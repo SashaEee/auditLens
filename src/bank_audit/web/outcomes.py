@@ -39,28 +39,12 @@ from .. import db
 log = logging.getLogger(__name__)
 MSK = dt.timezone(dt.timedelta(hours=3))
 
-# ── направления аудита ──────────────────────────────────────────────────────
-DIRS: list[tuple[str, str]] = [
-    ("mortgage", "Ипотека"), ("metals", "Операции с драгметаллами"),
-    ("field", "Выездное обслуживание"), ("youth", "Дети и молодёжь"),
-    ("selfemp", "Самозанятые"), ("credit_card", "Кредитные карты"),
-    ("acquiring", "Эквайринг"), ("atm", "Устройства самообслуживания"),
-    ("invest", "Инвестиционные продукты"), ("consumer", "Потребительские кредиты"),
-    ("svo", "Участники СВО"), ("payroll", "Зарплатные проекты"),
-    ("other", "Другое (вклады, дебетовые карты, переводы, РКО, страхование)"),
-]
-DIR_CODES = {c for c, _ in DIRS}
+# ── направления аудита — из общего справочника (directions.py) ───────────────
+from ..directions import DIRECTIONS as _DIRS, OTHER as _OTHER, review_maps as _review_maps  # noqa: E402
 
-# продукт «Аудита отзывов» (подпись в фильтре) → направление
-PRODUCT_DIR = {
-    "Ипотека": "mortgage", "Драгметаллы и ОМС": "metals",
-    "Выездной сервис — курьеры и выезд": "field", "Кредитная карта": "credit_card",
-    "Бизнес: эквайринг": "acquiring", "УС — банкоматы и терминалы": "atm",
-    "Инвестиции": "invest", "Потребительский кредит": "consumer", "Рассрочка": "consumer",
-    "Зарплатные проекты": "payroll",
-}
-SLICE_DIR = {"payroll": "payroll", "us": "atm", "field": "field"}
-VULNERABLE_DIR = {"minor": "youth", "svo": "svo"}
+DIRS: list[tuple[str, str]] = [(d.code, d.name) for d in _DIRS] + [_OTHER]
+DIR_CODES = {c for c, _ in DIRS}
+PRODUCT_DIR, SLICE_DIR, VULNERABLE_DIR = _review_maps()
 
 # пригодность запроса
 QUALITY = {

@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 1c8a5b4629ba0e522fe336784a7cfce77933e8d73b0cab0cefed92001e42abca): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 29ae18daf8c23c3a008fa5de8bb0b787df6a786c8e439dfc423dc195ea82291d): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -3882,7 +3882,9 @@ function FyRange({
 // Onboarding холодного старта (этап D): два вопроса чипами вместо пустой
 // страницы. Продукты → закреплённые темы, риски → custom-фразы (их парсят
 // dimension_weights и вектор профиля) — новых хранилищ не заводится.
-const OB_PRODUCTS = [["deposit", "Вклады"], ["ipoteka", "Ипотека"], ["credit_card", "Кредитные карты"], ["debit_card", "Дебетовые карты"], ["consumer_loan", "Потребкредиты"], ["auto", "Автокредиты"], ["savings", "Накопительные счета"], ["transfers", "Переводы и СБП"], ["acquiring", "Эквайринг"], ["premium", "Премиум"]];
+const OB_PRODUCTS = [["deposit", "Вклады"], ["ipoteka", "Ипотека"], ["credit_card", "Кредитные карты"], ["debit_card", "Дебетовые карты"], ["consumer_loan", "Потребкредиты"], ["auto", "Автокредиты"], ["savings", "Накопительные счета"], ["transfers", "Переводы и СБП"], ["acquiring", "Эквайринг"], ["premium", "Премиум"],
+// направления аудита, которых раньше не было
+["selfemp", "Самозанятые"], ["youth", "Дети и молодёжь"], ["payroll", "Зарплатные проекты"], ["field", "Выездное обслуживание"], ["atm", "Банкоматы и УС"], ["invest", "Инвестиции"], ["metals", "Драгметаллы"], ["svo", "Участники СВО"]];
 const OB_RISKS = [["fraud", "Мошенничество"], ["ops", "Сбои и доступность"], ["compliance", "Комплаенс и ЦБ"], ["market", "Тарифы и конкуренты"], ["conduct", "Продажи и жалобы"]];
 function FyOnboarding({
   onDone,
@@ -8505,7 +8507,8 @@ function RvCard({
   const snip = q && r.via !== "смысл" ? rvSnippet(r.marked) : null;
   const sig = rvSignals(r).slice(0, 3),
     sev = rvSev(r);
-  const themes = (r.themes || []).slice(0, 2);
+  const themes = (r.themes || []).slice(0, 2),
+    sl = (r.slices || []).slice(0, 2);
   const src = r.source && r.source.includes(".") ? r.source : r.url ? rvHost(r.url) : "";
   const meta = [rvShortDate(r.date), showBank && r.bank, r.city, r.product, src].filter(Boolean);
   return /*#__PURE__*/React.createElement("article", {
@@ -8566,14 +8569,18 @@ function RvCard({
     className: "rv-c-snip"
   }, kbMark(snip)) : a.quote ? /*#__PURE__*/React.createElement("div", {
     className: "rv-c-quote"
-  }, "\xAB", a.quote, "\xBB") : null, (sig.length > 0 || themes.length > 0) && /*#__PURE__*/React.createElement("div", {
+  }, "\xAB", a.quote, "\xBB") : null, (sig.length > 0 || themes.length > 0 || sl.length > 0) && /*#__PURE__*/React.createElement("div", {
     className: "rv-c-sig"
   }, sig.map(x => /*#__PURE__*/React.createElement("span", {
     key: x.k,
     className: "rv-sg " + x.tone
   }, x.ic && /*#__PURE__*/React.createElement(x.ic, {
     s: 12
-  }), x.t)), themes.length > 0 && /*#__PURE__*/React.createElement("span", {
+  }), x.t)), sl.map(x => /*#__PURE__*/React.createElement("span", {
+    key: "sl-" + x.key,
+    className: "rv-sg sl",
+    "data-tip": rvSliceWhy(x)
+  }, x.label)), themes.length > 0 && /*#__PURE__*/React.createElement("span", {
     className: "rv-c-th"
   }, themes.map((t, i) => /*#__PURE__*/React.createElement(React.Fragment, {
     key: t.key
@@ -8630,11 +8637,87 @@ function RvPassport({
   if (r.ann) rows.push(["Разметка", /*#__PURE__*/React.createElement(React.Fragment, null, rvCap(a.confidence || ""), a.new_topic && /*#__PURE__*/React.createElement("span", {
     className: "rv-dim"
   }, " \xB7 \u0432\u043D\u0435 \u043A\u043E\u0434\u0438\u0444\u0438\u043A\u0430\u0442\u043E\u0440\u0430: ", a.new_topic))]);
+  if ((r.slices || []).length) rows.push([r.slices.length > 1 ? "Срезы" : "Срез", /*#__PURE__*/React.createElement(RvSlices, {
+    r: r
+  })]);
   return /*#__PURE__*/React.createElement("dl", {
     className: "rv-pass"
   }, rows.map(([k, v]) => /*#__PURE__*/React.createElement(React.Fragment, {
     key: k
   }, /*#__PURE__*/React.createElement("dt", null, k), /*#__PURE__*/React.createElement("dd", null, v))));
+}
+
+// Почему жалоба в срезе: пункт определения и дословная цитата (rag/review_slices.py).
+// «Не относится» не снимает срез сразу — отметку проверяет команда, иначе один
+// клик менял бы числа у всех.
+const rvSliceWhy = x => [x.clause && /^\d$/.test(x.clause) ? `п. ${x.clause} определения` : null, x.quote ? `«${x.quote}»` : null].filter(Boolean).join(" — ") || "срез по разметке модели";
+function RvSlices({
+  r
+}) {
+  const [sent, setSent] = useState({}),
+    [open, setOpen] = useState(null),
+    [note, setNote] = useState("");
+  useEffect(() => {
+    setSent({});
+    setOpen(null);
+    setNote("");
+  }, [r.url]);
+  const send = key => {
+    apiFetch("/api/reviews/slice-flag", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        url: r.url,
+        key,
+        note: note.trim() || null
+      })
+    }).then(() => {
+      setSent(o => ({
+        ...o,
+        [key]: 1
+      }));
+      setOpen(null);
+      setNote("");
+      fbToast("Отметка у команды: если жалоба не относится, уберём её из среза", false);
+    }).catch(() => fbToast("Не получилось отправить — попробуйте ещё раз", true));
+  };
+  return /*#__PURE__*/React.createElement("span", {
+    className: "rv-sl"
+  }, r.slices.map(x => /*#__PURE__*/React.createElement("span", {
+    key: x.key,
+    className: "rv-sl-i"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "rv-sl-l"
+  }, x.label), (x.clause || x.quote) && /*#__PURE__*/React.createElement("span", {
+    className: "rv-sl-why"
+  }, x.clause && /^\d$/.test(x.clause) ? /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 \u043F. ", x.clause) : null, x.quote ? /*#__PURE__*/React.createElement(React.Fragment, null, " \u2014 \xAB", x.quote, "\xBB") : null), sent[x.key] || x.flagged > 0 ? /*#__PURE__*/React.createElement("span", {
+    className: "rv-dim"
+  }, " \xB7 \u043E\u0442\u043C\u0435\u0447\u0435\u043D\u043E \xAB\u043D\u0435 \u043E\u0442\u043D\u043E\u0441\u0438\u0442\u0441\u044F\xBB, \u043D\u0430 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0435") : open === x.key ? /*#__PURE__*/React.createElement("span", {
+    className: "rv-sl-f"
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "rv-sl-in",
+    autoFocus: true,
+    value: note,
+    maxLength: 300,
+    placeholder: "\u043F\u043E\u0447\u0435\u043C\u0443 (\u043D\u0435\u043E\u0431\u044F\u0437\u0430\u0442\u0435\u043B\u044C\u043D\u043E)",
+    onChange: e => setNote(e.target.value),
+    onKeyDown: e => {
+      if (e.key === "Enter") send(x.key);
+      if (e.key === "Escape") setOpen(null);
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "rv-lnkb",
+    onClick: () => send(x.key)
+  }, "\u041E\u0442\u043F\u0440\u0430\u0432\u0438\u0442\u044C"), /*#__PURE__*/React.createElement("button", {
+    className: "rv-lnkb dim",
+    onClick: () => setOpen(null)
+  }, "\u041E\u0442\u043C\u0435\u043D\u0430")) : /*#__PURE__*/React.createElement("button", {
+    className: "rv-lnkb dim",
+    onClick: () => setOpen(x.key),
+    "data-tip": "\u0436\u0430\u043B\u043E\u0431\u0430 \u043F\u043E\u043F\u0430\u043B\u0430 \u0432 \u0441\u0440\u0435\u0437 \u043F\u043E \u043E\u0448\u0438\u0431\u043A\u0435 \u2014 \u043A\u043E\u043C\u0430\u043D\u0434\u0430 \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442 \u0438 \u0443\u0431\u0435\u0440\u0451\u0442"
+  }, "\u043D\u0435 \u043E\u0442\u043D\u043E\u0441\u0438\u0442\u0441\u044F"))));
 }
 function RvReader({
   r,
@@ -8850,6 +8933,7 @@ const rvNum = v => v == null ? "—" : String(v).replace(".", ",");
 // Признаки ленты: те же коды, что у панели «Признаки риска» (белый список на сервере)
 const RV_FLAG_OPTS = [["Эскалация", [["filed:cbr_court", "Обратились в ЦБ или суд"], ["esc:filed", "Уже обратились куда-либо"], ["esc:threat", "Грозят обратиться"]]], ["Куда", Object.entries(RV_TO).map(([k, v]) => ["to:" + k, v[0].toUpperCase() + v.slice(1)])], ["Уязвимые клиенты", [["vuln:any", "Все уязвимые"], ["vuln:pensioner", "Пенсионеры"], ["vuln:low_income", "Низкий доход"], ["vuln:svo", "Участники СВО"], ["vuln:minor", "Несовершеннолетние"], ["vuln:disabled", "Инвалиды"], ["vuln:ill", "Тяжелобольные"]]], ["Практики и суммы", [["no_consent", "Без согласия"], ["misled", "Ввели в заблуждение"], ["amount:1m", "Сумма от 1 млн ₽"]]]];
 const RV_SOURCES = [["banki", "banki.ru"], ["sravni", "sravni.ru"], ["bankiros", "bankiros.ru"], ["finuslugi", "finuslugi.ru"]];
+const RV_SIG_RX = /^sig:\d{4}-\d{2}-\d{2}$/;
 
 // Снимок жалобы при приобщении: если отзыв пропадёт с площадки, в деле
 // останется суть и начало текста
@@ -10027,11 +10111,24 @@ function ReviewsPage({
   const pickTheme = key => {
     setQ("");
     setQInput("");
+    setFWeek("");
     if (theme === key && tab === "complaints") {
       setTheme("");
       return;
     }
     setTheme(key);
+    goTab("complaints");
+  };
+  // всплеск → жалобы его недели (а не тема за весь период вкладки)
+  const pickSignal = (key, we) => {
+    if (!we) {
+      pickTheme(key);
+      return;
+    }
+    setQ("");
+    setQInput("");
+    setTheme(key);
+    setFWeek("sig:" + we);
     goTab("complaints");
   };
   const [qInput, setQInput] = useState(P.q || "");
@@ -10060,6 +10157,9 @@ function ReviewsPage({
   // город: из адреса или из «Разобраться» на «Обзоре» (всплеск с гео-концентрацией)
   const [fCity, setFCity] = useState(() => P.city || preset && preset.city || ""),
     [fSrc, setFSrc] = useState("");
+  // неделя всплеска (month=sig:<последний день>): ровно жалобы, из которых сложилось число
+  // сигнала, — из клика по всплеску и из уведомления по подписке
+  const [fWeek, setFWeek] = useState(() => RV_SIG_RX.test(P.month || "") ? P.month : "");
   const [fOrder, setFOrder] = useState("date"); // date | severity (без поиска)
   const [fView, setFView] = useState("cards"); // cards | groups
   const [cl, setCl] = useState(null),
@@ -10171,7 +10271,9 @@ function ReviewsPage({
     if (fl !== flag) setFlag(fl);
     if (P.esc === "1" !== escOnly) setEscOnly(P.esc === "1");
     if ((P.city || "") !== fCity) setFCity(P.city || "");
-    const t = RV_TABS.some(([k]) => k === P.tab) ? P.tab : th || fl || P.q || P.esc || P.city ? "complaints" : "overview";
+    const mw = RV_SIG_RX.test(P.month || "") ? P.month : "";
+    if (mw !== fWeek) setFWeek(mw);
+    const t = RV_TABS.some(([k]) => k === P.tab) ? P.tab : th || fl || P.q || P.esc || P.city || mw ? "complaints" : "overview";
     if (t !== tab) goTab(t);
   }, [paramsKey]);
   const [trBasis, setTrBasis] = useState("pub"),
@@ -10300,6 +10402,7 @@ function ReviewsPage({
     } else {
       setProduct("");
       setFCity("");
+      setFWeek("");
     }
     apiFetch(`/api/reviews/products?bank=${enc(bank)}`).then(d => setProds(d.items || [])).catch(() => setProds([]));
   }, [bank]);
@@ -10346,7 +10449,9 @@ function ReviewsPage({
   // периода их менял, а список обращений — нет, и в трёхмесячном срезе
   // оставались прошлогодние жалобы.
   const feedNext = useRef(null); // курсор ленты от сервера
-  const feedQS = off => `/api/reviews/feed?bank=${enc(bank)}${pq()}` + `${theme ? `&theme=${theme}` : ""}${q ? `&q=${enc(q)}` : ""}` + `${perQ}${escOnly ? "&esc=1" : ""}${flag ? `&flag=${enc(flag)}` : ""}` + `${fCity ? `&city=${enc(fCity)}` : ""}${fSrc ? `&source=${fSrc}` : ""}` + `${q ? sortBy === "date" ? "&sort=date" : "" : fOrder === "severity" ? "&sort=severity" : ""}`
+  const feedQS = off => `/api/reviews/feed?bank=${enc(bank)}${pq()}` + `${theme ? `&theme=${theme}` : ""}${q ? `&q=${enc(q)}` : ""}`
+  // у недели всплеска своё окно — период вкладки её бы обрезал
+  + `${fWeek ? `&month=${enc(fWeek)}` : perQ}${escOnly ? "&esc=1" : ""}${flag ? `&flag=${enc(flag)}` : ""}` + `${fCity ? `&city=${enc(fCity)}` : ""}${fSrc ? `&source=${fSrc}` : ""}` + `${q ? sortBy === "date" ? "&sort=date" : "" : fOrder === "severity" ? "&sort=severity" : ""}`
   // лента без поиска листается курсором (next от сервера), поиск — по offset
   + (q ? `&limit=20&offset=${off}` : `&limit=20&cursor=${feedNext.current != null && off > 0 ? feedNext.current : 0}`);
   useEffect(() => {
@@ -10374,7 +10479,7 @@ function ReviewsPage({
       setFeedTot(null);
       setFeedBusy(false);
     });
-  }, [bank, product, theme, q, perKey, escOnly, sortBy, flag, fCity, fSrc, fOrder]);
+  }, [bank, product, theme, q, perKey, escOnly, sortBy, flag, fCity, fSrc, fOrder, fWeek]);
   const loadMoreFeed = () => {
     setFeedMoreBusy(true);
     return apiFetch(feedQS((feed || []).length)).then(d => {
@@ -11081,6 +11186,35 @@ function ReviewsPage({
   }, /*#__PURE__*/React.createElement(RvIChevD, {
     s: 12
   })))));
+  // «Новое» без всплесков: сюжеты вне кодификатора — наблюдения, их видно и в спокойную неделю
+  const rvNovel = nv => (nv || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "rv-radar-sub",
+    style: {
+      marginTop: 10
+    }
+  }, "\u041D\u043E\u0432\u043E\u0435 \u2014 \u0441\u044E\u0436\u0435\u0442\u044B \u0432\u043D\u0435 \u043A\u043E\u0434\u0438\u0444\u0438\u043A\u0430\u0442\u043E\u0440\u0430, \u043D\u0435 \u0432\u0441\u043F\u043B\u0435\u0441\u043A\u0438:"), /*#__PURE__*/React.createElement("div", {
+    className: "rv-radar-chips"
+  }, nv.map((c, i) => /*#__PURE__*/React.createElement("span", {
+    key: i,
+    className: "rv-radar-chip lvl-watch",
+    role: "button",
+    tabIndex: 0,
+    "data-tip": `${c.n} ${plural(c.n, "жалоба", "жалобы", "жалоб")} с похожим сюжетом — открыть`,
+    onClick: () => openGroup({
+      urls: c.urls,
+      n: c.n,
+      label: c.topic,
+      first: c.first,
+      last: c.last
+    }),
+    onKeyDown: onKey(() => openGroup({
+      urls: c.urls,
+      n: c.n,
+      label: c.topic,
+      first: c.first,
+      last: c.last
+    }))
+  }, c.topic, /*#__PURE__*/React.createElement("b", null, c.n)))));
   const radarCard = /*#__PURE__*/React.createElement("div", {
     className: "rv-card rv-radar"
   }, /*#__PURE__*/React.createElement("div", {
@@ -11121,11 +11255,11 @@ function ReviewsPage({
     type: "button",
     className: "btn btn-sm",
     onClick: () => setAnomTry(x => x + 1)
-  }, "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C")) : !anom || (!anom.signals || !anom.signals.length) && !(anom.watch || []).length ? /*#__PURE__*/React.createElement("div", {
+  }, "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C")) : !anom || (!anom.signals || !anom.signals.length) && !(anom.watch || []).length ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "rv-radar-calm"
   }, /*#__PURE__*/React.createElement("span", {
     className: "rv-radar-check"
-  }, /*#__PURE__*/React.createElement(IcoCheck, null)), " \u0420\u0435\u0437\u043A\u0438\u0445 \u0430\u043D\u043E\u043C\u0430\u043B\u0438\u0439 \u0437\u0430 \u043D\u0435\u0434\u0435\u043B\u044E \u043D\u0435 \u0432\u044B\u044F\u0432\u043B\u0435\u043D\u043E") : !anom.signals || !anom.signals.length ?
+  }, /*#__PURE__*/React.createElement(IcoCheck, null)), " \u0420\u0435\u0437\u043A\u0438\u0445 \u0430\u043D\u043E\u043C\u0430\u043B\u0438\u0439 \u0437\u0430 \u043D\u0435\u0434\u0435\u043B\u044E \u043D\u0435 \u0432\u044B\u044F\u0432\u043B\u0435\u043D\u043E"), anom && rvNovel(anom.novel)) : !anom.signals || !anom.signals.length ?
   /*#__PURE__*/
   /* порог всплеска не пробит, но расхождение с рынком есть —
      «спокойно» здесь было бы неправдой */
@@ -11141,7 +11275,7 @@ function ReviewsPage({
     "data-tip": `${d.week} за 7 дн · норма ${d.baseline_week}/нед · у нас ×${d.ratio}, по рынку ×${d.market_ratio} → быстрее рынка в ${d.gap} раза`,
     onClick: () => pickTheme(d.key),
     onKeyDown: onKey(() => pickTheme(d.key))
-  }, d.short || d.label, /*#__PURE__*/React.createElement("b", null, "\xD7", String(d.gap).replace(".", ",")))))) : /*#__PURE__*/React.createElement(React.Fragment, null, !(anom.signals.length === 1 && anom.summary) && /*#__PURE__*/React.createElement("div", {
+  }, d.short || d.label, /*#__PURE__*/React.createElement("b", null, "\xD7", String(d.gap).replace(".", ","))))), rvNovel(anom.novel)) : /*#__PURE__*/React.createElement(React.Fragment, null, !(anom.signals.length === 1 && anom.summary) && /*#__PURE__*/React.createElement("div", {
     className: "rv-radar-chips"
   }, anom.signals.map((s, i) => {
     const tip = `${s.week} за 7 дн (обычно ~${s.baseline_week}/нед)` + (s.bank_specific ? " · " + (ovMarketNote(s.ratio, s.market_ratio) || "сильнее рынка") : "") + (s.accel ? ` · ускоряется (${s.prev_week}→${s.week})` : "") + (sigCont(s) ? ` · держится с ${sigDm(s.since)}` + (s.baseline_before != null ? ` (до всплеска норма ~${s.baseline_before}/нед)` : "") : "") + (s.sustained ? ` · две недели подряд (${s.prev_week} и ${s.week})` : "") + (s.geo ? ` · ${s.geo.share}% из ${s.geo.city}` : "");
@@ -11151,8 +11285,8 @@ function ReviewsPage({
       role: "button",
       tabIndex: 0,
       "data-tip": tip,
-      onClick: () => pickTheme(s.key),
-      onKeyDown: onKey(() => pickTheme(s.key))
+      onClick: () => pickSignal(s.key, anom.week_end),
+      onKeyDown: onKey(() => pickSignal(s.key, anom.week_end))
     }, s.short || s.label, /*#__PURE__*/React.createElement("b", null, s.new ? "новое" : "×" + String(s.ratio).replace(".", ",")), s.accel && /*#__PURE__*/React.createElement("span", {
       className: "rv-radar-acc"
     }, /*#__PURE__*/React.createElement(IcoTrendUp, null)), sigCont(s) && /*#__PURE__*/React.createElement("span", {
@@ -11184,9 +11318,9 @@ function ReviewsPage({
     s: 12
   }))), anom.signals.length === 1 && /*#__PURE__*/React.createElement("button", {
     className: "rv-more-l",
-    onClick: () => pickTheme(anom.signals[0].key),
-    "data-tip": `${anom.signals[0].label}: жалобы периода`
-  }, "\u0416\u0430\u043B\u043E\u0431\u044B \u0441\u0438\u0433\u043D\u0430\u043B\u0430", /*#__PURE__*/React.createElement("span", {
+    onClick: () => pickSignal(anom.signals[0].key, anom.week_end),
+    "data-tip": `${anom.signals[0].label}: ${anom.signals[0].week} жалоб недели всплеска`
+  }, "\u0416\u0430\u043B\u043E\u0431\u044B \u0441\u0438\u0433\u043D\u0430\u043B\u0430 \xB7 ", anom.signals[0].week, /*#__PURE__*/React.createElement("span", {
     className: "rv-ico-in"
   }, /*#__PURE__*/React.createElement(RvIChevR, {
     s: 12
@@ -11295,6 +11429,10 @@ function ReviewsPage({
     k: "city",
     l: `Город: ${fCity}`,
     x: () => setFCity("")
+  }, fWeek && {
+    k: "week",
+    l: `Неделя всплеска: 7 дн по ${rvDate(fWeek.slice(4))}`,
+    x: () => setFWeek("")
   }, fSrc && {
     k: "src",
     l: `Площадка: ${(RV_SOURCES.find(x => x[0] === fSrc) || [0, fSrc])[1]}`,
@@ -11312,6 +11450,7 @@ function ReviewsPage({
     setFlag("");
     setEscOnly(false);
     setFCity("");
+    setFWeek("");
     setFSrc("");
     setQ("");
     setQInput("");
@@ -11436,7 +11575,7 @@ function ReviewsPage({
     className: "rv-export rv-export-a",
     download: true,
     "aria-label": "\u0412\u044B\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u0436\u0430\u043B\u043E\u0431\u044B \u0432 Excel",
-    href: `/api/reviews/export.xlsx?bank=${enc(bank)}${pq()}${theme ? `&theme=${enc(theme)}` : ""}${perQ}${escOnly ? "&esc=1" : ""}${flag ? `&flag=${enc(flag)}` : ""}${fCity ? `&city=${enc(fCity)}` : ""}${fSrc ? `&source=${enc(fSrc)}` : ""}${q ? `&q=${enc(q)}` : ""}`,
+    href: `/api/reviews/export.xlsx?bank=${enc(bank)}${pq()}${theme ? `&theme=${enc(theme)}` : ""}${fWeek ? `&month=${enc(fWeek)}` : perQ}${escOnly ? "&esc=1" : ""}${flag ? `&flag=${enc(flag)}` : ""}${fCity ? `&city=${enc(fCity)}` : ""}${fSrc ? `&source=${enc(fSrc)}` : ""}${q ? `&q=${enc(q)}` : ""}`,
     "data-tip": "Excel \u0432 \u0441\u0442\u0438\u043B\u0435 AuditLens: \u043E\u0431\u0437\u043E\u0440 \u0441 \u043F\u043E\u043A\u0430\u0437\u0430\u0442\u0435\u043B\u044F\u043C\u0438 \u0438 \u0433\u0440\u0430\u0444\u0438\u043A\u0430\u043C\u0438, \u0432\u0441\u0435 \u0436\u0430\u043B\u043E\u0431\u044B \u0441 \u0442\u0435\u043A\u0443\u0449\u0438\u043C\u0438 \u0444\u0438\u043B\u044C\u0442\u0440\u0430\u043C\u0438 \u0431\u0430\u043D\u043A\u0430, \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0430, \u0442\u0435\u043C\u044B, \u043F\u0440\u0438\u0437\u043D\u0430\u043A\u0430, \u0433\u043E\u0440\u043E\u0434\u0430, \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0438 \u0438 \u043F\u0435\u0440\u0438\u043E\u0434\u0430 \u2014 \u0441 \u0440\u0430\u0437\u043C\u0435\u0442\u043A\u043E\u0439 \u0418\u0418 \u0438 \u043F\u043E\u043B\u043D\u044B\u043C \u0442\u0435\u043A\u0441\u0442\u043E\u043C, \u0441\u0432\u043E\u0434\u043A\u0438 (\u043F\u043E\u0438\u0441\u043A \u0432 \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u0443 \u043D\u0435 \u0432\u0445\u043E\u0434\u0438\u0442)",
     onClick: () => trkEvent({
       kind: "ui",
@@ -11580,10 +11719,16 @@ function ReviewsPage({
     "data-tip": "\u044D\u0442\u0438 \u0441\u043B\u043E\u0432\u0430 \u0432\u0441\u0442\u0440\u0435\u0447\u0430\u044E\u0442\u0441\u044F \u043F\u043E\u0447\u0442\u0438 \u0432 \u043A\u0430\u0436\u0434\u043E\u0439 \u0436\u0430\u043B\u043E\u0431\u0435 \u0438 \u0442\u043E\u043B\u044C\u043A\u043E \u0440\u0430\u0437\u043C\u044B\u0432\u0430\u044E\u0442 \u0432\u044B\u0434\u0430\u0447\u0443"
   }, "\u043D\u0435 \u0443\u0447\u0438\u0442\u044B\u0432\u0430\u043B\u0438: ", feedMeta.common.join(" · ")), /*#__PURE__*/React.createElement("span", {
     className: "rv-sum-x",
-    "data-tip": `Со словами запроса — все такие жалобы по фильтрам вкладки${feedMeta.words_capped ? " (показаны первые 3000)" : ""}. По смыслу — не больше ${feedMeta.sense_cap || 20} ближайших жалоб, где этих слов нет. Выгрузка в Excel отдаёт ровно этот список.`
-  }, "\u0441\u043E \u0441\u043B\u043E\u0432\u0430\u043C\u0438 \u0437\u0430\u043F\u0440\u043E\u0441\u0430 ", fmtNum(feedMeta.n_words || 0), feedMeta.words_capped ? "+" : "", ", \u043F\u043E\u0445\u043E\u0436\u0438\u0445 \u043F\u043E \u0441\u043C\u044B\u0441\u043B\u0443 ", feedMeta.n_sense || 0)), !feedBusy && !feedErr && q && feedMeta && feedMeta.n_words === 0 && feed && feed.length > 0 && /*#__PURE__*/React.createElement("div", {
+    "data-tip": `Со словами запроса — все жалобы по фильтрам вкладки, где значимые слова запроса стоят рядом (или их вариант: сокращение, синоним)${feedMeta.words_capped ? "; совпадений очень много — уточните запрос" : ""}. По смыслу — не больше ${feedMeta.sense_cap || 20} ближайших жалоб без этих слов. Выгрузка в Excel отдаёт ровно этот список.`
+  }, "\u0441\u043E \u0441\u043B\u043E\u0432\u0430\u043C\u0438 \u0437\u0430\u043F\u0440\u043E\u0441\u0430 ", fmtNum(feedMeta.n_words || 0), feedMeta.words_capped ? "+" : "", ", \u043F\u043E\u0445\u043E\u0436\u0438\u0445 \u043F\u043E \u0441\u043C\u044B\u0441\u043B\u0443 ", feedMeta.n_sense || 0)), !feedBusy && !feedErr && q && feedMeta && (feedMeta.failed || feedMeta.words_failed) && /*#__PURE__*/React.createElement("div", {
     className: "rv-warn"
-  }, "\u0421\u043B\u043E\u0432 \u0437\u0430\u043F\u0440\u043E\u0441\u0430 \u0432 \u0442\u0435\u043A\u0441\u0442\u0430\u0445 \u043D\u0435\u0442 \u2014 \u0432\u0441\u0435 \u043E\u0442\u0437\u044B\u0432\u044B \u043D\u0438\u0436\u0435 \u043F\u043E\u0434\u043E\u0431\u0440\u0430\u043D\u044B \u043F\u043E \u0441\u043C\u044B\u0441\u043B\u0443. \u042D\u0442\u043E \u043D\u0435 \u0437\u043D\u0430\u0447\u0438\u0442, \u0447\u0442\u043E \u0436\u0430\u043B\u043E\u0431 \u043F\u043E \u0442\u0435\u043C\u0435 \u043D\u0435 \u0431\u044B\u043B\u043E: \u0432\u043E\u0437\u043C\u043E\u0436\u043D\u043E, \u043A\u043B\u0438\u0435\u043D\u0442\u044B \u043D\u0430\u0437\u044B\u0432\u0430\u044E\u0442 \u0435\u0451 \u0438\u043D\u0430\u0447\u0435."), /*#__PURE__*/React.createElement("div", {
+  }, feedMeta.failed === "filters" ? "Поиск не отработал: фильтры вкладки не применились из-за сбоя базы. Повторите запрос через минуту." : "Поиск по словам не отработал из-за сбоя базы — ниже только похожие по смыслу. Повторите запрос через минуту."), !feedBusy && !feedErr && q && feedMeta && !feedMeta.failed && !feedMeta.words_failed && (feedMeta.stop_phrases || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "rv-warn"
+  }, "\u041F\u043E \u0444\u0440\u0430\u0437\u0435 ", feedMeta.stop_phrases.map(x => `«${x}»`).join(", "), " \u043D\u0435 \u0438\u0441\u043A\u0430\u043B\u0438: \u0432 \u043D\u0435\u0439 \u0442\u043E\u043B\u044C\u043A\u043E \u0441\u043B\u0443\u0436\u0435\u0431\u043D\u044B\u0435 \u0441\u043B\u043E\u0432\u0430. \u0414\u043E\u0431\u0430\u0432\u044C\u0442\u0435 \u0432 \u043A\u0430\u0432\u044B\u0447\u043A\u0438 \u0437\u043D\u0430\u0447\u0438\u043C\u043E\u0435 \u0441\u043B\u043E\u0432\u043E."), !feedBusy && !feedErr && q && feedMeta && !feedMeta.words_failed && !feedMeta.failed && feedMeta.n_words === 0 && feed && feed.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "rv-warn"
+  }, "\u0421\u043B\u043E\u0432 \u0437\u0430\u043F\u0440\u043E\u0441\u0430 \u0432 \u0442\u0435\u043A\u0441\u0442\u0430\u0445 \u043D\u0435\u0442 \u2014 \u0432\u0441\u0435 \u043E\u0442\u0437\u044B\u0432\u044B \u043D\u0438\u0436\u0435 \u043F\u043E\u0434\u043E\u0431\u0440\u0430\u043D\u044B \u043F\u043E \u0441\u043C\u044B\u0441\u043B\u0443. \u042D\u0442\u043E \u043D\u0435 \u0437\u043D\u0430\u0447\u0438\u0442, \u0447\u0442\u043E \u0436\u0430\u043B\u043E\u0431 \u043F\u043E \u0442\u0435\u043C\u0435 \u043D\u0435 \u0431\u044B\u043B\u043E: \u0432\u043E\u0437\u043C\u043E\u0436\u043D\u043E, \u043A\u043B\u0438\u0435\u043D\u0442\u044B \u043D\u0430\u0437\u044B\u0432\u0430\u044E\u0442 \u0435\u0451 \u0438\u043D\u0430\u0447\u0435."), !feedBusy && !feedErr && q && feedMeta && feedMeta.sense_checked === false && (feedMeta.n_sense || 0) > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "rv-warn"
+  }, "\u041F\u043E\u0445\u043E\u0436\u0438\u0435 \u043F\u043E \u0441\u043C\u044B\u0441\u043B\u0443 \u0441\u0435\u0439\u0447\u0430\u0441 \u043D\u0435 \u043F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u044B \u043C\u043E\u0434\u0435\u043B\u044C\u044E \u2014 \u0441\u0440\u0435\u0434\u0438 \u043D\u0438\u0445 \u043C\u043E\u0433\u0443\u0442 \u0431\u044B\u0442\u044C \u043B\u0438\u0448\u043D\u0438\u0435."), /*#__PURE__*/React.createElement("div", {
     className: "rv-sr",
     "aria-live": "polite"
   }, feedBusy ? "Загружаю жалобы" : feedErr ? "Жалобы не загрузились" : feedTot && !q ? `${fmtNum(feedTot.total)} ${plural(feedTot.total, "жалоба", "жалобы", "жалоб")} по фильтру` : feed ? `Показано ${feed.length}` : ""), /*#__PURE__*/React.createElement("div", {
@@ -21939,6 +22084,92 @@ const puWait = iso => {
   const h = (Date.now() - new Date(iso).getTime()) / 36e5;
   return h < 1 ? "меньше часа" : h < 48 ? `${Math.floor(h)} ч` : `${Math.floor(h / 24)} дн`;
 };
+// Отметки «не относится к срезу» из карточки жалобы (rag/review_slices.py): решает
+// команда — «убрать» снимает срез с жалобы в индексе сразу и навсегда, «оставить» закрывает
+// отметку. Кроме команды никто этот блок не видит (ручка отвечает 403 — блока нет).
+function PuSliceFlags({
+  onOpenUser
+}) {
+  const [d, setD] = useState(null),
+    [busy, setBusy] = useState(0);
+  const load = () => apiFetch("/api/reviews/slice-flags").then(setD).catch(() => setD({
+    hidden: true
+  }));
+  useEffect(() => {
+    load();
+  }, []);
+  if (!d || d.hidden || !(d.items || []).length) return null;
+  const decide = (id, decision) => {
+    setBusy(id);
+    apiFetch("/api/reviews/slice-flags/" + id, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        decision
+      })
+    }).then(() => {
+      fbToast(decision === "excluded" ? "Жалоба убрана из среза" : "Срез оставлен", false);
+      load();
+    }).catch(() => fbToast("Не получилось — попробуйте ещё раз", true)).finally(() => setBusy(0));
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "pu-card",
+    style: {
+      marginBottom: 16
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0442\u043C\u0435\u0442\u043A\u0438 \xAB\u043D\u0435 \u043E\u0442\u043D\u043E\u0441\u0438\u0442\u0441\u044F \u043A \u0441\u0440\u0435\u0437\u0443\xBB \xB7 ", d.items.length)), /*#__PURE__*/React.createElement("p", {
+    className: "t-cap",
+    style: {
+      margin: "-4px 0 10px"
+    }
+  }, "\u0410\u0443\u0434\u0438\u0442\u043E\u0440 \u0441\u0447\u0438\u0442\u0430\u0435\u0442, \u0447\u0442\u043E \u0436\u0430\u043B\u043E\u0431\u0430 \u043F\u043E\u043F\u0430\u043B\u0430 \u0432 \u0441\u0440\u0435\u0437 \xAB\u0410\u0443\u0434\u0438\u0442\u0430 \u043E\u0442\u0437\u044B\u0432\u043E\u0432\xBB \u043F\u043E \u043E\u0448\u0438\u0431\u043A\u0435. \xAB\u0423\u0431\u0440\u0430\u0442\u044C\xBB \u0441\u043D\u0438\u043C\u0430\u0435\u0442 \u0441\u0440\u0435\u0437 \u0441 \u0436\u0430\u043B\u043E\u0431\u044B \u0441\u0440\u0430\u0437\u0443 \u0438 \u043D\u0430\u0432\u0441\u0435\u0433\u0434\u0430 \u2014 \u043F\u0435\u0440\u0435\u0440\u0430\u0437\u043C\u0435\u0442\u043A\u0430 \u0435\u0433\u043E \u043D\u0435 \u0432\u0435\u0440\u043D\u0451\u0442."), /*#__PURE__*/React.createElement("div", {
+    className: "pu-tblwrap"
+  }, /*#__PURE__*/React.createElement("table", {
+    className: "pu-tbl"
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u0441\u0440\u0435\u0437"), /*#__PURE__*/React.createElement("th", null, "\u0436\u0430\u043B\u043E\u0431\u0430"), /*#__PURE__*/React.createElement("th", null, "\u043E\u0441\u043D\u043E\u0432\u0430\u043D\u0438\u0435"), /*#__PURE__*/React.createElement("th", null, "\u043A\u0442\u043E \u0438 \u043F\u043E\u0447\u0435\u043C\u0443"), /*#__PURE__*/React.createElement("th", null))), /*#__PURE__*/React.createElement("tbody", null, d.items.map(x => /*#__PURE__*/React.createElement("tr", {
+    key: x.id
+  }, /*#__PURE__*/React.createElement("td", null, x.label), /*#__PURE__*/React.createElement("td", {
+    style: {
+      maxWidth: 320
+    }
+  }, /*#__PURE__*/React.createElement("a", {
+    href: x.url,
+    target: "_blank",
+    rel: "noopener noreferrer"
+  }, [x.bank, x.date].filter(Boolean).join(" · ") || "открыть"), x.summary && /*#__PURE__*/React.createElement("div", {
+    className: "t-cap"
+  }, x.summary)), /*#__PURE__*/React.createElement("td", {
+    style: {
+      maxWidth: 260
+    },
+    className: "t-cap"
+  }, x.evidence ? rvSliceWhy(x.evidence) : "—"), /*#__PURE__*/React.createElement("td", {
+    style: {
+      maxWidth: 220
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "pu-link",
+    onClick: () => onOpenUser && onOpenUser(x.username)
+  }, x.username), x.note && /*#__PURE__*/React.createElement("div", {
+    className: "t-cap"
+  }, "\xAB", x.note, "\xBB")), /*#__PURE__*/React.createElement("td", {
+    style: {
+      whiteSpace: "nowrap"
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "seg-btn",
+    disabled: busy === x.id,
+    onClick: () => decide(x.id, "excluded")
+  }, "\u0423\u0431\u0440\u0430\u0442\u044C"), " ", /*#__PURE__*/React.createElement("button", {
+    className: "seg-btn",
+    disabled: busy === x.id,
+    onClick: () => decide(x.id, "kept")
+  }, "\u041E\u0441\u0442\u0430\u0432\u0438\u0442\u044C"))))))));
+}
 function PuInbox({
   rev,
   onOpenUser,
@@ -24280,13 +24511,15 @@ function PulsePage({
     pz: m.personalization || {},
     days: m.days,
     onOpenUser: setCard
-  })), tab === "inbox" && /*#__PURE__*/React.createElement(PuInbox, {
+  })), tab === "inbox" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(PuSliceFlags, {
+    onOpenUser: setCard
+  }), /*#__PURE__*/React.createElement(PuInbox, {
     key: openTicket || 0,
     openTicket: openTicket,
     rev: rev,
     onOpenUser: setCard,
     onChanged: load
-  }), tab === "outcomes" && /*#__PURE__*/React.createElement(PuOutcomes, {
+  })), tab === "outcomes" && /*#__PURE__*/React.createElement(PuOutcomes, {
     isOwner: !!(me && me.is_admin),
     withMe: withMe
   }), tab === "reach" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(PuReach, {
@@ -24670,7 +24903,16 @@ const PROD_RU = {
   savings: "Накопит. счета",
   acquiring: "Эквайринг",
   premium: "Премиальные пакеты",
-  transfers: "Переводы и комиссии"
+  transfers: "Переводы и комиссии",
+  // направления аудита (directions.py)
+  metals: "Драгметаллы",
+  field: "Выездное обслуживание",
+  youth: "Дети и молодёжь",
+  selfemp: "Самозанятые",
+  atm: "Банкоматы и УС",
+  invest: "Инвестиции",
+  svo: "Участники СВО",
+  payroll: "Зарплатные проекты"
 };
 const topicLabel = t => BANK_RU[t] || PROD_RU[t] || t;
 const TZ_ZONES = [["Europe/Kaliningrad", "Калининград · МСК−1"], ["Europe/Moscow", "Москва · МСК"], ["Europe/Samara", "Самара · МСК+1"], ["Asia/Yekaterinburg", "Екатеринбург · МСК+2"], ["Asia/Omsk", "Омск · МСК+3"], ["Asia/Krasnoyarsk", "Красноярск · МСК+4"], ["Asia/Irkutsk", "Иркутск · МСК+5"], ["Asia/Yakutsk", "Якутск · МСК+6"], ["Asia/Vladivostok", "Владивосток · МСК+7"], ["Asia/Magadan", "Магадан · МСК+8"], ["Asia/Kamchatka", "Камчатка · МСК+9"]];

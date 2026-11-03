@@ -50,14 +50,14 @@ KIND_GROUP = {
     "case_restored": "access", "case_status": "access", "report_shared": "access",
     "ticket": "inbox",
     "watch_signal": "watch",
-    "team_ticket": "team", "team_ai_minus": "team",
+    "team_ticket": "team", "team_ai_minus": "team", "team_slice": "team",
 }
 # «Не следить за делом» глушит эти; упоминания, ответы и доступ — нет
 CASE_MUTABLE = {"case_items", "case_msg", "case_status", "case_analysis"}
 # эти склеиваются, пока не прочитаны (остальные — по одной строке на событие)
 _MERGE = {"case_items", "case_msg", "case_status", "case_analysis", "ticket", "report_shared",
-          "team_ticket", "team_ai_minus"}
-_COUNTED = {"case_items", "case_msg", "team_ai_minus"}          # склейка копит число
+          "team_ticket", "team_ai_minus", "team_slice"}
+_COUNTED = {"case_items", "case_msg", "team_ai_minus", "team_slice"}          # склейка копит число
 _SAME_ACTOR = {"case_items"}                   # склеиваются только от одного автора
 KEEP_DAYS = 90
 LIST_LIMIT = 60
@@ -142,6 +142,10 @@ def title_of(kind: str, ref: dict, count: int = 1) -> str:
         what = "неверный факт в ответе ИИ" if ref.get("claim") else "минус к ответу ИИ"
         return f"{what[0].upper() + what[1:]}: «{_q(ref.get('question'))}»" if ref.get("question") \
             else what[0].upper() + what[1:]
+    if kind == "team_slice":
+        if count > 1:
+            return f"{count} {_plural(count, 'отметка', 'отметки', 'отметок')} «не относится к срезу» ждут проверки"
+        return f"Отметка «не относится к срезу» «{_q(ref.get('label'))}» ждёт проверки"
     if kind == "watch_signal":
         what = _q(ref.get("bank")) + (f" · {_q(ref['product'])}" if ref.get("product") else "")
         ratio = f" ×{str(ref['ratio']).replace('.', ',')}" if ref.get("ratio") else ""

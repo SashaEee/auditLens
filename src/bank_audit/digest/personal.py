@@ -43,7 +43,8 @@ _LABEL = {
 
 
 def _label(t: str) -> str:
-    return _LABEL.get(t, t)
+    from ..directions import topic_labels
+    return _LABEL.get(t) or topic_labels().get(t, t)
 
 
 def _clip(text: str | None, n: int) -> str:

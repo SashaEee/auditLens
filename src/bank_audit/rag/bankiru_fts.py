@@ -519,19 +519,34 @@ def headline(texts: list[str], tsquery: str) -> list[str]:
         return clean
 
 
-def bodies_for(rows: list[dict]) -> dict[str, dict]:
+class Bodies(dict):
+    """{url: {text, product, city}} плюс failed — url, чьё хранилище не ответило.
+    Отсутствие url в словаре без failed значит «хранилище ответило, текста нет»."""
+
+    def __init__(self):
+        super().__init__()
+        self.failed: set[str] = set()
+
+
+def bodies_for(rows: list[dict]) -> Bodies:
     """Тексты по строкам индекса — каждый из своего хранилища.
 
     Индекс намеренно не хранит тела: у внешнего корпуса владелец текста — база
     banki.ru, у наших коллекторов — таблица review. Копия завела бы вторую
     версию правды, которая начнёт расходиться с первой.
+
+    Если хранилище не ответило, его url попадают в .failed. До 04.11.2026 сбой
+    выглядел как «текста нет», и разметка навсегда записывала такие отзывы в мусор
+    (на проде 555 жалоб с нулевой стоимостью разметки, у которых текст читается).
     """
-    out: dict[str, dict] = {}
+    out = Bodies()
     ext = [r for r in rows if (r.get("source") or "bankiru") == "bankiru"]
     loc = [r for r in rows if (r.get("source") or "bankiru") != "bankiru"]
     if ext:
         eng = _source_engine()
-        if eng is not None:
+        if eng is None:
+            out.failed.update(r["url"] for r in ext)
+        else:
             try:
                 with eng.connect() as c:
                     for x in c.execute(text(
@@ -543,6 +558,7 @@ def bodies_for(rows: list[dict]) -> dict[str, dict]:
                                          "product": x["product"],
                                          "city": _city(x["location"])}
             except Exception as e:
+                out.failed.update(r["url"] for r in ext)
                 log.warning("review_index: тексты внешнего корпуса не забрались (%s)", e)
     if loc:
         try:
@@ -554,6 +570,7 @@ def bodies_for(rows: list[dict]) -> dict[str, dict]:
                     out[x["url"]] = {"text": clean_body(x["text"]),
                                      "product": x["product"], "city": None}
         except Exception as e:
+            out.failed.update(r["url"] for r in loc)
             log.warning("review_index: тексты своих коллекторов не забрались (%s)", e)
     return out
 
@@ -677,3 +694,189 @@ def search_fts(query: str, *, bank: str | None = None, product: str | None = Non
              "date": r["dt"].date().isoformat() if r["dt"] else None,
              "city": r["city"], "rank": float(r["rank"]),
              "terms": list(r["terms"] or [])} for r in rows]
+
+
+# ── Полный набор «со словами запроса»: все значимые слова — рядом ──────────────
+# Для ленты, счётчика и выгрузки нужен НАБОР, а не верхушка ранжирования.
+# Словесная нога (search_fts) ищет любое из слов — для ранжирования это хорошо,
+# как определение «со словами запроса» нет: «переводы самому себе» по любому
+# слову — 6 523 жалобы Сбера, все слова где угодно в тексте — 728, точная фраза —
+# 33 (замер 03.11.2026). Фраза же теряет «навязали мне страховку» и всё, где
+# между словами стоит предлог. Поэтому: все лексемы группы в одном окне
+# не длиннее числа слов + NEAR_GAP. Группа — значимые слова запроса или один
+# вариант раскрытия (сокращение, синоним) — варианты объединяются.
+NEAR_GAP = int(os.getenv("REVIEWS_NEAR_GAP", "2"))
+NEAR_CAP = int(os.getenv("REVIEWS_NEAR_CAP", "6000"))
+_POS_RX = re.compile(r"'((?:[^']|'')+)':([\d,A-D]+)")
+
+
+def _positions(tsv_text: str) -> dict[str, list[int]]:
+    out: dict[str, list[int]] = {}
+    for lex, pos in _POS_RX.findall(tsv_text or ""):
+        out[lex.replace("''", "'")] = [int(re.sub(r"[A-D]", "", p)) for p in pos.split(",") if p]
+    return out
+
+
+# Основа русского стеммера зависит от формы: «зачисляют» → «зачисля», «зачислили» →
+# «зачисл», и «не зачисляют выручку» не находило «не зачислили выручку». Поэтому
+# длинные основы сравниваются по началу (PREFIX символов), короткие — целиком.
+PREFIX = int(os.getenv("REVIEWS_NEAR_PREFIX", "6"))
+
+
+def stem_key(lexeme: str) -> str:
+    return lexeme[:PREFIX] if len(lexeme) > PREFIX else lexeme
+
+
+def near_window(pos: dict[str, list[int]], lexemes: list[str], gap: int = NEAR_GAP,
+                words: int = 0) -> bool:
+    """Есть ли окно, где встречается каждая лексема (по началу основы), длиной не
+    больше числа слов запроса + gap. words — слов в запросе вместе со служебными:
+    в тексте «не», «по», «с» тоже занимают позиции, и «выручку по эквайрингу не
+    зачисляют» на запрос «не зачисляют выручку» иначе не попадало в окно (04.11.2026)."""
+    lex = [x for x in dict.fromkeys(stem_key(x) for x in lexemes) if x]
+    if not lex:
+        return False
+    hits = {x: sorted(p for k, ps in pos.items() if k == x or (len(x) == PREFIX and k.startswith(x))
+                      for p in ps) for x in lex}
+    if any(not v for v in hits.values()):
+        return False
+    if len(lex) == 1:
+        return True
+    events = sorted((p, x) for x in lex for p in hits[x])
+    need, have, left = len(lex), {}, 0
+    span_max = max(len(lex), words) - 1 + gap
+    for right, (p, x) in enumerate(events):
+        have[x] = have.get(x, 0) + 1
+        while len(have) == need:
+            if p - events[left][0] <= span_max:
+                return True
+            lx = events[left][1]
+            have[lx] -= 1
+            if not have[lx]:
+                del have[lx]
+            left += 1
+    return False
+
+
+def _filters(bank, city, month, since_ts) -> tuple[str, dict]:
+    clauses, params = [], {}
+    if bank:
+        clauses.append("f.bank = :bank")
+        params["bank"] = bank
+    if city:
+        clauses.append("f.city = :city")
+        params["city"] = city
+    if month:
+        clauses.append("date_trunc('month', f.dt) = to_date(:month, 'YYYY-MM')")
+        params["month"] = month
+    if since_ts is not None:
+        clauses.append("f.dt >= :since_ts")
+        params["since_ts"] = since_ts
+    return (" AND " + " AND ".join(clauses)) if clauses else "", params
+
+
+PHRASE_CAP = int(os.getenv("REVIEWS_PHRASE_CAP", "20000"))
+
+
+def search_phrases(phrases: list[str], *, bank: str | None = None, city: str | None = None,
+                   month: str | None = None, since_ts=None,
+                   _meta: dict | None = None) -> tuple[list[dict], bool]:
+    """Отзывы, где есть КАЖДАЯ фраза дословно (с точностью до словоформы) — phraseto_tsquery
+    по индексу целиком в SQL. Раньше фраза искалась окном с разрывом 0 по первым 6000
+    кандидатам в Python: часть совпадений терялась, а стоп-слова внутри фразы ломали
+    окно. Фраза только из стоп-слов («не без») ничего не ищет — это видно в _meta."""
+    phrases = [p.strip() for p in phrases if p and p.strip()]
+    if not phrases:
+        return [], False
+    where, params = _filters(bank, city, month, since_ts)
+    try:
+        with db.session() as s:
+            empty = [p for p in phrases if not s.execute(text(
+                "SELECT numnode(phraseto_tsquery(CAST('russian' AS regconfig), :p))"), {"p": p}).scalar()]
+            phrases = [p for p in phrases if p not in empty]
+            if _meta is not None and empty:
+                _meta["stop_phrases"] = empty
+            if not phrases:
+                return [], False
+            tq = " && ".join(f"phraseto_tsquery(CAST('russian' AS regconfig), :p{k})" for k in range(len(phrases)))
+            params.update({f"p{k}": p for k, p in enumerate(phrases)})
+            params["cap"] = PHRASE_CAP
+            rows = s.execute(text(f"""
+                SELECT f.url, f.review_id, f.source, f.bank, f.product, f.dt, f.city,
+                       ts_rank_cd(f.tsv, {tq}) AS rank
+                  FROM review_index f
+                 WHERE f.tsv @@ ({tq}){where}
+                 ORDER BY rank DESC, f.dt DESC
+                 LIMIT :cap"""), params).mappings().all()
+    except Exception as e:  # noqa: BLE001
+        log.warning("bankiru_fts: поиск фразы упал (%s: %s)", type(e).__name__, e)
+        if _meta is not None:
+            _meta["failed"] = True
+        return [], False
+    out = [{"url": r["url"], "review_id": int(r["review_id"]), "source": r["source"], "bank": r["bank"],
+            "product": r["product"], "date": r["dt"].date().isoformat() if r["dt"] else None,
+            "city": r["city"], "rank": float(r["rank"]), "terms": phrases} for r in rows]
+    return out, len(rows) >= PHRASE_CAP
+
+
+def search_near(groups: list[list[str]], *, bank: str | None = None, city: str | None = None,
+                month: str | None = None, since_ts=None, gap: int = NEAR_GAP,
+                spans: list[int] | None = None,
+                _meta: dict | None = None) -> tuple[list[dict], bool]:
+    """Отзывы, где для какой-нибудь группы все её слова стоят рядом. (строки, обрезано ли).
+    Сбой базы — пустой список и _meta["failed"]: «слов нет» и «поиск не отработал» —
+    разные вещи, и аудитор должен их различать."""
+    # spans — сколько слов было в исходной группе вместе со служебными (запрос
+    # «не зачисляют выручку» → 3, хотя значимых слов два): окно растёт на них
+    spans = list(spans or [])
+    pairs = [([w for w in g if w.strip()], spans[k] if k < len(spans) else 0)
+             for k, g in enumerate(groups) if g]
+    pairs = [(g, n) for g, n in pairs if g]
+    groups = [g for g, _n in pairs]
+    if not groups:
+        return [], False
+    where, params = _filters(bank, city, month, since_ts)
+    params["cap"] = NEAR_CAP
+    found: dict[str, dict] = {}
+    capped = False
+    try:
+        with db.session() as s:
+            for gi, g in enumerate(groups):
+                lexs = s.execute(text(
+                    "SELECT tsvector_to_array(to_tsvector(CAST('russian' AS regconfig), :t))"),
+                    {"t": " ".join(g)}).scalar() or []
+                if not lexs:
+                    continue
+                # основы уже готовые (как в индексе) — 'simple', а не 'russian': русский
+                # словарь обработал бы основу заново («навяза» → другая основа) и выкинул
+                # бы «сам» как стоп-слово — «навязали страховку» находила 0 (замер 03.11)
+                params["tq"] = " & ".join(
+                    "'" + stem_key(x).replace("'", "''") + "'" + (":*" if len(x) > PREFIX else "")
+                    for x in dict.fromkeys(lexs))
+                rows = s.execute(text(f"""
+                    SELECT f.url, f.review_id, f.source, f.bank, f.product, f.dt, f.city, f.tsv::text AS tsv,
+                           ts_rank_cd(f.tsv, to_tsquery(CAST('simple' AS regconfig), :tq)) AS rank
+                      FROM review_index f
+                     WHERE f.tsv @@ to_tsquery(CAST('simple' AS regconfig), :tq){where}
+                     ORDER BY rank DESC, f.dt DESC
+                     LIMIT :cap"""), params).mappings().all()
+                capped = capped or len(rows) >= NEAR_CAP
+                for r in rows:
+                    if r["url"] in found:
+                        continue
+                    pos = _positions(r["tsv"])
+                    # лексемы запроса, которых нет в словаре отзыва (to_tsvector их
+                    # не узнал), — не повод отбросить: окно считаем по найденным
+                    if not near_window(pos, lexs, gap, words=max(len(g), pairs[gi][1])):
+                        continue
+                    found[r["url"]] = {"url": r["url"], "review_id": int(r["review_id"]),
+                                       "source": r["source"], "bank": r["bank"], "product": r["product"],
+                                       "date": r["dt"].date().isoformat() if r["dt"] else None,
+                                       "city": r["city"], "rank": float(r["rank"]), "terms": lexs}
+    except Exception as e:  # noqa: BLE001
+        log.warning("bankiru_fts: поиск «рядом» упал (%s: %s)", type(e).__name__, e)
+        if _meta is not None:
+            _meta["failed"] = True
+        return [], False
+    rows = sorted(found.values(), key=lambda r: (-r["rank"], r["date"] or ""))
+    return rows, capped

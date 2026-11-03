@@ -1,23 +1,29 @@
 """Срезы «Аудита отзывов», которых нет в справочнике продуктов: зарплатные проекты,
-УС (банкоматы и терминалы), выездной сервис.
+УС (банкоматы и терминалы), выездной сервис, а с 03.11.2026 и направления аудита,
+которых не было в разметке: самозанятые и «Своё дело», дети и молодёжь, участники СВО.
 
 Срез — не продукт договора, а сюжет: зарплатная карта — это дебетовая карта,
 банкомат — канал. Поэтому основная разметка (review_annotate) их не ловит, а
 подсказки её каналов неточны: курьер маркетплейса — не выездной сервис банка,
-POS-терминал магазина — не УС. Здесь — отдельная LLM-разметка флагов:
+POS-терминал магазина — не УС. Здесь — отдельная LLM-разметка срезов:
 
 1. Кандидаты — полнотекстовый фильтр по индексу (с запасом на полноту) плюс
    подсказки основной разметки (канал «банкомат»/«курьер», проблема cash_atm).
-2. Две модели размечают независимо (A и B), расхождения решает арбитр.
-3. Итог — review_slice.tags, в индекс — review_index.slices; фильтр продукта
-   во вкладке — SQL-функция al_product_is (migrations/099).
+2. Каскад сильных моделей с карточками «ДА, если / НЕ …, если» (см. «каскад s7»):
+   у каждого решения — пункт определения и дословная цитата (review_slice.evidence),
+   аудитор видит, почему жалоба в срезе.
+3. Итог — review_slice (url, версия); в индекс review_index.slices попадают срезы из
+   АКТИВНОЙ версии каждого среза (review_slice_active): новая версия переключается по
+   срезу отдельно, когда разметка догнала и замер на эталоне не хуже прежней.
+   Фильтр продукта во вкладке — SQL-функция al_product_is (migrations/102).
 
-Качество замеряется слепой разметкой сильной модели-судьи (scripts/
-review_slices_judge.py); прежде чем менять определения — замер до и после.
+Качество — только против эталона, размеченного вслепую людьми или нами самими
+(не моделью против модели: на s6 такой замер давал 0,88–1,0 при ручных 0,44–0,73).
 """
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -31,18 +37,15 @@ from . import review_annotate as RA
 
 log = logging.getLogger(__name__)
 
-SCHEMA = os.getenv("REVIEW_SLICES_SCHEMA", "s6")   # s6 — payroll решают сильные модели (замер 14.10)
+# s7 (03.11.2026) — определения «входит / не входит» для всех срезов, сильные модели на каждом,
+# новые срезы направлений аудита (самозанятые, дети и молодёжь, СВО); s6 — payroll (14.10)
+SCHEMA = os.getenv("REVIEW_SLICES_SCHEMA", "s7")
 # окно разметки перекрывает самый длинный период вкладки (12 мес.) с запасом
 SINCE = os.getenv("REVIEW_SLICES_SINCE", "2025-09-01")
-MODEL_A = os.getenv("REVIEW_SLICES_A", RA.MODEL_A)
-MODEL_B = os.getenv("REVIEW_SLICES_B", RA.MODEL_B)
-MODEL_ARB = os.getenv("REVIEW_SLICES_ARB", RA.MODEL_C2)
-BATCH = int(os.getenv("REVIEW_SLICES_BATCH", "10"))
 INFLIGHT = int(os.getenv("REVIEW_SLICES_INFLIGHT", "12"))
 CAP_RUB = float(os.getenv("REVIEW_SLICES_CAP_RUB", "15000"))
 DAILY_CAP_RUB = float(os.getenv("REVIEW_SLICES_DAILY_CAP_RUB", "2000"))    # доразметка за сутки (МСК)
 _LOCK_KEY = 710_022_402
-_MAX_CHARS = 3000
 
 # ключ: (подпись в списке продуктов «Аудита отзывов», определение для модели)
 SLICES: dict[str, tuple[str, str]] = {
@@ -53,23 +56,80 @@ SLICES: dict[str, tuple[str, str]] = {
         "работодателя; (2) зачисление зарплаты, аванса, отпускных через банк — не пришли, задержаны, "
         "зачислены частично или с ошибкой; (3) работодатель (юрлицо, ИП) о зарплатном проекте — подключение, "
         "реестры, перечисление зарплаты, аванса, отпускных сотрудникам, тарифы, перевод проекта. "
+        "Льгота, потерянная из-за того, как зачисляется зарплата (ставка по кредиту, бесплатное "
+        "обслуживание), — это (1), а не (в). "
         "НЕ payroll, если: (а) клиент лишь упоминает, что он зарплатный клиент или что на карту приходит "
         "зарплата, а претензия о другом — блокировка, перевыпуск, переводы, подписки, лимиты, кредит, "
-        "обслуживание в офисе; (б) арест, взыскание или списание по исполнительному документу или требованию "
-        "налоговой — даже если списана зарплата и нарушен лимит удержаний; (в) зарплата — только доход "
-        "(кредит, проверка доходов); (г) пенсии и пособия.")),
+        "обслуживание в офисе; (б) арест, взыскание или списание по исполнительному документу, инкассовому "
+        "поручению или требованию налоговой, очерёдность списания со счёта — даже если списана зарплата, "
+        "нарушен лимит удержаний или речь о платежах работодателя по зарплате; (в) зарплата — только доход "
+        "(кредит, проверка доходов); общий сбой банка, при котором не проходят любые операции и "
+        "среди прочего «зависли зарплаты», — тоже (а); (г) пенсии и пособия; (д) пакет услуг или подписка, где зарплата "
+        "лишь одно из условий бесплатности, а претензия — о самом пакете. Статус зарплатного клиента "
+        "(«зарплатный» пакет, надбавка, бонус за перевод зарплаты в банк) — это пункт (1).")),
     "us": ("УС — банкоматы и терминалы", (
-        "устройства самообслуживания банка (УС): банкомат, платёжный терминал, инфокиоск, устройство приёма "
-        "наличных — не выдал или не зачислил деньги, удержал карту, сбой операции, устройства нет или не "
-        "работают, комиссия или лимит при операции в УС, очередь к банкомату. "
-        "НЕ us: кассовые и эквайринговые POS-терминалы магазинов и бизнеса; операции в кассе отделения у "
-        "сотрудника.")),
+        "устройства самообслуживания (УС): банкомат, платёжный терминал, инфокиоск, устройство приёма "
+        "наличных. ДА, если претензия — о работе или доступности самого устройства: (1) сбой операции в "
+        "УС — не выдал или не зачислил наличные, выдал не ту сумму, удержал или не вернул карту, операция "
+        "зависла или прервалась, деньги списаны, а операция не прошла (в том числе в устройстве другого "
+        "банка); (2) недоступность УС — устройств нет, не работают, не принимают купюры, нет нужной "
+        "функции, очереди к ним; (3) безопасность у УС — скиммер, кража денег из лотка, мошенничество у "
+        "устройства. НЕ us, если: (а) комиссия или лимит по тарифу карты за снятие или внесение, а "
+        "устройство сработало штатно — в том числе плата за снятие в чужих банкоматах; это тариф карты; "
+        "(б) кассовые и эквайринговые POS-терминалы магазинов и бизнеса; (в) операции в кассе у "
+        "сотрудника отделения; (г) блокировка карты или операции банком (антифрод, 115-ФЗ, 161-ФЗ), если "
+        "устройство само карту не удержало; (д) устройство лишь упомянуто, а претензия о другом.")),
     "field": ("Выездной сервис — курьеры и выезд", (
-        "выездной сервис банка: курьерская доставка карт и документов банка, выездной менеджер или "
-        "специалист банка (оформление, подписание, открытие счёта), выездное обслуживание на дому или "
-        "маломобильных клиентов, выезд инженера банка к бизнес-клиенту. "
-        "НЕ field: доставка товаров маркетплейсов, еды и других небанковских сервисов; почта, если банк "
-        "ничего не вёз.")),
+        "выездной сервис банка — сотрудник или курьер банка приезжает к клиенту. ДА, если претензия — о "
+        "самом выезде или доставке, то есть к срокам, действиям или поведению того, кто приехал: "
+        "(1) курьерская доставка банковской карты, документов, договора, "
+        "SIM-карты банка — не привезли, сорвали сроки, привезли не то, курьер не явился или вёл себя "
+        "некорректно, навязал или оформил продукт при доставке; (2) выездной менеджер или представитель "
+        "банка — приезд к клиенту для оформления продукта, подписания документов, подтверждения "
+        "личности, открытия счёта — не приехал, нарушил порядок, навязал продукт; (3) выездное "
+        "обслуживание маломобильных, пожилых, больных клиентов на дому — отказ, срыв или отсутствие "
+        "такой услуги. НЕ field, если: (а) инженер, техник или сервисная служба по эквайрингу, кассам, ККТ, "
+        "терминалам оплаты у бизнеса — это эквайринг; (б) взыскание долга, коллекторы, выезд по долгу; "
+        "(в) доставка товаров маркетплейсов, еды и других небанковских сервисов — кроме случая, когда "
+        "небанковский продукт навязали при доставке банковской карты; (г) почта, если банк ничего не "
+        "вёз; (д) доставка или выезд лишь упомянуты, а претензия о другом — условия кредита, "
+        "блокировка, перевод, обслуживание в офисе. Курьер штатно привёз карту, а претензия — к продукту "
+        "или к решению банка, принятому не на встрече (отказ или лимит после оформления, тариф, бонусы, "
+        "проверки и анкеты банка), — это (д). Если же что-то пошло не так на самой встрече — курьер или "
+        "представитель не предупредил о платных услугах, подключил или навязал их, выдал не ту карту, "
+        "ввёл в заблуждение, процедура при встрече сорвалась или не сработала, — это (1) или (2), даже если "
+        "дальше клиент спорит с банком.")),
+    # направления аудита, которых не было в разметке отзывов (directions.py, 03.11.2026)
+    "selfemp": ("Самозанятые и «Своё дело»", (
+        "самозанятые (налог на профессиональный доход, НПД) и сервис банка «Своё дело». ДА, если "
+        "претензия: (1) о регистрации или снятии с учёта самозанятого через банк, о сервисе «Своё "
+        "дело» — подключение, работа, чеки, начисление и уплата налога через сервис; (2) о счёте, "
+        "карте, поступлениях и переводах самозанятого как самозанятого — блокировка поступлений от "
+        "клиентов, ограничения, тарифы для самозанятых; (3) о кредитах, продуктах и условиях для "
+        "самозанятых. НЕ selfemp, если: (а) индивидуальный предприниматель или компания на другой "
+        "системе налогообложения (УСН, ОСНО) — это РКО и бизнес; кроме случая, когда клиент просил "
+        "оформить именно НПД, а банк оформил другой режим, — это (1); (б) клиент лишь упоминает, что он "
+        "самозанятый, а претензия о другом — ипотека, обычный перевод, мошенничество без связи со "
+        "статусом; (в) налоги физлица вне НПД — НДФЛ, вычеты.")),
+    "youth": ("Дети и молодёжь", (
+        "детские и молодёжные продукты и клиенты младше 25 лет. ДА, если: (1) претензия о детской "
+        "или молодёжной карте, счёте, вкладе, приложении для детей — оформление, ограничения, "
+        "родительский контроль, комиссии, лимиты; (2) клиент — несовершеннолетний или подросток, и "
+        "претензия связана с возрастом: оформление продуктов, доступ, согласие родителей, мошенничество "
+        "против подростка; (3) студенческие и молодёжные программы и тарифы. НЕ youth, если: (а) "
+        "родитель лишь упоминает детей, а претензия о его собственном продукте — ипотека с "
+        "материнским капиталом, кредит, вклад; (б) государственные пособия на детей, если претензия "
+        "не о детском продукте банка; (в) клиент — совершеннолетний студент или молодой человек, а "
+        "претензия не о молодёжном или студенческом продукте и не связана с возрастом (блокировка, "
+        "перевод, кредит на общих условиях).")),
+    "svo": ("Участники СВО", (
+        "участники специальной военной операции (СВО), военнослужащие, мобилизованные и их семьи. "
+        "ДА, если претензия связана с этим статусом: (1) кредитные каникулы и льготы для участников "
+        "СВО — отказ, нарушение, начисленные проценты и штрафы; (2) выплаты военнослужащим и их "
+        "зачисление — денежное довольствие, компенсации, единовременные выплаты; (3) обслуживание "
+        "семьи участника — доверенности, доступ к счетам, наследство погибшего. НЕ svo, если: (а) "
+        "статус лишь упомянут, а претензия о другом; (б) военная ипотека и общие программы для "
+        "военных без связи с участием в СВО — это ипотека.")),
 }
 KEYS = tuple(SLICES)
 LABELS = {k: v[0] for k, v in SLICES.items()}
@@ -79,6 +139,12 @@ _TSQ = {
     "payroll": "зарплатн:* | зарплат:* | заработн:* | работодател:*",
     "us": "банкомат:* | терминал:* | купюр:* | самообслуживан:* | инкассац:* | инфокиоск:*",
     "field": "курьер:* | выездн:* | выезд:* | доставк:*",
+    # «своё дело» фразой: лексема «сво» одна у «своё», «свой» и «СВО»
+    "selfemp": "самозанят:* | нпд | сво <-> дел:*",
+    # «дети» — точной лексемой ('дет'), не префиксом: префикс ловил бы «детали»
+    "youth": ("детск:* | подростк:* | молодежн:* | школьник:* | студент:* | несовершеннолетн:* | "
+              "сберкидс:* | ребен:* | дети"),
+    "svo": "военнослужащ:* | мобилизова:* | (специальн:* <-> военн:*) | участник:* <-> сво",
 }
 _HINT = ("'atm' = ANY(coalesce(i.channels, '{}'))", "i.issue = 'cash_atm'",
          "'courier' = ANY(coalesce(i.channels, '{}'))")
@@ -91,36 +157,51 @@ def candidate_sql() -> str:
 
 
 SYSTEM = (
-    "Ты — старший аудитор розничного банка. По каждому отзыву клиента поставь три флага — относится ли "
-    "претензия к срезу. Флаг true, только если это суть претензии или её существенная часть, а не "
-    "упоминание вскользь. Читай весь текст.\n\nСРЕЗЫ\n"
+    "Ты — старший аудитор розничного банка. Для каждого отзыва клиента реши по КАЖДОМУ срезу ниже, "
+    "относится ли претензия к срезу. Срез — только если это суть претензии или её существенная часть, а не "
+    "упоминание вскользь. Применяй определения буквально: пункты «ДА, если» — основание включить, пункты "
+    "«НЕ …, если» — основание исключить. Сомнение — не включай. Читай весь текст.\n\nСРЕЗЫ\n"
     + "\n".join(f"{k} — {v[1]}" for k, v in SLICES.items())
-    + '\n\nОтвечай ТОЛЬКО JSON без пояснений: {"items":[{"n":1,"payroll":false,"us":false,"field":false,'
-      '"quote":""}]} — по объекту на каждый отзыв, поле n обязательно; quote — дословная цитата до 150 '
-      "знаков, подтверждающая срез, если хоть один флаг true, иначе пусто.")
+    + '\n\nОтвечай ТОЛЬКО JSON без пояснений: {"items":[{"n":1,"slices":[{"key":"<срез>","clause":"<пункт ДА: '
+      '1|2|3>","quote":"<дословная цитата до 150 знаков>"}],"excluded":{"<срез>":"<пункт НЕ: а|б|в|г|д>"}}]} — '
+      "по объекту на каждый отзыв, поле n обязательно. В slices — только срезы, к которым отзыв относится "
+      "(пустой список — ни к одному); excluded — срезы, по которым сработал пункт «НЕ» (если были близкие "
+      "признаки), иначе пустой объект. Цитату копируй из текста символ в символ.")
 
 
 def flags(d) -> dict | None:
-    """Ответ модели по одному отзыву → {payroll, us, field, quote} или None."""
-    if not isinstance(d, dict) or not all(k in d for k in KEYS):
+    """Ответ модели по одному отзыву → {срез: bool, …, "evidence": {срез: {clause, quote}},
+    "excluded": {срез: пункт}} или None. Незнакомые срезы отбрасываются; ответ без списка
+    slices — нет ответа (не «ни к одному срезу»: молчание модели не равно «нет»)."""
+    if not isinstance(d, dict) or not isinstance(d.get("slices"), list):
         return None
-    out = {k: d[k] is True or str(d[k]).strip().lower() in ("true", "1", "да") for k in KEYS}
-    out["quote"] = str(d.get("quote") or "")[:200]
+    out: dict = {k: False for k in KEYS}
+    ev: dict = {}
+    for it in d["slices"]:
+        if isinstance(it, dict) and it.get("key") in KEYS:
+            out[it["key"]] = True
+            ev[it["key"]] = {"clause": str(it.get("clause") or "")[:8],
+                             "quote": str(it.get("quote") or "")[:300]}
+    exc = d.get("excluded") if isinstance(d.get("excluded"), dict) else {}
+    out["evidence"] = ev
+    out["excluded"] = {k: str(v)[:8] for k, v in exc.items() if k in KEYS and not out[k]}
     return out
-
-
-def merge(a: dict | None, b: dict | None) -> tuple[dict, list[str]]:
-    """Итог двух разметчиков и список спорных срезов (их решает арбитр). Если
-    один разметчик не ответил — спорны все срезы: одного голоса мало."""
-    if a is None or b is None:
-        base = a or b or {k: False for k in KEYS}
-        return {k: base[k] for k in KEYS}, list(KEYS)
-    final = {k: a[k] for k in KEYS if a[k] == b[k]}
-    return final, [k for k in KEYS if a[k] != b[k]]
 
 
 def tags_of(final: dict) -> list[str]:
     return [k for k in KEYS if final.get(k)]
+
+
+# Длинные жалобы: суть бывает в конце («…и в итоге курьер так и не приехал»). Раньше
+# текст резался до 3000 знаков, и такие случаи терялись; голова и хвост дают оба края.
+_HEAD, _TAIL = int(os.getenv("REVIEW_SLICES_HEAD", "6500")), int(os.getenv("REVIEW_SLICES_TAIL", "1200"))
+
+
+def clip(t: str) -> str:
+    t = t or ""
+    if len(t) <= _HEAD + _TAIL + 20:
+        return t
+    return t[:_HEAD] + "\n[…]\n" + t[-_TAIL:]
 
 
 def _card(x: dict, n: int | None = None) -> str:
@@ -128,57 +209,29 @@ def _card(x: dict, n: int | None = None) -> str:
     return f"{head}Банк: {x.get('bank') or '—'}.\nТекст:\n{x['text']}"
 
 
-async def _tag_batch(c: RA.Caller, model: str, items: list[dict]) -> dict[int, dict]:
-    user = ("Поставь флаги срезов каждому отзыву.\n\n"
-            + "\n\n".join(_card(x, k + 1) for k, x in enumerate(items)))
-    d, tin, tout = await c.ask(model, user)
-    arr = [it for it in ((d or {}).get("items") or []) if isinstance(it, dict)] if isinstance(d, dict) else []
-    by_n = {int(it["n"]): it for it in arr if str(it.get("n", "")).isdigit()}
-    share = RA.Ledger().add(model, tin, tout) / max(1, len(items)) if (tin or tout) else 0.0
-    out = {}
-    for k in range(len(items)):
-        v = flags(by_n.get(k + 1))
-        if v is not None:
-            v["_rub"] = share
-            out[k] = v
-    return out
-
-
-async def _arbitrate(c: RA.Caller, x: dict, a, b, disputed: list[str]) -> tuple[dict, float]:
-    show = lambda v: json.dumps({k: v[k] for k in KEYS}, ensure_ascii=False) if v else "нет ответа"  # noqa: E731
-    user = (_card(x) + "\n\nДва аналитика независимо поставили флаги и разошлись по срезам: "
-            + ", ".join(disputed) + f".\nАналитик A: {show(a)}\nАналитик B: {show(b)}\n"
-            "Реши сам по определениям срезов. Верни JSON {\"payroll\":…,\"us\":…,\"field\":…,\"quote\":\"…\"} "
-            "по всем трём срезам.")
-    d, tin, tout = await c.ask(MODEL_ARB, user)
-    rub = RA.Ledger().add(MODEL_ARB, tin, tout) if (tin or tout) else 0.0
-    return flags(d) or {}, rub
-
-
-# Зарплатный срез тонкий: дешёвые модели путают его с «клиент упомянул зарплату»
-# (замер 14.10 против эталона из трёх сильных моделей: точность 0,73), а перепроверка
-# одной моделью срезала полноту до 0,5. Поэтому payroll решают две сильные модели,
-# при расхождении — третья (большинство трёх ≈ эталон). Чтобы не гонять их по всем
-# кандидатам, сильным идут только отзывы с признаком: дешёвый проход сказал «да» или в
-# тексте есть «зарплатн…», «з/п», «аванс», «отпускные», «реестр» — на замере в эту
-# группу попали все 34 из 34 зарплатных случаев эталона.
+# ── каскад s7 (03.11.2026) ───────────────────────────────────────────────────
+# s6: две дешёвые модели и арбитр по всем срезам, потом для каждого среза — пара
+# сильных моделей на отзывы с признаком. Ручная проверка 03.11 показала, что беда
+# была не в моделях, а в определениях («выезд инженера к бизнес-клиенту» прямо
+# входил в выездной сервис), а замер качества шёл моделью против модели (0,88–1,0
+# при ручных 0,44–0,73). s7 — определения «входит / не входит» и такой каскад:
+#   A — сильная модель по пакету со всеми карточками: решение, пункт, цитата;
+#   B — вторая сильная модель другого семейства: все положительные A и 10%
+#       отрицательных (контроль полноты, выбор детерминирован по url);
+#   C — третья модель только по срезам, где A и B разошлись; итог — большинство.
+# Платим за решения, которые что-то меняют, а не за перезаписываемые проходы.
 STRONG_A = os.getenv("REVIEW_SLICES_STRONG_A", "google/gemini-3.1-pro-preview")
 STRONG_B = os.getenv("REVIEW_SLICES_STRONG_B", "anthropic/claude-opus-4.8")
 STRONG_TIE = os.getenv("REVIEW_SLICES_STRONG_TIE", "openai/gpt-5.4")
-STRONG_KEYS = ("payroll",)
-_STRONG_HINT = {"payroll": re.compile(
-    r"зарплатн|зачисл\w*\s+(?:заработн\w*\s+плат|зарплат)|реестр|з/п|\bзп\b|аванс|отпускн", re.I)}
+CONFIRM_NEG = float(os.getenv("REVIEW_SLICES_CONFIRM_NEG", "0.10"))
+BATCH = int(os.getenv("REVIEW_SLICES_BATCH", "8"))
 # ₽ за 1 млн токенов (вход, выход) — тарифы облака из /v1/models (14.10.2026)
 _PRICES_EXTRA = {"google/gemini-3.1-pro-preview": (341.6, 2049.6),
                  "anthropic/claude-opus-4.8": (854.0, 4270.0),
                  "openai/gpt-5.4": (427.0, 2562.0)}
 for _m in (STRONG_A, STRONG_B, STRONG_TIE):
-    RA._MAX_TOKENS.setdefault(_m, 6000)
+    RA._MAX_TOKENS.setdefault(_m, 8000)
     RA._SEM.setdefault(_m, int(os.getenv("REVIEW_SLICES_SEM_STRONG", "16")))
-_STRONG_SYS = {k: ("Ты — эксперт по аудиту банка. Применяй определение БУКВАЛЬНО к каждому отзыву.\n\n" + k + " — "
-                   + SLICES[k][1] + '\n\nВерни ТОЛЬКО JSON {"items":[{"n":1,"clause":"1|2|3|а|б|в|г|нет","' + k
-                   + '":true|false}]} — по объекту на каждый отзыв; clause — какой пункт ДА или НЕТ применим.')
-               for k in STRONG_KEYS}
 
 
 def _rub(model: str, tin: int, tout: int) -> float:
@@ -186,44 +239,105 @@ def _rub(model: str, tin: int, tout: int) -> float:
     return tin / 1e6 * pin + tout / 1e6 * pout
 
 
-def needs_strong(key: str, text_: str, a: dict | None, b: dict | None, arb: dict | None) -> bool:
-    """Идёт ли отзыв к сильным моделям по срезу key: дешёвый проход сказал «да» или в
-    тексте есть признак среза. Остальное — «нет» без сильных моделей."""
-    if any((v or {}).get(key) is True for v in (a, b, arb)):
-        return True
-    return bool(_STRONG_HINT[key].search(text_ or ""))
+def confirm_negative(url: str, share: float = CONFIRM_NEG) -> bool:
+    """Отрицательный ответ A всё равно идёт ко второй модели — для доли share отзывов,
+    выбор по хэшу url (одинаков между прогонами): так видна полнота каскада."""
+    h = int(hashlib.blake2b((url or "").encode(), digest_size=4).hexdigest(), 16)
+    return (h % 10000) < share * 10000
 
 
-async def _strong_batch(cs: RA.Caller, model: str, key: str, items: list[dict]) -> tuple[dict[int, bool], float]:
-    """Сильная модель по пакету: {номер: да/нет} и рубли. cs — свой клиент с подсказкой среза."""
-    user = "\n\n".join(f"[{k + 1}]\n{x['text']}" for k, x in enumerate(items))
-    d, tin, tout = await cs.ask(model, user)
+async def _ask_batch(c: RA.Caller, model: str, items: list[dict]) -> tuple[dict[int, dict], float]:
+    """Одна модель по пакету: {номер в пакете: flags} и рубли."""
+    user = ("Реши по каждому отзыву и каждому срезу.\n\n"
+            + "\n\n".join(_card(x, k + 1) for k, x in enumerate(items)))
+    d, tin, tout = await c.ask(model, user)
     arr = [it for it in ((d or {}).get("items") or []) if isinstance(it, dict)] if isinstance(d, dict) else []
     by_n = {int(it["n"]): it for it in arr if str(it.get("n", "")).isdigit()}
-    out = {k: str(by_n[k + 1].get(key)).strip().lower() == "true" for k in range(len(items))
-           if k + 1 in by_n and key in by_n[k + 1]}
+    out = {}
+    for k in range(len(items)):
+        v = flags(by_n.get(k + 1))
+        if v is not None:
+            out[k] = v
     return out, _rub(model, tin, tout)
 
 
-async def _strong_decide(cs: RA.Caller, key: str, items: list[dict]) -> tuple[dict[int, dict], float]:
-    """Две сильные модели, при расхождении или пропуске — третья. {номер: {a, b, tie, final}}."""
-    (va, ra_), (vb, rb_) = await asyncio.gather(_strong_batch(cs, STRONG_A, key, items),
-                                                _strong_batch(cs, STRONG_B, key, items))
-    rub = ra_ + rb_
-    out = {}
-    for k in range(len(items)):
-        a, b = va.get(k), vb.get(k)
-        out[k] = {"a": a, "b": b, "tie": None, "final": a if (a is not None and a == b) else None}
-    unsure = [k for k, v in out.items() if v["final"] is None]
-    if unsure:
-        vt, rt = await _strong_batch(cs, STRONG_TIE, key, [items[k] for k in unsure])
-        rub += rt
-        for j, k in enumerate(unsure):
-            v = out[k]
-            v["tie"] = vt.get(j)
-            votes = [x for x in (v["a"], v["b"], v["tie"]) if x is not None]
-            v["final"] = (sum(votes) * 2 > len(votes)) if votes else None
-    return out, rub
+def decide(a: dict | None, b: dict | None, c: dict | None) -> tuple[dict, dict, str]:
+    """Итог по срезам из ответов A, B (может отсутствовать — подтверждение не запрашивали)
+    и C (только по спорным). Возвращает (final, evidence, status).
+    • B не спрашивали — решает A (status single);
+    • A и B согласны — их решение (agree);
+    • разошлись — большинство из трёх (arbitrated); C молчит — осторожно «нет» (failed_tie)."""
+    if a is None:
+        return {}, {}, "failed"
+    final, ev, status = {}, {}, "single" if b is None else "agree"
+    for k in KEYS:
+        if b is None or a[k] == b[k]:
+            final[k] = a[k]
+            src = a if a[k] else None
+        else:
+            if c is None:
+                final[k] = False
+                status = "failed_tie"
+                src = None
+            else:
+                votes = [a[k], b[k], c[k]]
+                final[k] = sum(votes) >= 2
+                status = "arbitrated" if status != "failed_tie" else status
+                src = next((v for v in (a, b, c) if v[k] == final[k] and v[k]), None)
+        if final[k] and src:
+            e = (src.get("evidence") or {}).get(k) or {}
+            if not e:          # решение «да» другой модели, а основание у A или B
+                e = next(((v.get("evidence") or {}).get(k) for v in (a, b, c) if v and v.get(k)
+                          and (v.get("evidence") or {}).get(k)), {}) or {}
+            ev[k] = e
+    return final, ev, status
+
+
+async def _process(ca: RA.Caller, items: list[dict]) -> tuple[list[dict], float]:
+    ra, rub = await _ask_batch(ca, STRONG_A, items)
+    # вторая модель: все положительные A и контрольная доля отрицательных
+    need_b = [k for k in range(len(items)) if k in ra
+              and (any(ra[k][key] for key in KEYS) or confirm_negative(items[k]["url"]))]
+    rb: dict[int, dict] = {}
+    if need_b:
+        got, r = await _ask_batch(ca, STRONG_B, [items[k] for k in need_b])
+        rub += r
+        rb = {need_b[j]: v for j, v in got.items()}
+    # третья — где разошлись (одним пакетом)
+    need_c = [k for k in rb if any(ra[k][key] != rb[k][key] for key in KEYS)]
+    rc: dict[int, dict] = {}
+    if need_c:
+        got, r = await _ask_batch(ca, STRONG_TIE, [items[k] for k in need_c])
+        rub += r
+        rc = {need_c[j]: v for j, v in got.items()}
+    rows = []
+    share = rub / max(1, len(items))
+    for k, x in enumerate(items):
+        a = ra.get(k)
+        if a is None:
+            continue                      # A не ответила — отзыв уйдёт в следующий прогон
+        b = rb.get(k) if k in need_b else None
+        if k in need_b and b is None:
+            status_b = "b_missing"
+        else:
+            status_b = ""
+        final, ev, status = decide(a, b, rc.get(k))
+        if status_b:
+            status = status_b
+        for key, e in ev.items():         # цитата — дословно из текста или пусто
+            q, ok = RA.fix_quote(e.get("quote") or "", x["text"]) if e.get("quote") else ("", False)
+            e["quote"], e["quote_ok"] = q, ok
+        show = lambda v: json.dumps({key: v[key] for key in KEYS} | {"excluded": v.get("excluded") or {}},  # noqa: E731
+                                    ensure_ascii=False) if v else None
+        rows.append({"url": x["url"], "schema": SCHEMA, "tags": tags_of(final), "status": status,
+                     "a": show(a), "b": show(b), "arb": show(rc.get(k)),
+                     "evidence": json.dumps(ev, ensure_ascii=False) if ev else None,
+                     "quote": next((e["quote"] for e in ev.values() if e.get("quote")), ""),
+                     "rub": round(share, 4)})
+    if rows:
+        with db.session() as s:
+            s.execute(_UPSERT, rows)
+    return rows, rub
 
 
 def _spent(today: bool) -> float:
@@ -242,83 +356,24 @@ def _todo(limit: int, urls: list[str] | None = None) -> list[dict]:
                AND (CAST(:u AS text[]) IS NOT NULL AND i.url = ANY(:u)
                     OR CAST(:u AS text[]) IS NULL AND i.dt >= CAST(:since AS timestamp)
                        AND i.dt <= now() AND {candidate_sql()})
-               AND NOT EXISTS (SELECT 1 FROM review_slice s WHERE s.url = i.url AND s.schema = :v)
+               AND NOT EXISTS (SELECT 1 FROM review_slice s WHERE s.url = i.url AND s.schema = :v
+                                  AND s.status NOT IN ('failed', 'failed_tie', 'b_missing'))
              ORDER BY i.dt DESC NULLS LAST LIMIT :n"""),
             {"u": urls, "since": SINCE, "v": SCHEMA, "n": limit}).mappings().all()
     return [dict(r) for r in rows]
 
 
+# Ключ — (url, версия): новая версия определений не затирает прежнюю, пока не
+# переключена (migrations/102). Неудавшиеся решения повторяются следующим прогоном.
 _UPSERT = text("""
-    INSERT INTO review_slice (url, schema, tags, status, a, b, arb, quote, cost_rub)
+    INSERT INTO review_slice (url, schema, tags, status, a, b, arb, evidence, quote, cost_rub)
     VALUES (:url, :schema, :tags, :status, CAST(:a AS jsonb), CAST(:b AS jsonb), CAST(:arb AS jsonb),
-            :quote, :rub)
-    ON CONFLICT (url) DO UPDATE SET schema = EXCLUDED.schema, tags = EXCLUDED.tags,
+            CAST(:evidence AS jsonb), :quote, :rub)
+    ON CONFLICT (url, schema) DO UPDATE SET tags = EXCLUDED.tags,
         status = EXCLUDED.status, a = EXCLUDED.a, b = EXCLUDED.b, arb = EXCLUDED.arb,
-        quote = EXCLUDED.quote, cost_rub = EXCLUDED.cost_rub, created_at = now()
+        evidence = EXCLUDED.evidence, quote = EXCLUDED.quote,
+        cost_rub = review_slice.cost_rub + EXCLUDED.cost_rub, created_at = now()
 """)
-
-
-async def _process(c: RA.Caller, items: list[dict], cs: dict | None = None) -> tuple[list[dict], float]:
-    ra, rb = await asyncio.gather(_tag_batch(c, MODEL_A, items), _tag_batch(c, MODEL_B, items))
-    rows, rub = [], 0.0
-    pre = []
-    for k, x in enumerate(items):
-        a, b = ra.get(k), rb.get(k)
-        final, disputed = merge(a, b)
-        cost = (a or {}).get("_rub", 0.0) + (b or {}).get("_rub", 0.0)
-        arb = None
-        status = "agree"
-        if disputed:
-            arb, r = await _arbitrate(c, x, a, b, disputed)
-            cost += r
-            if not arb:
-                if a is None and b is None:
-                    continue                      # никто не ответил — повтор в следующий прогон
-                status = "failed"
-                final = {**{k2: False for k2 in KEYS}, **final}
-            else:
-                final.update({k2: arb[k2] for k2 in disputed})
-                status = "arbitrated" if a is not None and b is not None else "arb_single"
-        pre.append((k, x, a, b, arb, final, status, cost))
-    # тонкие срезы — сильным моделям пакетом, только отзывам с признаком
-    strong: dict[tuple[str, int], dict] = {}
-    extra: dict[int, float] = {}               # рубли сильных моделей — поровну на отзывы пакета
-    for key in STRONG_KEYS:
-        if cs is None or key not in cs:
-            continue
-        idx = [j for j, (k, x, a, b, arb, final, status, cost) in enumerate(pre)
-               if needs_strong(key, x["text"], a, b, arb)]
-        if idx:
-            res, r = await _strong_decide(cs[key], key, [pre[j][1] for j in idx])
-            for n_, j in enumerate(idx):
-                strong[(key, j)] = res[n_]
-                extra[j] = extra.get(j, 0.0) + r / len(idx)
-    for j, (k, x, a, b, arb, final, status, cost) in enumerate(pre):
-        votes = {}
-        cost += extra.get(j, 0.0)
-        for key in STRONG_KEYS:
-            if cs is None or key not in cs:
-                continue
-            v = strong.get((key, j))
-            if v is None:
-                final[key] = False                 # без признака — не этот срез
-            elif v["final"] is not None:
-                final[key] = v["final"]
-                votes[key] = v
-            else:                                  # сильные не ответили — остаётся дешёвый проход
-                status += "+strong_missing"
-        quote = next((v.get("quote") for v in (arb, a, b) if v and v.get("quote")), "") if tags_of(final) else ""
-        rows.append({"url": x["url"], "schema": SCHEMA, "tags": tags_of(final), "status": status,
-                     "a": json.dumps({k2: a[k2] for k2 in KEYS} if a else None),
-                     "b": json.dumps({k2: b[k2] for k2 in KEYS} if b else None),
-                     "arb": json.dumps({**({k2: arb[k2] for k2 in KEYS} if arb else {}),
-                                        **({"strong": votes} if votes else {})} or None),
-                     "quote": quote, "rub": round(cost, 4)})
-        rub += cost
-    if rows:
-        with db.session() as s:
-            s.execute(_UPSERT, rows)
-    return rows, rub
 
 
 def _try_lock():
@@ -351,10 +406,6 @@ async def run(limit: int = 2000, urls: list[str] | None = None, daily: bool = Tr
         base = await asyncio.to_thread(_spent, daily)
         c = RA.Caller(RA.Ledger())
         c.sys = SYSTEM
-        cs = {}
-        for key in STRONG_KEYS:                # свой клиент на каждую подсказку: c.sys на лету не меняем
-            cs[key] = RA.Caller(RA.Ledger())
-            cs[key].sys = _STRONG_SYS[key]
         sem = asyncio.Semaphore(INFLIGHT)
 
         async def one(part):
@@ -370,10 +421,10 @@ async def run(limit: int = 2000, urls: list[str] | None = None, daily: bool = Tr
                 for x in part:
                     t = (bodies.get(x["url"]) or {}).get("text") or ""
                     if len(t.strip()) >= 20:
-                        items.append({**x, "text": RA.scrub(t)[:_MAX_CHARS]})
+                        items.append({**x, "text": clip(RA.scrub(t))})
                 if not items:
                     return
-                rows, r = await _process(c, items, cs)
+                rows, r = await _process(c, items)
                 done += len(rows)
                 rub += r
 
@@ -389,24 +440,59 @@ async def run(limit: int = 2000, urls: list[str] | None = None, daily: bool = Tr
             lock.close()
 
 
-def apply_to_index(chunk: int = 1000) -> int:
-    """review_slice → review_index.slices порциями (фоновые задачи тоже пишут индекс —
-    крупный UPDATE ловил взаимную блокировку)."""
+def active() -> dict[str, str]:
+    """Активная версия каждого среза (review_slice_active). Без таблицы — текущая SCHEMA."""
+    try:
+        with db.session() as s:
+            got = dict(s.execute(text("SELECT key, schema FROM review_slice_active")).all())
+    except Exception:  # noqa: BLE001 — миграция ещё не накатана
+        got = {}
+    return {k: got.get(k, SCHEMA) for k in KEYS}
+
+
+# Срезы отзыва в индексе = срезы из АКТИВНОЙ версии каждого ключа. Если у отзыва ещё
+# нет разметки активной версии (переключили на s7, а этот отзыв s7 не дошёл) — берётся
+# прежняя версия этого ключа: иначе отзыв на время пересчёта выпал бы из среза.
+# Отметка аудитора «не относится», подтверждённая нами (decision = 'excluded'), снимает
+# срез с отзыва при любой версии разметки — и переразметка его не вернёт.
+_DESIRED = """
+    WITH act AS (SELECT key, schema FROM review_slice_active),
+    v AS (SELECT s.url, s.schema, s.tags FROM review_slice s
+           WHERE s.status NOT IN ('failed', 'failed_tie', 'b_missing') {url_filter}),
+    x AS (
+      SELECT v.url, a.key,
+             bool_or(a.key = ANY(v.tags)) FILTER (WHERE v.schema = a.schema) AS act_on,
+             bool_or(true) FILTER (WHERE v.schema = a.schema) AS has_act,
+             (array_agg(a.key = ANY(v.tags) ORDER BY v.schema DESC)
+                FILTER (WHERE v.schema <> a.schema))[1] AS prev_on
+        FROM v CROSS JOIN act a GROUP BY v.url, a.key)
+    SELECT url, coalesce(array_agg(key ORDER BY key) FILTER (
+               WHERE CASE WHEN has_act THEN act_on ELSE coalesce(prev_on, false) END
+                 AND NOT EXISTS (SELECT 1 FROM review_slice_feedback f
+                                  WHERE f.url = x.url AND f.key = x.key AND f.decision = 'excluded')),
+           '{{}}') AS tags
+      FROM x GROUP BY url
+"""
+
+
+def apply_to_index(chunk: int = 1000, urls: list[str] | None = None) -> int:
+    """Срезы активных версий → review_index.slices порциями (фоновые задачи тоже пишут
+    индекс — крупный UPDATE ловил взаимную блокировку). Идемпотентно: пишет только
+    отличающиеся строки."""
     with db.session() as s:
-        urls = s.execute(text("""
-            SELECT s.url FROM review_slice s JOIN review_index i ON i.url = s.url
-             WHERE s.schema = :v AND i.slices IS DISTINCT FROM s.tags ORDER BY s.url"""),
-            {"v": SCHEMA}).scalars().all()
+        if urls is None:
+            urls = s.execute(text("SELECT DISTINCT url FROM review_slice")).scalars().all()
     n = 0
     for k in range(0, len(urls), chunk):
-        part = urls[k:k + chunk]
+        part = list(urls[k:k + chunk])
         for attempt in range(5):
             try:
                 with db.session() as s:
-                    n += s.execute(text("""
-                        UPDATE review_index i SET slices = s.tags FROM review_slice s
-                         WHERE s.url = i.url AND s.schema = :v AND i.url = ANY(:u)"""),
-                        {"v": SCHEMA, "u": part}).rowcount
+                    n += s.execute(text(f"""
+                        UPDATE review_index i SET slices = d.tags
+                          FROM ({_DESIRED.format(url_filter="AND s.url = ANY(:u)")}) d
+                         WHERE i.url = d.url AND coalesce(i.slices, '{{}}') IS DISTINCT FROM d.tags"""),
+                        {"u": part}).rowcount
                 break
             except Exception:  # noqa: BLE001
                 time.sleep(2 + attempt * 3)
@@ -418,19 +504,138 @@ def apply_to_index(chunk: int = 1000) -> int:
 READY_SHARE = float(os.getenv("REVIEW_SLICES_READY", "0.97"))
 
 
+def _key_candidates(key: str) -> str:
+    """Кандидаты одного среза (для готовности по срезу)."""
+    parts = [f"i.tsv @@ to_tsquery('russian', '{_TSQ[key]}')"]
+    if key == "us":
+        parts += [_HINT[0], _HINT[1]]
+    if key == "field":
+        parts += [_HINT[2]]
+    return "(" + " OR ".join(parts) + ")"
+
+
 def coverage(days: int = 365) -> dict:
-    """Доля размеченных кандидатов за окно. Пока разметка не догнала (массовый
-    прогон, смена версии определений), срезы в списке продуктов не показываются:
-    недоразмеченный срез показал бы заниженные числа."""
+    """Готовность каждого среза: доля размеченных его кандидатов в активной версии за
+    окно. Пока разметка не догнала (массовый прогон, новая версия), срез в списке
+    продуктов не показывается: недоразмеченный срез показал бы заниженные числа.
+    Возвращает {"ready": все ли готовы, "keys": {срез: {candidates, tagged, share, ready}}}."""
+    act = active()
+    keys: dict[str, dict] = {}
     with db.session() as s:
-        n, tagged = s.execute(text(f"""
-            SELECT count(*), count(*) FILTER (WHERE EXISTS (
-                       SELECT 1 FROM review_slice s WHERE s.url = i.url AND s.schema = :v))
-              FROM review_index i
-             WHERE i.kind IN ('complaint', 'mixed') AND i.dt >= now() - make_interval(days => :d)
-               AND i.dt <= now() AND i.dt >= CAST(:since AS timestamp) AND {candidate_sql()}"""),
-            {"v": SCHEMA, "d": days, "since": SINCE}).one()
-    share = (tagged / n) if n else 1.0
-    return {"candidates": int(n), "tagged": int(tagged), "share": round(share, 4),
-            "ready": share >= READY_SHARE}
+        for key in KEYS:
+            n, tagged = s.execute(text(f"""
+                SELECT count(*), count(*) FILTER (WHERE EXISTS (
+                           SELECT 1 FROM review_slice s WHERE s.url = i.url AND s.schema = :v
+                              AND s.status NOT IN ('failed', 'failed_tie', 'b_missing')))
+                  FROM review_index i
+                 WHERE i.kind IN ('complaint', 'mixed') AND i.dt >= now() - make_interval(days => :d)
+                   AND i.dt <= now() AND i.dt >= CAST(:since AS timestamp) AND {_key_candidates(key)}"""),
+                {"v": act[key], "d": days, "since": SINCE}).one()
+            share = (tagged / n) if n else 1.0
+            keys[key] = {"candidates": int(n), "tagged": int(tagged), "share": round(share, 4),
+                         "ready": share >= READY_SHARE, "schema": act[key]}
+    return {"ready": all(v["ready"] for v in keys.values()), "keys": keys}
+
+
+# ── «Почему жалоба в срезе» и отметки «не относится» ─────────────────────────
+# Аудитор видит основание — пункт определения и дословную цитату — и может отметить
+# «не относится». Отметка не снимает срез сразу: решает команда (decide_feedback),
+# иначе один клик менял бы числа у всех. Подтверждённая — снимает срез навсегда.
+
+def evidence_for(urls: list[str]) -> dict[str, list[dict]]:
+    """{url: [{key, label, clause, quote, schema, flagged}]} — срезы отзыва из активных
+    версий (как в индексе) с основанием. У s6 основания по срезу нет — только общая
+    цитата строки, если она дословная."""
+    urls = [u for u in dict.fromkeys(urls or []) if u]
+    if not urls:
+        return {}
+    try:
+        with db.session() as s:
+            # как в _DESIRED: срез из индекса, основание — из активной версии, а пока
+            # её нет у отзыва — из самой свежей, где срез стоит
+            rows = s.execute(text("""
+                SELECT DISTINCT ON (i.url, k.key) i.url, k.key, s.schema,
+                       s.evidence -> k.key AS ev, s.quote,
+                       (SELECT count(*) FROM review_slice_feedback f
+                         WHERE f.url = i.url AND f.key = k.key AND f.decision IS NULL) AS flagged
+                  FROM review_index i
+                 CROSS JOIN LATERAL unnest(coalesce(i.slices, '{}')) AS k(key)
+                  JOIN review_slice s ON s.url = i.url AND k.key = ANY(s.tags)
+                       AND s.status NOT IN ('failed', 'failed_tie', 'b_missing')
+                  LEFT JOIN review_slice_active a ON a.key = k.key
+                 WHERE i.url = ANY(:u)
+                 ORDER BY i.url, k.key, (s.schema = a.schema) DESC NULLS LAST, s.schema DESC"""),
+                {"u": urls}).mappings().all()
+    except Exception as e:  # noqa: BLE001 — карточка не должна падать без основания
+        log.warning("срезы: основание не прочиталось (%s)", e)
+        return {}
+    out: dict[str, list[dict]] = {}
+    for r in rows:
+        ev = r["ev"] if isinstance(r["ev"], dict) else {}
+        quote = ev.get("quote") if ev.get("quote_ok") else None
+        if r["schema"] == "s6" and not quote:
+            quote = r["quote"] or None
+        out.setdefault(r["url"], []).append({
+            "key": r["key"], "label": LABELS.get(r["key"], r["key"]), "schema": r["schema"],
+            "clause": ev.get("clause") or None, "quote": quote, "flagged": int(r["flagged"] or 0)})
+    for v in out.values():
+        v.sort(key=lambda x: KEYS.index(x["key"]) if x["key"] in KEYS else 99)
+    return out
+
+
+def flag(url: str, key: str, username: str, note: str | None = None) -> bool:
+    """Отметка «не относится» от аудитора; повторная — обновляет комментарий и снова
+    ставит на проверку, если команда раньше оставила срез. Подтверждённую не трогает."""
+    if key not in KEYS or not url or not username:
+        return False
+    with db.session() as s:
+        s.execute(text("""
+            INSERT INTO review_slice_feedback (url, key, username, note) VALUES (:u, :k, :n, :c)
+            ON CONFLICT (url, key, username) DO UPDATE SET note = coalesce(EXCLUDED.note, review_slice_feedback.note),
+                created_at = CASE WHEN review_slice_feedback.decision IS NULL
+                                  THEN review_slice_feedback.created_at ELSE now() END,
+                decision = NULL, decided_by = NULL, decided_at = NULL
+             WHERE review_slice_feedback.decision IS DISTINCT FROM 'excluded'"""),
+            {"u": url, "k": key, "n": username, "c": (note or "").strip()[:1000] or None})
+    return True
+
+
+def open_flags(limit: int = 200) -> list[dict]:
+    """Отметки, ждущие решения команды, — с основанием среза и началом текста."""
+    with db.session() as s:
+        rows = s.execute(text("""
+            SELECT f.id, f.url, f.key, f.username, f.note, f.created_at, i.bank, i.dt,
+                   left(coalesce(a.summary, ''), 400) AS summary
+              FROM review_slice_feedback f
+              LEFT JOIN review_index i ON i.url = f.url
+              LEFT JOIN LATERAL (SELECT summary FROM review_annotation x WHERE x.url = f.url
+                                  ORDER BY x.created_at DESC LIMIT 1) a ON true
+             WHERE f.decision IS NULL ORDER BY f.created_at LIMIT :n"""), {"n": limit}).mappings().all()
+    ev = evidence_for([r["url"] for r in rows])
+    out = []
+    for r in rows:
+        e = next((x for x in ev.get(r["url"], []) if x["key"] == r["key"]), None)
+        out.append({**{k: r[k] for k in ("id", "url", "key", "username", "note", "bank", "summary")},
+                    "label": LABELS.get(r["key"], r["key"]), "created_at": str(r["created_at"]),
+                    "date": str(r["dt"])[:10] if r["dt"] else None, "evidence": e})
+    return out
+
+
+def decide_flag(fid: int, decision: str, by: str) -> dict | None:
+    """Решение команды по отметке: excluded — срез снимается с отзыва (и в индексе
+    сразу), kept — остаётся. Решение по одной отметке закрывает все отметки этого
+    отзыва и среза."""
+    if decision not in ("excluded", "kept"):
+        return None
+    with db.session() as s:
+        row = s.execute(text("SELECT url, key FROM review_slice_feedback WHERE id = :i"),
+                        {"i": fid}).mappings().first()
+        if not row:
+            return None
+        s.execute(text("""
+            UPDATE review_slice_feedback SET decision = :d, decided_by = :b, decided_at = now()
+             WHERE url = :u AND key = :k AND decision IS NULL"""),
+            {"d": decision, "b": by, "u": row["url"], "k": row["key"]})
+    apply_to_index(urls=[row["url"]])
+    return {"url": row["url"], "key": row["key"], "decision": decision}
 

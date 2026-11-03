@@ -328,11 +328,12 @@ def record_signals(sig: dict | None, bank: str, product: str | None = None,
                           {"id": cur[0]})
         n += 1
     if fresh:
-        _notify_watchers(bank, product, fresh)
+        _notify_watchers(bank, product, fresh, sig.get("week_end"))
     return n
 
 
-def _notify_watchers(bank: str, product: str | None, fresh: list[dict]) -> None:
+def _notify_watchers(bank: str, product: str | None, fresh: list[dict],
+                     week_end: str | None = None) -> None:
     """Новый всплеск — в колокольчик тем, кто следит за банком (все продукты)
     или за этим продуктом (волна 5 аудита 03.10): раньше подписка показывала
     состояние в «Для вас», но о новом всплеске никто не узнавал."""
@@ -349,9 +350,10 @@ def _notify_watchers(bank: str, product: str | None, fresh: list[dict]) -> None:
             return
         from urllib.parse import urlencode
         for s_ in fresh:
+            # ссылка ведёт на жалобы самой недели всплеска (month=sig:…), а не на тему за период
             link = "#reviews?" + urlencode({k: v for k, v in (
                 ("tab", "complaints"), ("bank", bank), ("product", product or ""),
-                ("theme", s_.get("key"))) if v})
+                ("theme", s_.get("key")), ("month", f"sig:{week_end}" if week_end else "")) if v})
             notices.notify(users, "watch_signal", link=link, ref={
                 "bank": bank, "product": product or "", "issue": s_.get("key"),
                 "label": (cb.ISSUES.get(s_.get("key")) or (s_.get("label") or s_.get("key"),))[0],

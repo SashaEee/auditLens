@@ -714,6 +714,7 @@ async def _run(limit, urls, retry_failed, daily) -> dict:
             pass
 
     last_dump = 0.0
+    unread: set[str] = set()
     while True:
         if STOP_FILE.exists():
             stop_reason = "stop_file"
@@ -732,8 +733,8 @@ async def _run(limit, urls, retry_failed, daily) -> dict:
         # уже отправленные в работу, но ещё не записанные, не берём повторно;
         # отбираем с запасом на них, иначе конвейер упрётся в собственный хвост
         busy = {x["url"] for items in inflight.values() for x in items}
-        todo = await asyncio.to_thread(_todo, want + len(busy), urls)
-        todo = [x for x in todo if x["url"] not in busy][:want]
+        todo = await asyncio.to_thread(_todo, want + len(busy) + len(unread), urls)
+        todo = [x for x in todo if x["url"] not in busy and x["url"] not in unread][:want]
         if not todo:
             if not inflight:
                 break
@@ -743,6 +744,9 @@ async def _run(limit, urls, retry_failed, daily) -> dict:
         bodies = await asyncio.to_thread(bodies_for, todo)
         pre_rows, ready = [], []
         for x in todo:
+            if x["url"] in getattr(bodies, "failed", ()):
+                unread.add(x["url"])       # хранилище не ответило — не мусор, повторим в следующий запуск
+                continue
             raw = ((bodies.get(x["url"]) or {}).get("text") or "")
             x["raw"] = raw
             x["dt"] = str(x["dt"])[:10]
@@ -758,6 +762,9 @@ async def _run(limit, urls, retry_failed, daily) -> dict:
                 continue
             x["text"] = t
             ready.append(x)
+        if all(x["url"] in unread for x in todo):
+            stop_reason = "bodies_unavailable"   # хранилище текстов лежит — не крутим цикл впустую
+            break
         await asyncio.to_thread(_write, pre_rows)
         if total_left is not None:
             total_left -= len(todo)
@@ -778,6 +785,10 @@ async def _run(limit, urls, retry_failed, daily) -> dict:
         await asyncio.gather(*list(inflight), return_exceptions=True)
     snap = stats.snapshot(ledger)
     snap["stop"] = stop_reason
+    snap["unread"] = len(unread)
+    if unread:
+        log.warning("review_annotate: тексты %d отзывов не прочитались — отложены до следующего запуска",
+                    len(unread))
     try:
         PROGRESS.write_text(json.dumps(snap, ensure_ascii=False, indent=1))
     except OSError:
@@ -785,6 +796,40 @@ async def _run(limit, urls, retry_failed, daily) -> dict:
     if stop_reason.startswith("cap"):
         log.warning("review_annotate: остановлено по потолку трат (%s)", stop_reason)
     return snap
+
+
+def repair_false_junk(apply: bool = False, chunk: int = 1000) -> dict:
+    """Мусор, записанный из-за сбоя чтения текста: статус junk с нулевой стоимостью,
+    а текст сейчас читается и проходит clean_text. Такие записи помечаются failed —
+    следующий запуск разметки их удалит и разметит заново (как любые failed).
+    apply=False — только посчитать."""
+    from .bankiru_fts import bodies_for
+    with db.session() as s:
+        rows = [dict(r) for r in s.execute(text("""
+            SELECT i.url, i.review_id, i.source FROM review_annotation a
+              JOIN review_index i ON i.url = a.url
+             WHERE a.schema_version = :v AND a.status = 'junk' AND coalesce(a.cost_rub, 0) = 0"""),
+            {"v": SCHEMA}).mappings().all()]
+    fixed, still, unread = [], 0, 0
+    for k in range(0, len(rows), chunk):
+        part = rows[k:k + chunk]
+        bodies = bodies_for(part)
+        for x in part:
+            if x["url"] in bodies.failed:
+                unread += 1
+                continue
+            t, why = clean_text((bodies.get(x["url"]) or {}).get("text") or "")
+            if why:
+                still += 1
+            else:
+                fixed.append(x["url"])
+    if apply and fixed:
+        with db.session() as s:
+            s.execute(text("""UPDATE review_annotation SET status = 'failed'
+                               WHERE schema_version = :v AND url = ANY(:u) AND status = 'junk'"""),
+                      {"v": SCHEMA, "u": fixed})
+    return {"junk_free": len(rows), "readable": len(fixed), "really_junk": still, "unread": unread,
+            "applied": bool(apply and fixed)}
 
 
 # ── Перенос в индекс ─────────────────────────────────────────────────────────
@@ -815,29 +860,33 @@ def apply_to_index(full: bool = False, chunk: int = 2000) -> dict:
     """Переносит разметку в review_index: тип текста, проблемы, продукт,
     эскалацию, дату событий и город (если у отзыва его не было).
 
-    Инкрементально — по записям разметки новее водяного знака; full=True
-    переносит всё (после смены версии кодификатора или ручной правки).
+    Переносится каждая запись разметки, которой в индексе ещё нет: у строки индекса
+    ann_at не равен времени записи. До 04.11.2026 перенос шёл по водяному знаку
+    «новее последней перенесённой» и терял записи навсегда — если транзакция
+    разметки зафиксировалась позже, чем знак ушёл вперёд, или строки индекса ещё
+    не было (на проде нашлось 203 таких отзыва: размечены, а в счётчиках их нет).
+    full=True переносит всё (после смены версии кодификатора или ручной правки).
     Отзыв без разметки остаётся с kind = NULL и в счётчики жалоб не входит:
     неразмеченное честнее не считать, чем считать по старой разметке."""
     from datetime import datetime, timezone
-    with db.session() as s:
-        row = s.execute(text("SELECT v FROM review_index_state WHERE k = :k"),
-                        {"k": _APPLIED}).first()
-    since = None if full or not row else row[0]
     t0 = time.time()
-    done, last = 0, since
+    done, last, seen = 0, None, None
     while True:
         with db.session() as s:
             rows = s.execute(text("""
-                SELECT url, status, kind, product, channels, issue, issues2, esc, event_date, city,
-                       created_at
-                FROM review_annotation
-                WHERE schema_version = :v
-                  AND (CAST(:since AS timestamptz) IS NULL OR created_at > CAST(:since AS timestamptz))
-                ORDER BY created_at, url LIMIT :n"""),
-                {"v": SCHEMA, "since": last, "n": chunk}).mappings().all()
+                SELECT a.url, a.status, a.kind, a.product, a.channels, a.issue, a.issues2, a.esc,
+                       a.event_date, a.city, a.created_at
+                FROM review_annotation a JOIN review_index i ON i.url = a.url
+                WHERE a.schema_version = :v
+                  AND (:full OR i.ann_at IS DISTINCT FROM a.created_at)
+                  AND (CAST(:after AS text) IS NULL OR (a.created_at, a.url) >
+                       (CAST(:after_at AS timestamptz), CAST(:after AS text)))
+                ORDER BY a.created_at, a.url LIMIT :n"""),
+                {"v": SCHEMA, "full": bool(full), "n": chunk,
+                 "after": seen[1] if seen else None, "after_at": seen[0] if seen else None}).mappings().all()
         if not rows:
             break
+        seen = (rows[-1]["created_at"], rows[-1]["url"])     # курсор: не перечитывать страницу
         payload = []
         for r in rows:
             ok = r["status"] in ("agree", "arbitrated")
@@ -864,7 +913,7 @@ def apply_to_index(full: bool = False, chunk: int = 2000) -> dict:
         last = rows[-1]["created_at"].isoformat()
         if len(rows) < chunk:
             break
-    if last and last != since:
+    if last:                          # для «Пульса»: когда перенос последний раз что-то нёс
         with db.session() as s:
             s.execute(text("""
                 INSERT INTO review_index_state (k, v, updated_at) VALUES (:k, :v, now())

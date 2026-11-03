@@ -41,7 +41,9 @@ def test_slice_products_are_one_condition_everywhere():
 
     from bank_audit.rag import reviews_dash as D
     root = Path(__file__).resolve().parents[1]
-    sql = (root / "migrations" / "099_review_slices.sql").read_text(encoding="utf-8")
+    # действует последняя миграция, где определена al_product_is
+    sql = sorted(p for p in (root / "migrations").glob("[0-9]*.sql")
+                 if "FUNCTION al_product_is" in p.read_text(encoding="utf-8"))[-1].read_text(encoding="utf-8")
     for label in D.PSEUDO_PRODUCTS:
         assert f"'{label}'" in sql, label
     assert "Зарплатные проекты" in D.PSEUDO_PRODUCTS

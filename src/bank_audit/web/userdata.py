@@ -411,6 +411,12 @@ _PRODUCT_KEYWORDS: list[tuple[re.Pattern, str]] = [
     # рельсы» — глагольный мусор получал вес продукта (замер 05.08.2026)
     (re.compile(r"перевод(?:[аеуы]|ов|ам|ами|ах|ом)?\b|сбп\b|\bкомисси", re.I), "transfers"),
 ]
+# Направления аудита (directions.py), которых в словаре не было: без них описание
+# профиля «самозанятые, Своё дело» разбиралось в пустой список (03.11.2026).
+# Тот же словарь размечает новости — поэтому «Для вас» находит и их.
+from ..directions import keyword_rules as _dir_rules  # noqa: E402
+_PRODUCT_KEYWORDS += [(rx, t) for rx, t in _dir_rules()
+                      if t not in {slug for _, slug in _PRODUCT_KEYWORDS}]
 
 
 def parse_query_signals(question: str) -> dict:

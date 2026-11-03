@@ -272,9 +272,25 @@ def _ann_schema() -> str:
 _MONTH_RX = re.compile(r"^(ev:)?(\d{4}-\d{2})$")
 
 
+# Неделя всплеска: sig:<последний день недели> — ровно те жалобы, из которых сложилось
+# число сигнала (7 дней по этот день, события не старше 60 дней — как в
+# _topic_day_counts). До 04.11.2026 клик по всплеску «×2,1 — 40 жалоб» открывал
+# тему за весь период вкладки — сотни жалоб, и «40» в них было не найти.
+_SIG_RX = re.compile(r"^sig:(\d{4}-\d{2}-\d{2})$")
+
+
+def _sig_window(alias: str, d: str, p: dict) -> str:
+    p["sig_d"] = d
+    return (f"{alias}.dt >= CAST(:sig_d AS date) - 6 AND {alias}.dt < CAST(:sig_d AS date) + 1"
+            f" AND ({alias}.ev_date IS NULL OR {alias}.ev_date >= {alias}.dt::date - 60)")
+
+
 def _month_clause(alias: str, month: str | None, p: dict) -> str:
     if not month:
         return ""
+    sg = _SIG_RX.match(month)
+    if sg:
+        return " AND " + _sig_window(alias, sg.group(1), p)
     m = _MONTH_RX.match(month)
     if not m:
         return " AND false"
@@ -1346,12 +1362,14 @@ def products(bank: str, days: int = 365, top: int = 10) -> dict | None:
                                               " AND " + cond), p).scalar() or 0))
                      for lbl, cond in PSEUDO_PRODUCTS.items()]
         items = [{"product": r[0], "n": int(r[1])} for r in rows]
-        try:        # срезы — только когда разметка догнала (иначе числа занижены)
-            ready = _rs.coverage(days)["ready"]
+        # срез — только когда разметка ЭТОГО среза догнала (иначе числа занижены):
+        # новый срез не прячет готовые, а пересчёт одного не гасит остальные
+        try:
+            ready = {k: v["ready"] for k, v in _rs.coverage(days)["keys"].items()}
         except Exception:  # noqa: BLE001
-            ready = False
-        if ready:
-            items += [{"product": lbl, "n": n} for lbl, n in extra if n]
+            ready = {}
+        key_of = {lbl: k for k, (lbl, _d) in _rs.SLICES.items()}
+        items += [{"product": lbl, "n": n} for lbl, n in extra if n and ready.get(key_of.get(lbl))]
         return {"bank": bc, "items": items}
     return _cached(f"pr:{bc}:{days}:{top}", _compute)
 
@@ -1415,6 +1433,10 @@ def export_rows(bank: str, product: str | None = None, theme: str | None = None,
         p["tkey"] = theme
     if fcond:
         extra += f" AND {fcond}"
+    # как в ленте (_feed_from_index): без темы и признака в неё входят и свежие, ещё
+    # не размеченные жалобы. До 04.11.2026 выгрузка брала только размеченные (JOIN) —
+    # в Excel было меньше строк, чем на экране.
+    extra += f" AND {_CMP}" if theme or fcond else f" AND (i.kind IS NULL OR {_CMP})"
     order = None
     if q and q.strip():
         got = search_set(q, bc, theme=theme, esc=esc, product=product, flag=flag, source=source,
@@ -1427,10 +1449,10 @@ def export_rows(bank: str, product: str | None = None, theme: str | None = None,
             SELECT i.url, i.review_id, i.source, i.bank, i.product, i.dt, i.city, i.rating,
                    i.issue, i.issues2, a.kind, a.esc, a.esc_to, a.no_consent, a.misled,
                    a.vulnerable, a.amount, a.event_date, a.code_fit, a.new_topic,
-                   a.summary, a.quote
+                   a.summary, a.quote, a.url AS a_url
             FROM review_index i
-            JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
-            WHERE i.bank = :bank AND {_CMP}
+            LEFT JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
+            WHERE i.bank = :bank
               AND (i.dt IS NULL OR i.dt <= now())
               AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product)){extra}
             ORDER BY i.dt DESC NULLS LAST
@@ -1440,9 +1462,10 @@ def export_rows(bank: str, product: str | None = None, theme: str | None = None,
         pos = {u: k for k, u in enumerate(order)}
         rows.sort(key=lambda r: pos.get(r["url"], len(pos)))
     from . import bankiru_fts
-    bodies = {}
+    bodies, sl = {}, {}
     for j in range(0, len(rows), 1000):
         bodies.update(bankiru_fts.bodies_for(rows[j:j + 1000]))
+        sl.update(_rs.evidence_for([r["url"] for r in rows[j:j + 1000]]))
     out = []
     for r in rows:
         o = cb.issue_obj(r["issue"]) or {}
@@ -1464,6 +1487,10 @@ def export_rows(bank: str, product: str | None = None, theme: str | None = None,
             "дата события": r["event_date"] or "",
             "вне кодификатора": (r["new_topic"] or "") if r["code_fit"] != "exact" else "",
             "суть": r["summary"] or "", "цитата": r["quote"] or "",
+            "срез и основание": "; ".join(
+                x["label"] + (f" · п. {x['clause']}" if (x.get("clause") or "").isdigit() else "")
+                + (f" — «{x['quote']}»" if x.get("quote") else "") for x in sl.get(r["url"], [])),
+            "разметка": "" if r["a_url"] else "на разметке",
             "ссылка": r["url"],
             "текст": (bodies.get(r["url"]) or {}).get("text") or "",
         })
@@ -1738,6 +1765,10 @@ def _attach_themes(items: list[dict]) -> None:
     for r in items:
         if r.get("url") in replies:
             r["bank_reply"] = replies[r["url"]]
+    # срезы с основанием: «Выездной сервис · п. 1 — „курьер не привёз карту“»
+    sl = _rs.evidence_for([i["url"] for i in items if i.get("url")])
+    for r in items:
+        r["slices"] = sl.get(r.get("url") or "", [])
     ann = _ann_for([i["url"] for i in items if i.get("url")])
     for r in items:
         a = ann.get(r.get("url") or "")
@@ -1788,29 +1819,123 @@ def list_reviews(bank: str, product: str | None = None, theme: str | None = None
 # (min(400, 2·(offset+limit+1))), счётчик «дословных N, по смыслу M» считался по
 # первой порции из 42 строк, смысловая часть конца не имела, а выгрузка поиск не
 # учитывала вовсе. Аудитор видел «38 + 4» и листал до 140+. Теперь набор
-# определён: ВСЕ отзывы, где слова запроса (с раскрытием сокращений) есть, с теми
-# же фильтрами, что во вкладке, плюс не больше SENSE_CAP ближайших по смыслу без
-# этих слов. Порог по косинусу не годится (замер: мусор бывает «ближе» верного),
-# поэтому смысловая часть ограничена числом, а не расстоянием.
+# определён: ВСЕ отзывы, где значимые слова запроса стоят рядом (или вариант
+# раскрытия — сокращение, синоним; bankiru_fts.search_near), с теми же фильтрами,
+# что во вкладке, плюс не больше SENSE_CAP ближайших по смыслу без этих слов.
+# «Любое из слов» как определение не годится: «переводы самому себе» — 6 523
+# жалобы Сбера. Порог по косинусу тоже (мусор бывает «ближе» верного), поэтому
+# смысловая часть ограничена числом, а не расстоянием.
 SENSE_CAP = int(os.getenv("REVIEWS_SEARCH_SENSE_CAP", "20"))
-WORDS_CAP = int(os.getenv("REVIEWS_SEARCH_WORDS_CAP", "3000"))
+_WORD_RX = re.compile(r"[0-9A-Za-zА-Яа-яЁё]{2,}")
 _SET_TTL = 600
 _SET_CACHE: dict[tuple, tuple[float, dict]] = {}
+
+
+_PHRASE_RX = re.compile(r'"([^"]{2,})"')
+_EXCL_RX = re.compile(r'(?:^|\s)[-−–]([0-9A-Za-zА-Яа-яЁё]{2,})')
+_SENSE_POOL = int(os.getenv("REVIEWS_SEARCH_SENSE_POOL", "40"))
+_THIN_WORDS = int(os.getenv("REVIEWS_SEARCH_THIN", "5"))
+_SENSE_OK: dict[tuple[str, str], bool] = {}     # (запрос, url) → относится ли (проверка моделью)
+
+
+def parse_query(q: str) -> dict:
+    """Синтаксис строки поиска: "точная фраза" в прямых кавычках, -слово — исключить.
+    Ёлочки «…» — просто текст: их копируют из подсказок, точную фразу они не значат."""
+    phrases = [p.strip() for p in _PHRASE_RX.findall(q or "") if p.strip()]
+    excl = [w.lower() for w in _EXCL_RX.findall(q or "")]
+    plain = _EXCL_RX.sub(" ", _PHRASE_RX.sub(" ", q or ""))
+    plain = " ".join(plain.replace("«", " ").replace("»", " ").split())
+    text_ = " ".join([plain] + phrases).strip() or (q or "").strip()
+    return {"phrases": phrases, "excl": excl, "plain": plain, "text": text_}
+
+
+def _excluded(urls: list[str], words: list[str]) -> set[str]:
+    """Какие из urls содержат слово-исключение (по началу основы, как и поиск)."""
+    if not urls or not words:
+        return set()
+    from . import bankiru_fts
+    with db.session() as s:
+        lex = s.execute(text("SELECT tsvector_to_array(to_tsvector(CAST('russian' AS regconfig), :t))"),
+                        {"t": " ".join(words)}).scalar() or []
+        if not lex:
+            return set()
+        tq = " | ".join("'" + bankiru_fts.stem_key(x).replace("'", "''") + "'"
+                        + (":*" if len(x) > bankiru_fts.PREFIX else "") for x in lex)
+        return set(s.execute(text("""SELECT url FROM review_index WHERE url = ANY(:u)
+                                      AND tsv @@ to_tsquery(CAST('simple' AS regconfig), :tq)"""),
+                             {"u": urls, "tq": tq}).scalars().all())
+
+
+def _verify_sense(query: str, rows: list[dict]) -> tuple[list[dict], bool]:
+    """Смысловые кандидаты → только относящиеся к запросу (быстрая модель по сути
+    жалобы из разметки). Без проверки «похожие по смыслу» на «переводы самому себе»
+    давали «перевод из ВТБ не дошёл». Осечка модели — кандидаты как есть, с пометкой."""
+    todo = [r for r in rows if (query, r["url"]) not in _SENSE_OK]
+    ok_model = True
+    if todo:
+        with db.session() as s:
+            summ = dict(s.execute(text("""SELECT url, summary FROM review_annotation
+                                           WHERE schema_version = :sv AND url = ANY(:u)"""),
+                                  {"sv": _ann_schema(), "u": [r["url"] for r in todo]}).all())
+        items = [(r["url"], (summ.get(r["url"]) or (r.get("text") or "")[:500]).strip()) for r in todo]
+        verdict = _ask_relevance(query, [t for _, t in items])
+        if verdict is None:
+            ok_model = False
+        else:
+            for (u, _), v in zip(items, verdict):
+                _SENSE_OK[(query, u)] = v
+    if len(_SENSE_OK) > 20000:
+        _SENSE_OK.clear()
+    if not ok_model:
+        return rows, False
+    return [r for r in rows if _SENSE_OK.get((query, r["url"]))], True
+
+
+def _ask_relevance(query: str, texts: list[str]) -> list[bool] | None:
+    from ..ai.analyst import LLM_API_KEY, LLM_BASE_URL, fast_model
+    from ..ai.llm_utils import _loose_json_loads
+    if not LLM_API_KEY or not texts:
+        return None
+    try:
+        from openai import OpenAI
+        c = OpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY, max_retries=1,
+                   timeout=float(os.getenv("REVIEWS_SENSE_TIMEOUT_S", "20")))
+        user = (f"Запрос аудитора: «{query}»\n\n"
+                + "\n".join(f"[{k}] {t[:500]}" for k, t in enumerate(texts, 1)))
+        r = c.chat.completions.create(
+            model=fast_model(), temperature=0, max_tokens=1500,
+            response_format={"type": "json_object"},
+            messages=[{"role": "system", "content": (
+                "Ты отбираешь жалобы клиентов банка к запросу аудитора. Жалоба относится к запросу, "
+                "если её суть — та ситуация, которую ищет аудитор, пусть и другими словами. Не относится, "
+                "если совпадает лишь продукт или общие слова, а ситуация другая. Сомневаешься — не "
+                'относится. Ответ строго JSON: {"items":[{"n":1,"rel":true}, ...]} по всем n.')},
+                {"role": "user", "content": user}])
+        j = _loose_json_loads(r.choices[0].message.content or "") or {}
+        got = {int(x["n"]): bool(x.get("rel")) for x in (j.get("items") or [])
+               if isinstance(x, dict) and str(x.get("n", "")).isdigit()}
+        if len(got) < len(texts) * 0.9:
+            return None
+        return [got.get(k, False) for k in range(1, len(texts) + 1)]
+    except Exception as e:  # noqa: BLE001
+        log.info("reviews_dash: проверка смысловых совпадений недоступна (%s)", type(e).__name__)
+        return None
 
 
 def search_set(q: str, bc: str | None, *, theme: str | None = None, esc: bool = False,
                product: str | None = None, flag: str | None = None, source: str | None = None,
                city: str | None = None, month: str | None = None, days: int | None = None,
                period=None, sort: str = "auto") -> dict:
-    """{rows, meta}: упорядоченный конечный набор (у словесных попаданий из хвоста
-    текста ещё нет — его подставляет _fill_page для показанной страницы) и
-    meta с точными n_words / n_sense / total."""
+    """{rows, meta}: упорядоченный конечный набор — сначала все жалобы со словами
+    запроса, затем не больше SENSE_CAP проверенных моделью похожих по смыслу. У строк
+    из хвоста текста ещё нет — его подставляет _fill_page для показанной страницы."""
     import time as _time
     pkey = period.key if isinstance(period, _rp.Period) else None
     key = (q.strip().lower(), bc, theme, esc, product, flag, source, city, month, days, pkey, sort)
     hit = _SET_CACHE.get(key)
     if hit and _time.time() - hit[0] < _SET_TTL:
         return hit[1]
+    pq = parse_query(q)
     meta: dict = {}
     since = days
     lo_d = hi_d = None
@@ -1818,55 +1943,111 @@ def search_set(q: str, bc: str | None, *, theme: str | None = None, esc: bool = 
         since = max(1, math.ceil((_dt.datetime.now(_rp.MSK) - period.t0) / _rp.DAY))
         lo_d = period.t0.date().isoformat()
         hi_d = (period.t1 - _rp.DAY).date().isoformat()
-    ev_month = month if (month or "").startswith("ev:") else None
+    # месяц событий и неделя всплеска — фильтр по индексу (_keep_urls), не окно поиска
+    ev_month = month if (month or "").startswith(("ev:", "sig:")) else None
     plain_month = None if ev_month else month
-    # голова: слияние слов и смысла (RRF) — лучшее сверху, как и было
-    head = search_reviews(q, bank=bc, product=None, since_days=since, theme_rx=None, city=city,
-                          month=plain_month, k=60, strict=True, _meta=meta)
-    # полный словесный набор — тем же раскрытым запросом
+    # верхушка слияния слов и смысла (RRF) — порядок и смысловые кандидаты
+    head = search_reviews(pq["text"], bank=bc, product=None, since_days=since, theme_rx=None,
+                          city=city, month=plain_month, k=60, strict=True, _meta=meta)
     from . import bankiru_fts
+    from . import reviews_query as _rq
+    since_ts = (_dt.datetime.now() - _dt.timedelta(days=since)) if since else None
+    wmeta: dict = {}
+    near = lambda groups, spans=None: bankiru_fts.search_near(  # noqa: E731
+        groups, bank=bc, city=city, month=plain_month, since_ts=since_ts, spans=spans, _meta=wmeta)
     words: list[dict] = []
-    if bankiru_fts.is_ready():
-        since_ts = (_dt.datetime.now() - _dt.timedelta(days=since)) if since else None
-        words = bankiru_fts.search_fts(meta.get("tsquery") or q, bank=bc, city=city,
-                                       month=plain_month, since_ts=since_ts, k=WORDS_CAP)
-    wset = {w["url"] for w in words}
-    urls = list(dict.fromkeys([r.get("url") for r in head if r.get("url")] + [w["url"] for w in words]))
+    capped = False
+    groups: list[list[str]] = []
+    if not bankiru_fts.is_ready():
+        wmeta["failed"] = True
+    else:
+        if pq["phrases"]:
+            # точные фразы: жалоба должна содержать каждую (как в поисковиках)
+            words, capped = bankiru_fts.search_phrases(pq["phrases"], bank=bc, city=city,
+                                                       month=plain_month, since_ts=since_ts, _meta=wmeta)
+            groups = [p.split() for p in pq["phrases"]]
+        else:
+            base = _rq.base_terms(pq["plain"])
+            common = {c.lower() for c in (meta.get("common") or [])}
+            kept = [t for t in base if t.lower() not in common] or base
+            low = {t.lower() for t in base}
+            groups = [kept] + [v.split() for v in (meta.get("terms") or []) if v.lower() not in low]
+            # окно первой группы — по всем словам запроса: служебные («не», «по») в
+            # тексте тоже занимают позиции
+            words, capped = near(groups, spans=[len(_WORD_RX.findall(pq["plain"]))])
+            if len(words) < _THIN_WORDS:
+                # слова аудитора не легли на язык жалоб — варианты от модели
+                # («не зачисляют выручку» ↔ «не поступают деньги по эквайрингу»)
+                x = _rq.expand(pq["plain"], use_llm=True)
+                extra = [v.split() for v in (x.get("terms") or [])
+                         if v.lower() not in low and v.split() not in groups]
+                if extra:
+                    more, c2 = near(extra)
+                    have = {w["url"] for w in words}
+                    words += [w for w in more if w["url"] not in have]
+                    groups += extra
+                    capped = capped or c2
+    wset = {w["url"]: w for w in words}
+    urls = list(dict.fromkeys([r.get("url") for r in head if r.get("url")] + list(wset)))
     keep = _keep_urls(urls, theme=theme, esc=esc, product=product, flag=flag, source=source,
                       month=ev_month)
+    if keep is None:
+        # фильтры вкладки не применились — показать всё найденное значило бы показать
+        # не тот набор (до 04.11.2026 так и было); честнее сказать, что поиск не отработал
+        meta.update({"n_words": 0, "n_sense": 0, "total": 0, "failed": "filters",
+                     "phrases": pq["phrases"], "excluded": pq["excl"]})
+        return {"rows": [], "meta": meta}
+    drop = _excluded(urls, pq["excl"])
 
     def ok(r) -> bool:
         d = str(r.get("date") or "")[:10]
-        return r.get("url") in keep and (not lo_d or not d or lo_d <= d <= hi_d)
-    rows: list[dict] = []
-    seen: set[str] = set()
-    n_sense = 0
+        u = r.get("url")
+        return u in keep and u not in drop and (not lo_d or not d or lo_d <= d <= hi_d)
+    head_pos = {r.get("url"): k for k, r in enumerate(head)}
+    head_by = {r.get("url"): r for r in head}
+    # 1) со словами запроса — сначала то, что выше в слиянии, затем по рангу слов
+    word_rows = []
+    for u, w in wset.items():
+        if not ok(w):
+            continue
+        h = head_by.get(u)
+        if h:
+            row = dict(h)
+            row["via"] = "слова и смысл" if h.get("via") in ("смысл", "слова и смысл") else "слова"
+        else:
+            row = {"bank": w.get("bank"), "product": w.get("product"), "date": w.get("date"),
+                   "city": w.get("city"), "url": u, "review_id": w.get("review_id"),
+                   "source": w.get("source") or "bankiru", "similar": 0, "text": None,
+                   "via": "слова", "terms": w.get("terms") or []}
+        row["_k"] = (head_pos.get(u, 10**6), -float(w.get("rank") or 0))
+        word_rows.append(row)
+    if sort == "date":
+        word_rows.sort(key=lambda r: (r.get("date") or ""), reverse=True)
+    else:
+        word_rows.sort(key=lambda r: r["_k"])
+    # 2) похожие по смыслу: ближайшие без слов запроса, проверенные моделью
+    cands = []
     for r in head:
         u = r.get("url")
-        if not u or u in seen or not ok(r):
+        if not u or u in wset or not ok(r):
             continue
-        if r.get("via") == "смысл" and u in wset:
-            r["via"] = "слова и смысл"      # слова есть, просто дальше верхушки словесной ноги
-        if r.get("via") == "смысл":
-            if n_sense >= SENSE_CAP:
-                continue
-            n_sense += 1
-        seen.add(u)
-        rows.append(r)
-    for w in words:
-        if w["url"] in seen or not ok(w):
-            continue
-        seen.add(w["url"])
-        rows.append({"bank": w.get("bank"), "product": w.get("product"), "date": w.get("date"),
-                     "city": w.get("city"), "url": w["url"], "review_id": w.get("review_id"),
-                     "source": w.get("source") or "bankiru", "similar": 0, "text": None,
-                     "via": "слова", "terms": w.get("terms") or []})
-    if sort == "date":
-        rows.sort(key=lambda r: (r.get("date") or ""), reverse=True)
-    n_words = len(rows) - n_sense
-    meta.update({"n_words": n_words, "n_sense": n_sense, "total": len(rows),
-                 "words_capped": len(words) >= WORDS_CAP, "sense_cap": SENSE_CAP})
+        cands.append({**r, "via": "смысл"})
+        if len(cands) >= _SENSE_POOL:
+            break
+    sense, checked = _verify_sense(pq["text"], cands) if cands else ([], True)
+    sense = sense[:SENSE_CAP]
+    rows = word_rows + sense
+    for r in rows:
+        r.pop("_k", None)
+    meta.update({"n_words": len(word_rows), "n_sense": len(sense), "total": len(rows),
+                 "words_capped": capped, "sense_cap": SENSE_CAP, "sense_checked": checked,
+                 "words_failed": bool(wmeta.get("failed")),
+                 "stop_phrases": wmeta.get("stop_phrases") or [],
+                 "groups": [" ".join(g) for g in groups], "phrases": pq["phrases"],
+                 "excluded": pq["excl"]})
     res = {"rows": rows, "meta": meta}
+    if meta["words_failed"] or not checked:
+        return res                         # неполный ответ не кэшируем: следующий запрос — заново
     if len(_SET_CACHE) > 200:
         _SET_CACHE.clear()
     _SET_CACHE[key] = (_time.time(), res)
@@ -2144,6 +2325,11 @@ def segment_profile(bank: str, product: str | None = None, city: str | None = No
         base = "i.dt >= :t0 AND i.dt < :t1 AND i.dt <= now()"
         pi = per.info()
         base_label = f"вся страна за тот же период ({_dm_range(pi['from'], pi['to'])})"
+    elif _SIG_RX.match(month or ""):
+        seg = _sig_window("i", _SIG_RX.match(month).group(1), p)
+        base = ("i.dt >= CAST(:sig_d AS date) - 55 AND i.dt < CAST(:sig_d AS date) - 6"
+                " AND (i.ev_date IS NULL OR i.ev_date >= i.dt::date - 60)")
+        base_label = "7 предыдущих недель"
     else:
         m = _MONTH_RX.match(month or "")
         if not m:
@@ -2846,10 +3032,10 @@ def _ann_for(urls: list[str]) -> dict[str, dict]:
 
 def _keep_urls(urls: list[str], *, theme: str | None, esc: bool,
                product: str | None = None, flag: str | None = None,
-               month: str | None = None, source: str | None = None) -> set[str]:
+               month: str | None = None, source: str | None = None) -> set[str] | None:
     """Какие из найденных отзывов показывать: жалобы (и ещё не размеченные),
     при заданной теме — с этой главной проблемой, при флажке — с эскалацией,
-    при признаке — с этим признаком разметки."""
+    при признаке — с этим признаком разметки. None — отбор не сработал."""
     if not urls:
         return set()
     fcond = _flag_sql(flag) or ""
@@ -2882,7 +3068,7 @@ def _keep_urls(urls: list[str], *, theme: str | None, esc: bool,
                 p).scalars().all())
     except Exception as e:                                     # noqa: BLE001
         log.warning("reviews_dash: отбор выдачи по разметке не сработал (%s)", e)
-        return set(urls)
+        return None                 # не «всё подходит»: вызывающий скажет, что поиск не отработал
     # отзыв, которого нет в индексе (вне окна зеркала), без темы не отбрасываем
     return ok | ({u for u in urls if u not in known}
                  if not (theme or esc or product or fcond or month or sc) else set())

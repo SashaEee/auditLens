@@ -490,7 +490,12 @@ _OB_REVIEW_PRODUCT = {"deposit": "Вклад", "ipoteka": "Ипотека", "cre
                       "transfers": "Переводы и платежи", "acquiring": "Бизнес: эквайринг",
                       "rko": "Бизнес: счёт и РКО"}
 _OB_PRODUCTS = {"deposit", "ipoteka", "credit_card", "debit_card", "consumer_loan",
-                "auto", "rko", "savings", "acquiring", "premium", "transfers"}
+                "auto", "rko", "savings", "acquiring", "premium", "transfers",
+                # темы направлений аудита (directions.py)
+                "metals", "field", "youth", "selfemp", "atm", "invest", "svo", "payroll"}
+_OB_REVIEW_PRODUCT.update({"metals": "Драгметаллы и ОМС", "invest": "Инвестиции",
+                           "field": "Выездной сервис — курьеры и выезд",
+                           "atm": "УС — банкоматы и терминалы", "payroll": "Зарплатные проекты"})
 
 
 @app.post("/api/me/onboarding")
@@ -2988,6 +2993,52 @@ def reviews_signal_verdict(signal_id: int, req: Verdict,
     return {"ok": True}
 
 
+class SliceFlagIn(BaseModel):
+    url: str
+    key: str
+    note: Optional[str] = None
+
+
+@app.post("/api/reviews/slice-flag")
+def reviews_slice_flag(req: SliceFlagIn, user: CurrentUser = Depends(get_current_user)):
+    """«Не относится к срезу» — отметка аудитора. Срез снимается после проверки
+    командой, а не сразу: один клик не должен менять числа у всех."""
+    from ..rag import review_slices as rs
+    if not rs.flag(req.url, req.key, user.username, req.note):
+        raise HTTPException(400, "неизвестный срез")
+    try:
+        from . import inbox
+        inbox.notify_team("team_slice", actor=user.username, link="#pulse?tab=inbox",
+                          ref={"label": rs.LABELS.get(req.key, req.key)})
+    except Exception:  # noqa: BLE001 — отметка уже сохранена
+        log.warning("срезы: команда не уведомлена об отметке", exc_info=True)
+    return {"ok": True}
+
+
+@app.get("/api/reviews/slice-flags")
+def reviews_slice_flags(user: CurrentUser = Depends(get_current_user)):
+    """Отметки «не относится», ждущие решения, — только команде."""
+    if user.username not in _inbox_team():
+        raise HTTPException(403, "только команде AuditLens")
+    from ..rag import review_slices as rs
+    return {"items": rs.open_flags()}
+
+
+class SliceDecisionIn(BaseModel):
+    decision: str
+
+
+@app.post("/api/reviews/slice-flags/{fid}")
+def reviews_slice_decide(fid: int, req: SliceDecisionIn, user: CurrentUser = Depends(get_current_user)):
+    if user.username not in _inbox_team():
+        raise HTTPException(403, "только команде AuditLens")
+    from ..rag import review_slices as rs
+    got = rs.decide_flag(fid, req.decision, user.username)
+    if not got:
+        raise HTTPException(400, "отметка не найдена или решение неизвестно")
+    return got
+
+
 class ReviewSub(BaseModel):
     bank: str
     product: Optional[str] = None
@@ -3056,16 +3107,28 @@ def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
                  per=Depends(_review_period_opt), esc: int = 0,
                  sort: str = "auto", limit: int = 20, offset: int = 0,
                  flag: Optional[str] = None, source: Optional[str] = None,
-                 cursor: Optional[int] = None):
+                 cursor: Optional[int] = None,
+                 user: CurrentUser = Depends(get_current_user)):
     # days раньше здесь ОТСУТСТВОВАЛ: переключатель периода стоял на вкладке,
     # менял верхние панели, а ленту не трогал вовсе — отсюда «сменил период на
     # 3 месяца, а в списке отзывы за прошлый год».
+    t0 = time.time()
     res = _rd().list_reviews_ex(bank, product=product or None, theme=theme or None,
                                 q=q or None, period=per,
                                 city=city or None, month=month or None,
                                 limit=limit, offset=max(0, offset),
                                 esc=bool(esc), sort=sort, flag=flag or None,
                                 source=source or None, cursor=cursor)
+    if (q or "").strip() and not offset and cursor is None:
+        # журнал поиска: что ищут аудиторы и как поиск отработал — из него набираются
+        # эталонные запросы для замеров поиска (только первая страница — без повторов)
+        m = res.get("search") or {}
+        userdata.log_event(user.username, "reviews_search", {
+            "q": q.strip()[:300], "bank": bank, "product": product, "theme": theme, "flag": flag,
+            "n_words": m.get("n_words"), "n_sense": m.get("n_sense"), "total": m.get("total"),
+            "capped": bool(m.get("words_capped")), "words_failed": bool(m.get("words_failed")),
+            "failed": m.get("failed"), "sense_checked": m.get("sense_checked"),
+            "error": res.get("error"), "ms": int((time.time() - t0) * 1000)})
     # mode/error нужны вкладке, чтобы отличить «ничего не нашлось» от «упало»;
     # search — по каким словам искали на самом деле и сколько попаданий дословных
     return {"items": res["items"], "count": len(res["items"]),
@@ -3088,15 +3151,16 @@ def reviews_export(bank: str = "Сбербанк", product: Optional[str] = None
                    theme: Optional[str] = None, city: Optional[str] = None,
                    month: Optional[str] = None, per=Depends(_review_period_opt),
                    esc: int = 0, limit: int = 10000, flag: Optional[str] = None,
-                   source: Optional[str] = None):
-    """Выгрузка жалоб с разметкой ИИ в CSV (UTF-8 с BOM — открывается в Excel)."""
+                   source: Optional[str] = None, q: Optional[str] = None):
+    """Выгрузка жалоб с разметкой ИИ в CSV (UTF-8 с BOM — открывается в Excel).
+    С поиском (q) — тот же набор, что во вкладке, как и у Excel."""
     import csv
     import io
     from urllib.parse import quote as _q
     rows = _rd().export_rows(bank, product=product or None, theme=theme or None,
                              city=city or None, month=month or None,
                              esc=bool(esc), limit=limit, flag=flag or None,
-                             source=source or None, period=per)
+                             source=source or None, period=per, q=(q or "").strip() or None)
     if rows is None:
         raise HTTPException(404, "банк не найден")
     flag_name = _rd().flag_label(flag)
@@ -3197,9 +3261,14 @@ async def reviews_anomalies(bank: str = "Сбербанк", product: Optional[st
     if not signals:
         wp = await asyncio.to_thread(_rd().week_pulse, bank, product or None)
         watch = [d for d in ((wp or {}).get("diverge") or []) if (d.get("gap") or 0) >= 1.15]
+        # «Новое» — новые сюжеты вне кодификатора, не всплески: до 04.11.2026 они
+        # считались только в неделю со всплеском, и в спокойные недели их не было вовсе
+        novel = await asyncio.to_thread(_rd().novel_clusters, bank, product or None)
         return {"summary": None, "signals": [], "watch": watch[:4],
                 "overall": (sig or {}).get("overall"),
-                "week_end": (sig or {}).get("week_end"), "calm": not watch}
+                "week_end": (sig or {}).get("week_end"), "calm": not watch,
+                "novel": [{k: c.get(k) for k in ("n", "topic", "urls", "first", "last")}
+                          for c in (novel or [])[:3]]}
     key = f"{bank}|{product}|" + ",".join(f"{s['key']}:{s['week']}" for s in signals)
     hit = _ANOM_CACHE.get(key)
     if hit and _time.time() - hit[0] < 6 * 3600:

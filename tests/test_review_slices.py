@@ -1,7 +1,10 @@
 """Срезы «Аудита отзывов» вне справочника продуктов (rag/review_slices.py): БД и сеть не нужны."""
 from __future__ import annotations
 
+import asyncio
+import json
 import os
+import re
 from pathlib import Path
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
@@ -11,98 +14,151 @@ from bank_audit.rag import review_slices as RS  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _latest_product_fn() -> str:
+    """Последняя миграция, где определена al_product_is, — она и действует на проде."""
+    files = sorted(p for p in (ROOT / "migrations").glob("[0-9]*.sql")
+                   if "FUNCTION al_product_is" in p.read_text(encoding="utf-8"))
+    return files[-1].read_text(encoding="utf-8")
+
+
 def test_flags_parsing_is_strict():
-    assert RS.flags({"payroll": True, "us": "false", "field": "true", "quote": "x"}) == \
-        {"payroll": True, "us": False, "field": True, "quote": "x"}
-    assert RS.flags({"payroll": True, "us": False}) is None           # нет поля — ответ негоден
+    got = RS.flags({"slices": [{"key": "field", "clause": "1", "quote": "курьер не приехал"},
+                               {"key": "nonsense", "clause": "1"}],
+                    "excluded": {"us": "а", "field": "б"}})
+    assert got["field"] is True and not any(got[k] for k in RS.KEYS if k != "field")
+    assert got["evidence"] == {"field": {"clause": "1", "quote": "курьер не приехал"}}
+    assert got["excluded"] == {"us": "а"}                 # «НЕ» у включённого среза не держим
+    assert RS.flags({"slices": []})["field"] is False     # пустой список — ни к одному срезу
+    assert RS.flags({"payroll": True}) is None            # старый формат / без slices — нет ответа
     assert RS.flags(None) is None and RS.flags("text") is None
-
-
-def test_merge_agreement_and_disputes():
-    a = {"payroll": True, "us": False, "field": False}
-    b = {"payroll": True, "us": True, "field": False}
-    final, disputed = RS.merge(a, b)
-    assert final == {"payroll": True, "field": False} and disputed == ["us"]
-    final, disputed = RS.merge(a, None)                               # один голос — спорно всё
-    assert disputed == list(RS.KEYS) and final["payroll"] is True
     assert RS.tags_of({"payroll": True, "us": False, "field": True}) == ["payroll", "field"]
+
+
+def _f(**on):
+    return {**{k: False for k in RS.KEYS}, **on,
+            "evidence": {k: {"clause": "1", "quote": k} for k, v in on.items() if v}, "excluded": {}}
+
+
+def test_decide_cascade():
+    # B не спрашивали (отрицательный A вне контрольной доли) — решает A
+    final, ev, st = RS.decide(_f(), None, None)
+    assert st == "single" and not any(final.values()) and ev == {}
+    # A и B согласны
+    final, ev, st = RS.decide(_f(field=True), _f(field=True), None)
+    assert st == "agree" and final["field"] and ev["field"]["clause"] == "1"
+    # разошлись — большинство из трёх
+    final, ev, st = RS.decide(_f(field=True, us=True), _f(field=True), _f(us=False))
+    assert st == "arbitrated" and final["field"] and not final["us"]
+    final, ev, st = RS.decide(_f(us=True), _f(), _f(us=True))
+    assert final["us"] and "us" in ev
+    # третья молчит — осторожное «нет» и повтор следующим прогоном
+    final, ev, st = RS.decide(_f(us=True), _f(), None)
+    assert st == "failed_tie" and not final["us"]
+    assert RS.decide(None, None, None)[2] == "failed"
+
+
+def test_confirm_negative_share_is_stable():
+    urls = [f"https://x/{i}" for i in range(4000)]
+    picked = [u for u in urls if RS.confirm_negative(u)]
+    assert 0.07 < len(picked) / len(urls) < 0.13
+    assert picked == [u for u in urls if RS.confirm_negative(u)]       # детерминизм
+
+
+def test_clip_keeps_head_and_tail():
+    t = "начало " + "x" * 9000 + " курьер так и не приехал"
+    c = RS.clip(t)
+    assert c.startswith("начало") and c.endswith("курьер так и не приехал") and "[…]" in c
+    assert RS.clip("коротко") == "коротко"
 
 
 def test_candidates_cover_every_slice():
     sql = RS.candidate_sql()
     for k, q in RS._TSQ.items():
         assert q in sql, k
+        assert RS._key_candidates(k).startswith("(")
     assert "'atm'" in sql and "cash_atm" in sql and "'courier'" in sql
 
 
 def test_slice_labels_match_sql_function():
     """Название среза в списке продуктов и в al_product_is — одно и то же:
     иначе пункт в списке есть, а фильтр по нему пуст."""
-    sql = (ROOT / "migrations" / "099_review_slices.sql").read_text(encoding="utf-8")
+    sql = _latest_product_fn()
     for key, (label, _definition) in RS.SLICES.items():
-        assert f"'{label}'" in sql and f"'{key}'" in sql, key
+        assert f"want = '{label}' AND '{key}'" in sql, key
 
 
 def test_system_prompt_has_definitions_and_negatives():
+    assert "КАЖДОМУ срезу" in RS.SYSTEM and "три флага" not in RS.SYSTEM
     for key, (_label, definition) in RS.SLICES.items():
         assert definition in RS.SYSTEM
         assert f"НЕ {key}" in definition                              # у каждого среза — чего НЕ относить
+        assert re.search(r"ДА, если", definition), key
 
 
-def test_strong_subset_selection():
-    """Сильным моделям — только отзывы с признаком: дешёвый проход сказал «да» или в
-    тексте «зарплатн…», «з/п», «аванс», «отпускные», «реестр» (замер: 34 из 34)."""
-    assert RS.needs_strong("payroll", "Мне перестали платить зарплатную льготу", None, None, None)
-    assert RS.needs_strong("payroll", "не пришёл аванс", None, None, None)
-    assert RS.needs_strong("payroll", "Банк вернул деньги", {"payroll": True}, None, None)
-    assert not RS.needs_strong("payroll", "Отказали в кредите, доход 80 тыс.", {"payroll": False},
-                               {"payroll": False}, None)
-    for clause in ("(1)", "(2)", "(3)", "(а)", "(б)", "(в)", "(г)"):
-        assert clause in RS._STRONG_SYS["payroll"], clause
+def test_migration_keeps_versions_and_registry():
+    sql = (ROOT / "migrations" / "102_review_slices_registry.sql").read_text(encoding="utf-8")
+    assert "lock_timeout" in sql and "PRIMARY KEY (url, schema)" in sql
+    assert "review_slice_active" in sql and "review_slice_feedback" in sql
+    for key in RS.KEYS:
+        assert f"('{key}', 's" in sql, key                           # у каждого среза — активная версия
 
 
-def test_strong_ensemble_majority_and_own_prompts():
-    """Две сильные модели, при расхождении — третья; у разметки и у сильных — свои
-    клиенты (14.10 подмена общей подсказки ломала параллельные пакеты)."""
-    import asyncio
+class _Caller:
+    """Подставная модель: отвечает заданным по модели и пишет, кого спрашивали."""
 
-    class Fake:
-        def __init__(self, sys_, answers):
-            self.sys, self.seen, self.answers = sys_, [], answers
+    def __init__(self, answers):
+        self.answers, self.seen, self.sys = answers, [], None
 
-        async def ask(self, model, user):
-            self.seen.append((self.sys, model))
-            await asyncio.sleep(0)
-            n = user.count("\n[") + 1
-            if self.sys == RS.SYSTEM:
-                return {"items": [{"n": k + 1, "payroll": False, "us": False, "field": False}
-                                  for k in range(n)]}, 10, 10
-            vals = self.answers[model]
-            return {"items": [{"n": k + 1, "payroll": vals[k]} for k in range(len(vals))]}, 10, 10
+    async def ask(self, model, user):
+        n = len(re.findall(r"^\[\d+\] ", user, flags=re.M))
+        self.seen.append((model, n))
+        return {"items": self.answers[model][:n] if isinstance(self.answers[model], list)
+                else self.answers[model](n)}, 1000, 100
 
-    items = [{"url": f"u{k}", "bank": "Банк", "text": t} for k, t in enumerate(
-        ["Не пришёл аванс", "Зарплатная карта: перевод по СБП", "Отказали в ипотеке"])]
-    c = Fake(RS.SYSTEM, {})
-    # первые два — с признаком; A и B согласны по первому, расходятся по второму → решает TIE
-    cs = {"payroll": Fake(RS._STRONG_SYS["payroll"], {RS.STRONG_A: [True, True], RS.STRONG_B: [True, False],
-                                                      RS.STRONG_TIE: [False]})}
 
-    async def run():
-        import bank_audit.db as db
-        orig = db.session
+def test_process_cascade_asks_only_what_changes(monkeypatch):
+    items = [{"url": f"https://banki/{i}", "bank": "Банк", "text": f"Курьер не привёз карту {i}. " * 3}
+             for i in range(3)]
+    # A: первый — выездной, второй — УС, третий — ничего; B: подтверждает выездной, УС отвергает
+    a = [{"n": 1, "slices": [{"key": "field", "clause": "1", "quote": "Курьер не привёз карту 0"}]},
+         {"n": 2, "slices": [{"key": "us", "clause": "1", "quote": "банкомат"}]},
+         {"n": 3, "slices": []}]
+    b = lambda n: ([{"n": 1, "slices": [{"key": "field", "clause": "1", "quote": "Курьер не привёз"}]},
+                    {"n": 2, "slices": []}] + [{"n": 3, "slices": []}])[:n]        # noqa: E731
+    tie = lambda n: [{"n": 1, "slices": []}][:n]                                    # noqa: E731
+    c = _Caller({RS.STRONG_A: a, RS.STRONG_B: b, RS.STRONG_TIE: tie})
+    monkeypatch.setattr(RS, "confirm_negative", lambda url, share=0.1: False)
+    written = []
 
-        class S:
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
-            def execute(self, *a, **k): return None
-        db.session = lambda: S()
-        try:
-            return await RS._process(c, items, cs)
-        finally:
-            db.session = orig
-    rows, _ = asyncio.run(run())
-    tags = {r["url"]: r["tags"] for r in rows}
-    assert tags == {"u0": ["payroll"], "u1": [], "u2": []}
-    assert {sys_ for sys_, _m in c.seen} == {RS.SYSTEM}
-    assert {sys_ for sys_, _m in cs["payroll"].seen} == {RS._STRONG_SYS["payroll"]}
-    assert [m for _s, m in cs["payroll"].seen].count(RS.STRONG_TIE) == 1   # третья — только по спорному
+    class S:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, sql, rows=None): written.extend(rows or [])
+    monkeypatch.setattr(RS.db, "session", lambda: S())
+    rows, rub = asyncio.run(RS._process(c, items))
+    tags = {r["url"][-1]: r["tags"] for r in rows}
+    assert tags == {"0": ["field"], "1": [], "2": []}
+    assert [m for m, _n in c.seen] == [RS.STRONG_A, RS.STRONG_B, RS.STRONG_TIE]
+    assert dict(c.seen)[RS.STRONG_B] == 2          # B — только положительные A
+    assert dict(c.seen)[RS.STRONG_TIE] == 1        # третья — только спорный отзыв
+    ev = json.loads(rows[0]["evidence"])
+    assert ev["field"]["clause"] == "1" and ev["field"]["quote_ok"] is True
+    assert rows[1]["status"] == "arbitrated" and rows[2]["status"] == "single"
+    assert rub > 0 and written
+
+
+def test_coverage_shape(monkeypatch):
+    class R:
+        def __init__(self, v): self.v = v
+        def one(self): return self.v
+        def all(self): return [("payroll", "s6")]
+
+    class S:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, sql, p=None):
+            return R((100, 99)) if "count(*)" in str(sql) else R(None)
+    monkeypatch.setattr(RS.db, "session", lambda: S())
+    cov = RS.coverage()
+    assert set(cov["keys"]) == set(RS.KEYS) and cov["keys"]["payroll"]["schema"] == "s6"
+    assert cov["keys"]["payroll"]["ready"] is True and cov["ready"] is True

@@ -106,3 +106,17 @@ def test_city_merges_region_suffix():
     assert _city("Санкт-Петербург и Ленинградская область") == "Санкт-Петербург"
     assert _city("Казань (Республика Татарстан)") == "Казань"
     assert _city("") is None
+
+
+def test_bodies_report_store_failure(monkeypatch):
+    """Сбой хранилища текстов — не «текста нет»: иначе разметка пишет жалобу в мусор."""
+    from bank_audit.rag import bankiru_fts
+    monkeypatch.setattr(bankiru_fts, "_source_engine", lambda: None)
+
+    class Boom:
+        def __enter__(self): raise RuntimeError("нет базы")
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(bankiru_fts.db, "session", lambda: Boom())
+    got = bankiru_fts.bodies_for([{"url": "x", "review_id": 1, "source": "bankiru"},
+                                  {"url": "y", "review_id": 2, "source": "sravni_reviews"}])
+    assert dict(got) == {} and got.failed == {"x", "y"}

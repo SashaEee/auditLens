@@ -1946,7 +1946,10 @@ function FyRange({r}){
 // dimension_weights и вектор профиля) — новых хранилищ не заводится.
 const OB_PRODUCTS=[["deposit","Вклады"],["ipoteka","Ипотека"],["credit_card","Кредитные карты"],
   ["debit_card","Дебетовые карты"],["consumer_loan","Потребкредиты"],["auto","Автокредиты"],
-  ["savings","Накопительные счета"],["transfers","Переводы и СБП"],["acquiring","Эквайринг"],["premium","Премиум"]];
+  ["savings","Накопительные счета"],["transfers","Переводы и СБП"],["acquiring","Эквайринг"],["premium","Премиум"],
+  // направления аудита, которых раньше не было
+  ["selfemp","Самозанятые"],["youth","Дети и молодёжь"],["payroll","Зарплатные проекты"],["field","Выездное обслуживание"],
+  ["atm","Банкоматы и УС"],["invest","Инвестиции"],["metals","Драгметаллы"],["svo","Участники СВО"]];
 const OB_RISKS=[["fraud","Мошенничество"],["ops","Сбои и доступность"],["compliance","Комплаенс и ЦБ"],
   ["market","Тарифы и конкуренты"],["conduct","Продажи и жалобы"]];
 function FyOnboarding({onDone,onSkip}){
@@ -4422,7 +4425,7 @@ function RvCard({r,sel,read,inCase,showBank,onOpen,onCase,onTheme,q,cardRef}){
   const title=a.summary||rvFirst(r.text);
   const snip=q&&r.via!=="смысл"?rvSnippet(r.marked):null;
   const sig=rvSignals(r).slice(0,3), sev=rvSev(r);
-  const themes=(r.themes||[]).slice(0,2);
+  const themes=(r.themes||[]).slice(0,2), sl=(r.slices||[]).slice(0,2);
   const src=r.source&&r.source.includes(".")?r.source:(r.url?rvHost(r.url):"");
   const meta=[rvShortDate(r.date),showBank&&r.bank,r.city,r.product,src].filter(Boolean);
   return <article ref={cardRef} className={"rv-c"+(sel?" sel":"")+(read&&!sel?" read":"")+(sev?" s-"+sev:"")}
@@ -4445,8 +4448,9 @@ function RvCard({r,sel,read,inCase,showBank,onOpen,onCase,onTheme,q,cardRef}){
     <div className={"rv-c-title"+(pending?" raw":"")}>{title}</div>
     {snip?<div className="rv-c-snip">{kbMark(snip)}</div>
       :a.quote?<div className="rv-c-quote">«{a.quote}»</div>:null}
-    {(sig.length>0||themes.length>0)&&<div className="rv-c-sig">
+    {(sig.length>0||themes.length>0||sl.length>0)&&<div className="rv-c-sig">
       {sig.map(x=><span key={x.k} className={"rv-sg "+x.tone}>{x.ic&&<x.ic s={12}/>}{x.t}</span>)}
+      {sl.map(x=><span key={"sl-"+x.key} className="rv-sg sl" data-tip={rvSliceWhy(x)}>{x.label}</span>)}
       {themes.length>0&&<span className="rv-c-th">{themes.map((t,i)=><React.Fragment key={t.key}>
         {i>0&&<span className="rv-c-dot">·</span>}
         {onTheme?<button className="rv-c-tl" data-tip={`${t.label} — показать жалобы этой темы`}
@@ -4476,7 +4480,36 @@ function RvPassport({r}){
     const ans=b.answer?"ответил":b.has_answer?"ответ на площадке":"ответа нет";
     rows.push(["Банк",[rvCap(ans),st].filter(Boolean).join(" · ")]);}
   if(r.ann)rows.push(["Разметка",<>{rvCap(a.confidence||"")}{a.new_topic&&<span className="rv-dim"> · вне кодификатора: {a.new_topic}</span>}</>]);
+  if((r.slices||[]).length)rows.push([r.slices.length>1?"Срезы":"Срез",<RvSlices r={r}/>]);
   return <dl className="rv-pass">{rows.map(([k,v])=><React.Fragment key={k}><dt>{k}</dt><dd>{v}</dd></React.Fragment>)}</dl>;
+}
+
+// Почему жалоба в срезе: пункт определения и дословная цитата (rag/review_slices.py).
+// «Не относится» не снимает срез сразу — отметку проверяет команда, иначе один
+// клик менял бы числа у всех.
+const rvSliceWhy=x=>[x.clause&&/^\d$/.test(x.clause)?`п. ${x.clause} определения`:null,
+  x.quote?`«${x.quote}»`:null].filter(Boolean).join(" — ")||"срез по разметке модели";
+function RvSlices({r}){
+  const[sent,setSent]=useState({}),[open,setOpen]=useState(null),[note,setNote]=useState("");
+  useEffect(()=>{setSent({});setOpen(null);setNote("");},[r.url]);
+  const send=key=>{ apiFetch("/api/reviews/slice-flag",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({url:r.url,key,note:note.trim()||null})})
+    .then(()=>{setSent(o=>({...o,[key]:1}));setOpen(null);setNote("");
+      fbToast("Отметка у команды: если жалоба не относится, уберём её из среза",false);})
+    .catch(()=>fbToast("Не получилось отправить — попробуйте ещё раз",true)); };
+  return <span className="rv-sl">{r.slices.map(x=><span key={x.key} className="rv-sl-i">
+    <span className="rv-sl-l">{x.label}</span>
+    {(x.clause||x.quote)&&<span className="rv-sl-why">{x.clause&&/^\d$/.test(x.clause)?<> · п. {x.clause}</>:null}
+      {x.quote?<> — «{x.quote}»</>:null}</span>}
+    {sent[x.key]||x.flagged>0?<span className="rv-dim"> · отмечено «не относится», на проверке</span>
+      :open===x.key?<span className="rv-sl-f">
+        <input className="rv-sl-in" autoFocus value={note} maxLength={300} placeholder="почему (необязательно)"
+          onChange={e=>setNote(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")send(x.key);if(e.key==="Escape")setOpen(null);}}/>
+        <button className="rv-lnkb" onClick={()=>send(x.key)}>Отправить</button>
+        <button className="rv-lnkb dim" onClick={()=>setOpen(null)}>Отмена</button></span>
+      :<button className="rv-lnkb dim" onClick={()=>setOpen(x.key)}
+        data-tip="жалоба попала в срез по ошибке — команда проверит и уберёт">не относится</button>}
+  </span>)}</span>;
 }
 
 function RvReader({r,pos,total,ctx,onPrev,onNext,onClose,onCase,inCase,onOpenSim,showBank,embedded,onBack}){
@@ -4571,6 +4604,7 @@ const RV_FLAG_OPTS=[
   ["Практики и суммы",[["no_consent","Без согласия"],["misled","Ввели в заблуждение"],["amount:1m","Сумма от 1 млн ₽"]]],
 ];
 const RV_SOURCES=[["banki","banki.ru"],["sravni","sravni.ru"],["bankiros","bankiros.ru"],["finuslugi","finuslugi.ru"]];
+const RV_SIG_RX=/^sig:\d{4}-\d{2}-\d{2}$/;
 
 // Снимок жалобы при приобщении: если отзыв пропадёт с площадки, в деле
 // останется суть и начало текста
@@ -5015,9 +5049,12 @@ function ReviewsPage({params}){
   // выглядит как «ничего не произошло»: в обратной связи так и написали —
   // «приходится удалять из поискового окна все символы». Делаем это сами.
   // Клик по теме где угодно — это «покажи эти жалобы»: фильтр и переход на «Жалобы»
-  const pickTheme=(key)=>{ setQ(""); setQInput("");
+  const pickTheme=(key)=>{ setQ(""); setQInput(""); setFWeek("");
     if(theme===key&&tab==="complaints"){setTheme("");return;}
     setTheme(key); goTab("complaints"); };
+  // всплеск → жалобы его недели (а не тема за весь период вкладки)
+  const pickSignal=(key,we)=>{ if(!we){pickTheme(key);return;}
+    setQ(""); setQInput(""); setTheme(key); setFWeek("sig:"+we); goTab("complaints"); };
   const[qInput,setQInput]=useState(P.q||"");
   const[ov,setOv]=useState(null),[tr,setTr]=useState(null),[th,setTh]=useState(null);
   const[ge,setGe]=useState(null),[prods,setProds]=useState([]);
@@ -5039,6 +5076,9 @@ function ReviewsPage({params}){
   const[jrOpen,setJrOpen]=useState(false);
   // город: из адреса или из «Разобраться» на «Обзоре» (всплеск с гео-концентрацией)
   const[fCity,setFCity]=useState(()=>P.city||(preset&&preset.city)||""),[fSrc,setFSrc]=useState("");
+  // неделя всплеска (month=sig:<последний день>): ровно жалобы, из которых сложилось число
+  // сигнала, — из клика по всплеску и из уведомления по подписке
+  const[fWeek,setFWeek]=useState(()=>RV_SIG_RX.test(P.month||"")?P.month:"");
   const[fOrder,setFOrder]=useState("date");             // date | severity (без поиска)
   const[fView,setFView]=useState("cards");              // cards | groups
   const[cl,setCl]=useState(null),[clBusy,setClBusy]=useState(false);
@@ -5097,7 +5137,8 @@ function ReviewsPage({params}){
     if(rvPerKey(np)!==rvPerKey(per))setPer(np); if(nc!==cmp)setCmp(nc);
     if(th!==theme)setTheme(th); if(fl!==flag)setFlag(fl);
     if((P.esc==="1")!==escOnly)setEscOnly(P.esc==="1"); if((P.city||"")!==fCity)setFCity(P.city||"");
-    const t=RV_TABS.some(([k])=>k===P.tab)?P.tab:(th||fl||P.q||P.esc||P.city?"complaints":"overview");
+    const mw=RV_SIG_RX.test(P.month||"")?P.month:""; if(mw!==fWeek)setFWeek(mw);
+    const t=RV_TABS.some(([k])=>k===P.tab)?P.tab:(th||fl||P.q||P.esc||P.city||mw?"complaints":"overview");
     if(t!==tab)goTab(t); },[paramsKey]);
   const[trBasis,setTrBasis]=useState("pub"),[trBusy,setTrBusy]=useState(true);
   // выбор месяцев протягиванием по графику динамики
@@ -5175,7 +5216,7 @@ function ReviewsPage({params}){
       .then(d=>{setTr(d);setTrBusy(false);}).catch(()=>{setTr({__err:true});setTrBusy(false);});
   },[bank,product,trBasis,trMonths]);
 
-  useEffect(()=>{ if(firstBankRun.current){firstBankRun.current=false;}else{setProduct("");setFCity("");}
+  useEffect(()=>{ if(firstBankRun.current){firstBankRun.current=false;}else{setProduct("");setFCity("");setFWeek("");}
     apiFetch(`/api/reviews/products?bank=${enc(bank)}`).then(d=>setProds(d.items||[])).catch(()=>setProds([]));
   },[bank]);
 
@@ -5205,7 +5246,8 @@ function ReviewsPage({params}){
   const feedNext=useRef(null);      // курсор ленты от сервера
   const feedQS=(off)=>`/api/reviews/feed?bank=${enc(bank)}${pq()}`
     +`${theme?`&theme=${theme}`:""}${q?`&q=${enc(q)}`:""}`
-    +`${perQ}${escOnly?"&esc=1":""}${flag?`&flag=${enc(flag)}`:""}`
+    // у недели всплеска своё окно — период вкладки её бы обрезал
+    +`${fWeek?`&month=${enc(fWeek)}`:perQ}${escOnly?"&esc=1":""}${flag?`&flag=${enc(flag)}`:""}`
     +`${fCity?`&city=${enc(fCity)}`:""}${fSrc?`&source=${fSrc}`:""}`
     +`${q?(sortBy==="date"?"&sort=date":""):(fOrder==="severity"?"&sort=severity":"")}`
     // лента без поиска листается курсором (next от сервера), поиск — по offset
@@ -5219,7 +5261,7 @@ function ReviewsPage({params}){
                 setFeedTot(d.total!=null?{total:d.total,pending:d.pending||0}:null);
                 setFeedMore(!!d.has_more);setFeedBusy(false);})
       .catch(()=>{setFeed([]);setFeedErr("network");setFeedMeta(null);setFeedTot(null);setFeedBusy(false);});
-  },[bank,product,theme,q,perKey,escOnly,sortBy,flag,fCity,fSrc,fOrder]);
+  },[bank,product,theme,q,perKey,escOnly,sortBy,flag,fCity,fSrc,fOrder,fWeek]);
 
   const loadMoreFeed=()=>{
     setFeedMoreBusy(true);
@@ -5520,6 +5562,14 @@ function ReviewsPage({params}){
           {geFull&&<button className="rv-more-l" onClick={()=>setGeFull(null)}>свернуть<span className="rv-ico-in" style={{transform:"rotate(180deg)"}}><RvIChevD s={12}/></span></button>}
           </>}
         </div>);
+  // «Новое» без всплесков: сюжеты вне кодификатора — наблюдения, их видно и в спокойную неделю
+  const rvNovel=nv=>(nv||[]).length>0&&<>
+    <div className="rv-radar-sub" style={{marginTop:10}}>Новое — сюжеты вне кодификатора, не всплески:</div>
+    <div className="rv-radar-chips">{nv.map((c,i)=><span key={i} className="rv-radar-chip lvl-watch" role="button" tabIndex={0}
+        data-tip={`${c.n} ${plural(c.n,"жалоба","жалобы","жалоб")} с похожим сюжетом — открыть`}
+        onClick={()=>openGroup({urls:c.urls,n:c.n,label:c.topic,first:c.first,last:c.last})}
+        onKeyDown={onKey(()=>openGroup({urls:c.urls,n:c.n,label:c.topic,first:c.first,last:c.last}))}>
+      {c.topic}<b>{c.n}</b></span>)}</div></>;
   const radarCard=(<div className="rv-card rv-radar">
           <div className="rv-radar-head">
             <span className="rv-radar-ico" aria-hidden="true"><IcoRadar/></span>
@@ -5537,8 +5587,9 @@ function ReviewsPage({params}){
            :anom&&anom.error?
             <div className="rv-radar-calm rv-radar-err" role="alert">Не удалось посчитать сигналы недели — о всплесках сейчас ничего не известно.
               <button type="button" className="btn btn-sm" onClick={()=>setAnomTry(x=>x+1)}>Повторить</button></div>
-           :(!anom||((!anom.signals||!anom.signals.length)&&!(anom.watch||[]).length))?
+           :(!anom||((!anom.signals||!anom.signals.length)&&!(anom.watch||[]).length))?<>
             <div className="rv-radar-calm"><span className="rv-radar-check"><IcoCheck/></span> Резких аномалий за неделю не выявлено</div>
+            {anom&&rvNovel(anom.novel)}</>
            :(!anom.signals||!anom.signals.length)?
             /* порог всплеска не пробит, но расхождение с рынком есть —
                «спокойно» здесь было бы неправдой */
@@ -5551,6 +5602,7 @@ function ReviewsPage({params}){
                     onClick={()=>pickTheme(d.key)} onKeyDown={onKey(()=>pickTheme(d.key))}>
                     {d.short||d.label}<b>×{String(d.gap).replace(".",",")}</b></span>)}
               </div>
+              {rvNovel(anom.novel)}
             </>
            :<>
               {!(anom.signals.length===1&&anom.summary)&&<div className="rv-radar-chips">
@@ -5563,7 +5615,7 @@ function ReviewsPage({params}){
                     +(s.geo?` · ${s.geo.share}% из ${s.geo.city}`:"");
                   return <span key={i} className={"rv-radar-chip lvl-"+(s.level||"medium")+(s.bank_specific?" only":"")}
                         role="button" tabIndex={0} data-tip={tip}
-                        onClick={()=>pickTheme(s.key)} onKeyDown={onKey(()=>pickTheme(s.key))}>
+                        onClick={()=>pickSignal(s.key,anom.week_end)} onKeyDown={onKey(()=>pickSignal(s.key,anom.week_end))}>
                     {s.short||s.label}<b>{s.new?"новое":"×"+String(s.ratio).replace(".",",")}</b>{s.accel&&<span className="rv-radar-acc"><IcoTrendUp/></span>}{sigCont(s)&&<span className="rv-radar-since">с {sigDm(s.since)}</span>}
                   </span>;
                 })}
@@ -5573,8 +5625,8 @@ function ReviewsPage({params}){
                 <div className="rv-radar-links">
                   <button className="rv-more-l" onClick={()=>setRadarAll(v=>!v)}>{radarAll?"Свернуть разбор":"Весь разбор"}
                     <span className="rv-ico-in" style={radarAll?{transform:"rotate(180deg)"}:null}><RvIChevD s={12}/></span></button>
-                  {anom.signals.length===1&&<button className="rv-more-l" onClick={()=>pickTheme(anom.signals[0].key)}
-                    data-tip={`${anom.signals[0].label}: жалобы периода`}>Жалобы сигнала<span className="rv-ico-in"><RvIChevR s={12}/></span></button>}
+                  {anom.signals.length===1&&<button className="rv-more-l" onClick={()=>pickSignal(anom.signals[0].key,anom.week_end)}
+                    data-tip={`${anom.signals[0].label}: ${anom.signals[0].week} жалоб недели всплеска`}>Жалобы сигнала · {anom.signals[0].week}<span className="rv-ico-in"><RvIChevR s={12}/></span></button>}
                 </div></>
                 :<div className="rv-cap" style={{marginTop:6}}>LLM-разбор недоступен — см. всплески выше (числа за 7 дн точны).</div>}
             </>}
@@ -5648,9 +5700,10 @@ function ReviewsPage({params}){
     flag&&{k:"flag",l:`Признак: ${flagLabel}`,x:()=>setFlag("")},
     escOnly&&{k:"esc",l:"Грозят или обратились",x:()=>setEscOnly(false)},
     fCity&&{k:"city",l:`Город: ${fCity}`,x:()=>setFCity("")},
+    fWeek&&{k:"week",l:`Неделя всплеска: 7 дн по ${rvDate(fWeek.slice(4))}`,x:()=>setFWeek("")},
     fSrc&&{k:"src",l:`Площадка: ${(RV_SOURCES.find(x=>x[0]===fSrc)||[0,fSrc])[1]}`,x:()=>setFSrc("")},
     q&&{k:"q",l:`Поиск: «${q}»`,x:()=>{setQ("");setQInput("");}}].filter(Boolean);
-  const resetFilters=()=>{setTheme("");setFlag("");setEscOnly(false);setFCity("");setFSrc("");setQ("");setQInput("");};
+  const resetFilters=()=>{setTheme("");setFlag("");setEscOnly(false);setFCity("");setFWeek("");setFSrc("");setQ("");setQInput("");};
   const citySel=<select className="rv-fsel" value={fCity} onChange={e=>setFCity(e.target.value)} aria-label="Город">
           <option value="">Все города</option>
           {fCity&&!((ge&&ge.cities)||[]).some(c=>c.city===fCity)&&<option value={fCity}>{fCity}</option>}
@@ -5703,7 +5756,7 @@ function ReviewsPage({params}){
             <span className="rv-keys">J K — по списку · Enter — открыть · A — в дело · / — поиск</span></span>}</div></div>
         {/* полный срез с текущими фильтрами (без поиска) — раньше его собирали вручную */}
         <a className="rv-export rv-export-a" download aria-label="Выгрузить жалобы в Excel"
-           href={`/api/reviews/export.xlsx?bank=${enc(bank)}${pq()}${theme?`&theme=${enc(theme)}`:""}${perQ}${escOnly?"&esc=1":""}${flag?`&flag=${enc(flag)}`:""}${fCity?`&city=${enc(fCity)}`:""}${fSrc?`&source=${enc(fSrc)}`:""}${q?`&q=${enc(q)}`:""}`}
+           href={`/api/reviews/export.xlsx?bank=${enc(bank)}${pq()}${theme?`&theme=${enc(theme)}`:""}${fWeek?`&month=${enc(fWeek)}`:perQ}${escOnly?"&esc=1":""}${flag?`&flag=${enc(flag)}`:""}${fCity?`&city=${enc(fCity)}`:""}${fSrc?`&source=${enc(fSrc)}`:""}${q?`&q=${enc(q)}`:""}`}
            data-tip="Excel в стиле AuditLens: обзор с показателями и графиками, все жалобы с текущими фильтрами банка, продукта, темы, признака, города, площадки и периода — с разметкой ИИ и полным текстом, сводки (поиск в выгрузку не входит)"
            onClick={()=>trkEvent({kind:"ui",page:"reviews",payload:{action:"reviews_export",bank,product,theme,period:rvPerKey(per),cmp:cmp||null,esc:escOnly,flag,city:fCity||null,source:fSrc||null,q:q||null}})}><RvIco s={13} d={<><path d="M12 4v11"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></>}/><span className="rv-csv-l">Excel</span></a>
       </div>
@@ -5766,12 +5819,23 @@ function ReviewsPage({params}){
         {feedMeta.common&&feedMeta.common.length>0&&
           <span className="rv-sum-x" data-tip="эти слова встречаются почти в каждой жалобе и только размывают выдачу">
             не учитывали: {feedMeta.common.join(" · ")}</span>}
-        <span className="rv-sum-x" data-tip={`Со словами запроса — все такие жалобы по фильтрам вкладки${feedMeta.words_capped?" (показаны первые 3000)":""}. По смыслу — не больше ${feedMeta.sense_cap||20} ближайших жалоб, где этих слов нет. Выгрузка в Excel отдаёт ровно этот список.`}>
+        <span className="rv-sum-x" data-tip={`Со словами запроса — все жалобы по фильтрам вкладки, где значимые слова запроса стоят рядом (или их вариант: сокращение, синоним)${feedMeta.words_capped?"; совпадений очень много — уточните запрос":""}. По смыслу — не больше ${feedMeta.sense_cap||20} ближайших жалоб без этих слов. Выгрузка в Excel отдаёт ровно этот список.`}>
           со словами запроса {fmtNum(feedMeta.n_words||0)}{feedMeta.words_capped?"+":""}, похожих по смыслу {feedMeta.n_sense||0}</span>
       </div>}
-      {!feedBusy&&!feedErr&&q&&feedMeta&&feedMeta.n_words===0&&feed&&feed.length>0&&
+      {/* «слов нет в текстах» и «поиск не отработал» — разные вещи (04.11.2026: при сбое
+          базы аудитор видел «0 со словами» и делал вывод, что жалоб не было) */}
+      {!feedBusy&&!feedErr&&q&&feedMeta&&(feedMeta.failed||feedMeta.words_failed)&&
+        <div className="rv-warn">{feedMeta.failed==="filters"
+          ?"Поиск не отработал: фильтры вкладки не применились из-за сбоя базы. Повторите запрос через минуту."
+          :"Поиск по словам не отработал из-за сбоя базы — ниже только похожие по смыслу. Повторите запрос через минуту."}</div>}
+      {!feedBusy&&!feedErr&&q&&feedMeta&&!feedMeta.failed&&!feedMeta.words_failed&&(feedMeta.stop_phrases||[]).length>0&&
+        <div className="rv-warn">По фразе {feedMeta.stop_phrases.map(x=>`«${x}»`).join(", ")} не искали: в ней только
+          служебные слова. Добавьте в кавычки значимое слово.</div>}
+      {!feedBusy&&!feedErr&&q&&feedMeta&&!feedMeta.words_failed&&!feedMeta.failed&&feedMeta.n_words===0&&feed&&feed.length>0&&
         <div className="rv-warn">Слов запроса в текстах нет — все отзывы ниже подобраны по смыслу.
           Это не значит, что жалоб по теме не было: возможно, клиенты называют её иначе.</div>}
+      {!feedBusy&&!feedErr&&q&&feedMeta&&feedMeta.sense_checked===false&&(feedMeta.n_sense||0)>0&&
+        <div className="rv-warn">Похожие по смыслу сейчас не проверены моделью — среди них могут быть лишние.</div>}
       <div className="rv-sr" aria-live="polite">{feedBusy?"Загружаю жалобы":feedErr?"Жалобы не загрузились"
         :feedTot&&!q?`${fmtNum(feedTot.total)} ${plural(feedTot.total,"жалоба","жалобы","жалоб")} по фильтру`
         :feed?`Показано ${feed.length}`:""}</div>
@@ -11438,6 +11502,38 @@ const PU_TK_TPL=[["Взяли в работу","Спасибо, взяли в р
 // сколько обращение ждёт ответа команды: «3 ч», «2 дн»
 const puWait=(iso)=>{ const h=(Date.now()-new Date(iso).getTime())/36e5;
   return h<1?"меньше часа":h<48?`${Math.floor(h)} ч`:`${Math.floor(h/24)} дн`; };
+// Отметки «не относится к срезу» из карточки жалобы (rag/review_slices.py): решает
+// команда — «убрать» снимает срез с жалобы в индексе сразу и навсегда, «оставить» закрывает
+// отметку. Кроме команды никто этот блок не видит (ручка отвечает 403 — блока нет).
+function PuSliceFlags({onOpenUser}){
+  const[d,setD]=useState(null),[busy,setBusy]=useState(0);
+  const load=()=>apiFetch("/api/reviews/slice-flags").then(setD).catch(()=>setD({hidden:true}));
+  useEffect(()=>{load();},[]);
+  if(!d||d.hidden||!(d.items||[]).length)return null;
+  const decide=(id,decision)=>{ setBusy(id);
+    apiFetch("/api/reviews/slice-flags/"+id,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({decision})}).then(()=>{fbToast(decision==="excluded"?"Жалоба убрана из среза":"Срез оставлен",false);load();})
+      .catch(()=>fbToast("Не получилось — попробуйте ещё раз",true)).finally(()=>setBusy(0)); };
+  return <div className="pu-card" style={{marginBottom:16}}>
+    <div className="h"><span>Отметки «не относится к срезу» · {d.items.length}</span></div>
+    <p className="t-cap" style={{margin:"-4px 0 10px"}}>Аудитор считает, что жалоба попала в срез «Аудита отзывов» по ошибке.
+      «Убрать» снимает срез с жалобы сразу и навсегда — переразметка его не вернёт.</p>
+    <div className="pu-tblwrap"><table className="pu-tbl">
+      <thead><tr><th>срез</th><th>жалоба</th><th>основание</th><th>кто и почему</th><th/></tr></thead>
+      <tbody>{d.items.map(x=><tr key={x.id}>
+        <td>{x.label}</td>
+        <td style={{maxWidth:320}}><a href={x.url} target="_blank" rel="noopener noreferrer">{[x.bank,x.date].filter(Boolean).join(" · ")||"открыть"}</a>
+          {x.summary&&<div className="t-cap">{x.summary}</div>}</td>
+        <td style={{maxWidth:260}} className="t-cap">{x.evidence?rvSliceWhy(x.evidence):"—"}</td>
+        <td style={{maxWidth:220}}><button className="pu-link" onClick={()=>onOpenUser&&onOpenUser(x.username)}>{x.username}</button>
+          {x.note&&<div className="t-cap">«{x.note}»</div>}</td>
+        <td style={{whiteSpace:"nowrap"}}>
+          <button className="seg-btn" disabled={busy===x.id} onClick={()=>decide(x.id,"excluded")}>Убрать</button>{" "}
+          <button className="seg-btn" disabled={busy===x.id} onClick={()=>decide(x.id,"kept")}>Оставить</button></td>
+      </tr>)}</tbody></table></div>
+  </div>;
+}
+
 function PuInbox({rev,onOpenUser,onChanged,openTicket}){
   const[st,setSt]=useState("open");
   const[kind,setKind]=useState("");
@@ -12440,7 +12536,8 @@ function PulsePage({params}){
       <PuPersonalization pz={m.personalization||{}} days={m.days} onOpenUser={setCard}/>
     </>}
 
-    {tab==="inbox"&&<PuInbox key={openTicket||0} openTicket={openTicket} rev={rev} onOpenUser={setCard} onChanged={load}/>}
+    {tab==="inbox"&&<><PuSliceFlags onOpenUser={setCard}/>
+      <PuInbox key={openTicket||0} openTicket={openTicket} rev={rev} onOpenUser={setCard} onChanged={load}/></>}
     {tab==="outcomes"&&<PuOutcomes isOwner={!!(me&&me.is_admin)} withMe={withMe}/>}
     {tab==="reach"&&<><PuReach isOwner={!!(me&&me.is_admin)} withMe={withMe}/><div style={{height:16}}/><PuCosts/></>}
 
@@ -12673,7 +12770,9 @@ const PROFILE_CSS=`
   .pf-toggle{position:relative}.pf-toggle::after{content:"";position:absolute;inset:-10px -2px}}
 `;
 const BANK_RU={sberbank:"Сбербанк",vtb:"ВТБ",alfabank:"Альфа-Банк",tinkoff:"Т-Банк",gazprombank:"Газпромбанк",rshb:"Россельхозбанк",domrf:"Банк ДОМ.РФ",psb:"ПСБ",sovcombank:"Совкомбанк",mtsbank:"МТС-Банк",raiffeisen:"Райффайзен",otkritie:"Открытие"};
-const PROD_RU={ipoteka:"Ипотека",deposit:"Вклады",credit_card:"Кредитные карты",debit_card:"Дебетовые карты",consumer_loan:"Потребкредиты",auto:"Автокредиты",rko:"РКО",savings:"Накопит. счета",acquiring:"Эквайринг",premium:"Премиальные пакеты",transfers:"Переводы и комиссии"};
+const PROD_RU={ipoteka:"Ипотека",deposit:"Вклады",credit_card:"Кредитные карты",debit_card:"Дебетовые карты",consumer_loan:"Потребкредиты",auto:"Автокредиты",rko:"РКО",savings:"Накопит. счета",acquiring:"Эквайринг",premium:"Премиальные пакеты",transfers:"Переводы и комиссии",
+  // направления аудита (directions.py)
+  metals:"Драгметаллы",field:"Выездное обслуживание",youth:"Дети и молодёжь",selfemp:"Самозанятые",atm:"Банкоматы и УС",invest:"Инвестиции",svo:"Участники СВО",payroll:"Зарплатные проекты"};
 const topicLabel=(t)=>BANK_RU[t]||PROD_RU[t]||t;
 const TZ_ZONES=[
   ["Europe/Kaliningrad","Калининград · МСК−1"],["Europe/Moscow","Москва · МСК"],

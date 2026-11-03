@@ -16,8 +16,12 @@ def _setup(monkeypatch, head, words, keep=None):
         return [dict(r) for r in head]
     monkeypatch.setattr(RD, "search_reviews", fake_search)
     monkeypatch.setattr(bankiru_fts, "is_ready", lambda: True)
-    monkeypatch.setattr(bankiru_fts, "search_fts", lambda *a, **k: [dict(w) for w in words])
+    monkeypatch.setattr(bankiru_fts, "search_near", lambda *a, **k: ([dict(w) for w in words], False))
     monkeypatch.setattr(RD, "_keep_urls", lambda urls, **k: set(urls) if keep is None else keep)
+    monkeypatch.setattr(RD, "_excluded", lambda urls, words: set())
+    monkeypatch.setattr(RD, "_verify_sense", lambda q, rows: (rows, True))
+    from bank_audit.rag import reviews_query
+    monkeypatch.setattr(reviews_query, "expand", lambda q, use_llm=False: {"terms": [], "tsquery": q})
     RD._SET_CACHE.clear()
 
 
@@ -63,3 +67,96 @@ def test_feed_pages_through_the_same_set(monkeypatch):
             break
         off += 20
     assert len(seen) == 35 == len(set(seen))
+
+
+def test_near_window():
+    """«Со словами запроса» — все значимые слова рядом, а не любое из них."""
+    pos = bankiru_fts._positions("'навяза':3 'мне':4 'страховк':5 'кредит':9")
+    assert bankiru_fts.near_window(pos, ["навяза", "страховк"])          # «навязали мне страховку»
+    far = bankiru_fts._positions("'навяза':1 'страховк':20")
+    assert not bankiru_fts.near_window(far, ["навяза", "страховк"])
+    assert not bankiru_fts.near_window(pos, ["навяза", "ипотек"])        # слова нет вовсе
+    assert bankiru_fts.near_window(pos, ["кредит"])                      # одно слово — где угодно
+    pos3 = bankiru_fts._positions("'перевод':2,40 'сам':41 'себ':42")
+    assert bankiru_fts.near_window(pos3, ["перевод", "сам", "себ"])
+
+
+def test_near_window_matches_word_forms():
+    """«не зачисляют выручку» находит «не зачислили выручку»: основы разные, начало общее."""
+    pos = bankiru_fts._positions("'зачисл':4 'выручк':5")
+    assert bankiru_fts.near_window(pos, ["зачисля", "выручк"])
+
+
+def test_query_syntax():
+    p = RD.parse_query('"переводы самому себе" -сбп навязали «страховку»')
+    assert p["phrases"] == ["переводы самому себе"] and p["excl"] == ["сбп"]
+    assert p["plain"] == "навязали страховку" and "переводы самому себе" in p["text"]
+
+
+def test_words_first_then_checked_sense(monkeypatch):
+    """Сначала все со словами, затем похожие по смыслу — только прошедшие проверку."""
+    head = [{"url": "s1", "via": "смысл", "date": "2026-10-01", "text": "x" * 50},
+            {"url": "w1", "via": "слова", "date": "2026-10-01", "text": "x" * 50},
+            {"url": "s2", "via": "смысл", "date": "2026-10-01", "text": "x" * 50}]
+    words = [{"url": u, "date": "2026-10-01"} for u in ("w1", "w2", "w3", "w4", "w5")]
+    _setup(monkeypatch, head, words)
+    monkeypatch.setattr(RD, "_verify_sense", lambda q, rows: ([r for r in rows if r["url"] == "s2"], True))
+    got = RD.search_set("q", "Сбербанк")
+    assert [r["url"] for r in got["rows"]][:1] == ["w1"]           # выше в слиянии — первым
+    assert [r["url"] for r in got["rows"]][-1] == "s2" and got["meta"]["n_sense"] == 1
+    assert all(r["via"] != "смысл" for r in got["rows"][:5])
+
+
+def test_failures_are_visible_and_not_cached(monkeypatch):
+    """Сбой — не «ничего не нашлось»: фильтры не применились → пустой набор с failed,
+    словесная нога упала → words_failed; такие ответы не кэшируются."""
+    head = [{"url": "s1", "via": "смысл", "date": "2026-10-01", "text": "x" * 50}]
+    _setup(monkeypatch, head, [])
+    monkeypatch.setattr(RD, "_keep_urls", lambda urls, **k: None)
+    got = RD.search_set("навязали страховку", "Сбербанк")
+    assert got["rows"] == [] and got["meta"]["failed"] == "filters" and not RD._SET_CACHE
+
+    _setup(monkeypatch, head, [])
+
+    def broken(groups, **k):
+        k["_meta"]["failed"] = True
+        return [], False
+    monkeypatch.setattr(bankiru_fts, "search_near", broken)
+    got = RD.search_set("навязали страховку", "Сбербанк")
+    assert got["meta"]["words_failed"] is True and [r["url"] for r in got["rows"]] == ["s1"]
+    assert not RD._SET_CACHE
+    # смысл не проверен моделью — тоже не кэшируем
+    _setup(monkeypatch, head, [{"url": "w1", "date": "2026-10-01"}])
+    monkeypatch.setattr(RD, "_verify_sense", lambda q, rows: (rows, False))
+    got = RD.search_set("навязали страховку", "Сбербанк")
+    assert got["meta"]["sense_checked"] is False and not RD._SET_CACHE
+
+
+def test_phrases_go_to_sql_phrase_search(monkeypatch):
+    _setup(monkeypatch, [], [])
+    seen = {}
+
+    def fake_phrases(phrases, **k):
+        seen["p"] = phrases
+        k["_meta"]["stop_phrases"] = ["не без"]
+        return [{"url": "p1", "date": "2026-10-01"}], False
+    monkeypatch.setattr(bankiru_fts, "search_phrases", fake_phrases)
+    monkeypatch.setattr(bankiru_fts, "search_near", lambda *a, **k: (_ for _ in ()).throw(AssertionError))
+    got = RD.search_set('"переводы самому себе" "не без"', "Сбербанк")
+    assert seen["p"] == ["переводы самому себе", "не без"]
+    assert [r["url"] for r in got["rows"]] == ["p1"] and got["meta"]["stop_phrases"] == ["не без"]
+
+
+def test_signal_week_filter():
+    """Неделя всплеска (month=sig:<день>) — те же жалобы, что в числе сигнала:
+    7 дней по этот день и события не старше 60 дней."""
+    p: dict = {}
+    c = RD._month_clause("i", "sig:2026-10-31", p)
+    assert p["sig_d"] == "2026-10-31"
+    assert "i.dt >= CAST(:sig_d AS date) - 6" in c and "i.dt < CAST(:sig_d AS date) + 1" in c
+    assert "i.ev_date >= i.dt::date - 60" in c
+    assert RD._month_clause("i", "sig:2026-10", {}) == " AND false"
+    assert RD._month_clause("i", "2026-10", {"x": 1}).startswith(" AND date_trunc")
+    from bank_audit.ai import agent_tools as T
+    link = T.link_reviews("Сбербанк", None, "card_block", 7, week_end="2026-10-31")
+    assert "month=sig%3A2026-10-31" in link and "days=" not in link and "theme=card_block" in link

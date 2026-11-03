@@ -90,9 +90,12 @@ def today_msk() -> _dt.date:
 
 def link_reviews(bank: str | None = SBER, product: str | None = None,
                  theme: str | None = None, days: int | None = None,
-                 city: str | None = None, q: str | None = None) -> str:
+                 city: str | None = None, q: str | None = None,
+                 week_end: str | None = None) -> str:
+    """week_end — ссылка на жалобы недели всплеска (те же, что в его числе), а не на «7 дней»."""
     p = {"bank": bank if bank and bank != SBER else None, "product": product,
-         "theme": theme, "days": days, "city": city, "q": q,
+         "theme": theme, "days": None if week_end else days, "city": city, "q": q,
+         "month": f"sig:{week_end}" if week_end else None,
          "tab": "complaints" if (theme or q or city) else None}
     qs = urlencode({k: v for k, v in p.items() if v})
     return "#reviews" + ("?" + qs if qs else "")
@@ -131,7 +134,7 @@ def _q(sql: str, params: dict | None = None) -> list[dict]:
         return [dict(r) for r in s.execute(text(sql), params or {}).mappings().all()]
 
 
-def _signal(s: dict, bank: str, product: str | None) -> dict:
+def _signal(s: dict, bank: str, product: str | None, week_end: str | None = None) -> dict:
     g = s.get("geo") or {}
     return {"theme": s.get("key"), "label": s.get("label"), "week": s.get("week"),
             "prev_week": s.get("prev_week"), "norm_per_week": s.get("baseline_week"),
@@ -143,7 +146,7 @@ def _signal(s: dict, bank: str, product: str | None) -> dict:
             "two_weeks_in_a_row": s.get("sustained"),
             "norm_before_spike": s.get("baseline_before"),
             "top_city": g.get("city"), "top_city_share_pct": g.get("share"),
-            "link": link_reviews(bank, product, s.get("key"), 7)}
+            "link": link_reviews(bank, product, s.get("key"), 7, week_end=week_end)}
 
 
 def _complaint(it: dict, text_chars: int = 700) -> dict:
@@ -197,7 +200,7 @@ def tool_complaint_signals(bank: str = SBER, product: Product | None = None) -> 
     keys = {s.get("key") for s in ws.get("signals") or []}
     sigs = []
     for i, s in enumerate(ws.get("signals") or []):
-        item = _signal(s, bank, product)
+        item = _signal(s, bank, product, ws.get("week_end"))
         if i < 3:
             # Жалобы, из которых сложился всплеск: причина почти всегда видна в
             # них самих (одно событие, продавец, сервис), а не в названии темы.
@@ -227,7 +230,7 @@ def tool_complaint_theme(theme: Theme, bank: str = SBER, product: Product | None
                     if s.get("key") == theme), None)
     res: dict = {"theme": theme, "label": _cb.ISSUES[theme][0], "bank": bank,
                  "product": product, "days": days, "week_end": ws.get("week_end"),
-                 "weekly_signal": _signal(sig, bank, product) if sig else None}
+                 "weekly_signal": _signal(sig, bank, product, ws.get("week_end")) if sig else None}
     if days <= 7:
         # ровно те жалобы, из которых сложился недельный счётчик
         ev = rd.signal_evidence(bank, theme, product, days, 40) or []
