@@ -923,3 +923,137 @@ def search_near(groups: list[list[str]], *, bank: str | None = None, city: str |
         return [], False
     rows = sorted(found.values(), key=lambda r: (-r["rank"], r["date"] or ""))
     return rows, capped
+
+
+# ── «Слова рядом» целиком в SQL: набор без потолка, точный счёт, страница ──────
+# search_near проверяет окно в Python по первым NEAR_CAP кандидатам: у частых
+# запросов хвост отрезается по рангу ещё до фильтров вкладки, а счётчик и страницы
+# считаются по обрезку. Здесь та же мера, но в базе: GIN-префильтр тем же tsquery,
+# окно — функцией al_near (migrations/106_al_near.sql; для одной и двух основ — сам
+# tsquery, это быстрее и равносильно), фильтры вкладки (extra_sql) — до LIMIT, счёт —
+# count(*) по тому же набору (04.11.2026).
+_NEAR_SQL_OK = False
+
+
+def near_sql_ready() -> bool:
+    """Накатана ли al_near. Миграции на проде идут руками — до наката вызывающий
+    остаётся на search_near; положительный ответ запоминается, отрицательный нет."""
+    global _NEAR_SQL_OK
+    if not _NEAR_SQL_OK:
+        try:
+            with db.session() as s:
+                _NEAR_SQL_OK = bool(s.execute(text(
+                    "SELECT to_regprocedure('al_near(tsvector,text[],integer,integer)') IS NOT NULL"
+                )).scalar())
+        except Exception:  # noqa: BLE001
+            return False
+    return _NEAR_SQL_OK
+
+
+def _near_phrase(keys: list[str], span: int) -> str:
+    """Окно двух основ как фразовый tsquery: «a <d> b» при d = 0..span в обе стороны,
+    с тем же правилом начала слова, что у al_near. Мера та же, но её считает C-код
+    поиска, а не plpgsql — в 6 раз быстрее (замер 04.11.2026). Для трёх основ
+    вариантов уже 3!·C(span+2, 2) — 90 при span 4, и выигрыш пропадает."""
+    a, b = ("'" + x + "'" + (":*" if len(x) >= _PREFIX_MIN else "") for x in keys)
+    return " | ".join([f"{a} <{d}> {b}" for d in range(span + 1)]
+                      + [f"{b} <{d}> {a}" for d in range(1, span + 1)])
+
+
+def search_near_sql(groups: list[list[str]], *, bank: str | None = None, city: str | None = None,
+                    month: str | None = None, since_ts=None, spans: list[int] | None = None,
+                    extra_sql: str = "", params: dict | None = None, limit: int | None = None,
+                    offset: int = 0, count: bool = False, gap: int = NEAR_GAP,
+                    _meta: dict | None = None) -> list[dict] | int:
+    """Отзывы, где для какой-нибудь группы все её слова стоят рядом, — как search_near,
+    но целиком в базе и без потолка. count=True — точное число таких отзывов, иначе
+    строки той же формы, что у search_near, по rank убыв., dt убыв. (limit/offset —
+    страница; с _meta в _meta["total"] ляжет и точный счёт). extra_sql — доп. условия
+    на f.* (параметры — в params), применяются до LIMIT. Сбой базы — исключение, а не
+    пустой список: «слов нет» и «поиск не отработал» аудитор должен различать."""
+    spans = list(spans or [])
+    pairs = [([w for w in g if w.strip()], spans[k] if k < len(spans) else 0)
+             for k, g in enumerate(groups) if g]
+    pairs = [(g, n) for g, n in pairs if g]
+    if _meta is not None:
+        _meta["total"] = 0
+    if not pairs:
+        return 0 if count else []
+    where, p = _filters(bank, city, month, since_ts)
+    clash = set(params or {}) & (set(p) | {"_npmin", "_nlim", "_noff"})
+    if clash or any(k.startswith(("_nq", "_nk", "_ns", "_nn")) for k in (params or {})):
+        raise ValueError("search_near_sql: имена параметров заняты: "
+                         f"{sorted(clash) or 'префикс _n'}")
+    p.update(params or {})
+    p["_npmin"] = _PREFIX_MIN
+    try:
+        with db.session() as s:
+            # лексемы всех групп — одним запросом (в search_near — по запросу на группу)
+            lexs_all = s.execute(text(
+                "SELECT tsvector_to_array(to_tsvector(CAST('russian' AS regconfig), x.t))"
+                "  FROM unnest(CAST(:ts AS text[])) WITH ORDINALITY AS x(t, i) ORDER BY x.i"),
+                {"ts": [" ".join(g) for g, _n in pairs]}).scalars().all()
+            used: list[tuple[list[str], str]] = []
+            for (g, n), lexs in zip(pairs, lexs_all):
+                lexs = list(lexs or [])
+                if not lexs:            # одни стоп-слова — группа ничего не ищет
+                    continue
+                k = len(used)
+                keys = [x for x in dict.fromkeys(stem_key(x) for x in lexs) if x]
+                # префильтр — тот же tsquery, что в search_near; окно — как near_window
+                p[f"_nq{k}"] = " & ".join(
+                    "'" + stem_key(x).replace("'", "''") + "'"
+                    + (":*" if len(x) >= _PREFIX_MIN else "") for x in dict.fromkeys(lexs))
+                span = max(len(keys), max(len(g), n)) - 1 + gap
+                plain = all(x.isalpha() for x in keys)
+                if len(keys) == 1 and plain and PREFIX >= _PREFIX_MIN:
+                    # одна основа: окно не нужно — у tsquery то же правило начала слова,
+                    # он уже вся мера; у частого слова десятки тысяч кандидатов, и al_near
+                    # на каждом стоила бы секунды
+                    near = ""
+                elif len(keys) == 2 and plain and 0 <= span <= 40:
+                    p[f"_nn{k}"] = _near_phrase(keys, span)
+                    near = f" AND f.tsv @@ to_tsquery(CAST('simple' AS regconfig), :_nn{k})"
+                else:
+                    p[f"_nk{k}"], p[f"_ns{k}"] = keys, span
+                    near = f" AND al_near(f.tsv, CAST(:_nk{k} AS text[]), :_ns{k}, :_npmin)"
+                used.append((lexs, near))
+            if not used:
+                return 0 if count else []
+            tq = [f"to_tsquery(CAST('simple' AS regconfig), :_nq{k})" for k in range(len(used))]
+            pre = " OR ".join(f"f.tsv @@ {q}" for q in tq)
+            # номер первой подошедшей группы — от него ранг и terms, как в search_near;
+            # OFFSET 0 не даёт планировщику развернуть подзапрос и посчитать окно
+            # дважды (в фильтре g IS NOT NULL и в выдаче)
+            which = " ".join(f"WHEN f.tsv @@ {q}{used[k][1]} THEN {k}" for k, q in enumerate(tq))
+            extra = f" AND ({extra_sql})" if (extra_sql or "").strip() else ""
+            inner = f"""SELECT f.url, f.review_id, f.source, f.bank, f.product, f.dt, f.city, f.tsv,
+                               CASE {which} END AS g
+                          FROM review_index f
+                         WHERE ({pre}){where}{extra}
+                        OFFSET 0"""
+            total = f"SELECT count(*) FROM ({inner}) m WHERE m.g IS NOT NULL"
+            if count:
+                return int(s.execute(text(total), p).scalar() or 0)
+            p.update({"_nlim": limit, "_noff": max(0, int(offset or 0))})
+            rank = "CASE m.g " + " ".join(f"WHEN {k} THEN {q}" for k, q in enumerate(tq)) + " END"
+            # _meta: счёт тем же проходом (окно над набором до LIMIT) — второй запрос
+            # count=True заново прогнал бы окно по всем кандидатам
+            tot = ", count(*) OVER () AS total" if _meta is not None else ""
+            rows = s.execute(text(f"""
+                SELECT m.url, m.review_id, m.source, m.bank, m.product, m.dt, m.city, m.g,
+                       ts_rank_cd(m.tsv, {rank}) AS rank{tot}
+                  FROM ({inner}) m
+                 WHERE m.g IS NOT NULL
+                 ORDER BY rank DESC, m.dt DESC NULLS LAST, m.url
+                 LIMIT :_nlim OFFSET :_noff"""), p).mappings().all()
+            if _meta is not None:
+                _meta["total"] = (int(rows[0]["total"]) if rows else
+                                  int(s.execute(text(total), p).scalar() or 0) if p["_noff"] else 0)
+    except Exception as e:  # noqa: BLE001
+        log.warning("bankiru_fts: поиск «рядом» в SQL упал (%s: %s)", type(e).__name__, e)
+        raise
+    return [{"url": r["url"], "review_id": int(r["review_id"]), "source": r["source"],
+             "bank": r["bank"], "product": r["product"],
+             "date": r["dt"].date().isoformat() if r["dt"] else None,
+             "city": r["city"], "rank": float(r["rank"]), "terms": used[r["g"]][0]} for r in rows]
