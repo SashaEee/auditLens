@@ -527,11 +527,16 @@ def lite(tmp_path, monkeypatch):
             CREATE TABLE review_summary_vec (url TEXT PRIMARY KEY, vec TEXT NOT NULL);
             CREATE TABLE review_annotation (url TEXT, schema_version TEXT, summary TEXT,
                                             PRIMARY KEY (url, schema_version));
+            CREATE TABLE review_story_pair (a TEXT NOT NULL, b TEXT NOT NULL, same BOOLEAN NOT NULL,
+                                            model TEXT, at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                            PRIMARY KEY (a, b));
         """)
         raw.commit()
     finally:
         raw.close()
     monkeypatch.setattr(db, "_Session", sessionmaker(bind=eng, expire_on_commit=False, future=True))
+    # склейка с моделью — только там, где тест подаёт свою подделку
+    monkeypatch.setattr(RS, "MERGE", False)
 
     def put(rows):
         """rows: (url, bank, kind, issue, dt, vec, summary, city)."""
@@ -1192,12 +1197,14 @@ def pgs(monkeypatch):
     raw = eng.raw_connection()
     try:
         cur = raw.cursor()
-        for sql in (_PG_BASE, MIG.read_text(encoding="utf-8"), _product_fn()):
+        for sql in (_PG_BASE + "DROP TABLE IF EXISTS review_story_pair;", MIG.read_text(encoding="utf-8"),
+                    _product_fn(), (ROOT / "migrations" / "109_review_story_pair.sql").read_text(encoding="utf-8")):
             cur.execute(sql)
         raw.commit()
     finally:
         raw.close()
     monkeypatch.setattr(db, "_Session", sessionmaker(bind=eng, expire_on_commit=False, future=True))
+    monkeypatch.setattr(RS, "MERGE", False)
 
     def put(rows):
         """rows: (url, issue, dt, vec, summary, product, slices) — все жалобы банка BANK."""
@@ -1381,3 +1388,115 @@ def test_new_badge_only_for_young_stories():
     young = {"first": now - timedelta(days=5), "n": 5, "m": []}
     assert RS._badges(old, ev, now) == []
     assert [b["kind"] for b in RS._badges(young, ev, now)] == ["appeared"]
+
+
+
+# ── Склейка пограничных групп (5.2, 04.11.2026) ─────────────────────────────
+
+def _three_groups(sp):
+    """A1 и A2 — одна история, порванная порогом (общая ось, своя доля у каждой
+    половины); C — соседняя история, похожая на A1 общей темой."""
+    ids, vecs, groups = [], [], []
+    for name, coef in (("A1", {"A": 0.88, "a1": 0.38}), ("A2", {"A": 0.88, "a2": 0.38}),
+                       ("C", {"A": 0.80, "c": 0.55})):
+        mem = []
+        for j in range(4):
+            pid = sp.add(f"{name}_{j}", **coef, **{f"{name}_{j}_own": 0.28})
+            mem.append(pid)
+        groups.append(mem)
+        ids += mem
+    X = sp.matrix(ids)
+    return ids, X, groups
+
+
+def test_merge_borderline_groups_without_chaining():
+    sp = Space(dim=64)
+    ids, X, raw = _three_groups(sp)
+    cl = RS.cluster(X, ids, sim=0.90, min_size=3)                # порог рвёт всё на группы
+    assert len(cl) == 3
+    pairs = RS.borderline_pairs(cl, ids, X, lo=0.6)
+    assert len(pairs) == 3 and pairs[0][2] >= pairs[-1][2]
+    by = {frozenset(g.ids): k for k, g in enumerate(cl)}
+    k1, k2, kc = (by[frozenset(m)] for m in raw)
+    key = lambda x, y: (min(x, y), max(x, y))                   # noqa: E731
+    same = {key(k1, k2): True, key(k1, kc): False, key(k2, kc): True}
+    out, merges = RS.merge_groups(cl, ids, X, pairs, same, lo=0.6)
+    # A1+A2 склеены; C с ними не склеен: A1 и C признаны разными — цепочки нет
+    assert merges == 1 and sorted(len(g) for g in out) == [4, 8]
+    big = next(g for g in out if len(g) == 8)
+    assert set(big.ids) == set(raw[0]) | set(raw[1]) and big.medoid in big.ids
+    assert len(big.sims) == 8 and 0 < big.cohesion < 1
+    # без решений «одна история» — ничего не меняется
+    assert RS.merge_groups(cl, ids, X, pairs, {})[1] == 0
+
+
+def test_merge_step_caches_decisions(lite):
+    put, q, eng = lite
+    sp = Space(dim=64)
+    ids, X, raw = _three_groups(sp)
+    rows = []
+    for k, u in enumerate(ids):
+        rows.append((f"https://r/{u}", BANK, "complaint", "fees", NOW - timedelta(days=1 + k % 9),
+                     X[k], f"изложение {u}", None))
+    put(rows)
+    calls = []
+
+    def judge(a, b):
+        calls.append((a[0], b[0]))
+        ta, tb = a[0].split()[1][:2], b[0].split()[1][:2]
+        return {ta, tb} == {"A1", "A2"}
+    judge.model = "fake"
+    urls = [f"https://r/{u}" for u in ids]
+    cl = RS.cluster(X, urls, sim=0.90, min_size=3)
+    out, st = RS._merge_step(BANK, cl, urls, X, None, judge, lo=0.6)
+    assert st["asked"] == 3 and st["merges"] == 1 and len(out) == 2
+    assert q("SELECT count(*) FROM review_story_pair")[0][0] == 3
+    # второй прогон — из кэша, модель не спрашивается
+    calls.clear()
+    out2, st2 = RS._merge_step(BANK, cl, urls, X, None, judge, lo=0.6)
+    assert not calls and st2["cached"] == 3 and len(out2) == 2
+    # модель не ответила — пара не склеивается и в кэш не пишется
+    with eng.begin() as c:
+        from sqlalchemy import text
+        c.execute(text("DELETE FROM review_story_pair"))
+    out3, st3 = RS._merge_step(BANK, cl, urls, X, None, lambda a, b: None, lo=0.6)
+    assert st3["failed"] == 3 and len(out3) == 3
+    assert q("SELECT count(*) FROM review_story_pair")[0][0] == 0
+
+
+def test_run_merges_split_story(lite, monkeypatch):
+    put, q, eng = lite
+    sp = Space(dim=64)
+    ids, X, raw = _three_groups(sp)
+    put([(f"https://r/{u}", BANK, "complaint", "fees", NOW - timedelta(days=1 + k % 9), X[k],
+          f"изложение {u}", None) for k, u in enumerate(ids)])
+    monkeypatch.setattr(RS, "MERGE_LO", 0.6)
+
+    def judge(a, b):
+        ta, tb = a[0].split()[1][:2], b[0].split()[1][:2]
+        return {ta, tb} == {"A1", "A2"}
+    st = RS.run(BANK, 90, now=NOW, sim=0.90, judge=judge)
+    assert st["merge"]["merges"] == 1 and st["clusters"] == 2 and st["appeared"] == 2
+    # без модели — прежние три сюжета (новый банк, чтобы не путать с прогоном выше)
+    st0 = RS.run(BANK, 90, now=NOW + timedelta(days=1), sim=0.90, judge=None)
+    assert "merge" not in st0 and st0["clusters"] == 3
+
+
+
+def test_pg_merge_step_writes_and_reads_decisions(pgs):
+    put, q = pgs
+    sp = Space(dim=64)
+    ids, X, raw = _three_groups(sp)
+    put([(f"https://r/{u}", "fees", NOW - timedelta(days=1 + k % 9), X[k], f"изложение {u}", None, None)
+         for k, u in enumerate(ids)])
+    urls = [f"https://r/{u}" for u in ids]
+    cl = RS.cluster(X, urls, sim=0.90, min_size=3)
+
+    def judge(a, b):
+        return {a[0].split()[1][:2], b[0].split()[1][:2]} == {"A1", "A2"}
+    judge.model = "fake"
+    out, st = RS._merge_step(BANK, cl, urls, X, None, judge, lo=0.6)
+    assert (st["asked"], st["merges"], len(out)) == (3, 1, 2)
+    assert q("SELECT count(*), count(*) FILTER (WHERE same) FROM review_story_pair")[0] == (3, 1)
+    out2, st2 = RS._merge_step(BANK, cl, urls, X, None, lambda a, b: 1 / 0, lo=0.6)
+    assert st2["cached"] == 3 and st2["asked"] == 0 and len(out2) == 2

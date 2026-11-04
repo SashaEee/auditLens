@@ -277,6 +277,248 @@ def _prune(block, group: list[int], thr: float) -> tuple[list[int], int, list[in
     return [], -1, sorted(out + keep)
 
 
+# ── Склейка пограничных групп (план 04.11.2026, 5.2) ────────────────────────
+# Порог 0,84 рвёт одну историю на части: у Сбера «лишили льготы семейной ипотеки,
+# 6 % → 16 %» и «… 6 % → 18,5 %, требуют вернуть льготную» — три сюжета со средним
+# сходством 0,82–0,83. А «ставку по ипотеке подняли после отказа от подписки» и
+# «… после смены страховки» при 0,81 — разные истории: сходство изложений их не
+# различает. Поэтому пары групп со средним сходством от MERGE_LO решает модель
+# («одна ли это история»), решение хранится по паре медоидов (review_story_pair,
+# миграция 109) — суточный прогон не спрашивает заново, и сюжеты не склеиваются и
+# не расклеиваются от прогона к прогону. Склейка без цепочек: компоненты сливаются,
+# только если ни одна их пара не признана разными и среднее сходство не ниже MERGE_LO.
+#
+# Замер 04.11.2026: 310 пар групп шести крупнейших банков, два слепых разметчика и
+# арбитр (согласие 93,5 %). Доля «одной истории»: 0,84+ — 80 %, 0,82–0,84 — 77 %,
+# 0,80–0,82 — 72 %, 0,78–0,80 — 66 %, 0,75–0,78 — 40 %, 0,70–0,75 — 10 %. Решающие
+# от 0,75: gemini-3.1-pro точность 0,95 / полнота 0,86; flash-lite 0,84 / 0,93 (лишние
+# склейки); реранкер ~0,7 / 0,9+; порог по сходству — не выше 0,78. Ниже 0,75 и pro
+# склеивает больше лишнего, чем нужного (1 к 3) — граница 0,76. ≈0,47 ₽ за пару.
+MERGE = os.getenv("REVIEW_STORIES_MERGE", "1") == "1"
+MERGE_LO = float(os.getenv("REVIEW_STORIES_MERGE_LO", "0.76"))
+MERGE_MODEL = "google/gemini-3.1-pro-preview"     # по умолчанию; env REVIEW_STORIES_MERGE_MODEL
+MERGE_MAX_ASK = int(os.getenv("REVIEW_STORIES_MERGE_MAX_ASK", "150"))   # новых вопросов на банк
+MERGE_TIMEOUT_S = float(os.getenv("REVIEW_STORIES_MERGE_TIMEOUT_S", "45"))
+MERGE_SUMMARIES = 4
+
+MERGE_SYSTEM = (
+    "Ты помогаешь внутреннему аудиту банка собирать жалобы клиентов в «сюжеты» — повторяющиеся "
+    "ситуации. Тебе дают две группы жалоб на один банк (краткие изложения, самые типичные первыми). "
+    "Реши: это одна история (склеить в один сюжет) или разные. ОДНА — то же действие или бездействие "
+    "банка в той же ситуации с тем же продуктом и по той же причине; различаются только суммы, даты, "
+    "город, формулировки, требования клиента. РАЗНЫЕ — разные действия банка, причины или механизмы, "
+    "даже при одном продукте (например, ставку по ипотеке повысили после отказа от подписки и после "
+    "смены страховой — разные истории), или одна тема, но разные ситуации (блокировка карты по 161-ФЗ "
+    "и блокировка счёта по 115-ФЗ). Смотри на суть всех изложений группы. Сомневаешься — разные. "
+    'Ответ строго JSON: {"same": true} или {"same": false}.')
+
+Judge = Callable[[Sequence[str], Sequence[str]], "bool | None"]
+
+
+def merge_prompt(a: Sequence[str], b: Sequence[str]) -> str:
+    return ("Группа A:\n" + "\n".join("- " + t for t in a) + "\n\nГруппа B:\n"
+            + "\n".join("- " + t for t in b))
+
+
+def _pair_key(ma, mb) -> tuple:
+    return (ma, mb) if str(ma) <= str(mb) else (mb, ma)
+
+
+def borderline_pairs(groups: Sequence[Cluster], ids: Sequence, X, *, lo: float = MERGE_LO
+                     ) -> list[tuple[int, int, float]]:
+    """Пары групп со средним сходством участников ≥ lo, по убыванию. Средняя связь
+    двух групп нормированных векторов = скалярное произведение их средних."""
+    import numpy as np
+
+    if len(groups) < 2:
+        return []
+    pos = {u: k for k, u in enumerate(ids)}
+    Xn = np.asarray(X, dtype=np.float32)
+    Xn = Xn / (np.linalg.norm(Xn, axis=1, keepdims=True) + 1e-9)
+    M = np.vstack([Xn[[pos[u] for u in g.ids]].mean(axis=0) for g in groups])
+    L = M @ M.T
+    out = [(a, b, float(L[a, b])) for a in range(len(groups)) for b in range(a + 1, len(groups))
+           if L[a, b] >= lo]
+    out.sort(key=lambda t: (-t[2], t[0], t[1]))
+    return out
+
+
+def merge_groups(groups: Sequence[Cluster], ids: Sequence, X, pairs: Sequence[tuple[int, int, float]],
+                 same: Mapping[tuple[int, int], bool], *, lo: float = MERGE_LO,
+                 issue_of: Mapping | Callable | None = None) -> tuple[list[Cluster], int]:
+    """Склейка групп по решениям same[(a, b)] (a < b, True — одна история). От самых
+    похожих пар: две компоненты сливаются, если ни одна их пара не признана разными
+    (False) и среднее сходство компонент не ниже lo — цепочка «A как B, B как C» не
+    склеивает A с C, если A и C не похожи. Возвращает группы (склеенные — с новым
+    медоидом) и число склеек."""
+    import numpy as np
+
+    n = len(groups)
+    if n < 2 or not any(same.values()):
+        return list(groups), 0
+    pos = {u: k for k, u in enumerate(ids)}
+    Xn = np.asarray(X, dtype=np.float32)
+    Xn = Xn / (np.linalg.norm(Xn, axis=1, keepdims=True) + 1e-9)
+    idx = [[pos[u] for u in g.ids] for g in groups]
+    M = np.vstack([Xn[i].mean(axis=0) for i in idx])
+    size = np.asarray([len(i) for i in idx], dtype=np.float64)
+    root = list(range(n))
+    comp = {k: [k] for k in range(n)}
+
+    def find(k: int) -> int:
+        while root[k] != k:
+            root[k] = root[root[k]]
+            k = root[k]
+        return k
+
+    def link(A: list[int], B: list[int]) -> float:
+        ma = (M[A] * size[A][:, None]).sum(axis=0) / size[A].sum()
+        mb = (M[B] * size[B][:, None]).sum(axis=0) / size[B].sum()
+        return float(ma @ mb)
+
+    merges = 0
+    for a, b, _l in pairs:
+        if not same.get((a, b)):
+            continue
+        ra, rb = find(a), find(b)
+        if ra == rb:
+            continue
+        A, B = comp[ra], comp[rb]
+        if any(same.get((min(x, y), max(x, y))) is False for x in A for y in B):
+            continue
+        if link(A, B) < lo:
+            continue
+        root[rb] = ra
+        comp[ra] = A + B
+        del comp[rb]
+        merges += 1
+    if not merges:
+        return list(groups), 0
+    out = []
+    for r, ks in comp.items():
+        if len(ks) == 1:
+            out.append(groups[ks[0]])
+            continue
+        mem = sorted({u for k in ks for u in groups[k].ids})
+        V = Xn[[pos[u] for u in mem]]
+        S = V @ V.T
+        mi = int(np.argmax(S.sum(axis=1)))
+        raw = S[:, mi]
+        rest = [float(v) for k, v in enumerate(raw) if k != mi]
+        cnt = Counter(x for u in mem if (x := _issue(issue_of, u)) is not None)
+        if not cnt:
+            cnt = Counter(groups[k].issue for k in ks if groups[k].issue)
+        main = None
+        if cnt:
+            top = max(cnt.values())
+            tied = sorted(x for x, v in cnt.items() if v == top)
+            mine = _issue(issue_of, mem[mi])
+            main = mine if mine in tied else tied[0]
+        out.append(Cluster(ids=tuple(mem), medoid=mem[mi],
+                           sims=tuple(round(float(v), 4) for v in raw), issue=main,
+                           cohesion=round(sum(rest) / len(rest), 4) if rest else 1.0))
+    out.sort(key=lambda c: (-len(c.ids), c.ids[0]))
+    return out, merges
+
+
+def _default_judge() -> Judge | None:
+    """Модель «одна ли история»; None — ключа нет. Сбой вызова — None (пара не
+    склеивается и спрашивается в следующий прогон)."""
+    from ..ai.analyst import LLM_API_KEY, LLM_BASE_URL
+    if not LLM_API_KEY:
+        return None
+    from openai import OpenAI
+    model = os.getenv("REVIEW_STORIES_MERGE_MODEL") or MERGE_MODEL
+    client = OpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY, timeout=MERGE_TIMEOUT_S,
+                    max_retries=1)
+
+    def judge(a: Sequence[str], b: Sequence[str]) -> bool | None:
+        try:
+            r = client.chat.completions.create(
+                model=model, temperature=0, max_tokens=2000,      # pro рассуждает до ответа
+                response_format={"type": "json_object"},
+                messages=[{"role": "system", "content": MERGE_SYSTEM},
+                          {"role": "user", "content": merge_prompt(a, b)}])
+            from ..ai.llm_utils import _loose_json_loads
+            j = _loose_json_loads(r.choices[0].message.content or "") or {}
+            v = j.get("same") if isinstance(j, dict) else None
+            return v if isinstance(v, bool) else None
+        except Exception as e:  # noqa: BLE001
+            log.info("сюжеты: склейка — модель не ответила (%s)", type(e).__name__)
+            return None
+    judge.model = model  # type: ignore[attr-defined]
+    return judge
+
+
+def _merge_step(bank: str, groups: list[Cluster], ids: Sequence, X, issue_of, judge: Judge,
+                *, lo: float | None = None, max_ask: int | None = None) -> tuple[list[Cluster], dict]:
+    """Пограничные пары → решения (кэш review_story_pair, остальное — модели, не больше
+    max_ask новых вопросов за прогон) → склейка. Без таблицы решений склейки нет:
+    иначе модель спрашивалась бы заново каждые сутки."""
+    lo = MERGE_LO if lo is None else lo
+    max_ask = MERGE_MAX_ASK if max_ask is None else max_ask
+    st = {"pairs": 0, "cached": 0, "asked": 0, "same": 0, "failed": 0, "merges": 0}
+    pairs = borderline_pairs(groups, ids, X, lo=lo)
+    st["pairs"] = len(pairs)
+    if not pairs:
+        return groups, st
+    keys = {(a, b): _pair_key(groups[a].medoid, groups[b].medoid) for a, b, _l in pairs}
+    try:
+        with db.session() as s:
+            got = s.execute(text("""SELECT a, b, same FROM review_story_pair
+                                    WHERE a IN :a"""
+                                 ).bindparams(bindparam("a", expanding=True)),
+                            {"a": sorted({k[0] for k in keys.values()})}).all()
+    except Exception as e:  # noqa: BLE001 — миграция 109 ещё не накатана
+        log.info("сюжеты %s: склейка пропущена (%s)", bank, type(e).__name__)
+        st["skipped"] = "нет таблицы решений"
+        return groups, st
+    known = {(a, b): bool(v) for a, b, v in got}
+    same: dict[tuple[int, int], bool] = {}
+    todo = []
+    for ab, key in keys.items():
+        if key in known:
+            same[ab] = known[key]
+            st["cached"] += 1
+        elif len(todo) < max_ask:
+            todo.append(ab)
+    if todo:
+        want = sorted({u for ab in todo for g in (groups[ab[0]], groups[ab[1]])
+                       for _s, u in sorted(zip(g.sims, g.ids), reverse=True)[:MERGE_SUMMARIES]})
+        with db.session() as s:
+            summ = dict(s.execute(text("""SELECT url, summary FROM review_annotation
+                                          WHERE schema_version = :sv AND url IN :u"""
+                                       ).bindparams(bindparam("u", expanding=True)),
+                                  {"sv": rd._ann_schema(), "u": want}).all())
+
+        def texts(g: Cluster) -> list[str]:
+            top = sorted(zip(g.sims, g.ids), reverse=True)[:MERGE_SUMMARIES]
+            return [t for _s, u in top if (t := (summ.get(u) or "").strip())]
+
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            res = list(ex.map(lambda ab: judge(texts(groups[ab[0]]), texts(groups[ab[1]]))
+                              if texts(groups[ab[0]]) and texts(groups[ab[1]]) else None, todo))
+        fresh = []
+        for ab, v in zip(todo, res):
+            if v is None:
+                st["failed"] += 1
+                continue
+            same[ab] = v
+            st["asked"] += 1
+            fresh.append({"a": keys[ab][0], "b": keys[ab][1], "s": v,
+                          "m": getattr(judge, "model", None)})
+        if fresh:
+            with db.session() as s:
+                s.execute(text("""INSERT INTO review_story_pair (a, b, same, model)
+                                  VALUES (:a, :b, :s, :m) ON CONFLICT (a, b) DO NOTHING"""), fresh)
+    st["same"] = sum(1 for v in same.values() if v)
+    if len(pairs) > len(same) + st["failed"]:
+        st["deferred"] = len(pairs) - len(same) - st["failed"]
+    out, st["merges"] = merge_groups(groups, ids, X, pairs, same, lo=lo, issue_of=issue_of)
+    return out, st
+
+
 # ── Сопоставление с прошлым прогоном ────────────────────────────────────────
 
 @dataclass
@@ -801,15 +1043,19 @@ def _open_stories(s, bank: str, since: datetime) -> tuple[dict[int, set], dict[i
     return dict(members), status
 
 
+_DEFAULT = object()
+
+
 def run(bank: str, since_days: int = 90, *, now: datetime | None = None, max_n: int = MAX_N,
         sim: float = SIM, issue_penalty: float = ISSUE_PENALTY,
-        min_size: int = MIN_SIZE) -> dict:
+        min_size: int = MIN_SIZE, judge=_DEFAULT) -> dict:
     """Пакетный проход по банку: жалобы окна с векторами изложений → группы →
     сопоставление с прежними сюжетами → запись сюжетов, состава и событий.
 
     bank — каноническое имя, как в review_index.bank. Векторы досчитывает
-    reviews_work.embed_summaries — run их не считает и в сеть не ходит; звать
-    после него. Модели нет: у новых сюжетов title пустой до шага названий.
+    reviews_work.embed_summaries — run их не считает; звать после него. Модель —
+    только у склейки пограничных групп (judge; по умолчанию лёгкая модель, без ключа
+    или с REVIEW_STORIES_MERGE=0 — без склейки), названия — отдельный шаг.
 
     Жалоба внутри окна принадлежит ровно одному действующему сюжету: ушедшие из
     группы удаляются из состава; ушедшие из окна остаются историей. Банк
@@ -828,6 +1074,10 @@ def run(bank: str, since_days: int = 90, *, now: datetime | None = None, max_n: 
         return stats
     groups = cluster(X, ids, sim=sim, issue_of=issue, issue_penalty=issue_penalty,
                      max_n=max_n, min_size=min_size)
+    if judge is _DEFAULT:
+        judge = _default_judge() if MERGE else None
+    if judge is not None and len(groups) > 1:
+        groups, stats["merge"] = _merge_step(bank, groups, ids, X, issue, judge)
     del X
     stats["clusters"] = len(groups)
     stats["clustered"] = sum(len(g) for g in groups)
