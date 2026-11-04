@@ -585,6 +585,7 @@ def metrics(days: int = 14, exclude: list[str] | None = None) -> dict:
             "collect": _collect_health(days),
             "search": _search_health(days),
             "reviews_search": _reviews_search_health(days, ex),
+            "reviews_pipeline": _reviews_pipeline(),
             "news_quality": _news_quality(days, ex),
             "review_sources": _review_sources(),
             "signal_journal": _signal_journal(),
@@ -972,6 +973,46 @@ def _ingest_health(days: int) -> dict:
            AND created_at > now() - (:days || ' days')::interval
          GROUP BY 1 ORDER BY 1""", {"days": days})
     return {"queue": q, "per_day": [{**r, "d": str(r["d"])} for r in hist]}
+
+
+def _reviews_pipeline() -> dict:
+    """Сторож конвейера «Аудита отзывов» (план 04.11, волна 4): разметка жалоб не
+    отстаёт, срезы размечены, отметки «не относится» не висят, склейка копий и
+    «Сюжеты» проходят по расписанию. Каждый пункт — отдельно: сбой одного не прячет
+    остальные."""
+    out: dict = {}
+    try:
+        out["pending_old"] = int(_rows("""
+            SELECT count(*) AS n FROM review_index i
+             WHERE i.kind IS NULL AND i.dt >= now() - interval '30 days'
+               AND i.dt < now() - interval '6 hours'""")[0]["n"])
+    except Exception:  # noqa: BLE001
+        out["pending_old"] = None
+    try:
+        from ..rag import review_slices as rs
+        cov = rs.coverage(365)["keys"]
+        out["slices_not_ready"] = [{"label": rs.LABELS[k], "share": v["share"]}
+                                   for k, v in cov.items() if not v["ready"]]
+    except Exception:  # noqa: BLE001
+        out["slices_not_ready"] = None
+    try:
+        r = _rows("""SELECT count(*) AS n, max(extract(epoch FROM now() - created_at) / 86400) AS age
+                       FROM review_slice_feedback WHERE decision IS NULL""")[0]
+        out["flags_open"], out["flags_oldest_days"] = int(r["n"] or 0), round(float(r["age"] or 0), 1)
+    except Exception:  # noqa: BLE001
+        out["flags_open"] = None
+    try:
+        st = {r["k"]: r["v"] for r in _rows(
+            "SELECT k, v FROM review_index_state WHERE k IN ('dedup_at', 'review_stories_at')")}
+        import time as _t
+        for k, name in (("dedup_at", "dedup_age_h"), ("review_stories_at", "stories_age_h")):
+            try:
+                out[name] = round((_t.time() - float(st[k])) / 3600, 1)
+            except (KeyError, TypeError, ValueError):
+                out[name] = None
+    except Exception:  # noqa: BLE001
+        pass
+    return out
 
 
 def _reviews_search_health(days: int, ex) -> dict:

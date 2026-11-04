@@ -10972,6 +10972,14 @@ function puGuardItems(m){
   const ib=m.inbox||{};
   if((ib.unread||0)>0) add("warn",`${ib.unread} ${plural(ib.unread,"обращение ждёт","обращения ждут","обращений ждут")} ответа${ib.oldest_new_days?` · старейшему ${ib.oldest_new_days} дн`:""}`,"inbox","pu-inbox");
   if((pr.pending||0)>0) add("warn",`${pr.pending} ${plural(pr.pending,"заявка","заявки","заявок")} на источники ${pr.pending===1?"ждёт":"ждут"} решения · старейшей ${pr.oldest_days} дн`,"data","pu-proposals");
+  // конвейер «Аудита отзывов» (с 04.11.2026): разметка, срезы, склейка копий, сюжеты, поиск
+  const rp=m.reviews_pipeline||{}, rsh=m.reviews_search||{};
+  if((rp.pending_old||0)>50) add("bad",`разметка жалоб отстаёт: ${fmtNum(rp.pending_old)} ждут дольше 6 ч`,"data","pu-slices");
+  if((rp.slices_not_ready||[]).length) add("warn",`срезы на доразметке (скрыты в фильтре): ${rp.slices_not_ready.map(x=>`${x.label} ${Math.round(x.share*100)}%`).join(", ")}`,"data","pu-slices");
+  if((rp.flags_open||0)>0&&(rp.flags_oldest_days||0)>=3) add("warn",`отметки «не относится к срезу» ждут решения: ${rp.flags_open} · старейшей ${Math.floor(rp.flags_oldest_days)} дн`,"inbox","pu-inbox");
+  if(rp.dedup_age_h!=null&&rp.dedup_age_h>30) add("warn",`склейка копий отзывов не проходила ${Math.round(rp.dedup_age_h)} ч`,"data","pu-slices");
+  if(rp.stories_age_h!=null&&rp.stories_age_h>50) add("warn",`«Сюжеты» не пересчитывались ${Math.round(rp.stories_age_h)} ч`,"data","pu-slices");
+  if((rsh.failed||0)>0) add("warn",`поиск по жалобам не отработал ${rsh.failed} ${plural(rsh.failed,"раз","раза","раз")}`,"data","pu-rsearch");
   return out.sort((a,b)=>(a.lv==="bad"?0:1)-(b.lv==="bad"?0:1));
 }
 function PuGuard({m,onGo}){

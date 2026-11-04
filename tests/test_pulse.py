@@ -95,3 +95,26 @@ def test_track_batch_stamps_age_and_moves_last_seen(monkeypatch):
     assert "created_at" in ins[0] and "millisecond" in ins[0]
     assert [r["age"] for r in ins[1]] == [2000, 100]
     assert any("last_seen_at" in c[0] for c in calls[1:])
+
+
+def test_reviews_pipeline_watchdog_reads_each_part_separately(monkeypatch):
+    # сторож конвейера «Аудита отзывов» (04.11.2026): сбой одного пункта не прячет остальные
+    import time
+    from bank_audit.rag import review_slices as rs
+    now = time.time()
+
+    def rows(sql, params=None):
+        if "kind IS NULL" in sql:
+            raise RuntimeError("индекс недоступен")
+        if "review_slice_feedback" in sql:
+            return [{"n": 2, "age": 4.26}]
+        return [{"k": "dedup_at", "v": f"{now - 7200:.0f}"}, {"k": "review_stories_at", "v": "мусор"}]
+
+    monkeypatch.setattr(T, "_rows", rows)
+    monkeypatch.setattr(rs, "coverage", lambda days=365: {"keys": {
+        "payroll": {"share": 0.991, "ready": True}, "youth": {"share": 0.82, "ready": False}}})
+    out = T._reviews_pipeline()
+    assert out["pending_old"] is None
+    assert out["slices_not_ready"] == [{"label": rs.LABELS["youth"], "share": 0.82}]
+    assert out["flags_open"] == 2 and out["flags_oldest_days"] == 4.3
+    assert 1.9 < out["dedup_age_h"] < 2.1 and out["stories_age_h"] is None
