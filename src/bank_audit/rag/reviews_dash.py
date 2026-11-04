@@ -546,11 +546,14 @@ def overview(bank: str, product: str | None = None, days: int = 90,
                        count(*) FILTER (WHERE {prev_w}),
                        count(*) FILTER (WHERE {cur_w} AND i.esc),
                        count(*) FILTER (WHERE {prev_w} AND i.esc),
-                       count(*) FILTER (WHERE {cmp_w})
+                       count(*) FILTER (WHERE {cmp_w}),
+                       count(*) FILTER (WHERE {cmp_w} AND coalesce(i.source, 'bankiru') = :csrc),
+                       count(*) FILTER (WHERE {prev_w} AND coalesce(i.source, 'bankiru') = :csrc)
                 FROM review_index i WHERE {idx} AND {_CMP} AND i.dt >= :lo AND i.dt < :t1
-            """), {**ip, **B}).one()
+            """), {**ip, **B, "csrc": CMP_SOURCE}).one()
             total_cur, total_prev, esc_cur = int(cur[0]), int(cur[1]), int(cur[2])
             esc_prev, total_cmp = int(cur[3]), int(cur[4])
+            c_cmp, c_prev = int(cur[5]), int(cur[6])          # сопоставимый корпус — для «к рынку»
             filed = int(s.execute(text(f"""
                 SELECT count(*) FROM review_index i
                 JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
@@ -570,11 +573,11 @@ def overview(bank: str, product: str | None = None, days: int = 90,
             m_n, m_esc, m_prev, m_cmp = s.execute(text(
                 f"SELECT count(*) FILTER (WHERE {cur_w}),"
                 f" count(*) FILTER (WHERE {cur_w} AND i.esc),"
-                f" count(*) FILTER (WHERE {prev_w}),"
-                f" count(*) FILTER (WHERE {cmp_w})"
+                f" count(*) FILTER (WHERE {prev_w} AND coalesce(i.source, 'bankiru') = :csrc),"
+                f" count(*) FILTER (WHERE {cmp_w} AND coalesce(i.source, 'bankiru') = :csrc)"
                 f" FROM review_index i WHERE i.bank <> :bank AND {_CMP}"
                 f" AND i.dt >= :lo AND i.dt < :t1 AND i.dt <= now()" + pq),
-                {"bank": bc, **B, **pp}).one()
+                {"bank": bc, **B, **pp, "csrc": CMP_SOURCE}).one()
             by_src = [{"source": r[0], "n": int(r[1])} for r in s.execute(text(
                 f"SELECT i.source, count(*) FROM review_index i WHERE {idx} AND {_CMP}"
                 f" AND {cur_w} GROUP BY 1 ORDER BY 2 DESC"), {**ip, **B}).all()]
@@ -589,7 +592,9 @@ def overview(bank: str, product: str | None = None, days: int = 90,
             esc_sig = bool(se and _p2((p1 - p0) / se) < 0.01 and p0 and p1 / p0 >= 1.2)
         ready = _prev_ready(bc, per)
         delta = per.delta_pct(total_cmp, total_prev) if ready else None
-        vm = _vs_market(total_cmp, total_prev, m_cmp, m_prev, per.k) if ready else {}
+        # рост к рынку — по сопоставимому корпусу с обеих сторон (CMP_SOURCE): новый свой
+        # источник жалоб на банк иначе выглядел как «банк растёт быстрее рынка»
+        vm = _vs_market(c_cmp, c_prev, m_cmp, m_prev, per.k) if ready else {}
         return {
             "bank": bc, "product": product, "days": per.days, "period": per.info(),
             "total": total_cur, "prev": total_prev, "cmp_n": total_cmp,
@@ -2555,8 +2560,15 @@ def week_end() -> str | None:
         return None
 
 
+# Сравнение с рынком — только по сопоставимому корпусу: внешний корпус banki.ru ровно
+# покрывает все банки, а наши сборщики (sravni, finuslugi, своя лента banki.ru, bankiros)
+# собирают в основном Сбер — новый источник давал «рост только у Сбера» (план 04.11, К5).
+# Рост к собственной норме считается по всем источникам, «банк против рынка» — по этому.
+CMP_SOURCE = "bankiru"
+
+
 def _topic_week_counts(bank_canon: str | None, product: str | None,
-                       exclude_bank: str | None = None):
+                       exclude_bank: str | None = None, source: str | None = None):
     """Понедельные счётчики жалоб по ГЛАВНОЙ проблеме — сырьё сигналов, пульса
     и слепой зоны. bank=None — рынок; exclude_bank — рынок без этого банка
     (иначе у крупного банка «рынок» наполовину состоит из него самого, и
@@ -2570,7 +2582,7 @@ def _topic_week_counts(bank_canon: str | None, product: str | None,
       topics: [{key,label,short,risk,group}] — проблемы кодификатора;
       counts: <key>_w0/_w1/_b, <key>_wk (по неделям 0..8), _tw0, _tb,
               _lab_w0/_lab_b (размечено жалоб), _unc_w0/_unc_b («Прочее»)."""
-    p = {"bank": bank_canon, "ex": exclude_bank, "product": product}
+    p = {"bank": bank_canon, "ex": exclude_bank, "product": product, "src": source}
     try:
         with db.session() as s:
             rows = s.execute(text(f"""
@@ -2579,6 +2591,7 @@ def _topic_week_counts(bank_canon: str | None, product: str | None,
                     FROM review_index i
                     WHERE (CAST(:bank AS text) IS NULL OR i.bank = :bank)
                       AND (CAST(:ex AS text) IS NULL OR i.bank <> :ex)
+                      AND (CAST(:src AS text) IS NULL OR coalesce(i.source, 'bankiru') = :src)
                       AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))
                       AND {_CMP}
                       AND i.dt >= {_WEEK_END} - make_interval(days => 63) AND i.dt < {_WEEK_END}
@@ -2678,6 +2691,12 @@ def market_flat(market_ratio) -> bool:
     return market_ratio is None or float(market_ratio) < _FLAT
 
 
+def _is_flat(s: dict) -> bool:
+    """Рынок по теме ровный: по выводу теста доли (market_flat в сигнале, с 04.11.2026 —
+    при нехватке данных НЕ ровный), а в старых снимках — по отношению ростов."""
+    return bool(s["market_flat"]) if "market_flat" in s else market_flat(s.get("market_ratio"))
+
+
 def market_phrase(ratio, market_ratio, who: str = "банка") -> str | None:
     """Как честно сказать о рынке. «Только у …» — лишь когда рынок по теме
     ровный: 25.09 заголовок написал «всплеск только у Сбера» при росте рынка
@@ -2772,7 +2791,7 @@ def _fix_chunk(chunk: str, topics: list[dict]) -> str:
         chunk = _ACCEL_RX.sub(lambda m: _match_case(m.group(1),
                                                     _ACCEL_WORDS[m.group(1).lower()]), chunk)
     loud = [t for t in topics
-            if t.get("market_ratio") is not None and not market_flat(t.get("market_ratio"))]
+            if t.get("market_ratio") is not None and not _is_flat(t)]
     if loud and _NOT_MARKET_RX.search(chunk):
         chunk = _NOT_MARKET_RX.sub("", chunk, count=1)
         notes = "; ".join(f"«{(t.get('short') or t.get('label') or '').strip()}» растёт и у "
@@ -2810,7 +2829,7 @@ def fix_market_claims(text: str | None, signals: list[dict] | None) -> str | Non
         parts = _SENT_RX.split(ln)
         out_lines.append(" ".join(_fix_chunk(p, _mentioned(p, signals)) for p in parts))
     text = "\n".join(out_lines)
-    if any(s.get("ratio") and market_flat(s.get("market_ratio")) for s in signals):
+    if any(s.get("ratio") and _is_flat(s) for s in signals):
         return text
     return _ONLY_RX.sub(lambda m: f"у {m.group(1)} сильнее, чем по рынку", text)
 
@@ -2827,8 +2846,11 @@ def week_pulse(bank: str, product: str | None = None) -> dict | None:
     if not lab:
         return None
     theme_defs, brow = lab
-    mlab = _topic_week_counts(None, product, exclude_bank=bc)
+    # банк против рынка — по сопоставимому корпусу с обеих сторон (CMP_SOURCE)
+    mlab = _topic_week_counts(None, product, exclude_bank=bc, source=CMP_SOURCE)
     mrow = mlab[1] if mlab else None
+    clab = _topic_week_counts(bc, product, source=CMP_SOURCE)
+    crow = clab[1] if clab else None
     BASE_W = 7.0
     diverge = []
     # разброс недель (перерассеяние) — общий по всем темам банка и рынка: жалобы идут
@@ -2840,7 +2862,7 @@ def week_pulse(bank: str, product: str | None = None) -> dict | None:
         ser = [list(row.get(f'{t["key"]}_wk') or [])[2:9] for t in theme_defs]
         ser = [x for x in ser if len(x) == 7]
         return max(1.0, _RS.pooled_overdispersion(ser)) if ser else 1.0
-    phi_b, phi_m = _phi(brow), _phi(mrow)
+    phi_b, phi_m = _phi(crow), _phi(mrow)
     for t in theme_defs:
         k = t["key"]
         w0, b = int(brow[f"{k}_w0"]), int(brow[f"{k}_b"])
@@ -2858,9 +2880,9 @@ def week_pulse(bank: str, product: str | None = None) -> dict | None:
         # «быстрее рынка» — точный условный тест доли банка (банк/рынок × неделя/база),
         # а не отношение двух отношений: прежнее «×1,3 быстрее рынка» на малых числах
         # было шумом. «По рынку мало данных» — отдельный вывод, не «рынок ровный».
-        v = (_RS.market_verdict(w0, int(mrow[f"{k}_w0"]), b, int(mrow[f"{k}_b"]), k=1 / BASE_W,
-                                phi=phi_b, phi_market=phi_m)
-             if mrow is not None else None)
+        v = (_RS.market_verdict(int(crow[f"{k}_w0"]), int(mrow[f"{k}_w0"]), int(crow[f"{k}_b"]),
+                                int(mrow[f"{k}_b"]), k=1 / BASE_W, phi=phi_b, phi_market=phi_m)
+             if mrow is not None and crow is not None else None)
         diverge.append({
             "key": k, "label": t["label"], "short": t["short"],
             "risk": t["risk"], "week": w0, "baseline_week": round(bw, 1),
@@ -3117,8 +3139,21 @@ def weekly_signals(bank: str, product: str | None = None) -> dict | None:
         daily = _topic_day_counts(bc, product, 63 + _SIG_LOOKBACK)
         if daily is None:
             return None
-        mlab = _topic_week_counts(None, product, exclude_bank=bc)
+        # «банк против рынка» — по сопоставимому корпусу с обеих сторон (CMP_SOURCE) и
+        # тестом доли (review_stats.market_verdict): прежнее правило «mratio < 1,4 или
+        # ratio ≥ 1,8·mratio» читало нехватку данных по рынку как «рынок ровный»
+        mlab = _topic_week_counts(None, product, exclude_bank=bc, source=CMP_SOURCE)
         mrow = mlab[1] if mlab else None
+        clab = _topic_week_counts(bc, product, source=CMP_SOURCE)
+        crow = clab[1] if clab else None
+
+        def _phi(row) -> float:
+            if row is None:
+                return 1.0
+            ser = [list(row.get(f'{t["key"]}_wk') or [])[2:9] for t in theme_defs]
+            ser = [x for x in ser if len(x) == 7]
+            return max(1.0, _RS.pooled_overdispersion(ser)) if ser else 1.0
+        phi_b, phi_m = _phi(crow), _phi(mrow)
         tdef = {t["key"]: t for t in theme_defs}
         chain = _signal_chain(daily, list(tdef))
         we = week_end()
@@ -3132,13 +3167,11 @@ def weekly_signals(bank: str, product: str | None = None) -> dict | None:
             ratio = (w0 / bw) if bw >= 0.5 else None
             excess = w0 - bw
             accel = w0 > w1 and w0 >= max(8, 1.4 * w1)
-            mratio, bank_specific = None, False
-            if mrow is not None:
-                mw0, mb = int(mrow[f"{k}_w0"]), int(mrow[f"{k}_b"])
-                mbw = mb / BASE_W
-                mratio = round(mw0 / mbw, 2) if mbw >= 0.5 else None
-                if ratio is not None and (mratio is None or mratio < 1.4 or ratio >= 1.8 * mratio):
-                    bank_specific = True
+            mv = (_RS.market_verdict(int(crow[f"{k}_w0"]), int(mrow[f"{k}_w0"]), int(crow[f"{k}_b"]),
+                                     int(mrow[f"{k}_b"]), k=1 / BASE_W, phi=phi_b, phi_market=phi_m)
+                  if mrow is not None and crow is not None else None)
+            mratio = round(mv["market_ratio"], 2) if mv and mv.get("market_ratio") is not None else None
+            bank_specific = bool(mv and mv["bank_specific"])
             since = int(ch["since"])
             fbw = sum(ch["base"]) / BASE_W
             s_ = {"key": k, "label": t["label"], "short": t["short"],
@@ -3152,8 +3185,10 @@ def weekly_signals(bank: str, product: str | None = None) -> dict | None:
                   "p_value": round(ch["p"], 5), "q_value": round(ch["q"], 5),
                   "new": bool(ch.get("new")), "accel": bool(accel),
                   "market_ratio": mratio, "bank_specific": bool(bank_specific),
-                  "market_flat": market_flat(mratio),
-                  "market_note": market_phrase(ratio, mratio),
+                  "market_flat": bool(mv and mv["market_flat"]),
+                  "market_claim": mv["claim"] if mv else "market_unknown",
+                  "market_note": (_RS.market_note(mv, "банка") if mv
+                                  else "по рынку данных мало для сравнения"),
                   # какой проверкой сигнал держится сегодня и с какого дня
                   "test": ch["test"], "entry_test": ch["entry"],
                   "status": "continuing" if since > 0 else "new",

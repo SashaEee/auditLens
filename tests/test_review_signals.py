@@ -122,7 +122,7 @@ def _patch_counts(monkeypatch, daily: dict[str, list[int]], topics: list[dict]):
                    f'{t["key"]}_b': sum(arr[2:9]), f'{t["key"]}_wk': arr})
     tw.update({"_tw0": 150, "_tb": 7 * 150})
 
-    def week_counts(bank, product, exclude_bank=None):
+    def week_counts(bank, product, exclude_bank=None, source=None):
         if exclude_bank:                               # рынок без банка: ровный
             return topics, {**{f'{t["key"]}_w0': 70 for t in topics},
                             **{f'{t["key"]}_b': 490 for t in topics}, "_tw0": 1500, "_tb": 10500}
@@ -185,7 +185,7 @@ def test_week_pulse_faster_than_market_needs_a_real_test(monkeypatch):
     market = {"big_w0": 300, "big_b": 2100, "noise_w0": 300, "noise_b": 2100, "thin_w0": 2, "thin_b": 7,
               "_tw0": 600, "_tb": 4200}
 
-    def week_counts(bank_, product, exclude_bank=None):
+    def week_counts(bank_, product, exclude_bank=None, source=None):
         return topics, (market if exclude_bank else bank)
     monkeypatch.setattr(rd, "resolve_bank", lambda b: "Сбербанк")
     monkeypatch.setattr(rd, "_topic_week_counts", week_counts)
@@ -213,7 +213,36 @@ def test_week_pulse_uses_real_spread_of_weeks(monkeypatch):
     monkeypatch.setattr(rd, "resolve_bank", lambda b: "Сбербанк")
     for wavy, expect in ((False, True), (True, False)):
         b, m = rows(wavy)
-        monkeypatch.setattr(rd, "_topic_week_counts", lambda bank, product, exclude_bank=None, b=b, m=m:
+        monkeypatch.setattr(rd, "_topic_week_counts", lambda bank, product, exclude_bank=None, source=None, b=b, m=m:
                             (topics, m if exclude_bank else b))
         d = {x["key"]: x for x in rd.week_pulse("Сбербанк")["diverge"]}
         assert d["t0"]["faster_sig"] is expect, wavy
+
+
+def test_market_comparison_uses_comparable_source(monkeypatch):
+    """Новый свой источник жалоб на банк (рост только «по всем источникам») — не «быстрее
+    рынка»: банк и рынок сравниваются по одному корпусу (CMP_SOURCE)."""
+    topics = [{"key": f"t{i}", "label": f"t{i}", "short": f"t{i}", "risk": "ops", "group": "g"} for i in range(6)]
+    base = [15] * 7
+
+    def rows(w0):
+        r = {"_tw0": 100, "_tb": 700}
+        for i in range(6):
+            r.update({f"t{i}_w0": w0 if i == 0 else 15, f"t{i}_b": 105, f"t{i}_wk": [w0 if i == 0 else 15, 15] + base})
+        return r
+    market = {"_tw0": 3000, "_tb": 21000}
+    for i in range(6):
+        market.update({f"t{i}_w0": 300, f"t{i}_b": 2100, f"t{i}_wk": [300] * 9})
+    seen = []
+
+    def week_counts(bank, product, exclude_bank=None, source=None):
+        seen.append((bool(exclude_bank), source))
+        if exclude_bank:
+            return topics, market
+        return topics, rows(15 if source == rd.CMP_SOURCE else 45)   # всплеск — только из нового источника
+    monkeypatch.setattr(rd, "resolve_bank", lambda b: "Сбербанк")
+    monkeypatch.setattr(rd, "_topic_week_counts", week_counts)
+    d = {x["key"]: x for x in rd.week_pulse("Сбербанк")["diverge"]}
+    assert d["t0"]["ratio"] == 3.0                       # рост к своей норме — по всем источникам
+    assert d["t0"]["faster_sig"] is False                # а «быстрее рынка» — нет
+    assert (True, rd.CMP_SOURCE) in seen and (False, rd.CMP_SOURCE) in seen
