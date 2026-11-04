@@ -5098,9 +5098,11 @@ function ReviewsPage({params}){
   // сигнала, — из клика по всплеску и из уведомления по подписке
   const[fWeek,setFWeek]=useState(()=>RV_SIG_RX.test(P.month||"")?P.month:"");
   const[fOrder,setFOrder]=useState("date");             // date | severity (без поиска)
-  const[fView,setFView]=useState("cards");              // cards | groups
+  const[fView,setFView]=useState("cards");              // cards | groups | stories
   const[cl,setCl]=useState(null),[clBusy,setClBusy]=useState(false);
   const[grp,setGrp]=useState(null),[grpItems,setGrpItems]=useState(null);
+  const[sts,setSts]=useState(null),[stsBusy,setStsBusy]=useState(false),[stEv,setStEv]=useState(null);
+  const[stSig,setStSig]=useState(null);
   const[mev,setMev]=useState(null);                     // изменения условий по продукту («Рынок»)
   const[sub,setSub]=useState(null);                     // подписка на сигналы среза
   // Читалка жалобы: {list, idx, ctx, src, back}. src="feed" — список берётся
@@ -5254,6 +5256,18 @@ function ReviewsPage({params}){
       .then(d=>{setCl(d);setClBusy(false);}).catch(()=>{setCl({__err:true});setClBusy(false);});
   },[fView,bank,product,perKey,theme,flag,fCity,fSrc,escOnly,fWeek]);
 
+  // «Сюжеты» (rag/review_stories.py): устойчивые группы похожих историй — пересчёт раз в
+  // сутки по банку за 90 дней; из фильтров вкладки к ним применяются банк, продукт и период
+  useEffect(()=>{ if(fView!=="stories")return; setStsBusy(true);
+    apiFetch(`/api/reviews/stories?bank=${enc(bank)}${pq()}${perQ}`)
+      .then(d=>{setSts(d);setStsBusy(false);}).catch(()=>{setSts({__err:true});setStsBusy(false);});
+  },[fView,bank,product,perKey]);
+
+  // сюжеты, выросшие за неделю сверх своей нормы — отдельно от радара: свой запрос, без LLM
+  useEffect(()=>{ setStSig(null);
+    apiFetch(`/api/reviews/story-signals?bank=${enc(bank)}${pq()}`).then(d=>setStSig(d.items||[])).catch(()=>setStSig([]));
+  },[bank,product]);
+
   // радар срочных аномалий — грузится ОТДЕЛЬНО (LLM), не блокирует дашборд
   useEffect(()=>{ setAnomBusy(true);setAnom(null);
     apiFetch(`/api/reviews/anomalies?bank=${enc(bank)}${pq()}`)
@@ -5351,7 +5365,7 @@ function ReviewsPage({params}){
         else if(e.key==="Escape"&&split){e.preventDefault();setRd(null);}
         return;
       }
-      if(tab!=="complaints"||overlay||!feed||!feed.length||(fView==="groups"&&!q))return;
+      if(tab!=="complaints"||overlay||!feed||!feed.length||(fView!=="cards"&&!q))return;
       if(down){e.preventDefault();setCur(c=>Math.min(feed.length-1,c+1));}
       else if(up){e.preventDefault();setCur(c=>Math.max(0,c-1));}
       else if(e.key==="Enter"&&cur>=0){e.preventDefault();openReader(null,cur,null,"feed");}
@@ -5382,8 +5396,10 @@ function ReviewsPage({params}){
          else await apiPost("/api/reviews/subscription",{bank,product:product||null});
          fbToast(prev?"Подписка снята":`Сигналы по «${bank}${product?" · "+rvProd(product):""}» будут в «Для вас»`,!prev);
     }catch{setSub(prev);} };
-  const openGroup=g=>{ setGrp(g);setGrpItems(null);
-    apiPost("/api/reviews/by-urls",{urls:g.urls}).then(d=>setGrpItems(d.items||[])).catch(()=>setGrpItems([])); };
+  const openGroup=g=>{ setGrp(g);setGrpItems(null);setStEv(null);
+    apiPost("/api/reviews/by-urls",{urls:g.urls}).then(d=>setGrpItems(d.items||[])).catch(()=>setGrpItems([]));
+    // у сюжета — журнал: появился, вырос, слился, затих
+    if(g.story_id)apiFetch(`/api/reviews/stories/${g.story_id}/events`).then(d=>setStEv(d.items||[])).catch(()=>setStEv([])); };
 
   const onKey=fn=>e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();fn();}};
   // Период словами — из того, что посчитал сервер (ov.period), пока ответ не
@@ -5584,13 +5600,23 @@ function ReviewsPage({params}){
           </>}
         </div>);
   // «Новое» без всплесков: сюжеты вне кодификатора — наблюдения, их видно и в спокойную неделю
-  const rvNovel=nv=>(nv||[]).length>0&&<>
+  // сюжеты недели (5.6): одна история против своей нормы — внутри «точного» кода её всплеск
+  // тонет в соседних историях; рынок — та же история у других банков banki.ru
+  const rvStSig=()=>(stSig||[]).length>0&&<>
+    <div className="rv-radar-sub" style={{marginTop:10}}>Сюжеты выросли за неделю:</div>
+    <div className="rv-radar-chips">{stSig.map(x=>{const g={urls:x.urls,n:x.urls.length,label:x.title,story_id:x.story_id,head:x.title};
+      const tip=`${x.week} за 7 дн · обычно ~${String(x.baseline_week).replace(".",",")}/нед`
+        +(x.market?(x.market.n?` · у рынка за неделю ещё ${x.market.n} ${plural(x.market.n,"похожая жалоба","похожие жалобы","похожих жалоб")} (${x.market.banks} ${plural(x.market.banks,"банк","банка","банков")})`:" · у других банков этой истории за неделю нет"):"")+" — открыть";
+      return <span key={x.story_id} className="rv-radar-chip lvl-watch" role="button" tabIndex={0} data-tip={tip}
+        onClick={()=>openGroup(g)} onKeyDown={onKey(()=>openGroup(g))}>
+        {x.title}<b>{x.ratio?"×"+String(x.ratio).replace(".",","):x.week}</b></span>;})}</div></>;
+  const rvNovel=nv=><>{rvStSig()}{(nv||[]).length>0&&<>
     <div className="rv-radar-sub" style={{marginTop:10}}>Новое — сюжеты вне кодификатора, не всплески:</div>
     <div className="rv-radar-chips">{nv.map((c,i)=><span key={i} className="rv-radar-chip lvl-watch" role="button" tabIndex={0}
         data-tip={`${c.n} ${plural(c.n,"жалоба","жалобы","жалоб")} с похожим сюжетом — открыть`}
         onClick={()=>openGroup({urls:c.urls,n:c.n,label:c.topic,first:c.first,last:c.last})}
         onKeyDown={onKey(()=>openGroup({urls:c.urls,n:c.n,label:c.topic,first:c.first,last:c.last}))}>
-      {c.topic}<b>{c.n}</b></span>)}</div></>;
+      {c.topic}<b>{c.n}</b></span>)}</div></>}</>;
   const radarCard=(<div className="rv-card rv-radar">
           <div className="rv-radar-head">
             <span className="rv-radar-ico" aria-hidden="true"><IcoRadar/></span>
@@ -5650,6 +5676,7 @@ function ReviewsPage({params}){
                     data-tip={`${anom.signals[0].label}: ${anom.signals[0].week} жалоб недели всплеска`}>Жалобы сигнала · {anom.signals[0].week}<span className="rv-ico-in"><RvIChevR s={12}/></span></button>}
                 </div></>
                 :<div className="rv-cap" style={{marginTop:6}}>LLM-разбор недоступен — см. всплески выше (числа за 7 дн точны).</div>}
+              {rvStSig()}
             </>}
         </div>);
   const flagsCard=(rf&&!rf.__err&&rf.groups&&rf.groups.length>0?<div className="rv-card rv-flags">
@@ -5750,18 +5777,18 @@ function ReviewsPage({params}){
           <RvIco s={16} d={dense?<><path d="M4 6h16"/><path d="M4 10h16"/><path d="M4 14h16"/><path d="M4 18h16"/></>
             :<><path d="M4 7h16"/><path d="M4 12h10"/><path d="M4 17h16"/></>}/></button>;
   const viewChips=!q&&<div className="rv-chips rv-chips-sm" role="group" aria-label="вид">
-          {[["cards","карточки"],["groups","группы похожих"]].map(([k,l])=>
+          {[["cards","карточки"],["groups","группы похожих"],["stories","сюжеты"]].map(([k,l])=>
             <button key={k} className={"rv-chip"+(fView===k?" on":"")} onClick={()=>setFView(k)}>{l}</button>)}
         </div>;
   // сколько настроек в листе отличаются от обычных — число на кнопке «Фильтры»
-  const fMore=(fSrc?1:0)+(flag?1:0)+(!q&&fOrder==="severity"?1:0)+(!q&&fView==="groups"?1:0);
+  const fMore=(fSrc?1:0)+(flag?1:0)+(!q&&fOrder==="severity"?1:0)+(!q&&fView!=="cards"?1:0);
   const feedCard=(<div className="rv-card">
       <div className="rv-ct">
         <div><h2 className="rv-ttl">Жалобы
           {/* Счётчик — всего по фильтру ленты (сервер считает тем же условием),
               а не загруженная страница: «21 жалоба» рядом с «2 426» на вкладке
               читалось как расхождение. Карточки и склейка дублей — в подсказке. */}
-          {!(fView==="groups"&&!q)&&(()=>{const n=(feed||[]).length,
+          {!(fView!=="cards"&&!q)&&(()=>{const n=(feed||[]).length,
                        dup=(feed||[]).reduce((a,r)=>a+(r.similar||0),0);
             if(!n)return null;
             const tip=`загружено ${n} ${plural(n,"карточка","карточки","карточек")}`
@@ -5862,7 +5889,30 @@ function ReviewsPage({params}){
         :feed?`Показано ${feed.length}`:""}</div>
       <div className={"rv-fw"+(split?" split":"")}>
       <div className={"rv-fw-list"+(dense?" dense":"")}>
-      {fView==="groups"&&!q?(
+      {fView==="stories"&&!q?(
+        stsBusy||!sts?<RvSkelRows n={5} h={92} gap={12}/>:
+        sts.__err||sts.error?<RvNote err/>:<>
+          <div className="rv-cl-sum">{sts.items.length
+            ?<><b>{sts.items.length}</b> {plural(sts.items.length,"сюжет","сюжета","сюжетов")} с жалобами за период — устойчивые группы похожих историй, пересчёт раз в сутки</>
+            :"Сюжетов с жалобами за период нет — сюжет начинается с трёх похожих историй"}
+            {(theme||flag||fCity||fSrc||escOnly)?<span className="rv-sum-x"> · тема, признак, город и площадка к сюжетам не применяются</span>:""}</div>
+          {sts.items.map(x=>{const g={urls:x.urls,n:x.n_window,label:x.title,first:x.first_seen,last:x.last_seen,
+                                      story_id:x.story_id,head:x.title,criterion:x.criterion};
+            return <div key={x.story_id} className="rv-cl" role="button" tabIndex={0}
+              onClick={()=>openGroup(g)} onKeyDown={onKey(()=>openGroup(g))}>
+            <div className="rv-cl-n"><b>{x.n_window}</b><span>{plural(x.n_window,"жалоба","жалобы","жалоб")}</span></div>
+            <div className="rv-cl-b">
+              <div className="rv-cl-h">{x.issue_label&&<span className={"rv-tag "+(x.risk||"ops")}>{x.issue_label}</span>}
+                {(x.badges||[]).map(b=><span key={b.kind} className={"rv-st-b "+b.kind}>{b.label}</span>)}
+                <span className="rv-cl-m">{rvDate(x.first_seen)===rvDate(x.last_seen)?rvDate(x.first_seen):`${rvDate(x.first_seen)} – ${rvDate(x.last_seen)}`}
+                  {x.n>x.n_window?` · всего ${x.n}`:""}{x.status==="quiet"?" · затих":""}</span></div>
+              <div className="rv-cl-s">{x.named?<b>{x.title}</b>:x.title}</div>
+              {x.named&&x.summary&&<div className="rv-cl-q">{x.summary}</div>}
+            </div>
+            <span className="rv-cl-go" aria-hidden="true"><RvIChevR s={16}/></span>
+          </div>;})}
+        </>):
+      fView==="groups"&&!q?(
         clBusy?<RvSkelRows n={5} h={92} gap={12}/>:
         !cl||cl.__err?<RvNote err={cl&&cl.__err}/>:<>
           <div className="rv-cl-sum">{cl.clustered
@@ -5894,7 +5944,7 @@ function ReviewsPage({params}){
           sel={split?rd.idx===i:(!rd&&cur===i)} read={readSet.has(r.url)} inCase={caseUrls[r.url]}
           cardRef={el=>{cardRefs.current[i]=el;}}
           onOpen={e=>vtOpen(e&&e.currentTarget,()=>openReader(null,i,null,"feed"))} onCase={a=>addCase(r,a)} onTheme={pickTheme}/>)}
-       {feedMore&&!(fView==="groups"&&!q)&&<button className="btn btn-ghost rv-more-btn" onClick={loadMoreFeed}
+       {feedMore&&!(fView!=="cards"&&!q)&&<button className="btn btn-ghost rv-more-btn" onClick={loadMoreFeed}
          disabled={feedMoreBusy}>
          {feedMoreBusy?"Загружаю…":`Показать ещё · показано ${(feed||[]).length}${feedTot&&!q?` из ${fmtNum(feedTot.total+feedTot.pending)}`:""}`}</button>}
       </div>
@@ -6043,8 +6093,11 @@ function ReviewsPage({params}){
     {jrOpen&&<RvModal side="right" onClose={()=>setJrOpen(false)} title="Журнал сигналов"
         sub={`${bank} · ${product||"все продукты"} · за полгода`}>
       <RvJournal bank={bank} product={product} onOpen={(list,i)=>openReader(list,i,"снимок сигнала","journal")}/></RvModal>}
-    {grp&&<RvModal side="right" onClose={()=>setGrp(null)} title={`${grp.n} похожих жалоб`}
-        sub={[grp.label,grp.first===grp.last?rvDate(grp.first):`${rvDate(grp.first)} – ${rvDate(grp.last)}`].filter(Boolean).join(" · ")}>
+    {grp&&<RvModal side="right" onClose={()=>setGrp(null)} title={grp.head||`${grp.n} похожих жалоб`}
+        sub={[grp.head?`${grp.n} ${plural(grp.n,"жалоба","жалобы","жалоб")}`:grp.label,grp.first===grp.last?rvDate(grp.first):`${rvDate(grp.first)} – ${rvDate(grp.last)}`].filter(Boolean).join(" · ")}>
+      {grp.criterion&&<p className="rv-st-crit">{grp.criterion}</p>}
+      {grp.story_id&&stEv&&stEv.length>0&&<details className="rv-st-ev"><summary>История сюжета · {stEv.length}</summary>
+        <ul>{stEv.map(e=><li key={e.event_id}><span className="rv-cl-m">{rvDate(e.at)}</span> {e.label}</li>)}</ul></details>}
       <div className="rv-grp-acts"><button className="btn btn-sm btn-primary" disabled={!grpItems||!grpItems.length}
         onClick={e=>caseAdd(grpItems.map(rvItem),{anchor:e.currentTarget,src:"reviews_group"})}>＋ всю группу в аудит-дело</button></div>
       {!grpItems?<Skel h={120}/>:<div className="rv-clist">{grpItems.map((r,i)=><RvCard key={r.url||i} r={r} showBank
@@ -10979,6 +11032,8 @@ function puGuardItems(m){
   if((rp.flags_open||0)>0&&(rp.flags_oldest_days||0)>=3) add("warn",`отметки «не относится к срезу» ждут решения: ${rp.flags_open} · старейшей ${Math.floor(rp.flags_oldest_days)} дн`,"inbox","pu-inbox");
   if(rp.dedup_age_h!=null&&rp.dedup_age_h>30) add("warn",`склейка копий отзывов не проходила ${Math.round(rp.dedup_age_h)} ч`,"data","pu-slices");
   if(rp.stories_age_h!=null&&rp.stories_age_h>50) add("warn",`«Сюжеты» не пересчитывались ${Math.round(rp.stories_age_h)} ч`,"data","pu-slices");
+  const sc=(m.slice_canary||[])[0];
+  if(sc&&sc.alert) add("bad",`канарейка срезов ${rvDate(sc.run_at)}: ${(sc.reasons||[]).join("; ")}`,"data","pu-slices");
   if((rsh.failed||0)>0) add("warn",`поиск по жалобам не отработал ${rsh.failed} ${plural(rsh.failed,"раз","раза","раз")}`,"data","pu-rsearch");
   return out.sort((a,b)=>(a.lv==="bad"?0:1)-(b.lv==="bad"?0:1));
 }
@@ -11396,6 +11451,14 @@ function PuSlices(){
         <td>{k.open_flags||"—"}</td>
       </tr>)}</tbody></table></div>
     <p className="t-cap" style={{margin:"8px 0 0"}}>Эталон 04.11: 260 жалоб, два слепых разметчика и арбитр. Траты разметки: {sp||"—"}.</p>
+    {/* канарейка (rag/review_slices_canary.py): раз в неделю тот же каскад на постоянной
+        выборке эталона, без записи разметки — смену модели в облаке видно за неделю */}
+    {(d.canary||[]).length>0&&<div className="pu-x-scroll" style={{marginTop:10}}><table className="pu-tbl">
+      <thead><tr><th>канарейка</th>{d.keys.map(k=><th key={k.key}>{k.label}</th>)}<th>₽</th></tr></thead>
+      <tbody>{d.canary.map(r=><tr key={r.run_at} title={r.note||""}>
+        <td>{rvDate(r.run_at)}{r.alert?<span className="pu-chip bad" title={(r.reasons||[]).join("; ")}> тревога</span>:null}</td>
+        {d.keys.map(k=>{const m=(r.metrics||{})[k.key];return <td key={k.key}>{m?`${pc(m.precision)} / ${pc(m.recall)}`:"—"}</td>;})}
+        <td>{fmtNum(Math.round(r.rub||0))}</td></tr>)}</tbody></table></div>}
   </div>;
 }
 

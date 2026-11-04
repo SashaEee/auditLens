@@ -1609,3 +1609,134 @@ def story_events(story_id: int, *, limit: int = 200) -> list[dict]:
     titles = {int(k): v for k, v in titles.items()}
     return [{"event_id": e, "kind": k, "kind_label": KINDS.get(k, k), "at": _iso(at),
              "label": _event_label(k, d, titles), "detail": d} for e, k, at, d in evs]
+
+
+# ── Сигналы по сюжетам (план 04.11.2026, 5.6) ───────────────────────────────
+# Всплеск кода проблемы смешивает разные истории одного кода, а новая история
+# внутри «точного» кода (fees, block_115) в нём тонет. Сюжет — одна история:
+# его неделя против собственной нормы считается тем же правилом V6, что у
+# проблем (предсказательный хвост с общим разбросом сюжетов банка, BH по
+# сюжетам), с практическим порогом пониже — сюжет уже кода. Сюжет моложе
+# STORY_SIG_MIN_AGE дней сравнивать не с чем: это «новый сюжет», не всплеск.
+STORY_SIG_ALPHA = float(os.getenv("REVIEW_STORY_SIG_ALPHA", "0.04"))
+STORY_SIG_MIN_AGE = 28
+STORY_SIG_FLOOR = 6
+STORY_SIG_WEEKS = 8
+
+
+def _story_weeks(bank: str, product: str | None) -> tuple[dict[int, list[int]], dict[int, dict]]:
+    """Недели 0..STORY_SIG_WEEKS-1 по действующим сюжетам банка: неделя 0 — та же,
+    что у сигналов проблем (reviews_dash._WEEK_END), жалобы — по правилу вкладки."""
+    pq = " AND al_product_is(i.product, i.slices, :product)" if product else ""
+    with db.session() as s:
+        rows = s.execute(text(f"""
+            SELECT m.story_id, floor(extract(epoch FROM {rd._WEEK_END} - i.dt) / 604800)::int AS w,
+                   count(*) AS n
+              FROM review_story r
+              JOIN review_story_member m ON m.story_id = r.story_id
+              JOIN review_index i ON i.url = m.url
+             WHERE r.bank = :b AND r.status = 'active' AND {rd._CMP}{pq}
+               AND i.dt >= {rd._WEEK_END} - make_interval(days => :d) AND i.dt < {rd._WEEK_END}
+             GROUP BY 1, 2"""), {"b": bank, "product": product, "d": 7 * STORY_SIG_WEEKS}).all()
+        meta = {int(r[0]): {"title": r[1], "first_seen": _utc(r[2]), "issue": r[3]} for r in s.execute(text(
+            "SELECT story_id, title, first_seen, issue_main FROM review_story"
+            " WHERE bank = :b AND status = 'active'"), {"b": bank}).all()}
+    weeks: dict[int, list[int]] = {}
+    for sid, w, n in rows:
+        if 0 <= int(w) < STORY_SIG_WEEKS:
+            weeks.setdefault(int(sid), [0] * STORY_SIG_WEEKS)[int(w)] += int(n)
+    return weeks, meta
+
+
+def story_signals(bank: str, *, product: str | None = None, market: bool = True,
+                  now: datetime | None = None) -> list[dict]:
+    """Сюжеты банка, выросшие за неделю сигнала сверх своей нормы: {story_id, title,
+    week, baseline_week, ratio, p, q, urls (жалобы недели), market}. market — та же
+    история у других банков в ту же неделю: жалобы banki.ru (сопоставимый корпус, как
+    у «быстрее рынка»), близкие к центру сюжета ({n, banks}); None — не посчитано."""
+    from . import review_stats as RS
+    now = _utc(now) or datetime.now(timezone.utc)
+    weeks, meta = _story_weeks(bank, product)
+    old = {sid: w for sid, w in weeks.items()
+           if (f := (meta.get(sid) or {}).get("first_seen")) is not None
+           and f <= now - timedelta(days=STORY_SIG_MIN_AGE)}
+    if not old:
+        return []
+    prior = RS.phi_prior([w[1:] for w in old.values()])
+    pv, cand = {}, {}
+    for sid, w in old.items():
+        base = [float(x) for x in w[1:]]
+        bw = sum(base) / len(base)
+        week_ok, _two = rd._practical(w[0], w[1], bw, floor_=STORY_SIG_FLOOR)
+        pv[sid] = RS.predictive_tail(int(w[0]), base, phi_prior=prior)
+        if week_ok:
+            cand[sid] = bw
+    q, _rej = RS.bh(pv, alpha=STORY_SIG_ALPHA)
+    hit = [sid for sid in cand if q.get(sid) is not None and q[sid] <= STORY_SIG_ALPHA]
+    if not hit:
+        return []
+    with db.session() as s:
+        urls = defaultdict(list)
+        for sid, url in s.execute(text(f"""
+                SELECT m.story_id, i.url FROM review_story_member m
+                  JOIN review_index i ON i.url = m.url
+                 WHERE m.story_id IN :ids AND {rd._CMP}
+                   AND i.dt >= {rd._WEEK_END} - interval '7 days' AND i.dt < {rd._WEEK_END}
+                   {"AND al_product_is(i.product, i.slices, :product)" if product else ""}
+                 ORDER BY i.dt DESC""").bindparams(bindparam("ids", expanding=True)),
+                {"ids": hit, "product": product}).all():
+            urls[int(sid)].append(url)
+    mk = _story_market(bank, hit) if market else {}
+    out = []
+    for sid in sorted(hit, key=lambda k: (q[k], -old[k][0])):
+        w0, bw = old[sid][0], cand[sid]
+        m = meta.get(sid) or {}
+        o = cb.issue_obj(m.get("issue")) or {}
+        out.append({"story_id": sid, "title": m.get("title") or o.get("label") or f"Сюжет №{sid}",
+                    "named": bool(m.get("title")), "week": w0, "baseline_week": round(bw, 1),
+                    "ratio": round(w0 / bw, 1) if bw >= 0.5 else None,
+                    "p": pv[sid], "q": q[sid], "urls": urls.get(sid, []),
+                    "market": mk.get(sid)})
+    return out
+
+
+def _story_market(bank: str, ids: list[int], sim: float = SIM) -> dict[int, dict | None]:
+    """Та же история у рынка: жалобы других банков banki.ru за неделю сигнала с
+    изложением ближе sim к центру сюжета. Без векторов — None (не «у рынка нет»)."""
+    import numpy as np
+    try:
+        with db.session() as s:
+            mem = s.execute(text("""
+                SELECT m.story_id, v.vec FROM review_story_member m
+                  JOIN review_summary_vec v ON v.url = m.url
+                 WHERE m.story_id IN :ids""").bindparams(bindparam("ids", expanding=True)),
+                {"ids": ids}).all()
+            week = s.execute(text(f"""
+                SELECT i.bank, v.vec FROM review_index i JOIN review_summary_vec v ON v.url = i.url
+                 WHERE i.bank <> :b AND coalesce(i.source, 'bankiru') = :src AND {rd._CMP}
+                   AND i.dt >= {rd._WEEK_END} - interval '7 days' AND i.dt < {rd._WEEK_END}"""),
+                {"b": bank, "src": rd.CMP_SOURCE}).all()
+    except Exception as e:  # noqa: BLE001
+        log.info("story_signals: рынок не посчитан (%s)", e)
+        return {sid: None for sid in ids}
+    vecs: dict[int, list] = defaultdict(list)
+    for sid, x in mem:
+        if (v := _vec(x)):
+            vecs[int(sid)].append(v)
+    pairs = [(b, v) for b, x in week if (v := _vec(x))]
+    out: dict[int, dict | None] = {}
+    if not pairs:
+        return {sid: {"n": 0, "banks": 0} for sid in ids}
+    dim = len(pairs[0][1])
+    pairs = [(b, v) for b, v in pairs if len(v) == dim]
+    H = np.asarray([v for _b, v in pairs], dtype=np.float32)
+    H /= np.linalg.norm(H, axis=1, keepdims=True) + 1e-9
+    banks = [b for b, _v in pairs]
+    for sid in ids:
+        c = _centroid({"vectors": vecs.get(sid)})
+        if c is None or len(c) != dim:
+            out[sid] = None
+            continue
+        hits = np.nonzero(H @ np.asarray(c, dtype=np.float32) >= sim)[0]
+        out[sid] = {"n": int(len(hits)), "banks": len({banks[k] for k in hits})}
+    return out

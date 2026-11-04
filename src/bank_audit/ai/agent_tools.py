@@ -155,13 +155,15 @@ def link_reviews(bank: str | None = SBER, product: str | None = None,
     всплеска (month=sig:…: те же жалобы, что в его числе, с отсевом старых событий,
     поэтому «с — по» здесь не годится). Неизвестные тема,
     признак и площадка в ссылку не идут: вкладка показала бы ошибку вместо жалоб."""
-    rd = _rd()
+    # класс среза и словарь признаков — из модуля напрямую, не через _rd(): ссылка —
+    # чистая функция, данные ей не нужны (заглушка _rd() в тестах ронял сбор целиком)
+    from ..rag.reviews_dash import ReviewQuery, _flag_sql
     we = _iso_day(week_end)
     d0 = _iso_day(date_from) if period is None else None
     # ссылку строит тот же объект среза, что и ленту, выгрузку и группы (ReviewQuery)
-    return rd.ReviewQuery(
+    return ReviewQuery(
         bank=bank, product=product, theme=theme if theme in _cb.ISSUES else None,
-        flag=flag if flag and rd._flag_sql(flag) else None, esc=bool(esc), city=city,
+        flag=flag if flag and _flag_sql(flag) else None, esc=bool(esc), city=city,
         source=source_key(source), month=f"sig:{we}" if we else None,
         period=period, days=days if (period is None and not d0) else None, q=q,
         date_from=d0, date_to=_iso_day(date_to) if d0 else None).to_url()

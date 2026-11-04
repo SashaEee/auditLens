@@ -348,3 +348,12 @@ def test_telemetry_block(monkeypatch):
         raise RuntimeError("relation review_slice_canary does not exist")
     monkeypatch.setattr(C, "history", boom)
     assert T._slice_canary() == []                             # до миграции «Пульс» не падает
+
+
+def test_alert_on_recall_floor():
+    # 04.11.2026: срез, теряющий половину жалоб, точностью не виден — нужна полнота
+    from bank_audit.rag import review_slices_canary as C
+    m = {"payroll": {"tp": 6, "fp": 0, "fn": 6, "precision": 1.0, "recall": 0.5}}
+    assert any("полнота 0,5" in x for x in C.alerts(m))
+    m["payroll"].update(fn=1, recall=round(6 / 7, 4))
+    assert C.alerts(m) == []

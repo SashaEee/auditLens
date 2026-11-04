@@ -603,7 +603,7 @@ def _slice_canary() -> list:
     try:
         from ..rag import review_slices_canary
         return review_slices_canary.history(4)
-    except Exception:  # noqa: BLE001 — до миграции 108 «Пульс» не падает
+    except Exception:  # noqa: BLE001 — до миграции 107 «Пульс» не падает
         return []
 
 

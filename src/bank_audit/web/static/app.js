@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 9b898e27db37256e7a02131be530d904890ce47de1b8173c8f4590810229f953): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 c1c3be776341da5221eac63b4401db937ea1aa9bcc2449052a874cfa9a4bd134): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -10192,11 +10192,15 @@ function ReviewsPage({
   // сигнала, — из клика по всплеску и из уведомления по подписке
   const [fWeek, setFWeek] = useState(() => RV_SIG_RX.test(P.month || "") ? P.month : "");
   const [fOrder, setFOrder] = useState("date"); // date | severity (без поиска)
-  const [fView, setFView] = useState("cards"); // cards | groups
+  const [fView, setFView] = useState("cards"); // cards | groups | stories
   const [cl, setCl] = useState(null),
     [clBusy, setClBusy] = useState(false);
   const [grp, setGrp] = useState(null),
     [grpItems, setGrpItems] = useState(null);
+  const [sts, setSts] = useState(null),
+    [stsBusy, setStsBusy] = useState(false),
+    [stEv, setStEv] = useState(null);
+  const [stSig, setStSig] = useState(null);
   const [mev, setMev] = useState(null); // изменения условий по продукту («Рынок»)
   const [sub, setSub] = useState(null); // подписка на сигналы среза
   // Читалка жалобы: {list, idx, ctx, src, back}. src="feed" — список берётся
@@ -10470,6 +10474,28 @@ function ReviewsPage({
     });
   }, [fView, bank, product, perKey, theme, flag, fCity, fSrc, escOnly, fWeek]);
 
+  // «Сюжеты» (rag/review_stories.py): устойчивые группы похожих историй — пересчёт раз в
+  // сутки по банку за 90 дней; из фильтров вкладки к ним применяются банк, продукт и период
+  useEffect(() => {
+    if (fView !== "stories") return;
+    setStsBusy(true);
+    apiFetch(`/api/reviews/stories?bank=${enc(bank)}${pq()}${perQ}`).then(d => {
+      setSts(d);
+      setStsBusy(false);
+    }).catch(() => {
+      setSts({
+        __err: true
+      });
+      setStsBusy(false);
+    });
+  }, [fView, bank, product, perKey]);
+
+  // сюжеты, выросшие за неделю сверх своей нормы — отдельно от радара: свой запрос, без LLM
+  useEffect(() => {
+    setStSig(null);
+    apiFetch(`/api/reviews/story-signals?bank=${enc(bank)}${pq()}`).then(d => setStSig(d.items || [])).catch(() => setStSig([]));
+  }, [bank, product]);
+
   // радар срочных аномалий — грузится ОТДЕЛЬНО (LLM), не блокирует дашборд
   useEffect(() => {
     setAnomBusy(true);
@@ -10676,7 +10702,7 @@ function ReviewsPage({
         }
         return;
       }
-      if (tab !== "complaints" || overlay || !feed || !feed.length || fView === "groups" && !q) return;
+      if (tab !== "complaints" || overlay || !feed || !feed.length || fView !== "cards" && !q) return;
       if (down) {
         e.preventDefault();
         setCur(c => Math.min(feed.length - 1, c + 1));
@@ -10742,9 +10768,12 @@ function ReviewsPage({
   const openGroup = g => {
     setGrp(g);
     setGrpItems(null);
+    setStEv(null);
     apiPost("/api/reviews/by-urls", {
       urls: g.urls
     }).then(d => setGrpItems(d.items || [])).catch(() => setGrpItems([]));
+    // у сюжета — журнал: появился, вырос, слился, затих
+    if (g.story_id) apiFetch(`/api/reviews/stories/${g.story_id}/events`).then(d => setStEv(d.items || [])).catch(() => setStEv([]));
   };
   const onKey = fn => e => {
     if (e.key === "Enter" || e.key === " ") {
@@ -11229,7 +11258,35 @@ function ReviewsPage({
     s: 12
   })))));
   // «Новое» без всплесков: сюжеты вне кодификатора — наблюдения, их видно и в спокойную неделю
-  const rvNovel = nv => (nv || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  // сюжеты недели (5.6): одна история против своей нормы — внутри «точного» кода её всплеск
+  // тонет в соседних историях; рынок — та же история у других банков banki.ru
+  const rvStSig = () => (stSig || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "rv-radar-sub",
+    style: {
+      marginTop: 10
+    }
+  }, "\u0421\u044E\u0436\u0435\u0442\u044B \u0432\u044B\u0440\u043E\u0441\u043B\u0438 \u0437\u0430 \u043D\u0435\u0434\u0435\u043B\u044E:"), /*#__PURE__*/React.createElement("div", {
+    className: "rv-radar-chips"
+  }, stSig.map(x => {
+    const g = {
+      urls: x.urls,
+      n: x.urls.length,
+      label: x.title,
+      story_id: x.story_id,
+      head: x.title
+    };
+    const tip = `${x.week} за 7 дн · обычно ~${String(x.baseline_week).replace(".", ",")}/нед` + (x.market ? x.market.n ? ` · у рынка за неделю ещё ${x.market.n} ${plural(x.market.n, "похожая жалоба", "похожие жалобы", "похожих жалоб")} (${x.market.banks} ${plural(x.market.banks, "банк", "банка", "банков")})` : " · у других банков этой истории за неделю нет" : "") + " — открыть";
+    return /*#__PURE__*/React.createElement("span", {
+      key: x.story_id,
+      className: "rv-radar-chip lvl-watch",
+      role: "button",
+      tabIndex: 0,
+      "data-tip": tip,
+      onClick: () => openGroup(g),
+      onKeyDown: onKey(() => openGroup(g))
+    }, x.title, /*#__PURE__*/React.createElement("b", null, x.ratio ? "×" + String(x.ratio).replace(".", ",") : x.week));
+  })));
+  const rvNovel = nv => /*#__PURE__*/React.createElement(React.Fragment, null, rvStSig(), (nv || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "rv-radar-sub",
     style: {
       marginTop: 10
@@ -11256,7 +11313,7 @@ function ReviewsPage({
       first: c.first,
       last: c.last
     }))
-  }, c.topic, /*#__PURE__*/React.createElement("b", null, c.n)))));
+  }, c.topic, /*#__PURE__*/React.createElement("b", null, c.n))))));
   const radarCard = /*#__PURE__*/React.createElement("div", {
     className: "rv-card rv-radar"
   }, /*#__PURE__*/React.createElement("div", {
@@ -11371,7 +11428,7 @@ function ReviewsPage({
     style: {
       marginTop: 6
     }
-  }, "LLM-\u0440\u0430\u0437\u0431\u043E\u0440 \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D \u2014 \u0441\u043C. \u0432\u0441\u043F\u043B\u0435\u0441\u043A\u0438 \u0432\u044B\u0448\u0435 (\u0447\u0438\u0441\u043B\u0430 \u0437\u0430 7 \u0434\u043D \u0442\u043E\u0447\u043D\u044B).")));
+  }, "LLM-\u0440\u0430\u0437\u0431\u043E\u0440 \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D \u2014 \u0441\u043C. \u0432\u0441\u043F\u043B\u0435\u0441\u043A\u0438 \u0432\u044B\u0448\u0435 (\u0447\u0438\u0441\u043B\u0430 \u0437\u0430 7 \u0434\u043D \u0442\u043E\u0447\u043D\u044B)."), rvStSig()));
   const flagsCard = rf && !rf.__err && rf.groups && rf.groups.length > 0 ? /*#__PURE__*/React.createElement("div", {
     className: "rv-card rv-flags"
   }, /*#__PURE__*/React.createElement("div", {
@@ -11573,20 +11630,20 @@ function ReviewsPage({
     className: "rv-chips rv-chips-sm",
     role: "group",
     "aria-label": "\u0432\u0438\u0434"
-  }, [["cards", "карточки"], ["groups", "группы похожих"]].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
+  }, [["cards", "карточки"], ["groups", "группы похожих"], ["stories", "сюжеты"]].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
     key: k,
     className: "rv-chip" + (fView === k ? " on" : ""),
     onClick: () => setFView(k)
   }, l)));
   // сколько настроек в листе отличаются от обычных — число на кнопке «Фильтры»
-  const fMore = (fSrc ? 1 : 0) + (flag ? 1 : 0) + (!q && fOrder === "severity" ? 1 : 0) + (!q && fView === "groups" ? 1 : 0);
+  const fMore = (fSrc ? 1 : 0) + (flag ? 1 : 0) + (!q && fOrder === "severity" ? 1 : 0) + (!q && fView !== "cards" ? 1 : 0);
   const feedCard = /*#__PURE__*/React.createElement("div", {
     className: "rv-card"
   }, /*#__PURE__*/React.createElement("div", {
     className: "rv-ct"
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h2", {
     className: "rv-ttl"
-  }, "\u0416\u0430\u043B\u043E\u0431\u044B", !(fView === "groups" && !q) && (() => {
+  }, "\u0416\u0430\u043B\u043E\u0431\u044B", !(fView !== "cards" && !q) && (() => {
     const n = (feed || []).length,
       dup = (feed || []).reduce((a, r) => a + (r.similar || 0), 0);
     if (!n) return null;
@@ -11777,7 +11834,58 @@ function ReviewsPage({
     className: "rv-fw" + (split ? " split" : "")
   }, /*#__PURE__*/React.createElement("div", {
     className: "rv-fw-list" + (dense ? " dense" : "")
-  }, fView === "groups" && !q ? clBusy ? /*#__PURE__*/React.createElement(RvSkelRows, {
+  }, fView === "stories" && !q ? stsBusy || !sts ? /*#__PURE__*/React.createElement(RvSkelRows, {
+    n: 5,
+    h: 92,
+    gap: 12
+  }) : sts.__err || sts.error ? /*#__PURE__*/React.createElement(RvNote, {
+    err: true
+  }) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "rv-cl-sum"
+  }, sts.items.length ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("b", null, sts.items.length), " ", plural(sts.items.length, "сюжет", "сюжета", "сюжетов"), " \u0441 \u0436\u0430\u043B\u043E\u0431\u0430\u043C\u0438 \u0437\u0430 \u043F\u0435\u0440\u0438\u043E\u0434 \u2014 \u0443\u0441\u0442\u043E\u0439\u0447\u0438\u0432\u044B\u0435 \u0433\u0440\u0443\u043F\u043F\u044B \u043F\u043E\u0445\u043E\u0436\u0438\u0445 \u0438\u0441\u0442\u043E\u0440\u0438\u0439, \u043F\u0435\u0440\u0435\u0441\u0447\u0451\u0442 \u0440\u0430\u0437 \u0432 \u0441\u0443\u0442\u043A\u0438") : "Сюжетов с жалобами за период нет — сюжет начинается с трёх похожих историй", theme || flag || fCity || fSrc || escOnly ? /*#__PURE__*/React.createElement("span", {
+    className: "rv-sum-x"
+  }, " \xB7 \u0442\u0435\u043C\u0430, \u043F\u0440\u0438\u0437\u043D\u0430\u043A, \u0433\u043E\u0440\u043E\u0434 \u0438 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0430 \u043A \u0441\u044E\u0436\u0435\u0442\u0430\u043C \u043D\u0435 \u043F\u0440\u0438\u043C\u0435\u043D\u044F\u044E\u0442\u0441\u044F") : ""), sts.items.map(x => {
+    const g = {
+      urls: x.urls,
+      n: x.n_window,
+      label: x.title,
+      first: x.first_seen,
+      last: x.last_seen,
+      story_id: x.story_id,
+      head: x.title,
+      criterion: x.criterion
+    };
+    return /*#__PURE__*/React.createElement("div", {
+      key: x.story_id,
+      className: "rv-cl",
+      role: "button",
+      tabIndex: 0,
+      onClick: () => openGroup(g),
+      onKeyDown: onKey(() => openGroup(g))
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "rv-cl-n"
+    }, /*#__PURE__*/React.createElement("b", null, x.n_window), /*#__PURE__*/React.createElement("span", null, plural(x.n_window, "жалоба", "жалобы", "жалоб"))), /*#__PURE__*/React.createElement("div", {
+      className: "rv-cl-b"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "rv-cl-h"
+    }, x.issue_label && /*#__PURE__*/React.createElement("span", {
+      className: "rv-tag " + (x.risk || "ops")
+    }, x.issue_label), (x.badges || []).map(b => /*#__PURE__*/React.createElement("span", {
+      key: b.kind,
+      className: "rv-st-b " + b.kind
+    }, b.label)), /*#__PURE__*/React.createElement("span", {
+      className: "rv-cl-m"
+    }, rvDate(x.first_seen) === rvDate(x.last_seen) ? rvDate(x.first_seen) : `${rvDate(x.first_seen)} – ${rvDate(x.last_seen)}`, x.n > x.n_window ? ` · всего ${x.n}` : "", x.status === "quiet" ? " · затих" : "")), /*#__PURE__*/React.createElement("div", {
+      className: "rv-cl-s"
+    }, x.named ? /*#__PURE__*/React.createElement("b", null, x.title) : x.title), x.named && x.summary && /*#__PURE__*/React.createElement("div", {
+      className: "rv-cl-q"
+    }, x.summary)), /*#__PURE__*/React.createElement("span", {
+      className: "rv-cl-go",
+      "aria-hidden": "true"
+    }, /*#__PURE__*/React.createElement(RvIChevR, {
+      s: 16
+    })));
+  })) : fView === "groups" && !q ? clBusy ? /*#__PURE__*/React.createElement(RvSkelRows, {
     n: 5,
     h: 92,
     gap: 12
@@ -11836,7 +11944,7 @@ function ReviewsPage({
     onOpen: e => vtOpen(e && e.currentTarget, () => openReader(null, i, null, "feed")),
     onCase: a => addCase(r, a),
     onTheme: pickTheme
-  })), feedMore && !(fView === "groups" && !q) && /*#__PURE__*/React.createElement("button", {
+  })), feedMore && !(fView !== "cards" && !q) && /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost rv-more-btn",
     onClick: loadMoreFeed,
     disabled: feedMoreBusy
@@ -12132,9 +12240,17 @@ function ReviewsPage({
   })), grp && /*#__PURE__*/React.createElement(RvModal, {
     side: "right",
     onClose: () => setGrp(null),
-    title: `${grp.n} похожих жалоб`,
-    sub: [grp.label, grp.first === grp.last ? rvDate(grp.first) : `${rvDate(grp.first)} – ${rvDate(grp.last)}`].filter(Boolean).join(" · ")
-  }, /*#__PURE__*/React.createElement("div", {
+    title: grp.head || `${grp.n} похожих жалоб`,
+    sub: [grp.head ? `${grp.n} ${plural(grp.n, "жалоба", "жалобы", "жалоб")}` : grp.label, grp.first === grp.last ? rvDate(grp.first) : `${rvDate(grp.first)} – ${rvDate(grp.last)}`].filter(Boolean).join(" · ")
+  }, grp.criterion && /*#__PURE__*/React.createElement("p", {
+    className: "rv-st-crit"
+  }, grp.criterion), grp.story_id && stEv && stEv.length > 0 && /*#__PURE__*/React.createElement("details", {
+    className: "rv-st-ev"
+  }, /*#__PURE__*/React.createElement("summary", null, "\u0418\u0441\u0442\u043E\u0440\u0438\u044F \u0441\u044E\u0436\u0435\u0442\u0430 \xB7 ", stEv.length), /*#__PURE__*/React.createElement("ul", null, stEv.map(e => /*#__PURE__*/React.createElement("li", {
+    key: e.event_id
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "rv-cl-m"
+  }, rvDate(e.at)), " ", e.label)))), /*#__PURE__*/React.createElement("div", {
     className: "rv-grp-acts"
   }, /*#__PURE__*/React.createElement("button", {
     className: "btn btn-sm btn-primary",
@@ -21147,6 +21263,8 @@ function puGuardItems(m) {
   if ((rp.flags_open || 0) > 0 && (rp.flags_oldest_days || 0) >= 3) add("warn", `отметки «не относится к срезу» ждут решения: ${rp.flags_open} · старейшей ${Math.floor(rp.flags_oldest_days)} дн`, "inbox", "pu-inbox");
   if (rp.dedup_age_h != null && rp.dedup_age_h > 30) add("warn", `склейка копий отзывов не проходила ${Math.round(rp.dedup_age_h)} ч`, "data", "pu-slices");
   if (rp.stories_age_h != null && rp.stories_age_h > 50) add("warn", `«Сюжеты» не пересчитывались ${Math.round(rp.stories_age_h)} ч`, "data", "pu-slices");
+  const sc = (m.slice_canary || [])[0];
+  if (sc && sc.alert) add("bad", `канарейка срезов ${rvDate(sc.run_at)}: ${(sc.reasons || []).join("; ")}`, "data", "pu-slices");
   if ((rsh.failed || 0) > 0) add("warn", `поиск по жалобам не отработал ${rsh.failed} ${plural(rsh.failed, "раз", "раза", "раз")}`, "data", "pu-rsearch");
   return out.sort((a, b) => (a.lv === "bad" ? 0 : 1) - (b.lv === "bad" ? 0 : 1));
 }
@@ -21929,7 +22047,27 @@ function PuSlices() {
     style: {
       margin: "8px 0 0"
     }
-  }, "\u042D\u0442\u0430\u043B\u043E\u043D 04.11: 260 \u0436\u0430\u043B\u043E\u0431, \u0434\u0432\u0430 \u0441\u043B\u0435\u043F\u044B\u0445 \u0440\u0430\u0437\u043C\u0435\u0442\u0447\u0438\u043A\u0430 \u0438 \u0430\u0440\u0431\u0438\u0442\u0440. \u0422\u0440\u0430\u0442\u044B \u0440\u0430\u0437\u043C\u0435\u0442\u043A\u0438: ", sp || "—", "."));
+  }, "\u042D\u0442\u0430\u043B\u043E\u043D 04.11: 260 \u0436\u0430\u043B\u043E\u0431, \u0434\u0432\u0430 \u0441\u043B\u0435\u043F\u044B\u0445 \u0440\u0430\u0437\u043C\u0435\u0442\u0447\u0438\u043A\u0430 \u0438 \u0430\u0440\u0431\u0438\u0442\u0440. \u0422\u0440\u0430\u0442\u044B \u0440\u0430\u0437\u043C\u0435\u0442\u043A\u0438: ", sp || "—", "."), (d.canary || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "pu-x-scroll",
+    style: {
+      marginTop: 10
+    }
+  }, /*#__PURE__*/React.createElement("table", {
+    className: "pu-tbl"
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u043A\u0430\u043D\u0430\u0440\u0435\u0439\u043A\u0430"), d.keys.map(k => /*#__PURE__*/React.createElement("th", {
+    key: k.key
+  }, k.label)), /*#__PURE__*/React.createElement("th", null, "\u20BD"))), /*#__PURE__*/React.createElement("tbody", null, d.canary.map(r => /*#__PURE__*/React.createElement("tr", {
+    key: r.run_at,
+    title: r.note || ""
+  }, /*#__PURE__*/React.createElement("td", null, rvDate(r.run_at), r.alert ? /*#__PURE__*/React.createElement("span", {
+    className: "pu-chip bad",
+    title: (r.reasons || []).join("; ")
+  }, " \u0442\u0440\u0435\u0432\u043E\u0433\u0430") : null), d.keys.map(k => {
+    const m = (r.metrics || {})[k.key];
+    return /*#__PURE__*/React.createElement("td", {
+      key: k.key
+    }, m ? `${pc(m.precision)} / ${pc(m.recall)}` : "—");
+  }), /*#__PURE__*/React.createElement("td", null, fmtNum(Math.round(r.rub || 0)))))))));
 }
 function PuReviewSources({
   r

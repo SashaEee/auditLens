@@ -45,7 +45,7 @@ def pg(monkeypatch):
         cur = raw.cursor()
         cur.execute(_SCHEMA)
         for f in ("069_review_annotation", "099_review_slices", "102_review_slices_registry",
-                  "109_product_directions"):
+                  "108_product_directions"):
             cur.execute((ROOT / "migrations" / f"{f}.sql").read_text(encoding="utf-8"))
         raw.commit()
     finally:
@@ -139,7 +139,7 @@ def test_copy_counts_when_its_canonical_is_not_a_complaint(pg):
 
 def test_direction_filter_matches_its_product_or_slice(pg):
     """Направление 'dir:<код>' считает то же, что его продукт или срез, — на плитке,
-    в ленте и в Excel (миграция 109, directions.py)."""
+    в ленте и в Excel (миграция 108, directions.py)."""
     per = RP.parse("365d")
     feed_dir = RD.list_reviews_ex(B, product="dir:field", period=per, limit=5)["total"]
     feed_slice = RD.list_reviews_ex(B, product=FIELD, period=per, limit=5)["total"]

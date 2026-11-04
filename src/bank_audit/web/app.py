@@ -662,7 +662,13 @@ def admin_pulse_slices(user: CurrentUser = Depends(get_current_user)):
     if not telemetry.can_pulse(user.username):
         raise HTTPException(403, "admin only")
     from ..rag import review_slices as rs
-    return rs.status()
+    out = rs.status()
+    try:
+        from ..rag import review_slices_canary
+        out["canary"] = review_slices_canary.history(4)
+    except Exception:  # noqa: BLE001 — до миграции 107 карточка без канарейки
+        out["canary"] = []
+    return out
 
 
 @app.get("/api/admin/pulse/reach")
@@ -2961,6 +2967,54 @@ def reviews_clusters(bank: str = "Сбербанк", product: Optional[str] = No
     return _rw().clusters(bank, product or None, per.days, theme or None, flag or None,
                           city or None, source or None, bool(esc), period=per,
                           month=month or None) or {}
+
+
+@app.get("/api/reviews/stories")
+def reviews_stories(bank: str = "Сбербанк", product: Optional[str] = None,
+                    per=Depends(_review_period)):
+    """«Сюжеты» банка (rag/review_stories.list_stories): устойчивые группы похожих
+    историй с названием, значками за две недели и жалобами окна. Считаются раз в
+    сутки за 90 дней — окно вкладки длиннее берёт только то, что в этих сюжетах."""
+    from ..rag import review_stories as rs
+    bc = _rd().resolve_bank(bank)
+    if not bc:
+        return {"items": [], "error": "unknown_bank"}
+    days = max(1, min(int(per.days or 90), 365))
+    try:
+        items = rs.list_stories(bc, product=product or None, days=days, limit=40)
+    except Exception as e:  # noqa: BLE001 — сбой — не «сюжетов нет»
+        log.warning("reviews_stories: %s", e)
+        return {"items": [], "error": "failed"}
+    return {"items": items, "days": days}
+
+
+@app.get("/api/reviews/story-signals")
+def reviews_story_signals(bank: str = "Сбербанк", product: Optional[str] = None):
+    """Сюжеты, выросшие за неделю сигнала сверх своей нормы (то же правило V6, что у
+    проблем), и та же история у рынка за неделю."""
+    from ..rag import review_stories as rs
+    rd = _rd()
+    bc = rd.resolve_bank(bank)
+    if not bc:
+        return {"items": [], "error": "unknown_bank"}
+    try:
+        items = rd._cached(f"story_sig:{bc}:{product}",
+                           lambda: rs.story_signals(bc, product=product or None), ttl=900)
+    except Exception as e:  # noqa: BLE001
+        log.warning("reviews_story_signals: %s", e)
+        return {"items": [], "error": "failed"}
+    return {"items": items}
+
+
+@app.get("/api/reviews/stories/{story_id}/events")
+def reviews_story_events(story_id: int):
+    """Журнал сюжета человеческими словами: появился, вырос, слился, затих."""
+    from ..rag import review_stories as rs
+    try:
+        return {"items": rs.story_events(story_id, limit=60)}
+    except Exception as e:  # noqa: BLE001
+        log.warning("reviews_story_events: %s", e)
+        return {"items": [], "error": "failed"}
 
 
 class ReviewUrls(BaseModel):

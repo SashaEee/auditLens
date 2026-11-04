@@ -4,7 +4,7 @@
 два слепых разметчика и арбитр. Дальше разметка живёт сама: облако меняет версию модели,
 мы правим определения, провайдер тихо деградирует — и узнаём об этом от аудиторов, когда
 в срезе уже неделю лишнее. Раз в неделю каскад прогоняется на постоянной выборке из
-эталона, точность и полнота каждого среза ложатся в review_slice_canary (миграция 108),
+эталона, точность и полнота каждого среза ложатся в review_slice_canary (миграция 107),
 «Пульс» показывает последние прогоны, а падение поднимает тревогу.
 
 Как.
@@ -47,7 +47,7 @@ EVERY_S = int(os.getenv("REVIEW_SLICES_CANARY_EVERY_S", str(7 * 86400)))
 # не вышло (тексты не прочитались, модель молчит, упала запись) — повтор через сутки,
 # а не каждый тик: иначе сбой после трат оплачивался бы каждый час
 RETRY_S = int(os.getenv("REVIEW_SLICES_CANARY_RETRY_S", str(86400)))
-CANARY_RUB = float(os.getenv("REVIEW_SLICES_CANARY_RUB", "150"))
+CANARY_RUB = float(os.getenv("REVIEW_SLICES_CANARY_RUB", "300"))
 PER_SLICE = int(os.getenv("REVIEW_SLICES_CANARY_PER_SLICE", "25"))
 NEGATIVES = int(os.getenv("REVIEW_SLICES_CANARY_NEG", "40"))
 # пакеты идут по нескольку разом; бюджет проверяется перед каждым, так что перерасход —
@@ -55,6 +55,9 @@ NEGATIVES = int(os.getenv("REVIEW_SLICES_CANARY_NEG", "40"))
 INFLIGHT = int(os.getenv("REVIEW_SLICES_CANARY_INFLIGHT", "4"))
 FLOOR = float(os.getenv("REVIEW_SLICES_CANARY_FLOOR", "0.80"))
 DROP = float(os.getenv("REVIEW_SLICES_CANARY_DROP", "0.10"))
+# Полнота: срез, который ловит меньше 0,70 жалоб эталона, теряет сюжеты тихо — точность
+# этого не видит (на эталоне 04.11 полнота срезов 0,85–1,0)
+RECALL_FLOOR = float(os.getenv("REVIEW_SLICES_CANARY_RECALL_FLOOR", "0.70"))
 # точность по одному-двум решениям «да» — шум (1 из 2 = 0,50): тревогу по точности
 # поднимаем, когда «да» не меньше MIN_SUPPORT
 MIN_SUPPORT = int(os.getenv("REVIEW_SLICES_CANARY_MIN_SUPPORT", "5"))
@@ -149,7 +152,7 @@ def _num(x: float) -> str:
 
 
 def alerts(metrics: dict, prev: dict | None = None) -> list[str]:
-    """Причины тревоги — пусто, если всё в порядке. Точность ниже FLOOR; упала больше
+    """Причины тревоги — пусто, если всё в порядке. Полнота ниже RECALL_FLOOR; точность ниже FLOOR; упала больше
     чем на DROP против прошлого прогона (оба с «да» не меньше MIN_SUPPORT); срез молчит,
     хотя положительных эталона в выборке не меньше MIN_SUPPORT, — полная потеря среза
     точностью не видна (ни одного «да» — нечего делить)."""
@@ -162,6 +165,9 @@ def alerts(metrics: dict, prev: dict | None = None) -> list[str]:
             if (m.get("fn") or 0) >= MIN_SUPPORT:
                 out.append(f"{label}: срез замолчал — {m['fn']} жалоб эталона, ни одного «да»")
             continue
+        r = m.get("recall")
+        if r is not None and (m.get("tp") or 0) + (m.get("fn") or 0) >= MIN_SUPPORT and r < RECALL_FLOOR:
+            out.append(f"{label}: полнота {_num(r)} ниже {_num(RECALL_FLOOR)}")
         if (m.get("tp") or 0) + (m.get("fp") or 0) < MIN_SUPPORT:
             continue
         if p < FLOOR:
@@ -330,7 +336,7 @@ def _gold_count() -> int:
     try:
         with db.session() as s:
             return int(s.execute(text("SELECT count(*) FROM review_slice_gold")).scalar() or 0)
-    except Exception:  # noqa: BLE001 — миграция 108 ещё не накатана: эталона нет
+    except Exception:  # noqa: BLE001 — миграция 107 ещё не накатана: эталона нет
         return 0
 
 

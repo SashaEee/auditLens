@@ -1253,3 +1253,64 @@ def test_short_and_plural():
     assert [RS._complaints(n) for n in (1, 2, 5, 11, 12, 21, 22, 25, 101, 111)] == [
         "1 жалоба", "2 жалобы", "5 жалоб", "11 жалоб", "12 жалоб", "21 жалоба", "22 жалобы",
         "25 жалоб", "101 жалоба", "111 жалоб"]
+
+
+def test_pg_story_signals_week_against_own_norm_and_market(pgs):
+    # 5.6 (04.11.2026): сюжет против своей нормы — V6 и BH по сюжетам; молодой сюжет —
+    # не всплеск; рынок — та же история у других банков banki.ru в ту же неделю
+    put, q = pgs
+    from bank_audit import db as _db
+    from sqlalchemy import text as _t
+    now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    with _db.session() as s:
+        s.execute(_t("ALTER TABLE review_index ADD COLUMN IF NOT EXISTS source text DEFAULT 'bankiru'"))
+    sp = Space(dim=160)
+    A, B, Y = sp.story("A", 60, 0.95), sp.story("B", 60, 0.95), sp.story("Y", 12, 0.95)
+    XA, XB, XY = sp.matrix(A), sp.matrix(B), sp.matrix(Y)
+    rows, members = [], {"A": [], "B": [], "Y": []}
+
+    def add(tag, ids, X, k, day):
+        url = f"https://r/{tag}{k}"
+        rows.append((url, "fees", now - timedelta(days=day, hours=3), X[k], f"изложение {tag}",
+                     None, None))
+        members[tag].append(url)
+    # A: по 2 жалобы в неделю семь недель, на неделе сигнала — 14
+    k = 0
+    for w in range(1, 8):
+        for j in range(2):
+            add("A", A, XA, k, 7 * w + 1 + j); k += 1
+    for j in range(14):
+        add("A", A, XA, k, 1 + j % 6); k += 1
+    # B: ровно по 3 в неделю все восемь недель — не всплеск
+    k = 0
+    for w in range(8):
+        for j in range(3):
+            add("B", B, XB, k, 7 * w + 1 + j); k += 1
+    # Y: 10 жалоб за последнюю неделю, но сюжету 6 дней — «новый», не всплеск
+    for k in range(10):
+        add("Y", Y, XY, k, 1 + k % 5)
+    put(rows)
+    for tag, first in (("A", 60), ("B", 60), ("Y", 6)):
+        with _db.session() as s:
+            sid = s.execute(_t("""INSERT INTO review_story (bank, title, first_seen, issue_main, status)
+                                  VALUES (:b, :t, :f, 'fees', 'active') RETURNING story_id"""),
+                            {"b": BANK, "t": f"Сюжет {tag}", "f": now - timedelta(days=first)}).scalar()
+            for u in members[tag]:
+                s.execute(_t("INSERT INTO review_story_member (story_id, url) VALUES (:s, :u)"),
+                          {"s": sid, "u": u})
+    # у рынка: две жалобы другого банка той же истории, одна — с другой площадки
+    with _db.session() as s:
+        for url, src, vec in (("https://m/1", "bankiru", XA[0]), ("https://m/2", "bankiru", XA[1]),
+                              ("https://m/3", "sravni", XA[2]), ("https://m/4", "bankiru", XB[0])):
+            s.execute(_t("""INSERT INTO review_index (url, bank, kind, issue, dt, source)
+                            VALUES (:u, 'Другой банк', 'complaint', 'fees', :d, :s)"""),
+                      {"u": url, "d": now - timedelta(days=2), "s": src})
+            s.execute(_t("INSERT INTO review_summary_vec VALUES (:u, :v)"),
+                      {"u": url, "v": [float(x) for x in vec]})
+    got = RS.story_signals(BANK, now=now)
+    assert [x["title"] for x in got] == ["Сюжет A"], got
+    a = got[0]
+    assert a["week"] == 14 and a["baseline_week"] == 2.0 and a["ratio"] == 7.0
+    assert len(a["urls"]) == 14 and a["q"] <= RS.STORY_SIG_ALPHA
+    assert a["market"] == {"n": 2, "banks": 1}
+    assert RS.story_signals(BANK, now=now, market=False)[0]["market"] is None
