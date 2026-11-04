@@ -83,9 +83,14 @@ def _month_label(ym: str) -> str:
         return ym
 
 
+def _product_label(p: str | None) -> str | None:
+    from ..directions import product_label
+    return product_label(p)
+
+
 def describe_filters(f: dict) -> list[tuple[str, str]]:
     out = [("Банк", f.get("bank") or "Сбербанк"),
-           ("Продукт", f.get("product") or "все продукты"),
+           ("Продукт", _product_label(f.get("product")) or "все продукты"),
            ("Тема", f.get("theme") or "все темы"),
            ("Признак", f.get("flag") or "—"),
            ("Площадка", SOURCE_LABEL.get(f.get("source") or "", f.get("source") or "все площадки")),
@@ -165,7 +170,7 @@ def to_xlsx(rows: list[dict], filters: dict, *, limit: int | None = None) -> byt
     pending = sum(1 for r in rows if r.get("разметка"))
     a = _agg([r for r in rows if not r.get("разметка")])
     bank = filters.get("bank") or "Сбербанк"
-    what = " · ".join(x for x in (filters.get("product"), filters.get("theme"),
+    what = " · ".join(x for x in (_product_label(filters.get("product")), filters.get("theme"),
                                    filters.get("flag")) if x)
     title = f"Жалобы клиентов: {bank}" + (f" · {what}" if what else "")
     period = ""

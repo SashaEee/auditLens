@@ -101,3 +101,46 @@ def review_maps() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
         for v in d.review_vulnerable:
             vul[v] = d.code
     return prod, sl, vul
+
+
+DIR_PREFIX = "dir:"
+
+
+def product_fn_sql() -> str:
+    """Текст SQL-функции al_product_is: продукт, особый срез или направление аудита
+    (want = 'dir:<код>' — продукты ИЛИ срезы направления). Миграция с этой функцией
+    генерируется отсюда, тест сверяет: иначе фильтр в SQL разойдётся с кодом."""
+    from .rag.review_slices import SLICES
+
+    def q(v: str) -> str:
+        return "'" + v.replace("'", "''") + "'"
+
+    parts = ["product = want"]
+    for key, (label, _d) in SLICES.items():
+        parts.append(f"(want = {q(label)} AND {q(key)} = ANY(coalesce(slices, '{{}}')))")
+    for d in DIRECTIONS:
+        conds = []
+        if d.review_products:
+            conds.append("product = ANY(ARRAY[" + ", ".join(q(x) for x in d.review_products) + "])")
+        if d.review_slices:
+            conds.append("coalesce(slices, '{}') && ARRAY[" + ", ".join(q(x) for x in d.review_slices) + "]")
+        if conds:
+            parts.append(f"(want = {q(DIR_PREFIX + d.code)} AND ({' OR '.join(conds)}))")
+    body = "\n        OR ".join(parts)
+    return ("CREATE OR REPLACE FUNCTION al_product_is(product text, slices text[], want text)\n"
+            "RETURNS boolean LANGUAGE sql IMMUTABLE AS $$\n"
+            f"    SELECT {body}\n$$;")
+
+
+def by_product_param(product: str | None) -> Direction | None:
+    """Направление по значению фильтра продукта 'dir:<код>' (иначе None)."""
+    if product and product.startswith(DIR_PREFIX):
+        return BY_CODE.get(product[len(DIR_PREFIX):])
+    return None
+
+
+def product_label(product: str | None) -> str | None:
+    """Подпись фильтра для людей: 'dir:mortgage' → «Направление: Ипотека»."""
+    d = by_product_param(product)
+    return f"Направление: {d.name}" if d else product
+

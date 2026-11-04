@@ -395,7 +395,9 @@ def data_start_for(product: str | None) -> "_dt.date":
     проекты», «УС», «Выездной сервис») — с начала своей разметки. Иначе прошлый
     период среза был бы почти пуст, и «12 мес» показывали бы рост в разы."""
     from . import review_slices as rs
-    if product and product in {lbl for lbl, _d in rs.SLICES.values()}:
+    from ..directions import by_product_param
+    d = by_product_param(product)
+    if (product and product in {lbl for lbl, _d in rs.SLICES.values()}) or (d and d.review_slices):
         return max(_rp.DATA_START, _dt.date.fromisoformat(rs.SINCE))
     return _rp.DATA_START
 
@@ -1382,6 +1384,18 @@ def products(bank: str, days: int = 365, top: int = 10) -> dict | None:
             ready = {}
         key_of = {lbl: k for k, (lbl, _d) in _rs.SLICES.items()}
         items += [{"product": lbl, "n": n} for lbl, n in extra if n and ready.get(key_of.get(lbl))]
+        # направления аудита (directions.py): продукты или срезы направления одним
+        # фильтром 'dir:<код>'; направление на срезе — только когда его разметка готова
+        from .. import directions as _dirs
+        dirs = []
+        with db.session() as s:
+            for d in _dirs.DIRECTIONS:
+                if any(not ready.get(k) for k in d.review_slices):
+                    continue
+                n = int(s.execute(text("SELECT count(*) FROM review_index i" + win
+                                       + " AND al_product_is(i.product, i.slices, :dir)"),
+                                  {**p, "dir": _dirs.DIR_PREFIX + d.code}).scalar() or 0)
+                dirs.append({"product": _dirs.DIR_PREFIX + d.code, "label": d.name, "n": n})
         # что поменялось в срезе за последние 45 дней (переход на новую версию, новый срез) —
         # строка под фильтром: иначе аудитор видит, что жалоб в срезе вдруг стало меньше
         notes: dict[str, str] = {}
@@ -1393,7 +1407,7 @@ def products(bank: str, days: int = 365, top: int = 10) -> dict | None:
                         notes[_rs.LABELS[key]] = note
         except Exception:  # noqa: BLE001 — без таблицы реестра заметок нет
             pass
-        return {"bank": bc, "items": items, "slice_notes": notes}
+        return {"bank": bc, "items": items, "slice_notes": notes, "directions": dirs}
     return _cached(f"pr:{bc}:{days}:{top}", _compute)
 
 

@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 f37b47ad83b850a30c626ce93e97dbf304a2e6c660a3736df11523938770a8f3): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 c154387048380363765728cf82eade02d051cded1c2280653b723ad38a91847b): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -4347,7 +4347,7 @@ function ForYouPage() {
       className: "fy-sg-b"
     }, /*#__PURE__*/React.createElement("span", {
       className: "fy-sg-l"
-    }, x.bank, x.product ? ` · ${x.product}` : " · все продукты"), /*#__PURE__*/React.createElement("span", {
+    }, x.bank, x.product ? ` · ${rvProd(x.product)}` : " · все продукты"), /*#__PURE__*/React.createElement("span", {
       className: "fy-sg-n"
     }, hot ? x.signals.map(s => `${s.short || s.label} ${s.new ? "— новое" : "×" + rvNum(s.ratio)}`).join(" · ") : w.length ? "быстрее рынка: " + w.map(d => `${d.short || d.label} ×${rvNum(d.gap)}`).join(" · ") : "спокойно")));
   }))), (p.links || []).length > 0 && /*#__PURE__*/React.createElement("section", {
@@ -8945,6 +8945,22 @@ const rvNum = v => v == null ? "—" : String(v).replace(".", ",");
 const RV_FLAG_OPTS = [["Эскалация", [["filed:cbr_court", "Обратились в ЦБ или суд"], ["esc:filed", "Уже обратились куда-либо"], ["esc:threat", "Грозят обратиться"]]], ["Куда", Object.entries(RV_TO).map(([k, v]) => ["to:" + k, v[0].toUpperCase() + v.slice(1)])], ["Уязвимые клиенты", [["vuln:any", "Все уязвимые"], ["vuln:pensioner", "Пенсионеры"], ["vuln:low_income", "Низкий доход"], ["vuln:svo", "Участники СВО"], ["vuln:minor", "Несовершеннолетние"], ["vuln:disabled", "Инвалиды"], ["vuln:ill", "Тяжелобольные"]]], ["Практики и суммы", [["no_consent", "Без согласия"], ["misled", "Ввели в заблуждение"], ["amount:1m", "Сумма от 1 млн ₽"]]]];
 const RV_SOURCES = [["banki", "banki.ru"], ["sravni", "sravni.ru"], ["bankiros", "bankiros.ru"], ["finuslugi", "finuslugi.ru"]];
 const RV_SIG_RX = /^sig:\d{4}-\d{2}-\d{2}$/;
+// Направления аудита — те же коды и названия, что в directions.py (тест сверяет)
+const RV_DIR_NAMES = {
+  mortgage: "Ипотека",
+  metals: "Операции с драгметаллами",
+  field: "Выездное обслуживание",
+  youth: "Дети и молодёжь",
+  selfemp: "Самозанятые",
+  credit_card: "Кредитные карты",
+  acquiring: "Эквайринг",
+  atm: "Устройства самообслуживания",
+  invest: "Инвестиционные продукты",
+  consumer: "Потребительские кредиты",
+  svo: "Участники СВО",
+  payroll: "Зарплатные проекты"
+};
+const rvProd = p => p && p.startsWith("dir:") ? "Направление: " + (RV_DIR_NAMES[p.slice(4)] || p.slice(4)) : p;
 
 // Снимок жалобы при приобщении: если отзыв пропадёт с площадки, в деле
 // останется суть и начало текста
@@ -10149,6 +10165,7 @@ function ReviewsPage({
   const [ge, setGe] = useState(null),
     [prods, setProds] = useState([]);
   const [sliceNotes, setSliceNotes] = useState({}); // «срез стал строже: было N, стало M»
+  const [dirs, setDirs] = useState([]); // направления аудита ('dir:<код>')
   const [geFull, setGeFull] = useState(null); // «ещё N городов» — полный список
   const [feed, setFeed] = useState(null);
   const [feedErr, setFeedErr] = useState(null); // упал поиск ≠ ничего не нашлось
@@ -10424,9 +10441,11 @@ function ReviewsPage({
     apiFetch(`/api/reviews/products?bank=${enc(bank)}`).then(d => {
       setProds(d.items || []);
       setSliceNotes(d.slice_notes || {});
+      setDirs(d.directions || []);
     }).catch(() => {
       setProds([]);
       setSliceNotes({});
+      setDirs([]);
     });
   }, [bank]);
   useEffect(() => {
@@ -10715,7 +10734,7 @@ function ReviewsPage({
         bank,
         product: product || null
       });
-      fbToast(prev ? "Подписка снята" : `Сигналы по «${bank}${product ? " · " + product : ""}» будут в «Для вас»`, !prev);
+      fbToast(prev ? "Подписка снята" : `Сигналы по «${bank}${product ? " · " + rvProd(product) : ""}» будут в «Для вас»`, !prev);
     } catch {
       setSub(prev);
     }
@@ -11069,7 +11088,7 @@ function ReviewsPage({
     className: "rv-cap"
   }, "\u0434\u043E\u043B\u044F \u043F\u0440\u043E\u0431\u043B\u0435\u043C\u044B \u0432 \u0436\u0430\u043B\u043E\u0431\u0430\u0445: ", bank, " \u043F\u0440\u043E\u0442\u0438\u0432 \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u044B\u0445 \u0431\u0430\u043D\u043A\u043E\u0432 \xB7 ", ix && ix.window_extended ? /*#__PURE__*/React.createElement("span", {
     "data-tip": "\u041D\u0430 \u043A\u043E\u0440\u043E\u0442\u043A\u043E\u043C \u043F\u0435\u0440\u0438\u043E\u0434\u0435 \u043F\u043E\u0447\u0442\u0438 \u0432\u0441\u0435 \u043F\u0440\u043E\u0431\u043B\u0435\u043C\u044B \u2014 \xAB\u043C\u0430\u043B\u043E \u0434\u0430\u043D\u043D\u044B\u0445\xBB, \u043F\u043E\u044D\u0442\u043E\u043C\u0443 \u0438\u043D\u0434\u0435\u043A\u0441 \u0441\u0447\u0438\u0442\u0430\u0435\u0442\u0441\u044F \u043D\u0435 \u043C\u0435\u043D\u044C\u0448\u0435 \u0447\u0435\u043C \u0437\u0430 90 \u0434\u043D\u0435\u0439, \u0434\u043E \u043A\u043E\u043D\u0446\u0430 \u043F\u0435\u0440\u0438\u043E\u0434\u0430"
-  }, "\u0437\u0430 90 \u0434\u043D\u0435\u0439 \u043F\u043E ", rvDmy(ix.window_to)) : `за ${pw.za}`, product ? ` · ${product}` : ""), busy && !ix ? /*#__PURE__*/React.createElement(RvSkelRows, {
+  }, "\u0437\u0430 90 \u0434\u043D\u0435\u0439 \u043F\u043E ", rvDmy(ix.window_to)) : `за ${pw.za}`, product ? ` · ${rvProd(product)}` : ""), busy && !ix ? /*#__PURE__*/React.createElement(RvSkelRows, {
     n: full ? 10 : 5,
     h: 42,
     gap: 10
@@ -11877,10 +11896,19 @@ function ReviewsPage({
     "data-tip": product ? "Продукт определён по тексту жалобы, а не взят из метки площадки: на продуктах, которые клиент называет прямо, разметка точна; широкие позиции («подписки», «дистанционное обслуживание») собирают и неопределённое" : undefined
   }, /*#__PURE__*/React.createElement("option", {
     value: ""
-  }, "\u0412\u0441\u0435 \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u044B"), prods.map(p => /*#__PURE__*/React.createElement("option", {
+  }, "\u0412\u0441\u0435 \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u044B"), dirs.length > 0 && /*#__PURE__*/React.createElement("optgroup", {
+    label: "\u041D\u0430\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0438\u044F \u0430\u0443\u0434\u0438\u0442\u0430"
+  }, dirs.map(p => /*#__PURE__*/React.createElement("option", {
     key: p.product,
     value: p.product
-  }, p.product, " (", fmtNum(p.n), ")"))), /*#__PURE__*/React.createElement("div", {
+  }, p.label, " (", fmtNum(p.n), ")"))), /*#__PURE__*/React.createElement("optgroup", {
+    label: "\u041F\u0440\u043E\u0434\u0443\u043A\u0442\u044B \u0438 \u0441\u0440\u0435\u0437\u044B"
+  }, prods.map(p => /*#__PURE__*/React.createElement("option", {
+    key: p.product,
+    value: p.product
+  }, p.product, " (", fmtNum(p.n), ")")), product && !prods.some(p => p.product === product) && !dirs.some(p => p.product === product) && /*#__PURE__*/React.createElement("option", {
+    value: product
+  }, rvProd(product)))), /*#__PURE__*/React.createElement("div", {
     className: "rv-hper"
   }, /*#__PURE__*/React.createElement(RvPeriodPicker, {
     per: per,
@@ -11896,7 +11924,7 @@ function ReviewsPage({
     className: "rv-bell" + (sub ? " on" : ""),
     onClick: toggleSub,
     "aria-label": sub ? "Слежу за сигналами" : "Следить за сигналами",
-    "data-tip": sub ? "Вы следите за сигналами этого среза — они приходят в «Для вас». Нажмите, чтобы отписаться" : `Следить за сигналами: ${bank}${product ? " · " + product : " · все продукты"} — новые всплески придут в колокольчик и в «С прошлого визита»`
+    "data-tip": sub ? "Вы следите за сигналами этого среза — они приходят в «Для вас». Нажмите, чтобы отписаться" : `Следить за сигналами: ${bank}${product ? " · " + rvProd(product) : " · все продукты"} — новые всплески придут в колокольчик и в «С прошлого визита»`
   }, /*#__PURE__*/React.createElement("svg", {
     width: "14",
     height: "14",
@@ -12132,7 +12160,7 @@ function ReviewsPage({
     side: "right",
     onClose: () => setDrill(null),
     title: drill.label,
-    sub: `${bank}${product ? ` · ${product}` : ""}${drillItems ? ` · показано ${drillItems.length}` : ""}`
+    sub: `${bank}${product ? ` · ${rvProd(product)}` : ""}${drillItems ? ` · показано ${drillItems.length}` : ""}`
   }, drillProf && drillProf.rows && drillProf.rows.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "rv-prof"
   }, /*#__PURE__*/React.createElement("div", {

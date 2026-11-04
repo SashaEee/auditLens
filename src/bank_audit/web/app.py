@@ -3152,6 +3152,13 @@ def reviews_feed(bank: str = "Сбербанк", product: Optional[str] = None,
             "next": res.get("next"),      # курсор ленты: с какой строки продолжать
             "search": res.get("search") or None}
 
+def _prod_name(product: Optional[str]) -> Optional[str]:
+    """Продукт для имени файла: направление 'dir:<код>' — его название."""
+    from ..directions import by_product_param
+    d = by_product_param(product)
+    return d.name if d else product
+
+
 def _period_slug(per) -> str:
     """Период в имени файла выгрузки: «2026-07-18_2026-10-15» или «всё»."""
     if per is None:
@@ -3189,7 +3196,7 @@ def reviews_export(bank: str = "Сбербанк", product: Optional[str] = None
     # тексты отзывов чужие: «=», «+», «-», «@» в начале ячейки Excel исполнит как формулу
     w.writerows({k: ("'" + v if isinstance(v, str) and v[:1] in "=+-@" else v)
                  for k, v in r.items()} for r in rows)
-    name = f"жалобы_{bank}_{theme or flag_name or product or 'все'}_{_period_slug(per)}.csv"
+    name = f"жалобы_{bank}_{theme or flag_name or _prod_name(product) or 'все'}_{_period_slug(per)}.csv"
     return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q(name)}"})
 
@@ -3223,7 +3230,7 @@ def reviews_export_xlsx(bank: str = "Сбербанк", product: Optional[str] =
         "month": month or None, "days": per.days if per else None, "esc": bool(esc),
         "period_label": _rp.label(per) if per else None, "flag": flag_name,
         "source": source or None, "q": (q or "").strip() or None}, limit=limit)
-    name = (f"AuditLens_жалобы_{bank}_{theme_label or flag_name or product or 'все'}_"
+    name = (f"AuditLens_жалобы_{bank}_{theme_label or flag_name or _prod_name(product) or 'все'}_"
             f"{_period_slug(per)}.xlsx")
     return Response(content=body,
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

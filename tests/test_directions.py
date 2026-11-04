@@ -54,3 +54,23 @@ def test_ai_tools_can_filter_by_every_slice():
     for label in RS.LABELS.values():
         assert label in T.PRODUCT_LABELS, label
     assert len(set(T.PRODUCT_LABELS)) == len(T.PRODUCT_LABELS)
+
+
+def test_product_fn_migration_matches_code():
+    """al_product_is в последней миграции — ровно то, что генерирует directions.py."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    files = sorted(p for p in (root / "migrations").glob("[0-9]*.sql")
+                   if "FUNCTION al_product_is" in p.read_text(encoding="utf-8"))
+    assert D.product_fn_sql() in files[-1].read_text(encoding="utf-8")
+    for d in D.DIRECTIONS:
+        assert f"'dir:{d.code}'" in D.product_fn_sql()
+    assert D.product_label("dir:mortgage") == "Направление: Ипотека" and D.product_label("Ипотека") == "Ипотека"
+
+
+def test_frontend_knows_direction_names():
+    """Подписи направлений в интерфейсе — те же, что в directions.py."""
+    from pathlib import Path
+    jsx = (Path(__file__).resolve().parents[1] / "src/bank_audit/web/static/app.jsx").read_text(encoding="utf-8")
+    for d in D.DIRECTIONS:
+        assert f'{d.code}:"{d.name}"' in jsx, d.code

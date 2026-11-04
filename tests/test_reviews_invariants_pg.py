@@ -44,7 +44,8 @@ def pg(monkeypatch):
     try:
         cur = raw.cursor()
         cur.execute(_SCHEMA)
-        for f in ("069_review_annotation", "099_review_slices", "102_review_slices_registry"):
+        for f in ("069_review_annotation", "099_review_slices", "102_review_slices_registry",
+                  "109_product_directions"):
             cur.execute((ROOT / "migrations" / f"{f}.sql").read_text(encoding="utf-8"))
         raw.commit()
     finally:
@@ -134,4 +135,19 @@ def test_copy_counts_when_its_canonical_is_not_a_complaint(pg):
     n = {t["key"]: t["n"] for t in RD.themes(B, period=per)["themes"]}["chargeback"]
     assert n == 11                       # 9 своих + 2 копии, чья каноническая теперь мусор
     assert RD.list_reviews_ex(B, theme="chargeback", period=per, limit=5)["total"] == 11
+
+
+def test_direction_filter_matches_its_product_or_slice(pg):
+    """Направление 'dir:<код>' считает то же, что его продукт или срез, — на плитке,
+    в ленте и в Excel (миграция 109, directions.py)."""
+    per = RP.parse("365d")
+    feed_dir = RD.list_reviews_ex(B, product="dir:field", period=per, limit=5)["total"]
+    feed_slice = RD.list_reviews_ex(B, product=FIELD, period=per, limit=5)["total"]
+    assert feed_dir == feed_slice == 3
+    got = RD.products(B, 365, top=60)
+    dirs = {d["product"]: d["n"] for d in got["directions"]}
+    assert dirs["dir:field"] == 3 and "dir:mortgage" in dirs
+    rows = RD.export_rows(B, product="dir:field", period=per)
+    assert len([r for r in rows if r["разметка"] == ""]) == 3
+    assert RD.data_start_for("dir:field") == RD.data_start_for(FIELD)
 

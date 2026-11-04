@@ -2159,7 +2159,7 @@ function ForYouPage(){
         {subs.map((x,i)=>{const hot=(x.signals||[]).length>0, w=x.watch||[];
           return <a key={i} className="fy-sg" href={fyRv({bank:x.bank,product:x.product,theme:hot?x.signals[0].key:""})}>
             <span className={"fy-sg-dot"+(hot?(x.signals.some(s=>s.level==="high")?" high":""):w.length?"":" calm")} aria-hidden="true"/>
-            <span className="fy-sg-b"><span className="fy-sg-l">{x.bank}{x.product?` · ${x.product}`:" · все продукты"}</span>
+            <span className="fy-sg-b"><span className="fy-sg-l">{x.bank}{x.product?` · ${rvProd(x.product)}`:" · все продукты"}</span>
               <span className="fy-sg-n">{hot?x.signals.map(s=>`${s.short||s.label} ${s.new?"— новое":"×"+rvNum(s.ratio)}`).join(" · ")
                 :w.length?"быстрее рынка: "+w.map(d=>`${d.short||d.label} ×${rvNum(d.gap)}`).join(" · ")
                 :"спокойно"}</span></span>
@@ -4613,6 +4613,12 @@ const RV_FLAG_OPTS=[
 ];
 const RV_SOURCES=[["banki","banki.ru"],["sravni","sravni.ru"],["bankiros","bankiros.ru"],["finuslugi","finuslugi.ru"]];
 const RV_SIG_RX=/^sig:\d{4}-\d{2}-\d{2}$/;
+// Направления аудита — те же коды и названия, что в directions.py (тест сверяет)
+const RV_DIR_NAMES={mortgage:"Ипотека",metals:"Операции с драгметаллами",field:"Выездное обслуживание",
+  youth:"Дети и молодёжь",selfemp:"Самозанятые",credit_card:"Кредитные карты",acquiring:"Эквайринг",
+  atm:"Устройства самообслуживания",invest:"Инвестиционные продукты",consumer:"Потребительские кредиты",
+  svo:"Участники СВО",payroll:"Зарплатные проекты"};
+const rvProd=p=>p&&p.startsWith("dir:")?"Направление: "+(RV_DIR_NAMES[p.slice(4)]||p.slice(4)):p;
 
 // Снимок жалобы при приобщении: если отзыв пропадёт с площадки, в деле
 // останется суть и начало текста
@@ -5067,6 +5073,7 @@ function ReviewsPage({params}){
   const[ov,setOv]=useState(null),[tr,setTr]=useState(null),[th,setTh]=useState(null);
   const[ge,setGe]=useState(null),[prods,setProds]=useState([]);
   const[sliceNotes,setSliceNotes]=useState({});           // «срез стал строже: было N, стало M»
+  const[dirs,setDirs]=useState([]);                       // направления аудита ('dir:<код>')
   const[geFull,setGeFull]=useState(null);               // «ещё N городов» — полный список
   const[feed,setFeed]=useState(null);
   const[feedErr,setFeedErr]=useState(null);                // упал поиск ≠ ничего не нашлось
@@ -5230,8 +5237,8 @@ function ReviewsPage({params}){
   },[bank,product,trBasis,trMonths]);
 
   useEffect(()=>{ if(firstBankRun.current){firstBankRun.current=false;}else{setProduct("");setFCity("");setFWeek("");}
-    apiFetch(`/api/reviews/products?bank=${enc(bank)}`).then(d=>{setProds(d.items||[]);setSliceNotes(d.slice_notes||{});})
-      .catch(()=>{setProds([]);setSliceNotes({});});
+    apiFetch(`/api/reviews/products?bank=${enc(bank)}`).then(d=>{setProds(d.items||[]);setSliceNotes(d.slice_notes||{});setDirs(d.directions||[]);})
+      .catch(()=>{setProds([]);setSliceNotes({});setDirs([]);});
   },[bank]);
 
   useEffect(()=>{ setSub(null);
@@ -5373,7 +5380,7 @@ function ReviewsPage({params}){
     const prev=sub; setSub(!prev);
     try{ if(prev)await apiDel(`/api/reviews/subscription?bank=${enc(bank)}${pq()}`);
          else await apiPost("/api/reviews/subscription",{bank,product:product||null});
-         fbToast(prev?"Подписка снята":`Сигналы по «${bank}${product?" · "+product:""}» будут в «Для вас»`,!prev);
+         fbToast(prev?"Подписка снята":`Сигналы по «${bank}${product?" · "+rvProd(product):""}» будут в «Для вас»`,!prev);
     }catch{setSub(prev);} };
   const openGroup=g=>{ setGrp(g);setGrpItems(null);
     apiPost("/api/reviews/by-urls",{urls:g.urls}).then(d=>setGrpItems(d.items||[])).catch(()=>setGrpItems([])); };
@@ -5517,7 +5524,7 @@ function ReviewsPage({params}){
             <RvInfo>Индекс — доля проблемы в жалобах банка, делённая на её долю у остальных банков. Сравнивается структура, а не объём, поэтому размер банка и активность его клиентов на площадках на индекс не влияют. Показаны только значимые отличия: 95% доверительный интервал, поправка на число проверенных проблем, от 10 жалоб у банка. Справа — индекс по четырём кварталам, пунктир — уровень рынка. Клик — жалобы этой проблемы.</RvInfo></div>
           <div className="rv-cap">доля проблемы в жалобах: {bank} против остальных банков · {ix&&ix.window_extended
             ?<span data-tip="На коротком периоде почти все проблемы — «мало данных», поэтому индекс считается не меньше чем за 90 дней, до конца периода">за 90 дней по {rvDmy(ix.window_to)}</span>
-            :`за ${pw.za}`}{product?` · ${product}`:""}</div>
+            :`за ${pw.za}`}{product?` · ${rvProd(product)}`:""}</div>
           {busy&&!ix?<RvSkelRows n={full?10:5} h={42} gap={10}/>:!ix||ix.__err||ix.bank_total==null?<RvNote err={ix&&ix.__err}/>:(()=>{
             const row=(r,worse)=><div key={r.key} className={"rv-ix"+(theme===r.key?" sel":"")}
                 role="button" tabIndex={0} onClick={()=>pickTheme(r.key)} onKeyDown={onKey(()=>pickTheme(r.key))}
@@ -5918,7 +5925,13 @@ function ReviewsPage({params}){
         <select className="rv-hsel" value={product} onChange={e=>setProduct(e.target.value)} aria-label="Продукт"
           data-tip={product?"Продукт определён по тексту жалобы, а не взят из метки площадки: на продуктах, которые клиент называет прямо, разметка точна; широкие позиции («подписки», «дистанционное обслуживание») собирают и неопределённое":undefined}>
           <option value="">Все продукты</option>
+          {/* направление аудита — продукты или срез направления одним фильтром (directions.py) */}
+          {dirs.length>0&&<optgroup label="Направления аудита">{dirs.map(p=>
+            <option key={p.product} value={p.product}>{p.label} ({fmtNum(p.n)})</option>)}</optgroup>}
+          <optgroup label="Продукты и срезы">
           {prods.map(p=><option key={p.product} value={p.product}>{p.product} ({fmtNum(p.n)})</option>)}
+          {product&&!prods.some(p=>p.product===product)&&!dirs.some(p=>p.product===product)&&
+            <option value={product}>{rvProd(product)}</option>}</optgroup>
         </select>
         <div className="rv-hper">
           <RvPeriodPicker per={per} cmp={cmp} info={perInfo} bank={bank} product={product} narrow={narrow} onChange={onPeriod}/>
@@ -5927,7 +5940,7 @@ function ReviewsPage({params}){
       <div className="rv-hact">
         {sub!==null&&<button className={"rv-bell"+(sub?" on":"")} onClick={toggleSub} aria-label={sub?"Слежу за сигналами":"Следить за сигналами"}
           data-tip={sub?"Вы следите за сигналами этого среза — они приходят в «Для вас». Нажмите, чтобы отписаться"
-                    :`Следить за сигналами: ${bank}${product?" · "+product:" · все продукты"} — новые всплески придут в колокольчик и в «С прошлого визита»`}>
+                    :`Следить за сигналами: ${bank}${product?" · "+rvProd(product):" · все продукты"} — новые всплески придут в колокольчик и в «С прошлого визита»`}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill={sub?"currentColor":"none"} stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
           <span className="rv-hact-l">{sub?"Слежу":"Следить"}</span></button>}
         <button className="rv-bell" onClick={()=>openCases()} aria-label="Аудит-дела"
@@ -6041,7 +6054,7 @@ function ReviewsPage({params}){
 
     {/* ДРАУЭР: drill-in по городу/месяцу + LLM-объяснение */}
     {drill&&<RvModal side="right" onClose={()=>setDrill(null)} title={drill.label}
-        sub={`${bank}${product?` · ${product}`:""}${drillItems?` · показано ${drillItems.length}`:""}`}>
+        sub={`${bank}${product?` · ${rvProd(product)}`:""}${drillItems?` · показано ${drillItems.length}`:""}`}>
       {/* сначала цифры: чем срез отличается от нормы — модель потом объясняет,
           а не решает сама, аномалия ли это */}
       {drillProf&&drillProf.rows&&drillProf.rows.length>0&&<div className="rv-prof">
