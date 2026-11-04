@@ -103,31 +103,22 @@ def clusters(bank: str, product: str | None = None, days: int = 90,
 
 def _clusters(bc, product, per, theme, flag, city, source, esc, limit, month=None) -> dict:
     import numpy as np
-    p: dict = {"bank": bc, "product": product, "lim": limit, "sv": rd._ann_schema()}
-    extra = rd._source_clause("i", source, p) or ""
-    # неделя всплеска (month=sig:…) задаёт своё окно — как в ленте
-    extra += rd._month_clause("i", month, p) if month else rd._win_clause("i", None, per, p)
-    fcond = rd._flag_sql(flag)
-    if fcond:
-        extra += f" AND {fcond}"
-    if theme:
-        extra += " AND i.issue = :t"
-        p["t"] = theme
-    if city:
-        extra += " AND i.city = :city"
-        p["city"] = city
-    if esc:
-        extra += " AND i.esc"
+    # тот же срез, что у ленты (ReviewQuery), но только размеченные: группе нужен пересказ
+    rq = rd.ReviewQuery(bank=bc, product=product, theme=theme, flag=flag, esc=esc, city=city,
+                        source=source, month=month, period=per)
+    if rq.error():
+        return {"total": 0, "no_vec": 0, "clusters": [], "clustered": 0, "days": per.days,
+                "period": per.info(), "limited": False, "error": rq.error()}
+    p: dict = {"lim": limit}
+    where = rq.where_sql(p, pending=False)
+    p["sv"] = rd._ann_schema()
     with db.session() as s:
         rows = [dict(r) for r in s.execute(text(f"""
             SELECT i.url, i.dt, i.city, i.issue, a.summary, a.quote, a.quote_ok, a.esc,
                    cardinality(a.vulnerable) > 0 AS vuln
             FROM review_index i
             JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
-            WHERE i.bank = :bank AND {rd._CMP}
-              AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product))
-              AND i.dt <= now()
-              AND coalesce(a.summary, '') <> ''{extra}
+            WHERE {where} AND coalesce(a.summary, '') <> ''
             ORDER BY i.dt DESC LIMIT :lim"""), p).mappings().all()]
     vecs = _vecs_for([r["url"] for r in rows])
     missing = [r for r in rows if r["url"] not in vecs][:_CL_ON_FLY]

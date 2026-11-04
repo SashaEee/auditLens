@@ -156,32 +156,15 @@ def link_reviews(bank: str | None = SBER, product: str | None = None,
     поэтому «с — по» здесь не годится). Неизвестные тема,
     признак и площадка в ссылку не идут: вкладка показала бы ошибку вместо жалоб."""
     rd = _rd()
-    per_p, d0, d1 = None, None, None
     we = _iso_day(week_end)
-    if we:
-        pass
-    elif period is not None:
-        if period.kind == "rolling" and period.n:
-            per_p = f"{period.n}d"
-        elif period.kind == "all":
-            per_p = "all"
-        else:
-            info = period.info()
-            d0, d1 = info["from"], info["to"]
-    elif _iso_day(date_from):
-        d0, d1 = _iso_day(date_from), _iso_day(date_to)
-    elif days:
-        per_p = f"{max(1, int(days))}d"
-    theme = theme if theme in _cb.ISSUES else None
-    flag = flag if flag and rd._flag_sql(flag) else None
-    src = source_key(source)
-    p = {"tab": "complaints" if (theme or flag or esc or city or src or q) else None,
-         "bank": bank if bank and bank != SBER else None, "product": product,
-         "p": per_p, "from": d0, "to": d1 if d0 else None,
-         "theme": theme, "flag": flag, "esc": "1" if esc else None, "city": city,
-         "source": src, "q": q, "month": f"sig:{we}" if we else None}
-    qs = urlencode({k: v for k, v in p.items() if v})
-    return "#reviews" + ("?" + qs if qs else "")
+    d0 = _iso_day(date_from) if period is None else None
+    # ссылку строит тот же объект среза, что и ленту, выгрузку и группы (ReviewQuery)
+    return rd.ReviewQuery(
+        bank=bank, product=product, theme=theme if theme in _cb.ISSUES else None,
+        flag=flag if flag and rd._flag_sql(flag) else None, esc=bool(esc), city=city,
+        source=source_key(source), month=f"sig:{we}" if we else None,
+        period=period, days=days if (period is None and not d0) else None, q=q,
+        date_from=d0, date_to=_iso_day(date_to) if d0 else None).to_url()
 
 
 def _week_dates(week_end, days: int = 7) -> tuple[str | None, str | None]:

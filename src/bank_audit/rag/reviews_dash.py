@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime as _dt
 import functools
 import logging
+import dataclasses
 import math
 import os
 import re
@@ -1439,6 +1440,110 @@ def _win_clause(alias: str, days: int | None, period, p: dict) -> str:
     return ""
 
 
+@dataclasses.dataclass(frozen=True)
+class ReviewQuery:
+    """Срез «Аудита отзывов» одним объектом (план 04.11, К1): лента, счётчик ленты,
+    выгрузка Excel/CSV, отбор поиска и группы похожих строят условие отсюда, ИИ —
+    ссылку на вкладку (to_url). До этого каждый собирал условие сам, и числа на
+    экране, в Excel и у ИИ расходились при любой новой мелочи фильтра.
+
+    bank — каноническое имя; month — 'YYYY-MM', 'ev:YYYY-MM' (месяц событий) или
+    'sig:YYYY-MM-DD' (неделя всплеска: своё окно, период не применяется)."""
+    bank: str | None
+    product: str | None = None
+    theme: str | None = None
+    flag: str | None = None
+    esc: bool = False
+    city: str | None = None
+    source: str | None = None
+    month: str | None = None
+    period: "_rp.Period | None" = None
+    days: int | None = None
+    q: str | None = None
+    date_from: str | None = None        # «с — по» строками — для ссылки, когда Period нет
+    date_to: str | None = None
+
+    def error(self) -> str | None:
+        """Код ошибки фильтра (неизвестные тема, признак, площадка) или None."""
+        if self.theme and self.theme not in cb.ISSUES:
+            return "unknown_theme"
+        if _flag_sql(self.flag) is None:
+            return "unknown_flag"
+        if _source_clause("i", self.source, {}) is None:
+            return "unknown_source"
+        return None
+
+    def where_sql(self, p: dict, *, pending: bool = True, window: bool = True,
+                  city: bool = True) -> str:
+        """Условие на строки индекса (алиас i) — то, что идёт после WHERE; параметры — в p.
+        pending — без темы и признака в набор входят и свежие неразмеченные (как в ленте);
+        window=False — без окна периода (поиск сам ищет в окне и сверяет даты);
+        city=False — город уже учтён (поиск ищет с городом)."""
+        cond = ["(i.dt IS NULL OR i.dt <= now())"]
+        if self.bank:                       # поиск ИИ бывает и по всем банкам
+            cond.insert(0, "i.bank = :bank")
+            p["bank"] = self.bank
+        if self.product:
+            cond.append("al_product_is(i.product, i.slices, :product)")
+            p["product"] = self.product
+        cond.append((_source_clause("i", self.source, p) or "")[len(" AND "):] or "true")
+        sig = bool(_SIG_RX.match(self.month or ""))
+        if window and not sig:
+            w = _win_clause("i", self.days, self.period, p)
+            if w:
+                cond.append(w[len(" AND "):])
+        if self.month and (window or sig or self.month.startswith("ev:")):
+            mc = _month_clause("i", self.month, p)
+            if mc:
+                cond.append(mc[len(" AND "):])
+        if city and self.city:
+            cond.append("i.city = :city")
+            p["city"] = self.city
+        if self.esc:
+            cond.append("i.esc")
+        fcond = _flag_sql(self.flag) or ""
+        if fcond:
+            # признак есть только у размеченной жалобы — неразмеченные свежие не берём
+            cond.append("EXISTS (SELECT 1 FROM review_annotation a WHERE a.url = i.url"
+                        f" AND a.schema_version = :sv AND {fcond})")
+            p["sv"] = _ann_schema()
+        if self.theme:
+            cond.append(f"i.issue = :tkey AND {_CMP}")
+            p["tkey"] = self.theme
+        elif fcond or not pending:
+            cond.append(_CMP)
+        else:
+            cond.append(f"(i.kind IS NULL OR {_CMP})")
+        return " AND ".join(c for c in cond if c and c != "true")
+
+    def to_url(self, tab: str | None = None) -> str:
+        """Ссылка на вкладку с этим срезом — те же параметры, что читает ReviewsPage."""
+        from urllib.parse import urlencode
+        per = self.period
+        pp, d0, d1 = None, None, None
+        sig = bool(_SIG_RX.match(self.month or ""))
+        if per is not None and not sig:
+            if per.kind == "rolling" and per.n:
+                pp = f"{per.n}d"
+            elif per.kind == "all":
+                pp = "all"
+            else:
+                info = per.info()
+                d0, d1 = info["from"], info["to"]
+        elif self.date_from and not sig:
+            d0, d1 = self.date_from, self.date_to
+        elif self.days and not sig:
+            pp = f"{max(1, int(self.days))}d"
+        t = tab or ("complaints" if (self.theme or self.flag or self.esc or self.city
+                                     or self.source or self.q or self.month) else None)
+        params = {"tab": t, "bank": self.bank if self.bank and self.bank != "Сбербанк" else None,
+                  "product": self.product, "p": pp, "from": d0, "to": d1 if d0 else None,
+                  "theme": self.theme, "flag": self.flag, "esc": "1" if self.esc else None,
+                  "city": self.city, "source": self.source, "month": self.month, "q": self.q}
+        qs = urlencode({k: v for k, v in params.items() if v})
+        return "#reviews" + ("?" + qs if qs else "")
+
+
 def export_rows(bank: str, product: str | None = None, theme: str | None = None,
                 days: int | None = None, city: str | None = None,
                 month: str | None = None, esc: bool = False,
@@ -1453,32 +1558,15 @@ def export_rows(bank: str, product: str | None = None, theme: str | None = None,
     bc = resolve_bank(bank)
     if not bc:
         return None
-    if theme and theme not in cb.ISSUES:
+    # тот же срез, что у ленты (ReviewQuery): без темы и признака в него входят и свежие,
+    # ещё не размеченные жалобы — до 04.11.2026 выгрузка брала только размеченные
+    rq = ReviewQuery(bank=bc, product=product, theme=theme, flag=flag, esc=esc, city=city,
+                     source=source, month=month, period=period, days=days)
+    if rq.error():
         return []
-    fcond = _flag_sql(flag)
-    if fcond is None:
-        return []
-    p: dict = {"bank": bc, "product": product, "lim": max(1, min(limit, 20000)),
-               "sv": _ann_schema()}
-    extra = _source_clause("i", source, p)
-    if extra is None:
-        return []
-    extra += _win_clause("i", days, period, p)
-    if city:
-        extra += " AND i.city = :city"
-        p["city"] = city
-    extra += _month_clause("i", month, p)
-    if esc:
-        extra += " AND i.esc"
-    if theme:
-        extra += " AND i.issue = :tkey"
-        p["tkey"] = theme
-    if fcond:
-        extra += f" AND {fcond}"
-    # как в ленте (_feed_from_index): без темы и признака в неё входят и свежие, ещё
-    # не размеченные жалобы. До 04.11.2026 выгрузка брала только размеченные (JOIN) —
-    # в Excel было меньше строк, чем на экране.
-    extra += f" AND {_CMP}" if theme or fcond else f" AND (i.kind IS NULL OR {_CMP})"
+    p: dict = {"lim": max(1, min(limit, 20000))}
+    extra = " AND " + rq.where_sql(p)
+    p["sv"] = _ann_schema()
     order = None
     if q and q.strip():
         got = search_set(q, bc, theme=theme, esc=esc, product=product, flag=flag, source=source,
@@ -1497,9 +1585,7 @@ def export_rows(bank: str, product: str | None = None, theme: str | None = None,
                    a.summary, a.quote, i.kind AS ikind
             FROM review_index i
             LEFT JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
-            WHERE i.bank = :bank
-              AND (i.dt IS NULL OR i.dt <= now())
-              AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product)){extra}
+            WHERE true{extra}
             ORDER BY i.dt DESC NULLS LAST
             LIMIT :lim
         """), p).mappings().all()]
@@ -1562,34 +1648,11 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
     каждый раз выбирался заново с потолком 600 строк: на ~600-й карточке «Показать
     ещё» пропадала при 2 451 жалобе на счётчике (аудит 03.10, ОТЗ-01)."""
     fetch = min(max((limit + offset) * 5, 40), 600)
-    p: dict = {"bank": bc, "product": product, "lim": fetch}
-    extra = _source_clause("i", source, p)
-    if extra is None:
-        return {"items": [], "mode": "feed", "error": "unknown_source"}
-    extra += _win_clause("i", days, period, p)
-    if city:
-        extra += " AND i.city = :city"
-        p["city"] = city
-    extra += _month_clause("i", month, p)
-    if esc:
-        extra += " AND i.esc"
-    fcond = _flag_sql(flag)
-    if fcond is None:
-        return {"items": [], "mode": "feed", "error": "unknown_flag"}
-    if fcond:
-        # признак есть только у размеченной жалобы — неразмеченные свежие не берём
-        extra += (" AND EXISTS (SELECT 1 FROM review_annotation a WHERE a.url = i.url"
-                  f" AND a.schema_version = :sv AND {fcond})")
-        p["sv"] = _ann_schema()
-    if theme:
-        if theme not in cb.ISSUES:
-            return {"items": [], "mode": "feed", "error": "unknown_theme"}
-        extra += f" AND i.issue = :tkey AND {_CMP}"
-        p["tkey"] = theme
-    elif fcond:
-        extra += f" AND {_CMP}"
-    else:
-        extra += f" AND (i.kind IS NULL OR {_CMP})"
+    p: dict = {"lim": fetch}
+    rq = ReviewQuery(bank=bc, product=product, theme=theme, flag=flag, esc=esc, city=city,
+                     source=source, month=month, period=period, days=days)
+    if rq.error():
+        return {"items": [], "mode": "feed", "error": rq.error()}
     # «Сначала серьёзные» — по признакам разметки; при равенстве свежие выше
     sev = sort == "severity"
     if sev:
@@ -1598,9 +1661,7 @@ def _feed_from_index(bc: str, product: str | None, theme: str | None,
             if sev else "")
     sev_col = f", {_severity_sql()} AS sev" if sev else ""
     order = "sev DESC NULLS LAST, i.dt DESC NULLS LAST" if sev else "i.dt DESC NULLS LAST"
-    where = f"""i.bank = :bank
-                  AND (i.dt IS NULL OR i.dt <= now())
-                  AND (CAST(:product AS text) IS NULL OR al_product_is(i.product, i.slices, :product)){extra}"""
+    where = rq.where_sql(p)
     if cursor is not None:
         return _feed_page(where, join, sev_col, order, p, limit, max(0, int(cursor)), sev)
     try:
@@ -2155,7 +2216,7 @@ def search_set(q: str, bc: str | None, *, theme: str | None = None, esc: bool = 
     wset = {w["url"]: w for w in words}
     urls = list(dict.fromkeys([r.get("url") for r in head if r.get("url")] + list(wset)))
     keep = _keep_urls(urls, theme=theme, esc=esc, product=product, flag=flag, source=source,
-                      month=ev_month)
+                      month=ev_month, bank=bc)
     if keep is None:
         # фильтры вкладки не применились — показать всё найденное значило бы показать
         # не тот набор (до 04.11.2026 так и было); честнее сказать, что поиск не отработал
@@ -3260,46 +3321,32 @@ def _ann_for(urls: list[str]) -> dict[str, dict]:
 
 def _keep_urls(urls: list[str], *, theme: str | None, esc: bool,
                product: str | None = None, flag: str | None = None,
-               month: str | None = None, source: str | None = None) -> set[str] | None:
-    """Какие из найденных отзывов показывать: жалобы (и ещё не размеченные),
-    при заданной теме — с этой главной проблемой, при флажке — с эскалацией,
-    при признаке — с этим признаком разметки. None — отбор не сработал."""
+               month: str | None = None, source: str | None = None,
+               bank: str | None = None) -> set[str] | None:
+    """Какие из найденных отзывов показывать — тот же срез, что у ленты (ReviewQuery):
+    жалобы (и ещё не размеченные), при теме — с этой главной проблемой, при признаке —
+    с этим признаком разметки. Окно и город поиск учёл сам. None — отбор не сработал."""
     if not urls:
         return set()
-    fcond = _flag_sql(flag) or ""
-    cond = [f"(i.kind IS NULL OR {_CMP})" if not (theme or fcond) else _CMP]
+    rq = ReviewQuery(bank=bank, product=product, theme=theme, flag=flag, esc=esc,
+                     source=source, month=month)
+    if rq.error():
+        return set()
     p: dict = {"u": urls}
-    if fcond:
-        cond.append("EXISTS (SELECT 1 FROM review_annotation a WHERE a.url = i.url"
-                    f" AND a.schema_version = :sv AND {fcond})")
-        p["sv"] = _ann_schema()
-    mc = _month_clause("i", month, p)
-    if mc:
-        cond.append(mc[len(" AND "):])
-    sc = _source_clause("i", source, p) or ""
-    if sc:
-        cond.append(sc[len(" AND "):])
-    if theme:
-        cond.append("i.issue = :t")
-        p["t"] = theme
-    if esc:
-        cond.append("i.esc")
-    if product:
-        cond.append("al_product_is(i.product, i.slices, :pr)")
-        p["pr"] = product
+    where = rq.where_sql(p, window=False, city=False)
     try:
         with db.session() as s:
             known = set(s.execute(text("SELECT i.url FROM review_index i WHERE i.url = ANY(:u)"),
                                   {"u": urls}).scalars().all())
             ok = set(s.execute(text(
-                f"SELECT i.url FROM review_index i WHERE i.url = ANY(:u) AND {' AND '.join(cond)}"),
+                f"SELECT i.url FROM review_index i WHERE i.url = ANY(:u) AND {where}"),
                 p).scalars().all())
     except Exception as e:                                     # noqa: BLE001
         log.warning("reviews_dash: отбор выдачи по разметке не сработал (%s)", e)
         return None                 # не «всё подходит»: вызывающий скажет, что поиск не отработал
-    # отзыв, которого нет в индексе (вне окна зеркала), без темы не отбрасываем
+    # отзыв, которого нет в индексе (вне окна зеркала), без фильтров не отбрасываем
     return ok | ({u for u in urls if u not in known}
-                 if not (theme or esc or product or fcond or month or sc) else set())
+                 if not (theme or esc or product or flag or month or source) else set())
 
 
 def _nb_tail(x: int, weeks: list[int], prior=None) -> float:
