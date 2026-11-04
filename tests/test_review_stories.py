@@ -1,6 +1,7 @@
 """«Сюжеты» (rag/review_stories.py): кластеризация, сопоставление прогонов,
-название, «новое» и пакетный проход. Векторы синтетические, база — SQLite
-по схеме из миграции 104; сети нет."""
+название, «новое», пакетный проход, шаг названий с моделью и чтение для
+вкладки. Векторы синтетические, база — SQLite по схеме из миграции 104 (и
+живой Postgres по STORIES_PG_TEST_URL); модель — подделка, сети нет."""
 from __future__ import annotations
 
 import json
@@ -501,18 +502,28 @@ def _ts(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
+def _al_product_is(product, slices, want):
+    """al_product_is (migrations/102) для SQLite: продукт или срез; срезы — JSON-список."""
+    tags = json.loads(slices) if slices else []
+    by_slice = {"Зарплатные проекты": "payroll", "УС — банкоматы и терминалы": "us"}
+    return int(product == want or (by_slice.get(want) in tags))
+
+
 @pytest.fixture
 def lite(tmp_path, monkeypatch):
-    from sqlalchemy import create_engine, text
+    from sqlalchemy import create_engine, event, text
     from sqlalchemy.orm import sessionmaker
 
     from bank_audit import db
     eng = create_engine(f"sqlite:///{tmp_path / 'stories.db'}", future=True)
+    event.listen(eng, "connect",
+                 lambda c, _r: c.create_function("al_product_is", 3, _al_product_is))
     raw = eng.raw_connection()
     try:
         raw.driver_connection.executescript(_sqlite_ddl() + """
             CREATE TABLE review_index (url TEXT PRIMARY KEY, bank TEXT, kind TEXT, issue TEXT,
-                                       dt TIMESTAMP, city TEXT, dup_of TEXT);
+                                       dt TIMESTAMP, city TEXT, dup_of TEXT, product TEXT,
+                                       slices TEXT);
             CREATE TABLE review_summary_vec (url TEXT PRIMARY KEY, vec TEXT NOT NULL);
             CREATE TABLE review_annotation (url TEXT, schema_version TEXT, summary TEXT,
                                             PRIMARY KEY (url, schema_version));
@@ -726,7 +737,519 @@ def test_tick_runs_once_per_period(monkeypatch):
                 return R((state["v"],) if "v" in state else None)
             state["v"] = p["v"]
     monkeypatch.setattr(RS.db, "session", lambda: Sess())
-    monkeypatch.setattr(RS, "run_all", lambda: calls.append(1) or [{"bank": "Б"}])
-    assert RS.tick(now=1_000_000.0) == {"banks": 1, "errors": 0}
+    named = []
+
+    def run_all():
+        calls.append(1)
+        assert len(named) == len(calls) - 1                         # названия — после прохода
+        return [{"bank": "Б"}]
+    monkeypatch.setattr(RS, "run_all", run_all)
+    monkeypatch.setattr(RS, "name_stories",
+                        lambda limit: named.append(limit) or {"todo": 3, "named": 2})
+    monkeypatch.delenv("REVIEW_STORIES_NAME_LIMIT", raising=False)
+    assert RS.tick(now=1_000_000.0) == {"banks": 1, "errors": 0, "named": 2}
+    assert named == [60] and state["v"] == "1000000"               # отметка уже записана
     assert RS.tick(now=1_000_000.0 + 3600)["skipped"] == "not_due" and len(calls) == 1
+    assert named == [60]                                            # не по сроку — и не называем
+    monkeypatch.setenv("REVIEW_STORIES_NAME_LIMIT", "7")
     assert RS.tick(now=1_000_000.0 + RS.TICK_EVERY_S + 1)["banks"] == 1 and len(calls) == 2
+    assert named == [60, 7]
+    # опечатка в env не роняет цикл — берётся значение по умолчанию
+    monkeypatch.setenv("REVIEW_STORIES_NAME_LIMIT", "шестьдесят")
+    RS.tick(now=1_000_000.0 + 2 * RS.TICK_EVERY_S + 2)
+    assert named == [60, 7, 60]
+
+
+# ── Шаг названий с моделью ──────────────────────────────────────────────────
+
+SUM_C = "Кэшбэк за покупки в супермаркетах не начислен по карте"
+SUM_D = "Перевод по СБП завис, деньги не пришли получателю"
+_BY_SUM = {"A": SUM_A, "B": SUM_B, "C": SUM_C, "D": SUM_D}
+TITLE_A = "Списание платы за подписку после отключения"
+TITLE_B = "Блокировка счёта без объяснения причины"
+TITLE_C = "Кэшбэк за покупки не начислен по карте"
+TITLE_D = "Перевод по СБП завис и не пришёл получателю"
+
+
+def _four(put):
+    """Четыре сюжета банка: A — 6 жалоб, B — 5, C — 4, D — 3; у каждого свои изложения."""
+    sp = Space()
+    ids = {"A": sp.story("A", 6, 0.9), "B": sp.story("B", 5, 0.88),
+           "C": sp.story("C", 4, 0.9), "D": sp.story("D", 3, 0.9)}
+    issue = {"A": "fees", "B": "block_115", "C": "cashback", "D": "transfer"}
+    for day, (key, pts) in enumerate(ids.items(), 1):
+        put(_rows(sp, pts, issue[key], day, _BY_SUM[key], city="Казань" if key == "A" else None))
+    RS.run(BANK, 90, now=NOW)
+    return sp, ids
+
+
+class FakeModel:
+    """Модель по сценарию: ответы для каждого сюжета по очереди (узнаёт сюжет по
+    изложению в задании); исключение в сценарии — бросается, как сбой связи."""
+
+    def __init__(self, script: dict):
+        self.script = {k: list(v) for k, v in script.items()}
+        self.calls: list[tuple[str, list]] = []
+
+    def __call__(self, messages):
+        key = next(k for k, s in _BY_SUM.items() if s in messages[0]["content"])
+        self.calls.append((key, [dict(m) for m in messages]))
+        r = self.script[key].pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r if isinstance(r, str) else json.dumps(r, ensure_ascii=False)
+
+
+def _ans(title, crit="Жалоба в сюжете, если это та же история"):
+    return {"title": title, "criterion": crit}
+
+
+def test_name_stories_with_fake_model(lite):
+    put, q, _eng = lite
+    _four(put)
+    sid = {r[0]: r[1] for r in q("SELECT issue_main, story_id FROM review_story")}
+    fake = FakeModel({
+        "A": [_ans(f"«{TITLE_A}.»", "  жалоба в сюжете, если плату за подписку списали  "
+                                    "после отключения ")],
+        "B": [_ans(TITLE_A), _ans(TITLE_B)],                # повтор соседа → переспрос
+        "C": ["не JSON вовсе", '{"name": "Кэшбэк"}'],        # дважды мимо — отложить
+        "D": [ConnectionError("нет связи")],                # сбой связи — не вина сюжета
+    })
+    st = RS.name_stories(10, caller=fake, now=NOW)
+    assert {k: st[k] for k in ("todo", "named", "retried", "invalid", "duplicate", "rejected",
+                               "failed", "skipped")} == {
+        "todo": 4, "named": 2, "retried": 1, "invalid": 1, "duplicate": 0, "rejected": 0,
+        "failed": 1, "skipped": 0}
+    assert "error" not in st and "stop" not in st
+    titles = dict(q("SELECT story_id, title FROM review_story"))
+    assert titles[sid["fees"]] == TITLE_A and titles[sid["block_115"]] == TITLE_B
+    assert titles[sid["cashback"]] is None and titles[sid["transfer"]] is None
+    crit = q("SELECT criterion FROM review_story WHERE story_id = :s", s=sid["fees"])[0][0]
+    assert crit == "Жалоба в сюжете, если плату за подписку списали после отключения"
+    # крупные первыми; у B в задании уже есть название A, названное минуту назад
+    assert [k for k, _m in fake.calls] == ["A", "B", "B", "C", "C", "D"]
+    b1, b2 = [m for k, m in fake.calls if k == "B"]
+    assert TITLE_A in b1[0]["content"] and "Соседние" in b1[0]["content"]
+    assert len(b2) == 3 and b2[1]["role"] == "assistant" and TITLE_A in b2[1]["content"]
+    assert "совпадает с соседним" in b2[2]["content"]
+    assert "не JSON" in [m for k, m in fake.calls if k == "C"][1][2]["content"]
+    # служебная отметка — только у C: сбой связи сюжет не откладывает
+    failed = q("SELECT story_id, detail FROM review_story_event WHERE kind = 'name_failed'")
+    assert [r[0] for r in failed] == [sid["cashback"]]
+    assert json.loads(failed[0][1])["kind"] == "invalid"
+    assert len(q("SELECT * FROM review_story_event WHERE kind = 'named'")) == 2
+
+    # назавтра: C отложен на неделю, D — в очереди
+    fake2 = FakeModel({"D": [_ans(TITLE_D)]})
+    st = RS.name_stories(10, caller=fake2, now=NOW + timedelta(days=1))
+    assert st["todo"] == 1 and st["named"] == 1 and [k for k, _m in fake2.calls] == ["D"]
+    # через неделю C спрашивают снова — состав и соседи могли измениться
+    fake3 = FakeModel({"C": [_ans(TITLE_C)]})
+    st = RS.name_stories(10, caller=fake3, now=NOW + timedelta(days=8))
+    assert st["named"] == 1
+    assert dict(q("SELECT story_id, title FROM review_story"))[sid["cashback"]] == TITLE_C
+    # безымянных не осталось — модель не зовётся вовсе
+    assert RS.name_stories(10, caller=FakeModel({}), now=NOW + timedelta(days=9))["todo"] == 0
+
+
+def test_name_stories_rejects_and_counts(lite):
+    put, q, _eng = lite
+    _four(put)
+    sid = {r[0]: r[1] for r in q("SELECT issue_main, story_id FROM review_story")}
+    fake = FakeModel({
+        "A": [_ans(TITLE_A)],
+        # повтор названия A дважды — не записан; город — не годится и со второго раза
+        "B": [_ans(TITLE_A), _ans("Списание платы за подписку после её отключения")],
+        "C": [_ans("Кэшбэк по карте не начислен в Казани"), _ans("Кэшбэк не начислен в Самаре")],
+        "D": [_ans("Перевод")] * 2,
+    })
+    st = RS.name_stories(10, caller=fake, now=NOW)
+    assert (st["named"], st["duplicate"], st["rejected"]) == (1, 1, 2)
+    why = dict((r[0], json.loads(r[1])) for r in q(
+        "SELECT story_id, detail FROM review_story_event WHERE kind = 'name_failed'"))
+    assert why[sid["block_115"]]["kind"] == "duplicate" and "соседн" in why[sid["block_115"]]["why"]
+    assert "город" in why[sid["cashback"]]["why"] and "одно слово" in why[sid["transfer"]]["why"]
+    assert why[sid["cashback"]]["title"] == "Кэшбэк не начислен в Самаре"
+    # не годится — не пишется
+    assert q("SELECT count(*) FROM review_story WHERE title IS NOT NULL")[0][0] == 1
+
+
+def test_name_stories_stops_when_model_is_down(lite):
+    put, q, _eng = lite
+    _four(put)
+    down = FakeModel({k: [TimeoutError("таймаут")] for k in "ABCD"})
+    st = RS.name_stories(10, caller=down, now=NOW)
+    assert st["failed"] == RS.NAME_MAX_FAILS == 3 and st["stop"] == "модель не отвечает"
+    assert len(down.calls) == 3 and st["named"] == 0
+    assert not q("SELECT * FROM review_story_event WHERE kind = 'name_failed'")
+    # бюджет времени вышел — тоже остановка, а не исключение
+    st = RS.name_stories(10, caller=FakeModel({}), now=NOW, budget_s=-1)
+    assert st["stop"] == "время вышло" and st["named"] == 0
+
+
+def test_name_stories_without_key_or_summaries(lite, monkeypatch):
+    put, q, eng = lite
+    _four(put)
+    from bank_audit.ai import analyst
+    monkeypatch.setattr(analyst, "LLM_API_KEY", "")
+    st = RS.name_stories(10, now=NOW)                      # модель по умолчанию, ключа нет
+    assert st["todo"] == 4 and st["stop"] == "нет ключа модели" and st["named"] == 0
+    # у сюжета нет изложений — называть не по чему: пропуск с отсрочкой
+    from sqlalchemy import text
+    with eng.begin() as c:
+        c.execute(text("DELETE FROM review_annotation WHERE url LIKE '%/D%'"))
+    st = RS.name_stories(10, caller=FakeModel({k: [_ans(t)] for k, t in (
+        ("A", TITLE_A), ("B", TITLE_B), ("C", TITLE_C))}), now=NOW)
+    assert st["named"] == 3 and st["skipped"] == 1
+    assert len(q("SELECT * FROM review_story_event WHERE kind = 'name_failed'")) == 1
+
+
+def test_name_stories_never_raises(monkeypatch):
+    def broken():
+        raise RuntimeError("база недоступна")
+    monkeypatch.setattr(RS.db, "session", broken)
+    st = RS.name_stories(5, caller=FakeModel({}), now=NOW)
+    assert st["error"].startswith("RuntimeError") and st["named"] == 0
+
+
+def test_parse_name():
+    assert RS._parse_name('{"title": " «Списание за подписку.» ", "criterion": "жалоба в '
+                          'сюжете, если списали"}') == ("Списание за подписку",
+                                                        "Жалоба в сюжете, если списали")
+    # JSON внутри текста; без признака — None; признак-простыня — не фраза
+    assert RS._parse_name('Вот ответ: {"title": "Списание за подписку"} — готово') == (
+        "Списание за подписку", None)
+    assert RS._parse_name(json.dumps({"title": "Списание за подписку", "criterion": "x" * 301})
+                          ) == ("Списание за подписку", None)
+    for bad in ("", "   ", "не JSON", "[1, 2]", '{"title": ""}', '{"title": 5}',
+                '{"name": "x"}', None):
+        assert RS._parse_name(bad) is None, bad
+
+
+def test_default_caller_settings(monkeypatch):
+    import types
+
+    import openai
+
+    from bank_audit.ai import analyst
+    seen: dict = {}
+
+    class Client:
+        def __init__(self, **kw):
+            seen["client"] = kw
+            self.chat = types.SimpleNamespace(completions=types.SimpleNamespace(create=self.create))
+
+        def create(self, **kw):
+            seen["create"] = kw
+            msg = types.SimpleNamespace(content='{"title": "Списание за подписку"}')
+            return types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)])
+
+    monkeypatch.setattr(openai, "OpenAI", Client)
+    monkeypatch.setattr(analyst, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(analyst, "LLM_BASE_URL", "http://llm.test/v1")
+    monkeypatch.delenv("REVIEW_STORIES_NAME_MODEL", raising=False)
+    call = RS._default_caller()
+    msgs = [{"role": "user", "content": "задание"}]
+    assert call(msgs) == '{"title": "Списание за подписку"}'
+    assert seen["client"] == {"base_url": "http://llm.test/v1", "api_key": "test-key",
+                              "timeout": 20.0, "max_retries": 0}
+    c = seen["create"]
+    assert (c["model"], c["temperature"], c["response_format"], c["messages"]) == (
+        "google/gemini-3.1-flash-lite", 0, {"type": "json_object"}, msgs)
+    monkeypatch.setenv("REVIEW_STORIES_NAME_MODEL", "other/light-model")
+    RS._default_caller()(msgs)
+    assert seen["create"]["model"] == "other/light-model"
+    monkeypatch.setattr(analyst, "LLM_API_KEY", "")
+    assert RS._default_caller() is None
+
+
+# ── Чтение для вкладки ──────────────────────────────────────────────────────
+
+def _set(eng, url, **cols):
+    from sqlalchemy import text
+    with eng.begin() as c:
+        c.execute(text(f"UPDATE review_index SET {', '.join(f'{k} = :{k}' for k in cols)} "
+                       "WHERE url = :u"), {**cols, "u": url})
+
+
+def _event(eng, sid, kind, at, detail):
+    from sqlalchemy import text
+    with eng.begin() as c:
+        c.execute(text("INSERT INTO review_story_event (story_id, kind, at, detail) "
+                       "VALUES (:s, :k, :a, :d)"),
+                  {"s": sid, "k": kind, "a": _ts(at), "d": json.dumps(detail, ensure_ascii=False)})
+
+
+def _timeline(put, q, eng):
+    """Сюжеты A и B появились 20 дней назад; сегодня A вырос на две жалобы и
+    появился C. Потом A[0] переразметили в похвалу, B[0] оказался копией жалобы
+    с другой площадки, у C разные продукты."""
+    sp = Space()
+    a, b, c = sp.story("A", 8, 0.9), sp.story("B", 5, 0.88), sp.story("C", 4, 0.9)
+    t0 = NOW - timedelta(days=20)
+    Xa, Xb, Xc = sp.matrix(a), sp.matrix(b), sp.matrix(c)
+    put([(f"https://r/{a[k]}", BANK, "complaint", "fees", t0 - timedelta(days=1 + k), Xa[k],
+          SUM_A, None) for k in range(6)]
+        + [(f"https://r/{b[k]}", BANK, "complaint", "block_115", t0 - timedelta(days=2 + k),
+            Xb[k], SUM_B, None) for k in range(5)])
+    RS.run(BANK, 90, now=t0)
+    put([(f"https://r/{a[6]}", BANK, "complaint", "fees", NOW - timedelta(days=1), Xa[6],
+          SUM_A, None),
+         (f"https://r/{a[7]}", BANK, "complaint", "fees", NOW - timedelta(days=2), Xa[7],
+          SUM_A, None)]
+        + [(f"https://r/{c[k]}", BANK, "complaint", "cashback", NOW - timedelta(days=3 + k),
+            Xc[k], SUM_C, None) for k in range(4)])
+    st = RS.run(BANK, 90, now=NOW)
+    assert (st["grew"], st["appeared"]) == (1, 1)
+    sid = {r[0]: r[1] for r in q("SELECT issue_main, story_id FROM review_story")}
+    _set(eng, f"https://r/{a[0]}", kind="praise")
+    put([("https://r/canon", "Другой банк", "complaint", "block_115", NOW - timedelta(days=30),
+          None, SUM_B, None)])
+    _set(eng, f"https://r/{b[0]}", dup_of="https://r/canon")
+    for k, (prod, sl) in enumerate([("Дебетовые карты", None), ("Дебетовые карты", None),
+                                    ("Прочее", '["payroll"]'), (None, None)]):
+        _set(eng, f"https://r/{c[k]}", product=prod, slices=sl)
+    return sid, a, b, c
+
+
+def test_list_stories(lite):
+    put, q, eng = lite
+    sid, a, b, c = _timeline(put, q, eng)
+    assert RS.save_name(sid["fees"], TITLE_A, "Жалоба в сюжете, если списали за подписку",
+                        now=NOW).ok
+    got = RS.list_stories(BANK, now=NOW)
+    assert [x["story_id"] for x in got] == [sid["fees"], sid["cashback"], sid["block_115"]]
+    xa, xc, xb = got
+    assert set(xa) == {"story_id", "title", "named", "criterion", "summary", "n", "n_window",
+                       "first_seen", "last_seen", "issue_main", "issue_label", "risk", "status",
+                       "badges", "top_urls", "urls"}
+    # A: похвала не в счёт; вырос за две недели — с 5 до 7 по составу
+    assert (xa["n"], xa["n_window"], xa["title"], xa["named"]) == (7, 7, TITLE_A, True)
+    assert xa["criterion"].startswith("Жалоба в сюжете")
+    assert xa["badges"] == [{"kind": "grew", "label": "вырос с 5 до 7", "from": 5, "to": 7}]
+    assert f"https://r/{a[0]}" not in xa["urls"] + xa["top_urls"]
+    assert xa["urls"][:2] == [f"https://r/{a[6]}", f"https://r/{a[7]}"]      # свежие первыми
+    assert xa["last_seen"] == (NOW - timedelta(days=1)).isoformat()
+    assert xa["first_seen"] == (NOW - timedelta(days=26)).isoformat()
+    assert xa["status"] == "active" and xa["issue_main"] == "fees"
+    # C: новый, без названия — заглушка из изложения медоида; медоид ближе всех к себе
+    assert (xc["n"], xc["named"], xc["title"], xc["summary"]) == (4, False, SUM_C, SUM_C)
+    assert xc["badges"] == [{"kind": "appeared", "label": "новый сюжет"}]
+    medoid = q("SELECT medoid_url FROM review_story WHERE story_id = :s", s=sid["cashback"])[0][0]
+    assert xc["top_urls"][0] == medoid and len(xc["top_urls"]) == 3
+    # B: копия с другой площадки не в счёт; событий за две недели нет
+    assert (xb["n"], xb["badges"]) == (4, [])
+    assert f"https://r/{b[0]}" not in xb["urls"]
+
+    # окно 10 дней: у A в окне две жалобы, B выпадает целиком
+    got = RS.list_stories(BANK, days=10, now=NOW)
+    assert [(x["story_id"], x["n"], x["n_window"]) for x in got] == [
+        (sid["cashback"], 4, 4), (sid["fees"], 7, 2)]
+    assert got[1]["urls"] == [f"https://r/{a[6]}", f"https://r/{a[7]}"]
+    assert [x["story_id"] for x in RS.list_stories(BANK, now=NOW, limit=1)] == [sid["fees"]]
+    assert RS.list_stories("Другой банк", now=NOW) == []
+
+    # продукт: считаются только жалобы продукта или среза
+    deb = RS.list_stories(BANK, product="Дебетовые карты", now=NOW)
+    assert [(x["story_id"], x["n"], x["n_window"]) for x in deb] == [(sid["cashback"], 2, 2)]
+    assert set(deb[0]["urls"]) == {f"https://r/{c[0]}", f"https://r/{c[1]}"}
+    pay = RS.list_stories(BANK, product="Зарплатные проекты", now=NOW)
+    assert [(x["story_id"], x["n"]) for x in pay] == [(sid["cashback"], 1)]
+    assert pay[0]["urls"] == [f"https://r/{c[2]}"] and pay[0]["badges"][0]["kind"] == "appeared"
+    assert RS.list_stories(BANK, product="Ипотека", now=NOW) == []
+
+    # подпись проблемы — из кодификатора; нет изложений — заглушка названия из неё
+    assert (xb["issue_label"], xb["risk"]) == ("Блокировки по 115-ФЗ", "compliance")
+    from sqlalchemy import text
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM review_annotation WHERE url LIKE '%/B%'"))
+    xb = next(x for x in RS.list_stories(BANK, now=NOW) if x["story_id"] == sid["block_115"])
+    assert (xb["title"], xb["summary"], xb["named"]) == ("Блокировки по 115-ФЗ", None, False)
+
+
+def test_list_stories_badges_and_quiet(lite):
+    put, q, eng = lite
+    sid, a, b, c = _timeline(put, q, eng)
+    # слияние (у принявшего) и возвращение — из журнала за две недели; старше — нет
+    _event(eng, sid["fees"], "merged", NOW - timedelta(days=3), {"from": [999]})
+    _event(eng, sid["cashback"], "returned", NOW - timedelta(days=2), {"n": 4})
+    _event(eng, sid["block_115"], "returned", NOW - timedelta(days=15), {"n": 5})
+    _event(eng, sid["block_115"], "merged", NOW - timedelta(days=1), {"into": sid["fees"]})
+    by = {x["story_id"]: x for x in RS.list_stories(BANK, now=NOW)}
+    assert [x["label"] for x in by[sid["fees"]]["badges"]] == ["вырос с 5 до 7", "слился"]
+    assert [x["label"] for x in by[sid["cashback"]]["badges"]] == ["новый сюжет", "вернулся"]
+    assert by[sid["block_115"]]["badges"] == []
+    # события позже «сейчас» не видны: list_stories на дату — как было тогда
+    early = {x["story_id"]: x for x in RS.list_stories(BANK, now=NOW - timedelta(days=10))}
+    assert sid["cashback"] not in early and early[sid["fees"]]["badges"] == [
+        {"kind": "appeared", "label": "новый сюжет"}]
+    # с продуктом рост не своего продукта значка не даёт
+    assert RS.list_stories(BANK, product="Дебетовые карты", now=NOW)[0]["badges"][0]["kind"] \
+        == "appeared"
+
+    # векторы B пропали — B затих; в списке остаётся, пока последняя жалоба в окне
+    from sqlalchemy import text
+    with eng.begin() as conn:
+        conn.execute(text("DELETE FROM review_summary_vec WHERE url LIKE '%/B%'"))
+    assert RS.run(BANK, 90, now=NOW)["quiet"] == 1
+    xb = next(x for x in RS.list_stories(BANK, now=NOW) if x["story_id"] == sid["block_115"])
+    assert xb["status"] == "quiet" and xb["n"] == 4
+    assert sid["block_115"] not in {x["story_id"] for x in RS.list_stories(BANK, days=21, now=NOW)}
+
+
+def test_story_events_labels(lite):
+    put, q, eng = lite
+    from sqlalchemy import text
+    with eng.begin() as c:
+        for title in ("Главный сюжет", "Списание за подписку", None, "Кусок"):
+            c.execute(text("INSERT INTO review_story (bank, title, status) "
+                           "VALUES (:b, :t, 'active')"), {"b": BANK, "t": title})
+    s, x, y, z = [r[0] for r in q("SELECT story_id FROM review_story ORDER BY story_id")]
+    evs = [("appeared", {"n": 3, "from": [x]}), ("grew", {"new": 2, "n": 5}),
+           ("merged", {"from": [x, y]}), ("split", {"into": [z], "kept": True}),
+           ("quiet", {"visible": 0}), ("returned", {"n": 21}),
+           ("named", {"title": "Главный сюжет", "prev": None}),
+           ("named", {"title": "Главный сюжет", "prev": "Старое"}),
+           ("name_failed", {"why": "не JSON"}), ("merged", {"into": y}),
+           ("split", {"into": [y, z], "kept": False}), ("appeared", {"n": 1})]
+    for k, (kind, d) in enumerate(evs):
+        _event(eng, s, kind, NOW - timedelta(days=len(evs) - k), d)
+    got = RS.story_events(s)
+    assert [e["kind"] for e in got] == [k for k, _d in reversed(evs) if k != "name_failed"]
+    assert [e["label"] for e in reversed(got)] == [
+        "Появился: 3 жалобы — откололся от сюжета «Списание за подписку»",
+        "Вырос на 2 жалобы: в группе 5",
+        f"К нему присоединились сюжеты «Списание за подписку», №{y}",
+        "От него откололся сюжет «Кусок»",
+        "Затих: похожие жалобы больше не складываются в группу",
+        "Вернулся: в группе 21 жалоба",
+        "Назван «Главный сюжет»",
+        "Переименован: «Старое» → «Главный сюжет»",
+        f"Влился в сюжет №{y}",
+        f"Распался на сюжеты №{y}, «Кусок»",
+        "Появился: 1 жалоба"]
+    assert got[0]["at"] == (NOW - timedelta(days=1)).isoformat()
+    assert got[0]["kind_label"] == "появился" and got[-1]["detail"] == {"n": 3, "from": [x]}
+    assert RS.story_events(10 ** 6) == []
+    assert len(RS.story_events(s, limit=2)) == 2
+
+
+# ── Живой Postgres ──────────────────────────────────────────────────────────
+# Запуск: пустая база и STORIES_PG_TEST_URL=postgresql+psycopg://user@127.0.0.1:5432/db —
+# таблицы тест создаёт сам (миграция 104 и al_product_is из последней миграции). Без
+# переменной пропускается: в общем прогоне базы нет. Проверяет то, чего SQLite не
+# видит: jsonb приходит словарём, timestamptz, срезы — text[], сама al_product_is.
+
+PG = os.getenv("STORIES_PG_TEST_URL")
+
+_PG_BASE = """
+DROP TABLE IF EXISTS review_story_event, review_story_member, review_story, review_index,
+                     review_summary_vec, review_annotation CASCADE;
+CREATE TABLE review_index (url text PRIMARY KEY, bank text, kind text, issue text,
+                           dt timestamptz, city text, dup_of text, product text, slices text[]);
+CREATE TABLE review_summary_vec (url text PRIMARY KEY, vec real[] NOT NULL);
+CREATE TABLE review_annotation (url text, schema_version text, summary text,
+                                PRIMARY KEY (url, schema_version));
+"""
+
+
+def _product_fn() -> str:
+    """al_product_is(product, slices, want) из последней миграции, где она определена."""
+    head = "CREATE OR REPLACE FUNCTION al_product_is(product text, slices text[]"
+    src = [p.read_text(encoding="utf-8") for p in sorted((ROOT / "migrations").glob("*.sql"))
+           if head in p.read_text(encoding="utf-8")][-1]
+    return re.search(re.escape(head) + r".*?\$\$;", src, re.S).group(0)
+
+
+@pytest.fixture
+def pgs(monkeypatch):
+    if not PG:
+        pytest.skip("нужна живая база: STORIES_PG_TEST_URL")
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import sessionmaker
+
+    from bank_audit import db
+    from bank_audit.rag import reviews_dash as rd
+    eng = create_engine(PG, future=True)
+    raw = eng.raw_connection()
+    try:
+        cur = raw.cursor()
+        for sql in (_PG_BASE, MIG.read_text(encoding="utf-8"), _product_fn()):
+            cur.execute(sql)
+        raw.commit()
+    finally:
+        raw.close()
+    monkeypatch.setattr(db, "_Session", sessionmaker(bind=eng, expire_on_commit=False, future=True))
+
+    def put(rows):
+        """rows: (url, issue, dt, vec, summary, product, slices) — все жалобы банка BANK."""
+        with eng.begin() as c:
+            for url, issue, dt, vec, summary, product, slices in rows:
+                c.execute(text("""INSERT INTO review_index
+                                      (url, bank, kind, issue, dt, product, slices)
+                                  VALUES (:u, :b, 'complaint', :i, :d, :p, :s)"""),
+                          {"u": url, "b": BANK, "i": issue, "d": dt, "p": product, "s": slices})
+                c.execute(text("INSERT INTO review_summary_vec VALUES (:u, :v)"),
+                          {"u": url, "v": [float(x) for x in vec]})
+                c.execute(text("INSERT INTO review_annotation VALUES (:u, :s, :t)"),
+                          {"u": url, "s": rd._ann_schema(), "t": summary})
+
+    def q(sql, **p):
+        with eng.connect() as c:
+            return c.execute(text(sql), p).all()
+
+    yield put, q
+    eng.dispose()
+
+
+def test_pg_naming_list_and_events(pgs):
+    put, q = pgs
+    sp = Space()
+    a, c = sp.story("A", 8, 0.9), sp.story("C", 4, 0.9)
+    Xa, Xc = sp.matrix(a), sp.matrix(c)
+    prod = ["Дебетовые карты"] * 3 + [None] * 5
+    put([(f"https://r/{a[k]}", "fees", NOW - timedelta(days=1 + k), Xa[k], SUM_A, prod[k],
+          ["payroll"] if k == 3 else None) for k in range(6)]
+        + [(f"https://r/{c[k]}", "cashback", NOW - timedelta(days=2 + k), Xc[k], SUM_C, None,
+            None) for k in range(4)])
+    assert RS.run(BANK, 90, now=NOW)["appeared"] == 2
+    sid = {r[0]: r[1] for r in q("SELECT issue_main, story_id FROM review_story")}
+    st = RS.name_stories(10, caller=FakeModel({"A": [_ans(TITLE_A)],
+                                               "C": ['{"x": 1}', "не JSON"]}), now=NOW)
+    assert (st["named"], st["invalid"]) == (1, 1) and "error" not in st
+    # отложенный сюжет на завтра не берётся: сравнение timestamptz
+    assert RS.name_stories(10, caller=FakeModel({}), now=NOW + timedelta(days=1))["todo"] == 0
+
+    # день спустя A вырос на две жалобы
+    later = NOW + timedelta(days=1)
+    put([(f"https://r/{a[k]}", "fees", later - timedelta(hours=k), Xa[k], SUM_A, None, None)
+         for k in (6, 7)])
+    assert RS.run(BANK, 90, now=later)["grew"] == 1
+    got = {x["story_id"]: x for x in RS.list_stories(BANK, now=later)}
+    xa, xc = got[sid["fees"]], got[sid["cashback"]]
+    assert (xa["title"], xa["n"], xa["n_window"]) == (TITLE_A, 8, 8)
+    assert [b["label"] for b in xa["badges"]] == ["новый сюжет", "вырос с 6 до 8"]
+    assert (xc["title"], xc["named"], xc["n"]) == (SUM_C, False, 4)
+    deb = RS.list_stories(BANK, product="Дебетовые карты", now=later)
+    assert [(x["story_id"], x["n"]) for x in deb] == [(sid["fees"], 3)]
+    assert [b["kind"] for b in deb[0]["badges"]] == ["appeared"]          # рост — не их
+    pay = RS.list_stories(BANK, product="Зарплатные проекты", now=later)
+    assert [(x["story_id"], x["n"], x["urls"]) for x in pay] == [
+        (sid["fees"], 1, [f"https://r/{a[3]}"])]
+
+    ev = RS.story_events(sid["fees"])
+    assert [e["kind"] for e in ev] == ["grew", "named", "appeared"]
+    assert ev[0]["detail"] == {"new": 2, "n": 8}                          # jsonb — словарём
+    assert ev[0]["label"] == "Вырос на 2 жалобы: в группе 8"
+    assert ev[1]["label"] == f"Назван «{TITLE_A}»"
+    assert RS.story_events(sid["cashback"])[0]["kind"] == "appeared"     # name_failed не виден
+
+
+def test_short_and_plural():
+    assert RS._short("коротко") == "коротко" and RS._short("") is None
+    long = "слово " * 60
+    s = RS._short(long)
+    assert s.endswith("…") and len(s) <= RS.TITLE_MAX + 1 and "  " not in s
+    assert [RS._complaints(n) for n in (1, 2, 5, 11, 12, 21, 22, 25, 101, 111)] == [
+        "1 жалоба", "2 жалобы", "5 жалоб", "11 жалоб", "12 жалоб", "21 жалоба", "22 жалобы",
+        "25 жалоб", "101 жалоба", "111 жалоб"]
