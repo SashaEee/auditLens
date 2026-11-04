@@ -44,8 +44,9 @@ def pg(monkeypatch):
     try:
         cur = raw.cursor()
         cur.execute(_SCHEMA)
+        cur.execute("DROP TABLE IF EXISTS review_slice_sieve")
         for f in ("069_review_annotation", "099_review_slices", "102_review_slices_registry",
-                  "108_product_directions"):
+                  "108_product_directions", "110_review_slice_sieve"):
             cur.execute((ROOT / "migrations" / f"{f}.sql").read_text(encoding="utf-8"))
         raw.commit()
     finally:
