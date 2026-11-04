@@ -23,10 +23,11 @@ pytestmark = pytest.mark.skipif(not PG, reason="нужна живая база: 
 # индекс в тесте — только нужные срезам столбцы
 _INDEX = """
 DROP TABLE IF EXISTS review_slice_feedback, review_slice_active, review_slice, review_index,
-                     review_annotation, review_slice_spend CASCADE;
+                     review_annotation, review_slice_spend, review_slice_sieve CASCADE;
 CREATE TABLE review_index (url text PRIMARY KEY, kind text, dt timestamptz, tsv tsvector,
                            channels text[], issue text, product text, bank text);
-CREATE TABLE review_annotation (url text, summary text, created_at timestamptz DEFAULT now());
+CREATE TABLE review_annotation (url text, summary text, created_at timestamptz DEFAULT now(),
+                                schema_version text);
 """
 
 
@@ -39,7 +40,8 @@ def pg(monkeypatch):
     try:
         cur = raw.cursor()
         cur.execute(_INDEX)
-        for f in ("099_review_slices", "102_review_slices_registry", "105_review_slice_spend"):
+        for f in ("099_review_slices", "102_review_slices_registry", "105_review_slice_spend",
+                  "110_review_slice_sieve"):
             cur.execute((ROOT / "migrations" / f"{f}.sql").read_text(encoding="utf-8"))
         raw.commit()
     finally:
@@ -231,3 +233,41 @@ def test_daily_spend_is_a_ledger_not_moved_row_costs(pg):
     _sql("UPDATE review_slice SET cost_rub = cost_rub + 3, created_at = now() WHERE url = 'y1'")   # повтор
     assert RS._spent(True) == 20 and RS._spent(False) == 503
 
+
+
+
+def test_sieve_marks_candidates_without_keywords(pg):
+    # 04.11.2026: «таксую» — жалоба без слов среза; сито по изложению делает её кандидатом
+    import asyncio
+    from bank_audit.rag import review_annotate as RA
+    _sql("ALTER TABLE review_index ADD COLUMN IF NOT EXISTS review_id bigint, ADD COLUMN IF NOT EXISTS source text")
+    rows = [("w1", "Списали зарплатную карту", "Банк закрыл зарплатную карту"),      # кандидат по словам
+            ("t1", "Таксую, банк заблокировал счёт", "Таксист: банк заблокировал счёт с выручкой"),
+            ("t2", "Не пришёл кэшбэк", "Клиент не получил кэшбэк за покупки"),
+            ("t3", "Без изложения", "")]
+    for url, body, summ in rows:
+        _sql("""INSERT INTO review_index (url, kind, dt, tsv) VALUES
+                (:u, 'complaint', now() - interval '3 days', to_tsvector('russian', :b))""", {"u": url, "b": body})
+        _sql("INSERT INTO review_annotation (url, summary, schema_version) VALUES (:u, :s, :v)",
+             {"u": url, "s": summ, "v": RA.SCHEMA})
+    # у всех issue NULL — условие по словам для них NULL, сито их всё равно видит
+    assert {r["url"] for r in RS._sieve_todo(100)} == {"t1", "t2"}   # кандидат по словам и пустое — нет
+
+    class Fake:
+        sys = ""
+
+        async def ask(self, model, user):
+            items = []
+            for k, line in enumerate([x for x in user.split("\n\n") if x.strip()], 1):
+                items.append({"n": k, "slices": ["selfemp", "мусор"] if "Таксист" in line else []})
+            return {"items": items}, 1000, 100
+    st = asyncio.run(RS.sieve(100, caller=Fake()))
+    assert (st["sieved"], st["flagged"], st["per_key"]) == (2, 1, {"selfemp": 1}) and st["rub"] > 0
+    assert dict(_sql("SELECT url, keys FROM review_slice_sieve")) == {"t1": ["selfemp"], "t2": []}
+    assert RS._sieve_todo(100) == []                           # повторно не просеивается
+    # t1 — кандидат: в очереди разметки и в готовности среза selfemp
+    queue = {r["url"] for r in RS._todo(100)}
+    assert "t1" in queue and "t2" not in queue and "w1" in queue
+    cov = RS.coverage(30)["keys"]
+    assert cov["selfemp"]["candidates"] >= 1
+    assert float(_sql("SELECT rub FROM review_slice_spend WHERE schema = 'sieve'")[0][0]) > 0

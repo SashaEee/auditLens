@@ -153,10 +153,37 @@ _HINT = ("'atm' = ANY(coalesce(i.channels, '{}'))", "i.issue = 'cash_atm'",
          "'courier' = ANY(coalesce(i.channels, '{}'))")
 
 
-def candidate_sql() -> str:
-    """Условие «отзыв — кандидат хотя бы в один срез» (алиас индекса — i)."""
-    parts = [f"i.tsv @@ to_tsquery('russian', '{q}')" for q in _TSQ.values()]
-    return "(" + " OR ".join(parts + list(_HINT)) + ")"
+# ── Сито по смыслу (04.11.2026) ─────────────────────────────────────────────
+# Кандидаты по словам не видят жалоб без ключевых слов: «таксую», «карта СВОи»,
+# «оплата обучения». Тест пропусков 04.11.2026: 7 срезовых жалоб на 400 случайных
+# некандидатов (1,75 % — порядка 1 600 на 92 тыс.). Сито — лёгкая модель по изложению
+# жалобы из разметки, на полноту: отмечает «может относиться», решает каскад. На тех
+# 400: отмечено 11, из них 5 из 7 срезовых (оба пропуска — «приехал представитель»,
+# их теперь ловит _TSQ); по полному тексту — 52 отмечено и 6 из 7, то есть вчетверо
+# больше платной разметки ради одной находки. Сходство векторов с размеченными
+# (kNN) пробовали: у выездного тысячи шумных кандидатов, молодёжь и самозанятые почти
+# не отделяются от фона.
+SIEVE = os.getenv("REVIEW_SLICES_SIEVE", "1") == "1"
+SIEVE_MODEL = os.getenv("REVIEW_SLICES_SIEVE_MODEL", "google/gemini-3.1-flash-lite")
+SIEVE_BATCH = int(os.getenv("REVIEW_SLICES_SIEVE_BATCH", "30"))
+SIEVE_DAILY_RUB = float(os.getenv("REVIEW_SLICES_SIEVE_DAILY_RUB", "800"))
+SIEVE_INFLIGHT = int(os.getenv("REVIEW_SLICES_SIEVE_INFLIGHT", "8"))
+_SIEVE_SPEND = "sieve"          # строка журнала трат review_slice_spend
+_SIEVE_ANY = ("EXISTS (SELECT 1 FROM review_slice_sieve sv WHERE sv.url = i.url"
+              " AND cardinality(sv.keys) > 0)")
+
+
+def _sieve_key(key: str) -> str:
+    return f"EXISTS (SELECT 1 FROM review_slice_sieve sv WHERE sv.url = i.url AND '{key}' = ANY(sv.keys))"
+
+
+def candidate_sql(sieve: bool | None = None) -> str:
+    """Условие «отзыв — кандидат хотя бы в один срез» (алиас индекса — i): слова и
+    каналы, а с ситом (SIEVE, миграция 110) — и отмеченные им."""
+    parts = [f"i.tsv @@ to_tsquery('russian', '{q}')" for q in _TSQ.values()] + list(_HINT)
+    if SIEVE if sieve is None else sieve:
+        parts.append(_SIEVE_ANY)
+    return "(" + " OR ".join(parts) + ")"
 
 
 SYSTEM = (
@@ -370,14 +397,14 @@ def _spent(today: bool) -> float:
                " AT TIME ZONE 'Europe/Moscow'" if today else "")), {"v": SCHEMA}).scalar() or 0)
 
 
-def _log_spend(rub: float) -> None:
+def _log_spend(rub: float, schema: str | None = None) -> None:
     if rub <= 0:
         return
     try:
         with db.session() as s:
             s.execute(text(f"""INSERT INTO review_slice_spend (day, schema, rub) VALUES ({_TODAY}, :v, :r)
                                ON CONFLICT (day, schema) DO UPDATE SET rub = review_slice_spend.rub + EXCLUDED.rub"""),
-                      {"v": SCHEMA, "r": round(rub, 4)})
+                      {"v": schema or SCHEMA, "r": round(rub, 4)})
     except Exception:  # noqa: BLE001 — журнал трат не должен ронять разметку
         log.warning("срезы: траты не записались в журнал", exc_info=True)
 
@@ -509,6 +536,108 @@ _DESIRED = """
 """
 
 
+SIEVE_SYSTEM = (
+    "Ты отбираешь жалобы клиентов банка, которые МОГУТ относиться к особым срезам аудита. Это первичное "
+    "сито: лучше отметить лишнее, чем пропустить, — дальше каждую отмеченную проверит сильная модель. "
+    "Срез — если по изложению видно или правдоподобно, что суть жалобы подходит под определение, даже если "
+    "ключевых слов нет (таксист, курьер-доставщик, мастер, ремесленник — возможно самозанятый; студент, "
+    "школьник, ребёнок, образовательный кредит — молодёжь; участник СВО, мобилизованный, «СВОи» — СВО и т. п.)."
+    "\n\nСРЕЗЫ\n" + "\n".join(f"{k} — {v[0]}: {v[1]}" for k, v in SLICES.items())
+    + '\n\nОтвет строго JSON: {"items":[{"n":1,"slices":["<ключ среза>", ...]}, ...]} по каждому n; '
+      "пустой список — ни к одному.")
+RA._MAX_TOKENS.setdefault(SIEVE_MODEL, 4000)
+RA._SEM.setdefault(SIEVE_MODEL, int(os.getenv("REVIEW_SLICES_SIEVE_SEM", "16")))
+
+
+def _sieve_todo(limit: int) -> list[dict]:
+    """Жалобы окна вне кандидатов по словам, с изложением, ещё не просеянные."""
+    with db.session() as s:
+        rows = s.execute(text(f"""
+            SELECT i.url, a.summary FROM review_index i
+            JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
+            WHERE i.kind IN ('complaint', 'mixed') AND i.dt >= CAST(:since AS timestamp)
+              -- coalesce: у жалобы без темы (issue NULL) условие по словам — NULL, а не
+              -- «нет», и NOT отбросил бы её из сита молча
+              AND i.dt <= now() AND NOT coalesce({candidate_sql(sieve=False)}, false)
+              AND coalesce(a.summary, '') <> ''
+              AND NOT EXISTS (SELECT 1 FROM review_slice_sieve sv WHERE sv.url = i.url)
+            ORDER BY i.dt DESC NULLS LAST, i.url LIMIT :n"""),
+            {"sv": RA.SCHEMA, "since": SINCE, "n": limit}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def sieve_parse(d, n: int) -> dict[int, list[str]]:
+    """Ответ сита → {номер: [срезы]}; номера без ответа в словарь не попадают (жалоба
+    просеется в следующий раз), незнакомые ключи отбрасываются."""
+    arr = (d or {}).get("items") if isinstance(d, dict) else None
+    out: dict[int, list[str]] = {}
+    for it in arr if isinstance(arr, list) else []:
+        if not isinstance(it, dict) or not str(it.get("n", "")).isdigit():
+            continue
+        k = int(it["n"])
+        sl = it.get("slices")
+        if 1 <= k <= n and isinstance(sl, list):
+            out[k - 1] = [x for x in KEYS if x in sl]
+    return out
+
+
+async def sieve(limit: int = 3000, *, daily: bool = True, caller=None) -> dict:
+    """Просеять до limit жалоб вне кандидатов по словам: отмеченные моделью становятся
+    кандидатами (candidate_sql), решение — за каскадом. Потолок трат — свой, за сутки
+    по Москве (SIEVE_DAILY_RUB, строка «sieve» в журнале трат); daily=False — без него."""
+    if not SIEVE:
+        return {"skipped": "off"}
+    todo = await asyncio.to_thread(_sieve_todo, limit)
+    if not todo:
+        return {"sieved": 0}
+    spent = 0.0
+    if daily:
+        try:
+            with db.session() as s:
+                spent = float(s.execute(text(f"""SELECT coalesce(sum(rub), 0) FROM review_slice_spend
+                                                 WHERE schema = :v AND day = {_TODAY}"""),
+                                        {"v": _SIEVE_SPEND}).scalar() or 0)
+        except Exception:  # noqa: BLE001
+            spent = 0.0
+    c = caller or RA.Caller(RA.Ledger())
+    c.sys = SIEVE_SYSTEM            # свой Caller: общий с чужой подсказкой не делим
+    sem = asyncio.Semaphore(max(1, SIEVE_INFLIGHT))
+    st = {"sieved": 0, "flagged": 0, "unanswered": 0, "rub": 0.0, "stop": None}
+    per: dict[str, int] = {}
+
+    async def one(part: list[dict]) -> None:
+        async with sem:
+            if daily and spent + st["rub"] >= SIEVE_DAILY_RUB:
+                st["stop"] = "cap"
+                return
+            user = "\n\n".join(f"[{k + 1}] {(x['summary'] or '')[:1500]}" for k, x in enumerate(part))
+            d, tin, tout = await c.ask(SIEVE_MODEL, user)
+            st["rub"] += _rub(SIEVE_MODEL, tin, tout)
+            got = sieve_parse(d, len(part))
+            rows = [{"u": part[k]["url"], "k": keys, "m": SIEVE_MODEL} for k, keys in got.items()]
+            st["unanswered"] += len(part) - len(rows)
+            if rows:
+                def write():
+                    with db.session() as s:
+                        s.execute(text("""INSERT INTO review_slice_sieve (url, keys, model)
+                                          VALUES (:u, :k, :m)
+                                          ON CONFLICT (url) DO UPDATE SET keys = EXCLUDED.keys,
+                                              model = EXCLUDED.model, at = now()"""), rows)
+                await asyncio.to_thread(write)
+            st["sieved"] += len(rows)
+            for r in rows:
+                if r["k"]:
+                    st["flagged"] += 1
+                    for k in r["k"]:
+                        per[k] = per.get(k, 0) + 1
+
+    await asyncio.gather(*(one(todo[k:k + SIEVE_BATCH]) for k in range(0, len(todo), SIEVE_BATCH)))
+    await asyncio.to_thread(_log_spend, st["rub"], _SIEVE_SPEND)
+    st["rub"] = round(st["rub"], 2)
+    st["per_key"] = per
+    return st
+
+
 def apply_to_index(chunk: int = 1000, urls: list[str] | None = None) -> int:
     """Срезы активных версий → review_index.slices порциями (фоновые задачи тоже пишут
     индекс — крупный UPDATE ловил взаимную блокировку). Идемпотентно: пишет только
@@ -545,6 +674,8 @@ def _key_candidates(key: str) -> str:
         parts += [_HINT[0], _HINT[1]]
     if key == "field":
         parts += [_HINT[2]]
+    if SIEVE:
+        parts.append(_sieve_key(key))
     return "(" + " OR ".join(parts) + ")"
 
 
@@ -715,6 +846,15 @@ def status() -> dict:
                      "share": c.get("share"), "ready": c.get("ready"),
                      "open_flags": int(flags.get(k, 0)),
                      "gold": {"precision": g[0], "recall": g[1], "precision_s6": g[2]} if g else None})
+    sv = None
+    try:
+        with db.session() as s:
+            r = s.execute(text("""SELECT count(*), count(*) FILTER (WHERE cardinality(keys) > 0),
+                                         (SELECT coalesce(sum(rub), 0) FROM review_slice_spend WHERE schema = :v)
+                                    FROM review_slice_sieve"""), {"v": _SIEVE_SPEND}).one()
+            sv = {"sieved": int(r[0]), "flagged": int(r[1]), "rub": round(float(r[2] or 0))}
+    except Exception:  # noqa: BLE001 — до миграции 110 сита нет
+        pass
     return {"keys": keys, "spend": {k: {"rows": v[0], "rub": round(v[1])} for k, v in spend.items()},
-            "schema": SCHEMA}
+            "schema": SCHEMA, "sieve": sv}
 

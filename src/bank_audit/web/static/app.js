@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 c9c73e2c792597b734f538a9d4e4b53c1803fa89bf151d61fa151ee3860c106e): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 2eb38a9018b257d47b85a6b4cc118749bad4d7d5683d63b2af5c67e38488a1fb): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -22076,7 +22076,7 @@ function PuSlices() {
     style: {
       margin: "8px 0 0"
     }
-  }, "\u042D\u0442\u0430\u043B\u043E\u043D 04.11: 260 \u0436\u0430\u043B\u043E\u0431, \u0434\u0432\u0430 \u0441\u043B\u0435\u043F\u044B\u0445 \u0440\u0430\u0437\u043C\u0435\u0442\u0447\u0438\u043A\u0430 \u0438 \u0430\u0440\u0431\u0438\u0442\u0440. \u0422\u0440\u0430\u0442\u044B \u0440\u0430\u0437\u043C\u0435\u0442\u043A\u0438: ", sp || "—", "."), (d.canary || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "\u042D\u0442\u0430\u043B\u043E\u043D 04.11: 260 \u0436\u0430\u043B\u043E\u0431, \u0434\u0432\u0430 \u0441\u043B\u0435\u043F\u044B\u0445 \u0440\u0430\u0437\u043C\u0435\u0442\u0447\u0438\u043A\u0430 \u0438 \u0430\u0440\u0431\u0438\u0442\u0440. \u0422\u0440\u0430\u0442\u044B \u0440\u0430\u0437\u043C\u0435\u0442\u043A\u0438: ", sp || "—", ".", d.sieve ? ` Сито по смыслу (жалобы без ключевых слов): просеяно ${fmtNum(d.sieve.sieved)}, отмечено ${fmtNum(d.sieve.flagged)}, ${fmtNum(d.sieve.rub)} ₽.` : ""), (d.canary || []).length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "pu-x-scroll",
     style: {
       marginTop: 10

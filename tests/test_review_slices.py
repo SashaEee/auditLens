@@ -162,3 +162,12 @@ def test_coverage_shape(monkeypatch):
     cov = RS.coverage()
     assert set(cov["keys"]) == set(RS.KEYS) and cov["keys"]["payroll"]["schema"] == "s6"
     assert cov["keys"]["payroll"]["ready"] is True and cov["ready"] is True
+
+
+
+def test_sieve_parse_keeps_known_keys_and_answered_items():
+    from bank_audit.rag import review_slices as R
+    d = {"items": [{"n": 1, "slices": ["selfemp", "xxx"]}, {"n": 2, "slices": []}, {"n": "3", "slices": "svo"},
+                   {"n": 9, "slices": ["svo"]}, "мусор"]}
+    assert R.sieve_parse(d, 3) == {0: ["selfemp"], 1: []}      # 3 — не список, 9 — вне пакета
+    assert R.sieve_parse(None, 3) == {} and R.sieve_parse({"items": "x"}, 2) == {}

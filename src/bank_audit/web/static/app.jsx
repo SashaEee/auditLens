@@ -11472,7 +11472,8 @@ function PuSlices(){
         <td>{k.gold&&k.gold.precision_s6!=null?pc(k.gold.precision_s6):"—"}</td>
         <td>{k.open_flags||"—"}</td>
       </tr>)}</tbody></table></div>
-    <p className="t-cap" style={{margin:"8px 0 0"}}>Эталон 04.11: 260 жалоб, два слепых разметчика и арбитр. Траты разметки: {sp||"—"}.</p>
+    <p className="t-cap" style={{margin:"8px 0 0"}}>Эталон 04.11: 260 жалоб, два слепых разметчика и арбитр. Траты разметки: {sp||"—"}.
+      {d.sieve?` Сито по смыслу (жалобы без ключевых слов): просеяно ${fmtNum(d.sieve.sieved)}, отмечено ${fmtNum(d.sieve.flagged)}, ${fmtNum(d.sieve.rub)} ₽.`:""}</p>
     {/* канарейка (rag/review_slices_canary.py): раз в неделю тот же каскад на постоянной
         выборке эталона, без записи разметки — смену модели в облаке видно за неделю */}
     {(d.canary||[]).length>0&&<div className="pu-x-scroll" style={{marginTop:10}}><table className="pu-tbl">

@@ -783,6 +783,11 @@ async def bankiru_fts_background_loop():
             # Срезы вне справочника продуктов (зарплатные проекты, УС, выездной
             # сервис) — после основной разметки: кандидатов отбирают и по её каналам
             from ..rag import review_slices
+            # сито по смыслу — до разметки: отмеченные им жалобы уже кандидаты этого тика
+            r0 = await review_slices.sieve(limit=int(os.getenv("REVIEW_SLICES_SIEVE_TICK", "1500")), daily=True)
+            if r0.get("sieved"):
+                log.info("срезы отзывов: сито %d, отмечено %d, %.1f ₽", r0["sieved"], r0.get("flagged", 0),
+                         r0.get("rub") or 0)
             r = await review_slices.run(limit=int(os.getenv("REVIEW_SLICES_TICK_LIMIT", "2000")), daily=True)
             if r.get("done"):
                 log.info("срезы отзывов: %d за тик, %.1f ₽, остановка: %s", r["done"], r.get("rub") or 0, r.get("stop"))
