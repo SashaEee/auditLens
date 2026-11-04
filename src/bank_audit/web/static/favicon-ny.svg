@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="AuditLens">
+  <!-- Новогодний выпуск (docs/NEW_YEAR.md): тот же знак, звезда на вершине «A». -->
+  <style>.a{fill:#0E1116}.s{fill:#D7A33A}@media (prefers-color-scheme:dark){.a{fill:#FAFAF8}.s{fill:#F3D27A}}</style>
+  <g transform="translate(5 9) scale(.9)">
+    <path fill="#1F4DFF" d="M47.5 13 L59.5 13 L89.5 89 L75.5 89 Z"/>
+    <path class="a" fill-rule="evenodd" d="M47.5 13 L57.5 13 L83.5 89 L66.5 89 L58.5 67 L36.5 67 L27.5 89 L10.5 89 Z M47.5 36 L56.5 58 L38.5 58 Z"/>
+  </g>
+  <path class="s" d="M53.15 0L56.1 8.05 64.15 11 56.1 13.95 53.15 22 50.2 13.95 42.15 11 50.2 8.05Z"/>
+</svg>
