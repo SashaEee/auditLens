@@ -1972,7 +1972,7 @@ def _excluded(urls: list[str], words: list[str]) -> set[str]:
         if not lex:
             return set()
         tq = " | ".join("'" + bankiru_fts.stem_key(x).replace("'", "''") + "'"
-                        + (":*" if len(x) >= bankiru_fts._PREFIX_MIN else "") for x in lex)
+                        + (":*" if bankiru_fts.is_prefix(x) else "") for x in lex)
         return set(s.execute(text("""SELECT url FROM review_index WHERE url = ANY(:u)
                                       AND tsv @@ to_tsquery(CAST('simple' AS regconfig), :tq)"""),
                              {"u": urls, "tq": tq}).scalars().all())

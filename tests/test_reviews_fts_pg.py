@@ -51,12 +51,15 @@ def _urls(rows):
     return sorted(r["url"] for r in rows)
 
 
-def test_near_words_with_word_forms(pg):
+def test_near_words_with_word_forms(pg, monkeypatch):
     rows, capped = F.search_near([["навязали", "страховку"]])
-    # «навязали страховку» ↔ «страховка навязана»: падеж и залог — одна основа.
-    # Известный пробел: вид глагола («навязывали», u2) — другая основа, пары видов
-    # связывает только раскрытие запроса (волна 2: семьи слов)
-    assert _urls(rows) == ["u1", "u7"] and not capped
+    # «навязали страховку» ↔ «страховка навязана» (падеж и залог — одна основа) и
+    # ↔ «страховку не навязывали» (вид глагола — семья слов, FAMILY с 04.11.2026)
+    assert _urls(rows) == ["u1", "u2", "u7"] and not capped
+    monkeypatch.setattr(F, "FAMILY", False)
+    rows, _ = F.search_near([["навязали", "страховку"]])
+    assert _urls(rows) == ["u1", "u7"]                       # без семей — только одна основа
+    monkeypatch.setattr(F, "FAMILY", True)
     rows, _ = F.search_near([["не", "зачисляют", "выручку"]])
     assert "u5" in _urls(rows) and "u6" in _urls(rows)          # «зачислил выручку» — та же основа
     # служебные слова запроса тоже занимают позиции: «выручку по эквайрингу не зачисляют»

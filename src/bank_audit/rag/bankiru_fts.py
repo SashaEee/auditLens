@@ -728,8 +728,39 @@ PREFIX = int(os.getenv("REVIEWS_NEAR_PREFIX", "6"))
 _PREFIX_MIN = int(os.getenv("REVIEWS_NEAR_PREFIX_MIN", "5"))
 
 
+# Семьи слов: snowball даёт совершенному и несовершенному виду разные основы —
+# «навязали» → «навяза», «навязывали» → «навязыва», «списали» → «списа», «списывают» →
+# «списыва». Общая часть — до суффикса вида: «навяз», «спис». С FAMILY ключ основы —
+# эта общая часть, и она ищется как начало слова (от 4 букв). Включено 04.11.2026 по
+# замеру на 25 запросах: «навязали страховку» 27 → 50 жалоб за год, «отказывают в
+# реструктуризации» 12 → 54; добавленные совпадения, по слепой оценке трёх судей,
+# относятся к запросу в 34 из 45 случаев (остальные — соседние ситуации).
+FAMILY = os.getenv("REVIEWS_NEAR_FAMILY", "1") == "1"
+_ASPECT_RX = re.compile(r"(?:ыва|ива)$")
+
+
+def _family(lexeme: str) -> str | None:
+    """Общая часть видовой пары или None, если основа — не глагол с суффиксом вида."""
+    if len(lexeme) >= 7 and _ASPECT_RX.search(lexeme):
+        return _ASPECT_RX.sub("", lexeme)
+    if len(lexeme) >= 6 and lexeme.endswith("а"):
+        return lexeme[:-1]
+    return None
+
+
 def stem_key(lexeme: str) -> str:
+    if FAMILY:
+        f = _family(lexeme)
+        if f and len(f) >= 4:
+            return f[:PREFIX]
     return lexeme[:PREFIX] if len(lexeme) > PREFIX else lexeme
+
+
+def is_prefix(lexeme: str) -> bool:
+    """Ищется ли основа запроса как начало слова (а не целиком)."""
+    if FAMILY and (f := _family(lexeme)) and len(f) >= 4:
+        return True
+    return len(lexeme) >= _PREFIX_MIN
 
 
 def near_window(pos: dict[str, list[int]], lexemes: list[str], gap: int = NEAR_GAP,
@@ -741,7 +772,8 @@ def near_window(pos: dict[str, list[int]], lexemes: list[str], gap: int = NEAR_G
     lex = [x for x in dict.fromkeys(stem_key(x) for x in lexemes) if x]
     if not lex:
         return False
-    hits = {x: sorted(p for k, ps in pos.items() if k == x or (len(x) >= _PREFIX_MIN and k.startswith(x))
+    pre = {stem_key(x): is_prefix(x) for x in lexemes}
+    hits = {x: sorted(p for k, ps in pos.items() if k == x or (pre.get(x) and k.startswith(x))
                       for p in ps) for x in lex}
     if any(not v for v in hits.values()):
         return False
@@ -862,7 +894,7 @@ def search_near(groups: list[list[str]], *, bank: str | None = None, city: str |
                 # словарь обработал бы основу заново («навяза» → другая основа) и выкинул
                 # бы «сам» как стоп-слово — «навязали страховку» находила 0 (замер 03.11)
                 params["tq"] = " & ".join(
-                    "'" + stem_key(x).replace("'", "''") + "'" + (":*" if len(x) >= _PREFIX_MIN else "")
+                    "'" + stem_key(x).replace("'", "''") + "'" + (":*" if is_prefix(x) else "")
                     for x in dict.fromkeys(lexs))
                 rows = s.execute(text(f"""
                     SELECT f.url, f.review_id, f.source, f.bank, f.product, f.dt, f.city, f.tsv::text AS tsv,
