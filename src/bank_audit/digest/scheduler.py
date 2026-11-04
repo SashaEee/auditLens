@@ -790,6 +790,16 @@ async def bankiru_fts_background_loop():
         except Exception as e:  # noqa: BLE001
             log.warning("срезы отзывов: %s", e)
         try:
+            # Канарейка качества срезов: раз в неделю каскад на постоянной выборке
+            # эталона, без записи разметки; без эталона в базе — пропуск
+            from ..rag import review_slices_canary
+            r = await review_slices_canary.tick()
+            if r.get("saved"):
+                log.info("канарейка срезов: решений %d, %.1f ₽, тревога: %s",
+                         r["n"], r.get("rub") or 0, r["alert"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("канарейка срезов: %s", e)
+        try:
             # Векторы изложений новых жалоб — для групп похожих в ленте;
             # ограничено по времени, недосчитанное доберёт следующий тик
             from ..rag import reviews_work

@@ -593,7 +593,18 @@ def metrics(days: int = 14, exclude: list[str] | None = None) -> dict:
             "topics": _team_topics(days, ex),
             "eval": _eval_brief(),
             "inbox": _inbox_brief(),
-            "mail": _mail_brief(days, ex)}
+            "mail": _mail_brief(days, ex),
+            "slice_canary": _slice_canary()}
+
+
+def _slice_canary() -> list:
+    """Канарейка качества срезов: последние прогоны на эталоне с тревогой каждого
+    (rag/review_slices_canary.history)."""
+    try:
+        from ..rag import review_slices_canary
+        return review_slices_canary.history(4)
+    except Exception:  # noqa: BLE001 — до миграции 108 «Пульс» не падает
+        return []
 
 
 def _mail_brief(days: int, ex: list[str] | None = None) -> dict:
