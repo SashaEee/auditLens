@@ -294,8 +294,10 @@ def _complaints_for_bank(od: OwnData, slug: str, bank: str, scope: dict, anchor:
     ov_w = sig.get("overall") or {}
     if ov_w.get("week") is not None:
         txt = (f"Всего жалоб за неделю по {_dm(sig.get('week_end'))}: {_n(ov_w['week'])} при норме "
-               f"{_f(ov_w.get('norm_per_week'))} (×{_f(ov_w.get('ratio'))}; у рынка "
-               f"×{_f(ov_w.get('market_ratio'))}).")
+               f"{_f(ov_w.get('norm_per_week'))} (×{_f(ov_w.get('ratio'))} по всем площадкам"
+               + (f"; по banki.ru банк ×{_f(ov_w.get('cmp_ratio'))}, рынок ×{_f(ov_w.get('market_ratio'))}"
+                  if ov_w.get("cmp_ratio") is not None and ov_w.get("market_ratio") is not None else "")
+               + ").")
         s_lines.append(txt)
         s_rows.append(("Жалобы: всего за неделю", _n(ov_w["week"]), txt))
     if not sig.get("signals"):

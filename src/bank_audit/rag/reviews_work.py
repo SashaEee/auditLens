@@ -289,7 +289,8 @@ def record_signals(sig: dict | None, bank: str, product: str | None = None,
         stats = {k: s_.get(k) for k in ("week", "baseline_week", "ratio", "excess", "q_value",
                                         "market_ratio", "bank_specific", "new", "accel",
                                         "prev_week", "week_total", "test", "status", "since",
-                                        "sustained", "baseline_before")}
+                                        "sustained", "baseline_before", "market_claim",
+                                        "market_note")}
         with db.session() as s:
             cur = s.execute(text("""
                 SELECT signal_id, stats FROM signal_journal

@@ -100,6 +100,9 @@ def review_maps() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
                 prod[SLICES[s][0]] = d.code
         for v in d.review_vulnerable:
             vul[v] = d.code
+        # и сам фильтр направления 'dir:<код>' (с 04.11.2026): без него «Итоги» в
+        # «Пульсе» относили просмотры, выгрузки и подписки по направлению к «Другому»
+        prod[DIR_PREFIX + d.code] = d.code
     return prod, sl, vul
 
 

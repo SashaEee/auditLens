@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 c1c3be776341da5221eac63b4401db937ea1aa9bcc2449052a874cfa9a4bd134): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 c9c73e2c792597b734f538a9d4e4b53c1803fa89bf151d61fa151ee3860c106e): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -2121,11 +2121,21 @@ function ovMarketNote(ratio, mr, who = "банка") {
   const k = ratio / mr;
   return k >= 1.3 ? `в ${ovN(k)} ${ovRaz(k)} сильнее рынка (у рынка ×${ovN(mr)})` : `рынок растёт так же (×${ovN(mr)})`;
 }
+// С 04.11.2026 о рынке говорит вердикт сервера (market_claim: тест доли по banki.ru,
+// с порогом сопоставимого объёма банка); пустая заметка при нём — «о рынке молчать».
+// Пересчёт из отношений — только для снимков без вердикта: отношение банка там по
+// всем площадкам, а рынка — по banki.ru, и «только у Сбера» выходило вопреки тесту.
+function sgMkt(s, who = "банка") {
+  if (!s) return "";
+  if (s.market_claim != null) return s.market_note || "";
+  return s.ratio && s.market_ratio != null ? ovMarketNote(s.ratio, s.market_ratio, who) || "" : s.bank_specific ? "сильнее рынка" : "";
+}
 // Страховка для уже записанных выпусков: «только у Сбера», когда ни один
 // сигнал не ровный по рынку, — «у Сбера сильнее, чем по рынку»
 function ovFixOnly(text, sigs) {
   if (!text || !sigs || !sigs.length) return text;
-  if (sigs.some(x => x && x.ratio && (x.market_ratio == null || x.market_ratio < 1.15))) return text;
+  // по вердикту «только у» подтверждает лишь only_bank; в старых снимках — ровный рынок
+  if (sigs.some(x => x && x.ratio && (x.market_claim != null ? x.market_claim === "only_bank" : x.market_ratio == null || x.market_ratio < 1.15))) return text;
   return String(text).replace(/только\s+у\s+(Сбера|Сбербанка|банка|нас)(?![а-яё])/gi, (m, w) => `у ${w} сильнее, чем по рынку`);
 }
 function xpRows(kind, d, now) {
@@ -2144,7 +2154,10 @@ function xpRows(kind, d, now) {
     if (d.sustained && d.prev_week != null) R.push(["Две недели", `${ovJ(d.prev_week)} и ${ovJ(d.week)} подряд при норме ${ovN(d.baseline_week)} — рост держится, а не разовый`]);
     // масштаб: 6.7/нед — это ОДНА тема; без общего числа цифра кажется мелкой
     if (d.week_total) R.push(["Масштаб", `тема — ${Math.round(100 * d.week / d.week_total)}% всех жалоб на Сбер за неделю (${d.week} из ${d.week_total})`]);
-    if (d.market_ratio != null) R.push(["Рынок", `та же тема по рынку ×${ovN(d.market_ratio)} — ` + (d.market_ratio < 1.15 ? "рынок ровный, всплеск наш, а не отраслевой" : `растёт и рынок; у Сбера ${(ovMarketNote(d.ratio, d.market_ratio) || "").replace(/\s*\(у рынка[^)]*\)/, "")}`)]);
+    if (d.market_claim != null) {
+      // вердикт по сопоставимому корпусу (banki.ru) — без него о рынке молчим
+      if (d.market_note) R.push(["Рынок", `по banki.ru: ${d.market_note}`]);
+    } else if (d.market_ratio != null) R.push(["Рынок", `та же тема по рынку ×${ovN(d.market_ratio)} — ` + (d.market_ratio < 1.15 ? "рынок ровный, всплеск наш, а не отраслевой" : `растёт и рынок; у Сбера ${(ovMarketNote(d.ratio, d.market_ratio) || "").replace(/\s*\(у рынка[^)]*\)/, "")}`)]);
     // Выпуск — снимок на утро; к вечеру данные дополняются. Та же цифра сейчас
     // — как в «Отзывах», чтобы расхождение не выглядело ошибкой
     if (now && (now.week !== d.week || Math.abs((now.baseline_week || 0) - (d.baseline_week || 0)) >= 0.05)) R.push(["Сейчас", `${ovJ(now.week)} за 7 дней при норме ${ovN(now.baseline_week)} — ×${ovN(now.ratio)}: после выпуска данные дополнились (так же в разделе «Аудит отзывов»)`]);
@@ -4167,7 +4180,7 @@ function ForYouPage() {
   const maxD = Math.max(1, ...mv.map(x => Math.abs(+x.c.delta || 0)));
   const ps = me && me.personalization,
     psNext = ps && (ps.parts || []).find(x => !x.done && x.cta);
-  const sgNote = s => s.market_note || (s.market_ratio != null && s.ratio ? ovMarketNote(s.ratio, s.market_ratio, "Сбера") : s.gap != null ? `×${ovN(s.gap)} к рынку` : "");
+  const sgNote = s => sgMkt(s, "Сбера") || (s.market_claim == null && s.gap != null ? `×${ovN(s.gap)} к рынку` : "");
   return /*#__PURE__*/React.createElement("div", {
     className: "fade-in ov fyp"
   }, /*#__PURE__*/React.createElement("style", null, FY_CSS), /*#__PURE__*/React.createElement("div", {
@@ -4923,7 +4936,7 @@ function SinceStrip() {
     k: "sig",
     t: `${N(sg.n, "новый всплеск", "новых всплеска", "новых всплесков")} жалоб на Сбер` + (sg.mine ? ` · ${sg.mine} по вашим подпискам` : ""),
     list: (sg.top || []).map(x => ({
-      t: `${x.bank}${x.product ? " · " + x.product : ""} — ${x.label}${x.ratio ? ` ×${rvNum(x.ratio)}` : ""}`,
+      t: `${x.bank}${x.product ? " · " + rvProd(x.product) : ""} — ${x.label}${x.ratio ? ` ×${rvNum(x.ratio)}` : ""}`,
       href: fyRv({
         bank: x.bank,
         product: x.product || "",
@@ -5394,7 +5407,7 @@ function OverviewPage() {
         sessionStorage.setItem("al-ov-upd", v ? "1" : "0");
       } catch {}
     };
-    const mn = x => x.market_note || (x.market_ratio != null && x.ratio ? ovMarketNote(x.ratio, x.market_ratio, "Сбера") : x.bank_specific ? "сильнее рынка" : "");
+    const mn = x => sgMkt(x, "Сбера");
     return /*#__PURE__*/React.createElement("section", {
       className: "ov-upd" + (updOpen ? " open" : ""),
       "aria-label": "\u0414\u043E\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u0435 \u043A \u0432\u044B\u043F\u0443\u0441\u043A\u0443"
@@ -9045,7 +9058,7 @@ function RvJournal({
       className: "rv-tag compliance"
     }, "\u0441\u0438\u043B\u044C\u043D\u044B\u0439")), /*#__PURE__*/React.createElement("div", {
       className: "rv-jr-m"
-    }, d1 === d2 ? d1 : `${d1} – ${d2}`, " \xB7 \u043F\u0438\u043A ", st.week, " \u0437\u0430 7 \u0434\u043D \u043F\u0440\u0438 \u043D\u043E\u0440\u043C\u0435 ~", rvNum(st.baseline_week), st.new ? " · новое" : st.ratio ? ` · ×${rvNum(st.ratio)}` : "", st.bank_specific ? " · " + (ovMarketNote(st.ratio, st.market_ratio) || "сильнее рынка") : ""), /*#__PURE__*/React.createElement("div", {
+    }, d1 === d2 ? d1 : `${d1} – ${d2}`, " \xB7 \u043F\u0438\u043A ", st.week, " \u0437\u0430 7 \u0434\u043D \u043F\u0440\u0438 \u043D\u043E\u0440\u043C\u0435 ~", rvNum(st.baseline_week), st.new ? " · новое" : st.ratio ? ` · ×${rvNum(st.ratio)}` : "", (st.market_claim != null ? st.market_note : st.bank_specific) ? " · " + sgMkt(st) : ""), /*#__PURE__*/React.createElement("div", {
       className: "rv-jr-a"
     }, /*#__PURE__*/React.createElement("button", {
       className: "rv-jr-b ok" + (e.verdict === "confirmed" ? " on" : ""),
@@ -10493,7 +10506,12 @@ function ReviewsPage({
   // сюжеты, выросшие за неделю сверх своей нормы — отдельно от радара: свой запрос, без LLM
   useEffect(() => {
     setStSig(null);
-    apiFetch(`/api/reviews/story-signals?bank=${enc(bank)}${pq()}`).then(d => setStSig(d.items || [])).catch(() => setStSig([]));
+    // сбой — не «спокойно»: держим признак ошибки и говорим о нём в радаре
+    apiFetch(`/api/reviews/story-signals?bank=${enc(bank)}${pq()}`).then(d => setStSig(d.error ? {
+      __err: true
+    } : d.items || [])).catch(() => setStSig({
+      __err: true
+    }));
   }, [bank, product]);
 
   // радар срочных аномалий — грузится ОТДЕЛЬНО (LLM), не блокирует дашборд
@@ -11260,7 +11278,12 @@ function ReviewsPage({
   // «Новое» без всплесков: сюжеты вне кодификатора — наблюдения, их видно и в спокойную неделю
   // сюжеты недели (5.6): одна история против своей нормы — внутри «точного» кода её всплеск
   // тонет в соседних историях; рынок — та же история у других банков banki.ru
-  const rvStSig = () => (stSig || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  const rvStSig = () => stSig && stSig.__err ? /*#__PURE__*/React.createElement("div", {
+    className: "rv-cap",
+    style: {
+      marginTop: 10
+    }
+  }, "\u0421\u044E\u0436\u0435\u0442\u044B \u043D\u0435\u0434\u0435\u043B\u0438 \u043D\u0435 \u043F\u043E\u0441\u0447\u0438\u0442\u0430\u043B\u0438\u0441\u044C \u2014 \u043E \u0440\u043E\u0441\u0442\u0435 \u043E\u0442\u0434\u0435\u043B\u044C\u043D\u044B\u0445 \u0438\u0441\u0442\u043E\u0440\u0438\u0439 \u0441\u0435\u0439\u0447\u0430\u0441 \u043D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u0438\u0437\u0432\u0435\u0441\u0442\u043D\u043E.") : (stSig || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "rv-radar-sub",
     style: {
       marginTop: 10
@@ -11347,14 +11370,14 @@ function ReviewsPage({
     className: "rv-radar-scan"
   }, /*#__PURE__*/React.createElement("div", {
     className: "rv-radar-beam"
-  }), /*#__PURE__*/React.createElement("span", null, "\u0410\u043D\u0430\u043B\u0438\u0437\u0438\u0440\u0443\u044E \u0441\u0438\u0433\u043D\u0430\u043B\u044B \u043D\u0435\u0434\u0435\u043B\u0438\u2026")) : anom && anom.error ? /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement("span", null, "\u0410\u043D\u0430\u043B\u0438\u0437\u0438\u0440\u0443\u044E \u0441\u0438\u0433\u043D\u0430\u043B\u044B \u043D\u0435\u0434\u0435\u043B\u0438\u2026")) : anom && anom.error ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "rv-radar-calm rv-radar-err",
     role: "alert"
   }, "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u043E\u0441\u0447\u0438\u0442\u0430\u0442\u044C \u0441\u0438\u0433\u043D\u0430\u043B\u044B \u043D\u0435\u0434\u0435\u043B\u0438 \u2014 \u043E \u0432\u0441\u043F\u043B\u0435\u0441\u043A\u0430\u0445 \u0441\u0435\u0439\u0447\u0430\u0441 \u043D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u0438\u0437\u0432\u0435\u0441\u0442\u043D\u043E.", /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "btn btn-sm",
     onClick: () => setAnomTry(x => x + 1)
-  }, "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C")) : !anom || (!anom.signals || !anom.signals.length) && !(anom.watch || []).length ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C")), rvStSig()) : !anom || (!anom.signals || !anom.signals.length) && !(anom.watch || []).length ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "rv-radar-calm"
   }, /*#__PURE__*/React.createElement("span", {
     className: "rv-radar-check"
@@ -11377,7 +11400,7 @@ function ReviewsPage({
   }, d.short || d.label, /*#__PURE__*/React.createElement("b", null, "\xD7", String(d.gap).replace(".", ","))))), rvNovel(anom.novel)) : /*#__PURE__*/React.createElement(React.Fragment, null, !(anom.signals.length === 1 && anom.summary) && /*#__PURE__*/React.createElement("div", {
     className: "rv-radar-chips"
   }, anom.signals.map((s, i) => {
-    const tip = `${s.week} за 7 дн (обычно ~${s.baseline_week}/нед)` + (s.bank_specific ? " · " + (ovMarketNote(s.ratio, s.market_ratio) || "сильнее рынка") : "") + (s.accel ? ` · ускоряется (${s.prev_week}→${s.week})` : "") + (sigCont(s) ? ` · держится с ${sigDm(s.since)}` + (s.baseline_before != null ? ` (до всплеска норма ~${s.baseline_before}/нед)` : "") : "") + (s.sustained ? ` · две недели подряд (${s.prev_week} и ${s.week})` : "") + (s.geo ? ` · ${s.geo.share}% из ${s.geo.city}` : "");
+    const tip = `${s.week} за 7 дн (обычно ~${s.baseline_week}/нед)` + ((s.market_claim != null ? s.market_note : s.bank_specific) ? " · " + sgMkt(s) : "") + (s.accel ? ` · ускоряется (${s.prev_week}→${s.week})` : "") + (sigCont(s) ? ` · держится с ${sigDm(s.since)}` + (s.baseline_before != null ? ` (до всплеска норма ~${s.baseline_before}/нед)` : "") : "") + (s.sustained ? ` · две недели подряд (${s.prev_week} и ${s.week})` : "") + (s.geo ? ` · ${s.geo.share}% из ${s.geo.city}` : "");
     return /*#__PURE__*/React.createElement("span", {
       key: i,
       className: "rv-radar-chip lvl-" + (s.level || "medium") + (s.bank_specific ? " only" : ""),
@@ -11485,8 +11508,10 @@ function ReviewsPage({
     // рост сравниваем с рынком: «+20%» при росте остальных банков на 12% — не «стало хуже на 20%»
     if (vol) {
       const mk = ov.market_delta_pct,
-        rel = ov.delta_vs_market_pct;
-      const mtxt = mk == null ? "" : `; у остальных банков ${rvSgn(Math.round(mk))}% — ` + (vol.vs_market === "above" ? `${bank} обгоняет рынок на ${Math.round(Math.abs(rel || 0))}%` : vol.vs_market === "below" ? `${bank} лучше рынка` : `в целом вместе с рынком`);
+        rel = ov.delta_vs_market_pct,
+        cd = ov.cmp_delta_pct;
+      // с рынком (только banki.ru) сравниваем рост банка там же, а не по всем площадкам
+      const mtxt = mk == null ? "" : (cd != null ? `; по banki.ru — ${bank} ${rvSgn(Math.round(cd))}%, остальные банки ${rvSgn(Math.round(mk))}% — ` : `; у остальных банков ${rvSgn(Math.round(mk))}% — `) + (vol.vs_market === "above" ? `${bank} обгоняет рынок на ${Math.round(Math.abs(rel || 0))}%` : vol.vs_market === "below" ? `${bank} лучше рынка` : `в целом вместе с рынком`);
       out.push(`Жалоб ${ov.delta_pct > 0 ? "больше" : "меньше"} на ${Math.round(Math.abs(ov.delta_pct))}%, чем за ${cw ? cw.za : "прошлый период"}: ${fmtNum(ov.cmp_n != null ? ov.cmp_n : ov.total)} против ${fmtNum(ov.prev)}${perInfo && perInfo.per_day ? " (в пересчёте на день)" : ""}${mtxt}.`);
     }
     // «без значимых изменений» рядом с чипами изменившихся тем читалось как
@@ -11842,9 +11867,9 @@ function ReviewsPage({
     err: true
   }) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "rv-cl-sum"
-  }, sts.items.length ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("b", null, sts.items.length), " ", plural(sts.items.length, "сюжет", "сюжета", "сюжетов"), " \u0441 \u0436\u0430\u043B\u043E\u0431\u0430\u043C\u0438 \u0437\u0430 \u043F\u0435\u0440\u0438\u043E\u0434 \u2014 \u0443\u0441\u0442\u043E\u0439\u0447\u0438\u0432\u044B\u0435 \u0433\u0440\u0443\u043F\u043F\u044B \u043F\u043E\u0445\u043E\u0436\u0438\u0445 \u0438\u0441\u0442\u043E\u0440\u0438\u0439, \u043F\u0435\u0440\u0435\u0441\u0447\u0451\u0442 \u0440\u0430\u0437 \u0432 \u0441\u0443\u0442\u043A\u0438") : "Сюжетов с жалобами за период нет — сюжет начинается с трёх похожих историй", theme || flag || fCity || fSrc || escOnly ? /*#__PURE__*/React.createElement("span", {
+  }, sts.items.length ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("b", null, sts.items.length), sts.total > sts.items.length ? ` из ${fmtNum(sts.total)}` : "", " ", plural(sts.total || sts.items.length, "сюжет", "сюжета", "сюжетов"), " \u0441 \u0436\u0430\u043B\u043E\u0431\u0430\u043C\u0438 \u0437\u0430 ", pw.za, sts.total > sts.items.length ? " — показаны крупные" : "", " \xB7 \u0443\u0441\u0442\u043E\u0439\u0447\u0438\u0432\u044B\u0435 \u0433\u0440\u0443\u043F\u043F\u044B \u043F\u043E\u0445\u043E\u0436\u0438\u0445 \u0438\u0441\u0442\u043E\u0440\u0438\u0439, \u043F\u0435\u0440\u0435\u0441\u0447\u0451\u0442 \u0440\u0430\u0437 \u0432 \u0441\u0443\u0442\u043A\u0438") : "Сюжетов с жалобами за период нет — сюжет начинается с трёх похожих историй", theme || flag || fCity || fSrc || escOnly || fWeek ? /*#__PURE__*/React.createElement("span", {
     className: "rv-sum-x"
-  }, " \xB7 \u0442\u0435\u043C\u0430, \u043F\u0440\u0438\u0437\u043D\u0430\u043A, \u0433\u043E\u0440\u043E\u0434 \u0438 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0430 \u043A \u0441\u044E\u0436\u0435\u0442\u0430\u043C \u043D\u0435 \u043F\u0440\u0438\u043C\u0435\u043D\u044F\u044E\u0442\u0441\u044F") : ""), sts.items.map(x => {
+  }, " \xB7 \u0442\u0435\u043C\u0430, \u043F\u0440\u0438\u0437\u043D\u0430\u043A, \u0433\u043E\u0440\u043E\u0434, \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0430 \u0438 \u043D\u0435\u0434\u0435\u043B\u044F \u0432\u0441\u043F\u043B\u0435\u0441\u043A\u0430 \u043A \u0441\u044E\u0436\u0435\u0442\u0430\u043C \u043D\u0435 \u043F\u0440\u0438\u043C\u0435\u043D\u044F\u044E\u0442\u0441\u044F") : ""), sts.items.map(x => {
     const g = {
       urls: x.urls,
       n: x.n_window,
@@ -12183,7 +12208,8 @@ function ReviewsPage({
     className: "rv-cmpk",
     "data-tip": cw && cw.tip
   }, cw && !cw.none ? cw.k : "к прошлому периоду"), ov.market_delta_pct != null ? /*#__PURE__*/React.createElement("span", {
-    className: "rv-lown"
+    className: "rv-lown",
+    "data-tip": ov.cmp_delta_pct != null ? `по banki.ru (с ним и сравниваем): ${bank} ${rvSgn(Math.round(ov.cmp_delta_pct))}%, остальные банки ${rvSgn(Math.round(ov.market_delta_pct))}%` : "остальные банки, banki.ru"
   }, " \xB7 \u0440\u044B\u043D\u043E\u043A ", rvSgn(Math.round(ov.market_delta_pct)), "%") : "", ov.delta_low_n ? /*#__PURE__*/React.createElement("span", {
     className: "rv-lown"
   }, " \xB7 \u043C\u0430\u043B\u0430\u044F \u0431\u0430\u0437\u0430") : "") : cw && cw.none ? /*#__PURE__*/React.createElement("span", {
@@ -12232,7 +12258,7 @@ function ReviewsPage({
     side: "right",
     onClose: () => setJrOpen(false),
     title: "\u0416\u0443\u0440\u043D\u0430\u043B \u0441\u0438\u0433\u043D\u0430\u043B\u043E\u0432",
-    sub: `${bank} · ${product || "все продукты"} · за полгода`
+    sub: `${bank} · ${product ? rvProd(product) : "все продукты"} · за полгода`
   }, /*#__PURE__*/React.createElement(RvJournal, {
     bank: bank,
     product: product,
@@ -12250,7 +12276,9 @@ function ReviewsPage({
     key: e.event_id
   }, /*#__PURE__*/React.createElement("span", {
     className: "rv-cl-m"
-  }, rvDate(e.at)), " ", e.label)))), /*#__PURE__*/React.createElement("div", {
+  }, rvDate(e.at)), " ", e.label)))), grpItems && grp.n > grpItems.length && /*#__PURE__*/React.createElement("p", {
+    className: "rv-st-crit"
+  }, "\u041F\u043E\u043A\u0430\u0437\u0430\u043D\u044B ", grpItems.length, " \u0441\u0430\u043C\u044B\u0445 \u0441\u0432\u0435\u0436\u0438\u0445 \u0438\u0437 ", fmtNum(grp.n), "."), /*#__PURE__*/React.createElement("div", {
     className: "rv-grp-acts"
   }, /*#__PURE__*/React.createElement("button", {
     className: "btn btn-sm btn-primary",
@@ -12259,7 +12287,7 @@ function ReviewsPage({
       anchor: e.currentTarget,
       src: "reviews_group"
     })
-  }, "\uFF0B \u0432\u0441\u044E \u0433\u0440\u0443\u043F\u043F\u0443 \u0432 \u0430\u0443\u0434\u0438\u0442-\u0434\u0435\u043B\u043E")), !grpItems ? /*#__PURE__*/React.createElement(Skel, {
+  }, grpItems && grp.n > grpItems.length ? `＋ показанные ${grpItems.length} в аудит-дело` : "＋ всю группу в аудит-дело")), !grpItems ? /*#__PURE__*/React.createElement(Skel, {
     h: 120
   }) : /*#__PURE__*/React.createElement("div", {
     className: "rv-clist"
@@ -21264,6 +21292,7 @@ function puGuardItems(m) {
   if (rp.dedup_age_h != null && rp.dedup_age_h > 30) add("warn", `склейка копий отзывов не проходила ${Math.round(rp.dedup_age_h)} ч`, "data", "pu-slices");
   if (rp.stories_age_h != null && rp.stories_age_h > 50) add("warn", `«Сюжеты» не пересчитывались ${Math.round(rp.stories_age_h)} ч`, "data", "pu-slices");
   const sc = (m.slice_canary || [])[0];
+  if (rp.canary_age_days != null && rp.canary_age_days > 9) add("warn", `канарейка срезов не отрабатывала ${Math.floor(rp.canary_age_days)} дн (должна раз в неделю)`, "data", "pu-slices");
   if (sc && sc.alert) add("bad", `канарейка срезов ${rvDate(sc.run_at)}: ${(sc.reasons || []).join("; ")}`, "data", "pu-slices");
   if ((rsh.failed || 0) > 0) add("warn", `поиск по жалобам не отработал ${rsh.failed} ${plural(rsh.failed, "раз", "раза", "раз")}`, "data", "pu-rsearch");
   return out.sort((a, b) => (a.lv === "bad" ? 0 : 1) - (b.lv === "bad" ? 0 : 1));

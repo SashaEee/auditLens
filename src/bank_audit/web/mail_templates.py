@@ -954,7 +954,9 @@ def render_brief(d: dict, now=None, name: str = "", private: bool = False) -> di
                 q = urlencode({k: v for k, v in (("tab", "complaints"), ("bank", x["bank"]),
                                                   ("product", x.get("product") or ""),
                                                   ("theme", x.get("issue"))) if v})
-                t = f"{x['bank']}{' · ' + x['product'] if x.get('product') else ''} — {x['label']}"
+                from .. import directions as _dirs
+                t = (f"{x['bank']}{' · ' + _dirs.product_label(x['product']) if x.get('product') else ''}"
+                     f" — {x['label']}")
                 body += (f'<a href="{_e(go_url("reviews?" + q))}" target="_blank" style="display:block;'
                          f'margin:8px 0 0;{_font(14, 20, LINK, 500, "text-decoration:none")}">'
                          f'{"★ " if x.get("mine") else ""}{_e(t)}</a>')

@@ -86,6 +86,10 @@ _MISSING_MIN = 5
 _LOCK_KEY = 710_022_420
 _AT_KEY = "dedup_at"
 _FULL_KEY = "dedup_full_at"
+# Проход, который действительно склеил: без сбоев записи и с большинством банков
+# (соседняя база не отдала тексты — банк пропущен). dedup_at пишется при любом
+# проходе, и сторож «Пульса» видел бы здоровье там, где пропущены все банки.
+_OK_KEY = "dedup_ok_at"
 
 
 # ── Текст → отпечаток ────────────────────────────────────────────────────────
@@ -651,8 +655,8 @@ def run(since_days: int | None = SINCE_DAYS, *, window_days: int = WINDOW_DAYS,
 
 def _state_get() -> dict[str, float]:
     with db.session() as s:
-        rows = s.execute(text("SELECT k, v FROM review_index_state WHERE k IN (:a, :b)"),
-                         {"a": _AT_KEY, "b": _FULL_KEY}).all()
+        rows = s.execute(text("SELECT k, v FROM review_index_state WHERE k IN (:a, :b, :c)"),
+                         {"a": _AT_KEY, "b": _FULL_KEY, "c": _OK_KEY}).all()
     out = {}
     for k, v in rows:
         try:
@@ -691,7 +695,10 @@ def tick(now: float | None = None) -> dict:
     if res.get("skipped"):
         return res                                  # замок занят — повторит следующий тик
     done = not res.get("failed") and not res.get("skipped_banks")
+    ok = not res.get("failed") and len(res.get("skipped_banks") or {}) * 2 < max(1, res.get("banks") or 0)
     _state_set([_AT_KEY, _FULL_KEY] if full and done else [_AT_KEY], at)
+    if ok:
+        _state_set([_OK_KEY], at)
     return res
 
 

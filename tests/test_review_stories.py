@@ -887,6 +887,24 @@ def test_name_stories_stops_when_model_is_down(lite):
     assert st["stop"] == "время вышло" and st["named"] == 0
 
 
+def test_name_stories_defers_rejected_requests(lite):
+    # 4xx от провайдера повторится и завтра: сюжет откладывается, шаг идёт дальше,
+    # а не стоит каждый день на трёх «неназываемых» (ревью 04.11.2026)
+    put, q, _eng = lite
+    _four(put)
+
+    class Rejected(Exception):
+        status_code = 400
+
+    fake = FakeModel({k: [Rejected("фильтр содержания")] for k in "ABC"}
+                     | {"D": [_ans("Перевод по СБП завис"), _ans("Перевод по СБП не дошёл получателю")]})
+    st = RS.name_stories(10, caller=fake, now=NOW)
+    assert st["failed"] == 3 and st["named"] == 1 and "stop" not in st, repr(st)
+    assert q("SELECT count(*) FROM review_story_event WHERE kind = 'name_failed'")[0][0] == 3
+    assert not RS._rejected_request(TimeoutError()) and not RS._rejected_request(
+        type("E", (Exception,), {"status_code": 429})())
+
+
 def test_name_stories_without_key_or_summaries(lite, monkeypatch):
     put, q, eng = lite
     _four(put)
@@ -1264,37 +1282,54 @@ def test_pg_story_signals_week_against_own_norm_and_market(pgs):
     now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
     with _db.session() as s:
         s.execute(_t("ALTER TABLE review_index ADD COLUMN IF NOT EXISTS source text DEFAULT 'bankiru'"))
-    sp = Space(dim=160)
+        s.execute(_t("ALTER TABLE review_index ADD COLUMN IF NOT EXISTS ev_date date"))
+    sp = Space(dim=240)
     A, B, Y = sp.story("A", 60, 0.95), sp.story("B", 60, 0.95), sp.story("Y", 12, 0.95)
-    XA, XB, XY = sp.matrix(A), sp.matrix(B), sp.matrix(Y)
-    rows, members = [], {"A": [], "B": [], "Y": []}
+    D = sp.story("D", 40, 0.95)
+    XA, XB, XY, XD = sp.matrix(A), sp.matrix(B), sp.matrix(Y), sp.matrix(D)
+    rows, members = [], {"A": [], "B": [], "Y": [], "D": []}
 
     def add(tag, ids, X, k, day):
         url = f"https://r/{tag}{k}"
         rows.append((url, "fees", now - timedelta(days=day, hours=3), X[k], f"изложение {tag}",
                      None, None))
         members[tag].append(url)
-    # A: по 2 жалобы в неделю семь недель, на неделе сигнала — 14
+    # A: по 2 жалобы в неделю восемь недель, на неделе сигнала — 14
     k = 0
-    for w in range(1, 8):
+    for w in range(1, 9):
         for j in range(2):
             add("A", A, XA, k, 7 * w + 1 + j); k += 1
     for j in range(14):
         add("A", A, XA, k, 1 + j % 6); k += 1
-    # B: ровно по 3 в неделю все восемь недель — не всплеск
+    # B: ровно по 3 в неделю все девять недель — не всплеск
     k = 0
-    for w in range(8):
+    for w in range(9):
         for j in range(3):
             add("B", B, XB, k, 7 * w + 1 + j); k += 1
     # Y: 10 жалоб за последнюю неделю, но сюжету 6 дней — «новый», не всплеск
     for k in range(10):
         add("Y", Y, XY, k, 1 + k % 5)
+    # D: без названия, вторая неделя подъёма (10 и 10 при норме 2): прошлая неделя в
+    # норму не входит, и сигнал не гаснет; жалоба о событии годичной давности не в счёт
+    k = 0
+    for w in range(2, 9):
+        for j in range(2):
+            add("D", D, XD, k, 7 * w + 1 + j); k += 1
+    for w in (0, 1):
+        for j in range(10):
+            add("D", D, XD, k, 7 * w + 1 + j % 6); k += 1
+    old_ev = members["D"][-1]
     put(rows)
-    for tag, first in (("A", 60), ("B", 60), ("Y", 6)):
+    with _db.session() as s:
+        s.execute(_t("UPDATE review_index SET ev_date = (dt - interval '400 days')::date WHERE url = :u"),
+                  {"u": old_ev})
+    for tag, first in (("A", 70), ("B", 70), ("Y", 6), ("D", 70)):
         with _db.session() as s:
-            sid = s.execute(_t("""INSERT INTO review_story (bank, title, first_seen, issue_main, status)
-                                  VALUES (:b, :t, :f, 'fees', 'active') RETURNING story_id"""),
-                            {"b": BANK, "t": f"Сюжет {tag}", "f": now - timedelta(days=first)}).scalar()
+            sid = s.execute(_t("""INSERT INTO review_story (bank, title, first_seen, issue_main, status,
+                                                            medoid_url)
+                                  VALUES (:b, :t, :f, 'fees', 'active', :m) RETURNING story_id"""),
+                            {"b": BANK, "t": None if tag == "D" else f"Сюжет {tag}",
+                             "f": now - timedelta(days=first), "m": members[tag][0]}).scalar()
             for u in members[tag]:
                 s.execute(_t("INSERT INTO review_story_member (story_id, url) VALUES (:s, :u)"),
                           {"s": sid, "u": u})
@@ -1307,10 +1342,31 @@ def test_pg_story_signals_week_against_own_norm_and_market(pgs):
                       {"u": url, "d": now - timedelta(days=2), "s": src})
             s.execute(_t("INSERT INTO review_summary_vec VALUES (:u, :v)"),
                       {"u": url, "v": [float(x) for x in vec]})
-    got = RS.story_signals(BANK, now=now)
-    assert [x["title"] for x in got] == ["Сюжет A"], got
-    a = got[0]
+    got = {x["title"]: x for x in RS.story_signals(BANK, now=now)}
+    assert set(got) == {"Сюжет A", "изложение D"}, list(got)
+    d = got["изложение D"]
+    assert (d["week"], d["prev_week"], d["baseline_week"], d["named"]) == (10, 9, 2.0, False)
+    a = got["Сюжет A"]
     assert a["week"] == 14 and a["baseline_week"] == 2.0 and a["ratio"] == 7.0
     assert len(a["urls"]) == 14 and a["q"] <= RS.STORY_SIG_ALPHA
     assert a["market"] == {"n": 2, "banks": 1}
-    assert RS.story_signals(BANK, now=now, market=False)[0]["market"] is None
+    assert all(x["market"] is None for x in RS.story_signals(BANK, now=now, market=False))
+
+
+def test_pg_list_stories_window_from_period(pgs):
+    # окно вкладки (Period.binds — наивное МСК) считает база: широкое окно берёт всех,
+    # окно в прошлом — никого из свежих; total — до обрезки по limit (04.11.2026)
+    put, q = pgs
+    sp = Space()
+    a = sp.story("A", 6, 0.9)
+    Xa = sp.matrix(a)
+    now = datetime.now(timezone.utc)
+    put([(f"https://r/{a[k]}", "fees", now - timedelta(days=1 + k), Xa[k], SUM_A, None, None)
+         for k in range(6)])
+    assert RS.run(BANK, 90, now=now)["appeared"] == 1
+    naive = datetime.now()
+    meta = {}
+    got = RS.list_stories(BANK, t0=naive - timedelta(days=400), t1=naive + timedelta(days=1),
+                          _meta=meta)
+    assert [(x["n"], x["n_window"]) for x in got] == [(6, 6)] and meta["total"] == 1
+    assert RS.list_stories(BANK, t0=naive - timedelta(days=400), t1=naive - timedelta(days=30)) == []

@@ -145,7 +145,17 @@ def signal_lines(sig: dict) -> tuple[list[str], str]:
         # «только у банка» — лишь при ровном рынке; иначе во сколько раз сильнее
         # (раньше при рынке ×2,09 модели писали «ТОЛЬКО у банка», и она
         # повторяла это в заголовке)
-        if s.get("bank_specific") or (mr is not None and mr >= 1.4):
+        if "market_claim" in s:
+            # с 04.11.2026 о рынке говорит только вердикт (тест доли по banki.ru):
+            # пересчёт из отношений всех площадок давал «ТОЛЬКО у банка» вопреки ему
+            mn = s.get("market_note")
+            if mn and s["market_claim"] == "only_bank":
+                bits.append("ТОЛЬКО у банка — " + mn.split(": ", 1)[-1])
+            elif mn and s["market_claim"] == "faster":
+                bits.append(f"у банка {mn}")
+            elif mn:
+                bits.append(mn)
+        elif s.get("bank_specific") or (mr is not None and mr >= 1.4):
             from .reviews_dash import market_flat, market_phrase
             note = market_phrase(s.get("ratio"), mr)
             if note and market_flat(mr):
@@ -160,7 +170,10 @@ def signal_lines(sig: dict) -> tuple[list[str], str]:
                      + "; ".join(bits))
     ov = (sig or {}).get("overall") or {}
     ov_line = (f'Всего жалоб за неделю: {ov.get("week")} (обычно ~{ov.get("baseline_week")}/нед'
-               + (f', рынок ×{ov["market_ratio"]}' if ov.get("market_ratio") is not None else "")
+               + (f', по banki.ru банк ×{ov["cmp_ratio"]}, рынок ×{ov["market_ratio"]}'
+                  if ov.get("market_ratio") is not None and ov.get("cmp_ratio") is not None
+                  else f', рынок (banki.ru) ×{ov["market_ratio"]}' if ov.get("market_ratio") is not None
+                  else "")
                + ").") if ov.get("week") is not None else ""
     return lines, ov_line
 

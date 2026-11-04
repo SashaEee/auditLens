@@ -2902,9 +2902,12 @@ def reviews_overview(bank: str = "Сбербанк", product: Optional[str] = No
     # выбор НЕдефолтного среза — сигнал интереса (этап A): дефолтный заход
     # (Сбербанк без продукта) профиль не двигает, якорь и так у всех
     if product or (bank and bank != "Сбербанк"):
+        # направление 'dir:<код>' — его название: по служебному коду темы не найти
+        from .. import directions as _dirs
+        d = _dirs.by_product_param(product)
         userdata.update_interests_from_signal(
-            user.username, text_=f"{bank if bank != 'Сбербанк' else ''} {product or ''}",
-            weight=0.3)
+            user.username, text_=f"{bank if bank != 'Сбербанк' else ''} {d.name if d else product or ''}",
+            products=[d.topic] if d else None, weight=0.3)
     return _rd().overview(bank, product or None, period=per) or {}
 
 @app.get("/api/reviews/trend")
@@ -2979,13 +2982,15 @@ def reviews_stories(bank: str = "Сбербанк", product: Optional[str] = Non
     bc = _rd().resolve_bank(bank)
     if not bc:
         return {"items": [], "error": "unknown_bank"}
-    days = max(1, min(int(per.days or 90), 365))
+    b = per.binds()                       # окно выбранного периода, наивное МСК
+    meta: dict = {}
     try:
-        items = rs.list_stories(bc, product=product or None, days=days, limit=40)
+        items = rs.list_stories(bc, product=product or None, limit=40, t0=b["t0"], t1=b["t1"],
+                                _meta=meta)
     except Exception as e:  # noqa: BLE001 — сбой — не «сюжетов нет»
         log.warning("reviews_stories: %s", e)
         return {"items": [], "error": "failed"}
-    return {"items": items, "days": days}
+    return {"items": items, "total": meta.get("total", len(items)), "period": per.info()}
 
 
 @app.get("/api/reviews/story-signals")

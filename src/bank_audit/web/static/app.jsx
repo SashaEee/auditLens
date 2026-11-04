@@ -933,11 +933,21 @@ function ovMarketNote(ratio,mr,who="банка"){
   const k=ratio/mr;
   return k>=1.3?`в ${ovN(k)} ${ovRaz(k)} сильнее рынка (у рынка ×${ovN(mr)})`:`рынок растёт так же (×${ovN(mr)})`;
 }
+// С 04.11.2026 о рынке говорит вердикт сервера (market_claim: тест доли по banki.ru,
+// с порогом сопоставимого объёма банка); пустая заметка при нём — «о рынке молчать».
+// Пересчёт из отношений — только для снимков без вердикта: отношение банка там по
+// всем площадкам, а рынка — по banki.ru, и «только у Сбера» выходило вопреки тесту.
+function sgMkt(s,who="банка"){
+  if(!s)return "";
+  if(s.market_claim!=null)return s.market_note||"";
+  return s.ratio&&s.market_ratio!=null?(ovMarketNote(s.ratio,s.market_ratio,who)||""):(s.bank_specific?"сильнее рынка":"");
+}
 // Страховка для уже записанных выпусков: «только у Сбера», когда ни один
 // сигнал не ровный по рынку, — «у Сбера сильнее, чем по рынку»
 function ovFixOnly(text,sigs){
   if(!text||!sigs||!sigs.length)return text;
-  if(sigs.some(x=>x&&x.ratio&&(x.market_ratio==null||x.market_ratio<1.15)))return text;
+  // по вердикту «только у» подтверждает лишь only_bank; в старых снимках — ровный рынок
+  if(sigs.some(x=>x&&x.ratio&&(x.market_claim!=null?x.market_claim==="only_bank":(x.market_ratio==null||x.market_ratio<1.15))))return text;
   return String(text).replace(/только\s+у\s+(Сбера|Сбербанка|банка|нас)(?![а-яё])/gi,(m,w)=>`у ${w} сильнее, чем по рынку`);
 }
 
@@ -965,7 +975,10 @@ function xpRows(kind,d,now){
     // масштаб: 6.7/нед — это ОДНА тема; без общего числа цифра кажется мелкой
     if(d.week_total)
       R.push(["Масштаб",`тема — ${Math.round(100*d.week/d.week_total)}% всех жалоб на Сбер за неделю (${d.week} из ${d.week_total})`]);
-    if(d.market_ratio!=null)
+    if(d.market_claim!=null){
+      // вердикт по сопоставимому корпусу (banki.ru) — без него о рынке молчим
+      if(d.market_note)R.push(["Рынок",`по banki.ru: ${d.market_note}`]);
+    }else if(d.market_ratio!=null)
       R.push(["Рынок",`та же тема по рынку ×${ovN(d.market_ratio)} — `+(d.market_ratio<1.15
         ?"рынок ровный, всплеск наш, а не отраслевой"
         :`растёт и рынок; у Сбера ${(ovMarketNote(d.ratio,d.market_ratio)||"").replace(/\s*\(у рынка[^)]*\)/,"")}`)]);
@@ -2082,8 +2095,7 @@ function ForYouPage(){
   const mv=[...mvS,...mvO].slice(0,6);
   const maxD=Math.max(1,...mv.map(x=>Math.abs(+x.c.delta||0)));
   const ps=me&&me.personalization, psNext=ps&&(ps.parts||[]).find(x=>!x.done&&x.cta);
-  const sgNote=s=>s.market_note||(s.market_ratio!=null&&s.ratio?ovMarketNote(s.ratio,s.market_ratio,"Сбера")
-    :s.gap!=null?`×${ovN(s.gap)} к рынку`:"");
+  const sgNote=s=>sgMkt(s,"Сбера")||(s.market_claim==null&&s.gap!=null?`×${ovN(s.gap)} к рынку`:"");
 
   return <div className="fade-in ov fyp">
     <style>{FY_CSS}</style>
@@ -2502,7 +2514,7 @@ function SinceStrip(){
   const iss=d.issues||{}, nw=d.news||{}, sg=d.signals||{}, tf=d.tariffs||{};
   if(iss.n>=2)it.push({k:"iss",t:`${N(iss.n,"выпуск","выпуска","выпусков")}`,s:iss.latest?`свежий: «${iss.latest}»`:null});
   if(sg.n)it.push({k:"sig",t:`${N(sg.n,"новый всплеск","новых всплеска","новых всплесков")} жалоб на Сбер`+(sg.mine?` · ${sg.mine} по вашим подпискам`:""),
-    list:(sg.top||[]).map(x=>({t:`${x.bank}${x.product?" · "+x.product:""} — ${x.label}${x.ratio?` ×${rvNum(x.ratio)}`:""}`,
+    list:(sg.top||[]).map(x=>({t:`${x.bank}${x.product?" · "+rvProd(x.product):""} — ${x.label}${x.ratio?` ×${rvNum(x.ratio)}`:""}`,
       href:fyRv({bank:x.bank,product:x.product||"",theme:x.issue}),mine:x.mine}))});
   if(nw.n)it.push({k:"news",t:`${N(nw.n,"важная новость","важные новости","важных новостей")}`,
     list:(nw.top||[]).map(x=>({t:x.title,href:x.url,ext:true}))});
@@ -2800,7 +2812,7 @@ function OverviewPage(){
         its.length?`${its.length} ${plural(its.length,"новость","новости","новостей")}`:null].filter(Boolean).join(" и ");
       const first=sg.length?`Всплеск «${sg[0].label}»`:its[0].title;
       const tog=()=>{const v=!updOpen; setUpdOpen(v); try{sessionStorage.setItem("al-ov-upd",v?"1":"0");}catch{}};
-      const mn=x=>x.market_note||(x.market_ratio!=null&&x.ratio?ovMarketNote(x.ratio,x.market_ratio,"Сбера"):x.bank_specific?"сильнее рынка":"");
+      const mn=x=>sgMkt(x,"Сбера");
       return <section className={"ov-upd"+(updOpen?" open":"")} aria-label="Дополнение к выпуску">
         <button type="button" className="ov-upd-bar" aria-expanded={updOpen} aria-controls="ov-upd-list" onClick={tog}>
           <span className="ov-upd-dot" aria-hidden="true"/>
@@ -4656,7 +4668,7 @@ function RvJournal({bank,product,onOpen}){
         <div className="rv-jr-h"><span className="rv-jr-l">{e.label}</span>
           {e.level==="high"&&<span className="rv-tag compliance">сильный</span>}</div>
         <div className="rv-jr-m">{d1===d2?d1:`${d1} – ${d2}`} · пик {st.week} за 7 дн при норме ~{rvNum(st.baseline_week)}
-          {st.new?" · новое":st.ratio?` · ×${rvNum(st.ratio)}`:""}{st.bank_specific?" · "+(ovMarketNote(st.ratio,st.market_ratio)||"сильнее рынка"):""}</div>
+          {st.new?" · новое":st.ratio?` · ×${rvNum(st.ratio)}`:""}{(st.market_claim!=null?st.market_note:st.bank_specific)?" · "+sgMkt(st):""}</div>
         <div className="rv-jr-a">
           <button className={"rv-jr-b ok"+(e.verdict==="confirmed"?" on":"")} onClick={()=>mark(e,"confirmed")}>подтвердился</button>
           <button className={"rv-jr-b no"+(e.verdict==="false"?" on":"")} onClick={()=>mark(e,"false")}>ложный</button>
@@ -5265,7 +5277,9 @@ function ReviewsPage({params}){
 
   // сюжеты, выросшие за неделю сверх своей нормы — отдельно от радара: свой запрос, без LLM
   useEffect(()=>{ setStSig(null);
-    apiFetch(`/api/reviews/story-signals?bank=${enc(bank)}${pq()}`).then(d=>setStSig(d.items||[])).catch(()=>setStSig([]));
+    // сбой — не «спокойно»: держим признак ошибки и говорим о нём в радаре
+    apiFetch(`/api/reviews/story-signals?bank=${enc(bank)}${pq()}`).then(d=>setStSig(d.error?{__err:true}:(d.items||[])))
+      .catch(()=>setStSig({__err:true}));
   },[bank,product]);
 
   // радар срочных аномалий — грузится ОТДЕЛЬНО (LLM), не блокирует дашборд
@@ -5602,7 +5616,8 @@ function ReviewsPage({params}){
   // «Новое» без всплесков: сюжеты вне кодификатора — наблюдения, их видно и в спокойную неделю
   // сюжеты недели (5.6): одна история против своей нормы — внутри «точного» кода её всплеск
   // тонет в соседних историях; рынок — та же история у других банков banki.ru
-  const rvStSig=()=>(stSig||[]).length>0&&<>
+  const rvStSig=()=>stSig&&stSig.__err?<div className="rv-cap" style={{marginTop:10}}>Сюжеты недели не посчитались — о росте отдельных историй сейчас ничего не известно.</div>
+    :(stSig||[]).length>0&&<>
     <div className="rv-radar-sub" style={{marginTop:10}}>Сюжеты выросли за неделю:</div>
     <div className="rv-radar-chips">{stSig.map(x=>{const g={urls:x.urls,n:x.urls.length,label:x.title,story_id:x.story_id,head:x.title};
       const tip=`${x.week} за 7 дн · обычно ~${String(x.baseline_week).replace(".",",")}/нед`
@@ -5632,8 +5647,9 @@ function ReviewsPage({params}){
           {anomBusy?
             <div className="rv-radar-scan"><div className="rv-radar-beam"/><span>Анализирую сигналы недели…</span></div>
            :anom&&anom.error?
-            <div className="rv-radar-calm rv-radar-err" role="alert">Не удалось посчитать сигналы недели — о всплесках сейчас ничего не известно.
+            <><div className="rv-radar-calm rv-radar-err" role="alert">Не удалось посчитать сигналы недели — о всплесках сейчас ничего не известно.
               <button type="button" className="btn btn-sm" onClick={()=>setAnomTry(x=>x+1)}>Повторить</button></div>
+              {rvStSig()}</>
            :(!anom||((!anom.signals||!anom.signals.length)&&!(anom.watch||[]).length))?<>
             <div className="rv-radar-calm"><span className="rv-radar-check"><IcoCheck/></span> Резких аномалий за неделю не выявлено</div>
             {anom&&rvNovel(anom.novel)}</>
@@ -5655,7 +5671,7 @@ function ReviewsPage({params}){
               {!(anom.signals.length===1&&anom.summary)&&<div className="rv-radar-chips">
                 {anom.signals.map((s,i)=>{
                   const tip=`${s.week} за 7 дн (обычно ~${s.baseline_week}/нед)`
-                    +(s.bank_specific?" · "+(ovMarketNote(s.ratio,s.market_ratio)||"сильнее рынка"):"")
+                    +((s.market_claim!=null?s.market_note:s.bank_specific)?" · "+sgMkt(s):"")
                     +(s.accel?` · ускоряется (${s.prev_week}→${s.week})`:"")
                     +(sigCont(s)?` · держится с ${sigDm(s.since)}`+(s.baseline_before!=null?` (до всплеска норма ~${s.baseline_before}/нед)`:""):"")
                     +(s.sustained?` · две недели подряд (${s.prev_week} и ${s.week})`:"")
@@ -5712,8 +5728,10 @@ function ReviewsPage({params}){
   const leadText=(()=>{ if(!ov||ov.__err||ov.total==null)return null;
     const out=[], vol=chg&&chg.items&&chg.items.find(x=>x.kind==="volume");
     // рост сравниваем с рынком: «+20%» при росте остальных банков на 12% — не «стало хуже на 20%»
-    if(vol){ const mk=ov.market_delta_pct, rel=ov.delta_vs_market_pct;
-      const mtxt=mk==null?"":`; у остальных банков ${rvSgn(Math.round(mk))}% — `+(vol.vs_market==="above"
+    if(vol){ const mk=ov.market_delta_pct, rel=ov.delta_vs_market_pct, cd=ov.cmp_delta_pct;
+      // с рынком (только banki.ru) сравниваем рост банка там же, а не по всем площадкам
+      const mtxt=mk==null?"":(cd!=null?`; по banki.ru — ${bank} ${rvSgn(Math.round(cd))}%, остальные банки ${rvSgn(Math.round(mk))}% — `
+        :`; у остальных банков ${rvSgn(Math.round(mk))}% — `)+(vol.vs_market==="above"
         ?`${bank} обгоняет рынок на ${Math.round(Math.abs(rel||0))}%`
         :vol.vs_market==="below"?`${bank} лучше рынка`:`в целом вместе с рынком`);
       out.push(`Жалоб ${ov.delta_pct>0?"больше":"меньше"} на ${Math.round(Math.abs(ov.delta_pct))}%, чем за ${cw?cw.za:"прошлый период"}: ${fmtNum(ov.cmp_n!=null?ov.cmp_n:ov.total)} против ${fmtNum(ov.prev)}${perInfo&&perInfo.per_day?" (в пересчёте на день)":""}${mtxt}.`); }
@@ -5893,9 +5911,9 @@ function ReviewsPage({params}){
         stsBusy||!sts?<RvSkelRows n={5} h={92} gap={12}/>:
         sts.__err||sts.error?<RvNote err/>:<>
           <div className="rv-cl-sum">{sts.items.length
-            ?<><b>{sts.items.length}</b> {plural(sts.items.length,"сюжет","сюжета","сюжетов")} с жалобами за период — устойчивые группы похожих историй, пересчёт раз в сутки</>
+            ?<><b>{sts.items.length}</b>{sts.total>sts.items.length?` из ${fmtNum(sts.total)}`:""} {plural(sts.total||sts.items.length,"сюжет","сюжета","сюжетов")} с жалобами за {pw.za}{sts.total>sts.items.length?" — показаны крупные":""} · устойчивые группы похожих историй, пересчёт раз в сутки</>
             :"Сюжетов с жалобами за период нет — сюжет начинается с трёх похожих историй"}
-            {(theme||flag||fCity||fSrc||escOnly)?<span className="rv-sum-x"> · тема, признак, город и площадка к сюжетам не применяются</span>:""}</div>
+            {(theme||flag||fCity||fSrc||escOnly||fWeek)?<span className="rv-sum-x"> · тема, признак, город, площадка и неделя всплеска к сюжетам не применяются</span>:""}</div>
           {sts.items.map(x=>{const g={urls:x.urls,n:x.n_window,label:x.title,first:x.first_seen,last:x.last_seen,
                                       story_id:x.story_id,head:x.title,criterion:x.criterion};
             return <div key={x.story_id} className="rv-cl" role="button" tabIndex={0}
@@ -6050,7 +6068,7 @@ function ReviewsPage({params}){
           <div className="rv-kv">{busy&&!ov?<Skel w="55%" h={30}/>:(ov&&ov.total!=null?fmtNum(ov.total):"—")}</div>
           <div className="rv-ks">{ov&&ov.delta_partial?<span data-tip="прошлый период ещё размечается — сравнение дало бы ложный рост">сравнение — после разметки прошлого периода</span>:ov&&ov.delta_pct!=null?<>{volSig&&volIt.dir!=="flat"
             ?<span className={volIt.dir==="up"?"rv-up":"rv-down"} data-tip={volIt.dir==="up"?"растёт быстрее, чем у остальных банков":"растёт медленнее, чем у остальных банков"}>{ov.delta_pct<0?"↓":"↑"} {Math.round(Math.abs(ov.delta_pct))}%</span>
-            :<span className="rv-flat" data-tip={volSig?"меняется вместе с остальными банками":"в пределах обычных колебаний — не значимо"}>{ov.delta_pct<0?"−":"+"}{Math.round(Math.abs(ov.delta_pct))}%</span>} <span className="rv-cmpk" data-tip={cw&&cw.tip}>{cw&&!cw.none?cw.k:"к прошлому периоду"}</span>{ov.market_delta_pct!=null?<span className="rv-lown"> · рынок {rvSgn(Math.round(ov.market_delta_pct))}%</span>:""}{ov.delta_low_n?<span className="rv-lown"> · малая база</span>:""}</>
+            :<span className="rv-flat" data-tip={volSig?"меняется вместе с остальными банками":"в пределах обычных колебаний — не значимо"}>{ov.delta_pct<0?"−":"+"}{Math.round(Math.abs(ov.delta_pct))}%</span>} <span className="rv-cmpk" data-tip={cw&&cw.tip}>{cw&&!cw.none?cw.k:"к прошлому периоду"}</span>{ov.market_delta_pct!=null?<span className="rv-lown" data-tip={ov.cmp_delta_pct!=null?`по banki.ru (с ним и сравниваем): ${bank} ${rvSgn(Math.round(ov.cmp_delta_pct))}%, остальные банки ${rvSgn(Math.round(ov.market_delta_pct))}%`:"остальные банки, banki.ru"}> · рынок {rvSgn(Math.round(ov.market_delta_pct))}%</span>:""}{ov.delta_low_n?<span className="rv-lown"> · малая база</span>:""}</>
             :cw&&cw.none?<span className="rv-cmpk" data-tip={cw.tip}>{cw.k}</span>:"—"}</div>
         </div>
         <div className={"rv-card rv-kpi rv-kpi-click"+(escOnly?" rv-kpi-on":"")} role="button" tabIndex={0}
@@ -6091,15 +6109,18 @@ function ReviewsPage({params}){
     </div>
 
     {jrOpen&&<RvModal side="right" onClose={()=>setJrOpen(false)} title="Журнал сигналов"
-        sub={`${bank} · ${product||"все продукты"} · за полгода`}>
+        sub={`${bank} · ${product?rvProd(product):"все продукты"} · за полгода`}>
       <RvJournal bank={bank} product={product} onOpen={(list,i)=>openReader(list,i,"снимок сигнала","journal")}/></RvModal>}
     {grp&&<RvModal side="right" onClose={()=>setGrp(null)} title={grp.head||`${grp.n} похожих жалоб`}
         sub={[grp.head?`${grp.n} ${plural(grp.n,"жалоба","жалобы","жалоб")}`:grp.label,grp.first===grp.last?rvDate(grp.first):`${rvDate(grp.first)} – ${rvDate(grp.last)}`].filter(Boolean).join(" · ")}>
       {grp.criterion&&<p className="rv-st-crit">{grp.criterion}</p>}
       {grp.story_id&&stEv&&stEv.length>0&&<details className="rv-st-ev"><summary>История сюжета · {stEv.length}</summary>
         <ul>{stEv.map(e=><li key={e.event_id}><span className="rv-cl-m">{rvDate(e.at)}</span> {e.label}</li>)}</ul></details>}
+      {/* by-urls отдаёт до 200 карточек: у крупного сюжета — самые свежие, и об этом
+          говорим, а «в дело» уходят ровно показанные */}
+      {grpItems&&grp.n>grpItems.length&&<p className="rv-st-crit">Показаны {grpItems.length} самых свежих из {fmtNum(grp.n)}.</p>}
       <div className="rv-grp-acts"><button className="btn btn-sm btn-primary" disabled={!grpItems||!grpItems.length}
-        onClick={e=>caseAdd(grpItems.map(rvItem),{anchor:e.currentTarget,src:"reviews_group"})}>＋ всю группу в аудит-дело</button></div>
+        onClick={e=>caseAdd(grpItems.map(rvItem),{anchor:e.currentTarget,src:"reviews_group"})}>{grpItems&&grp.n>grpItems.length?`＋ показанные ${grpItems.length} в аудит-дело`:"＋ всю группу в аудит-дело"}</button></div>
       {!grpItems?<Skel h={120}/>:<div className="rv-clist">{grpItems.map((r,i)=><RvCard key={r.url||i} r={r} showBank
         read={readSet.has(r.url)} inCase={caseUrls[r.url]} sel={rd&&rd.src==="group"&&rd.idx===i}
         onOpen={()=>openReader(grpItems,i,`группа · ${grp.n}`,"group")} onCase={a=>addCase(r,a)}/>)}</div>}
@@ -11033,6 +11054,7 @@ function puGuardItems(m){
   if(rp.dedup_age_h!=null&&rp.dedup_age_h>30) add("warn",`склейка копий отзывов не проходила ${Math.round(rp.dedup_age_h)} ч`,"data","pu-slices");
   if(rp.stories_age_h!=null&&rp.stories_age_h>50) add("warn",`«Сюжеты» не пересчитывались ${Math.round(rp.stories_age_h)} ч`,"data","pu-slices");
   const sc=(m.slice_canary||[])[0];
+  if(rp.canary_age_days!=null&&rp.canary_age_days>9) add("warn",`канарейка срезов не отрабатывала ${Math.floor(rp.canary_age_days)} дн (должна раз в неделю)`,"data","pu-slices");
   if(sc&&sc.alert) add("bad",`канарейка срезов ${rvDate(sc.run_at)}: ${(sc.reasons||[]).join("; ")}`,"data","pu-slices");
   if((rsh.failed||0)>0) add("warn",`поиск по жалобам не отработал ${rsh.failed} ${plural(rsh.failed,"раз","раза","раз")}`,"data","pu-rsearch");
   return out.sort((a,b)=>(a.lv==="bad"?0:1)-(b.lv==="bad"?0:1));

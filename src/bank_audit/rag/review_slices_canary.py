@@ -61,6 +61,12 @@ RECALL_FLOOR = float(os.getenv("REVIEW_SLICES_CANARY_RECALL_FLOOR", "0.70"))
 # точность по одному-двум решениям «да» — шум (1 из 2 = 0,50): тревогу по точности
 # поднимаем, когда «да» не меньше MIN_SUPPORT
 MIN_SUPPORT = int(os.getenv("REVIEW_SLICES_CANARY_MIN_SUPPORT", "5"))
+# Каскад ответил меньше чем на половину отправленного (не по бюджету) — прогон не
+# мерит ничего: у всех срезов поддержка ниже MIN_SUPPORT и тревоги «нет». Такой
+# прогон — тревога сам по себе (ревью 04.11.2026).
+MIN_DECIDED = float(os.getenv("REVIEW_SLICES_CANARY_MIN_DECIDED", "0.5"))
+# Прогон держит фоновый цикл индекса — не дольше этого
+RUN_TIMEOUT_S = float(os.getenv("REVIEW_SLICES_CANARY_TIMEOUT_S", "2400"))
 _TICK_KEY = "review_slices_canary_at"
 # каскад сам по себе не дал решения: A молчит, B не ответила на запрос подтверждения,
 # третья молчит при споре. Разметка такие строки повторяет и в индекс не берёт —
@@ -279,6 +285,9 @@ async def run(sample: list[dict] | None = None, *, caller=None, budget_rub: floa
 
     metrics = score({g["url"]: g["labels"] for g in picked}, decided)
     reasons = alerts(metrics, (prev or {}).get("metrics"))
+    sent = len(items) - len(not_reached)
+    if sent and len(decided) < MIN_DECIDED * sent:
+        reasons.insert(0, f"каскад ответил на {len(decided)} из {sent} — замер неполный")
     parts = [f"выборка {len(picked)}, решений {len(decided)}"]
     for name, xs in (("нет в индексе", missing), ("хранилище не ответило", failed),
                      ("без текста", empty), ("каскад без решения", unanswered),
@@ -350,12 +359,15 @@ async def tick(now: float | None = None) -> dict:
     if not await asyncio.to_thread(_gold_count):
         return {"skipped": "no_gold"}
     retry = at - EVERY_S + RETRY_S
-    try:
-        res = await run()
-    except Exception:
-        await asyncio.to_thread(_mark, retry)
-        raise
-    await asyncio.to_thread(_mark, at if res.get("saved") else retry)
+    # отметка «повтор через RETRY_S» — ДО прогона: перезапуск посреди прогона (выкатка)
+    # иначе запускал его заново сразу, и деньги прерванного терялись дважды
+    await asyncio.to_thread(_mark, retry)
+    res = await asyncio.wait_for(run(), timeout=RUN_TIMEOUT_S)
+    if res.get("saved"):
+        await asyncio.to_thread(_mark, at)
+    else:
+        log.warning("канарейка срезов: прогон без решений (%s) — повтор через %.0f ч",
+                    res.get("note") or res.get("stop") or "?", RETRY_S / 3600)
     if res.get("alert"):
         log.warning("канарейка срезов: тревога — %s", "; ".join(res["reasons"]))
     return res

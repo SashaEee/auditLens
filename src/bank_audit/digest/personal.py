@@ -694,13 +694,13 @@ def _signal_line(s: dict, lead_key: str | None = None) -> str:
         bits.append(f"норма {float(s['baseline_week']):.1f}".replace(".", ","))
     if s.get("ratio") is not None:
         bits.append(f"×{float(s['ratio']):.1f}".replace(".", ","))
-    note = s.get("market_note")
-    if not note and s.get("ratio") and s.get("market_ratio") is not None:
-        try:
-            from ..rag import reviews_dash as rd
-            note = rd.market_phrase(s["ratio"], s["market_ratio"], "Сбера")
-        except Exception:  # noqa: BLE001
-            note = None
+    # о рынке — только вердикт (market_claim): пустая заметка при нём значит «молчать»;
+    # пересчёт из отношений — лишь для снимков до 04.11.2026
+    try:
+        from ..rag import reviews_dash as rd
+        note = rd.market_text(s, "Сбера")
+    except Exception:  # noqa: BLE001
+        note = s.get("market_note")
     if note:
         bits.append(str(note))
     if s.get("confirmed") is False:

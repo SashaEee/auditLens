@@ -308,7 +308,10 @@ def tool_complaint_signals(bank: str = SBER, product: Product | None = None) -> 
     return out({
         "bank": bank, "product": product, "week_end": we,
         "overall": {"week": ov.get("week"), "norm_per_week": ov.get("baseline_week"),
-                    "ratio": ov.get("ratio"), "market_ratio": ov.get("market_ratio")},
+                    "ratio": ov.get("ratio"),
+                    # рынок — только banki.ru; сравнивать его с cmp_ratio (банк там же),
+                    # а не с ratio по всем площадкам
+                    "market_ratio": ov.get("market_ratio"), "cmp_ratio": ov.get("cmp_ratio")},
         "signals": sigs,
         "watch_faster_than_market": [_signal(s, bank, product, we)
                                      for s in (wp.get("diverge") or [])[:6] if s.get("faster_sig")

@@ -147,7 +147,9 @@ def title_of(kind: str, ref: dict, count: int = 1) -> str:
             return f"{count} {_plural(count, 'отметка', 'отметки', 'отметок')} «не относится к срезу» ждут проверки"
         return f"Отметка «не относится к срезу» «{_q(ref.get('label'))}» ждёт проверки"
     if kind == "watch_signal":
-        what = _q(ref.get("bank")) + (f" · {_q(ref['product'])}" if ref.get("product") else "")
+        from .. import directions as _dirs
+        what = _q(ref.get("bank")) + (f" · {_q(_dirs.product_label(ref['product']))}"
+                                      if ref.get("product") else "")
         ratio = f" ×{str(ref['ratio']).replace('.', ',')}" if ref.get("ratio") else ""
         return f"{what}: всплеск жалоб «{_q(ref.get('label'))}»{ratio}"
     return _q(ref.get("title")) or "Новое событие"

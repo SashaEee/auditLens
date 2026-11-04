@@ -963,6 +963,7 @@ def run_all(since_days: int = 90, *, min_items: int = 30, now: datetime | None =
 
 
 _TICK_KEY = "review_stories_at"
+_OK_KEY = "review_stories_ok_at"      # проход без ошибок у большинства банков
 TICK_EVERY_S = int(os.getenv("REVIEW_STORIES_EVERY_S", str(20 * 3600)))
 
 
@@ -995,11 +996,18 @@ def tick(now: float | None = None) -> dict:
         s.execute(text("""INSERT INTO review_index_state (k, v, updated_at) VALUES (:k, :v, CURRENT_TIMESTAMP)
                           ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v, updated_at = CURRENT_TIMESTAMP"""),
                   {"k": _TICK_KEY, "v": f"{at:.0f}"})
+    errors = sum(1 for r in res if r.get("error"))
+    if res and errors * 2 < len(res):
+        # проход, который действительно пересчитал сюжеты (большинство банков без
+        # ошибки) — по этой отметке судит сторож «Пульса», а не по факту запуска
+        with db.session() as s:
+            s.execute(text("""INSERT INTO review_index_state (k, v, updated_at) VALUES (:k, :v, CURRENT_TIMESTAMP)
+                              ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v, updated_at = CURRENT_TIMESTAMP"""),
+                      {"k": _OK_KEY, "v": f"{at:.0f}"})
     nm = name_stories(limit=int(_env_num("REVIEW_STORIES_NAME_LIMIT", 60)))
     if nm.get("todo") or nm.get("error"):
         log.info("сюжеты: названия %s", nm)
-    return {"banks": len(res), "errors": sum(1 for r in res if r.get("error")),
-            "named": nm.get("named", 0)}
+    return {"banks": len(res), "errors": errors, "named": nm.get("named", 0)}
 
 
 # ── Шаг названий: подготовка и запись ───────────────────────────────────────
@@ -1201,6 +1209,15 @@ def _parse_name(raw) -> tuple[str, str | None] | None:
     return (t, _clean_criterion(j.get("criterion"))) if t else None
 
 
+def _rejected_request(e: Exception) -> bool:
+    """Ошибка запроса, а не связи: код 4xx от провайдера (кроме 408/409/429 — их
+    повтор может пройти). Сеть, таймаут и 5xx — False."""
+    code = getattr(e, "status_code", None)
+    if code is None:
+        code = getattr(getattr(e, "response", None), "status_code", None)
+    return isinstance(code, int) and 400 <= code < 500 and code not in (408, 409, 429)
+
+
 def _ask_name(task: dict, call: Caller, titles: Sequence[str]) -> dict:
     """Название для одного задания: ответ, проверка, при неудаче — переспрос с
     причиной. titles — названия сюжетов банка (повтор любого — не годится).
@@ -1297,8 +1314,15 @@ def _name_loop(st: dict, t0: float, limit: int, caller: Caller | None, bank: str
         try:
             res = _ask_name(task, call, [r[1] for r in named])
         except Exception as e:  # noqa: BLE001 — сеть, таймаут, 5xx: не вина сюжета
-            streak += 1
             st["failed"] += 1
+            if _rejected_request(e):
+                # 4xx (фильтр содержания, слишком длинный запрос) повторится и завтра:
+                # такой сюжет откладываем, как плохой ответ, — иначе крупнейшие
+                # «неназываемые» каждый день съедали бы три попытки и стоп шага
+                _mark_failed(sid, now, {"kind": "request_rejected", "why": type(e).__name__})
+                log.info("сюжеты: название %d — запрос отклонён (%s), отложен", sid, type(e).__name__)
+                continue
+            streak += 1
             log.info("сюжеты: название %d — модель не ответила (%s)", sid, type(e).__name__)
             continue
         streak = 0
@@ -1418,7 +1442,8 @@ def _short(s: str | None, limit: int = TITLE_MAX) -> str | None:
 
 
 def list_stories(bank: str, *, product: str | None = None, days: int = 90, limit: int = 30,
-                 now: datetime | None = None) -> list[dict]:
+                 now: datetime | None = None, t0: datetime | None = None,
+                 t1: datetime | None = None, _meta: dict | None = None) -> list[dict]:
     """Сюжеты банка для вкладки: действующие и затихшие, чья последняя жалоба ещё в
     окне `days`, — у которых в окне есть хоть одна жалоба; крупные в окне первыми.
 
@@ -1434,10 +1459,20 @@ def list_stories(bank: str, *, product: str | None = None, days: int = 90, limit
     issue_main с подписью (issue_label) и риском; status; badges — из журнала за
     BADGE_DAYS дней: {kind, label}, у «вырос» ещё from / to; top_urls — три
     участника ближе всех к медоиду; urls — все участники окна, свежие первыми
-    (открыть сюжет в ленте)."""
+    (открыть сюжет в ленте).
+
+    t0/t1 — окно вкладки (review_period.Period.binds: наивное московское время, как
+    review_index.dt): с ним окно и «не из будущего» считает база, наивное с наивным
+    (до 04.11.2026 окно было «последние days дней» при любом выбранном периоде, а
+    наивное МСК читалось как UTC — жалобы последних трёх часов выпадали). В _meta
+    кладётся total — сколько сюжетов до обрезки по limit."""
     now = _utc(now) or datetime.now(timezone.utc)
-    since = now - timedelta(days=days)
+    win_sql = t0 is not None and t1 is not None
+    since = (t0.replace(tzinfo=timezone(timedelta(hours=3))).astimezone(timezone.utc)
+             if win_sql else now - timedelta(days=days))
     p: dict = {"b": bank, "since": since}
+    if win_sql:
+        p.update(w0=t0.replace(tzinfo=None), w1=t1.replace(tzinfo=None))
     pq = ""
     if product:
         pq = " AND al_product_is(i.product, i.slices, :product)"
@@ -1445,7 +1480,9 @@ def list_stories(bank: str, *, product: str | None = None, days: int = 90, limit
     with db.session() as s:
         rows = s.execute(text(f"""
             SELECT r.story_id, r.title, r.criterion, r.issue_main, r.status, r.medoid_url,
-                   m.url, m.sim, m.added_at, i.dt
+                   m.url, m.sim, m.added_at, i.dt,
+                   {"(i.dt >= :w0 AND i.dt < :w1)" if win_sql else "NULL"} AS in_win,
+                   {"(i.dt > now())" if win_sql else "NULL"} AS fut
             FROM review_story r
             JOIN review_story_member m ON m.story_id = r.story_id
             JOIN review_index i ON i.url = m.url
@@ -1453,17 +1490,18 @@ def list_stories(bank: str, *, product: str | None = None, days: int = 90, limit
               AND (r.status = 'active' OR (r.status = 'quiet' AND r.last_seen >= :since))
               AND {rd._CMP}{pq}""").bindparams(*_ts("since")), p).all()
         by: dict[int, dict] = {}
-        for sid, title, crit, issue, status, medoid, url, sim, added, dt in rows:
+        for sid, title, crit, issue, status, medoid, url, sim, added, dt, in_win, fut in rows:
             d = _utc(dt)
-            if d is not None and d > now:
+            if (fut if win_sql else d is not None and d > now):
                 continue
             x = by.setdefault(int(sid), {"story_id": int(sid), "title": title, "criterion": crit,
                                          "issue_main": issue, "status": status,
                                          "medoid": medoid, "m": []})
-            x["m"].append((url, -1.0 if sim is None else float(sim), _utc(added), d))
+            x["m"].append((url, -1.0 if sim is None else float(sim), _utc(added), d, bool(in_win)))
         out = []
         for x in by.values():
-            win = sorted((m for m in x["m"] if m[3] is not None and m[3] > since),
+            win = sorted((m for m in x["m"] if m[3] is not None
+                          and (m[4] if win_sql else m[3] > since)),
                          key=lambda m: (-m[3].timestamp(), m[0]))
             if not win:
                 continue
@@ -1473,6 +1511,8 @@ def list_stories(bank: str, *, product: str | None = None, days: int = 90, limit
                      top_urls=[m[0] for m in sorted(x["m"], key=lambda m: (-m[1], m[0]))[:3]])
             out.append(x)
         out.sort(key=lambda x: (-x["n_window"], -x["n"], -x["last"].timestamp(), x["story_id"]))
+        if _meta is not None:
+            _meta["total"] = len(out)
         out = out[:limit]
         if not out:
             return []
@@ -1615,13 +1655,17 @@ def story_events(story_id: int, *, limit: int = 200) -> list[dict]:
 # Всплеск кода проблемы смешивает разные истории одного кода, а новая история
 # внутри «точного» кода (fees, block_115) в нём тонет. Сюжет — одна история:
 # его неделя против собственной нормы считается тем же правилом V6, что у
-# проблем (предсказательный хвост с общим разбросом сюжетов банка, BH по
-# сюжетам), с практическим порогом пониже — сюжет уже кода. Сюжет моложе
-# STORY_SIG_MIN_AGE дней сравнивать не с чем: это «новый сюжет», не всплеск.
+# проблем: норма — недели 2–8 (прошлая в норму не входит, иначе всплеск второй
+# недели разбавляет сам себя), предсказательный хвост с общим разбросом сюжетов
+# банка, неделя и две недели подряд сведены Симсом, BH по сюжетам; отсев жалоб о
+# событиях старше 60 дней — как у сигналов проблем. Практический порог пониже —
+# сюжет уже кода. Сюжет моложе STORY_SIG_MIN_AGE дней сравнивать не с чем: это
+# «новый сюжет», не всплеск.
 STORY_SIG_ALPHA = float(os.getenv("REVIEW_STORY_SIG_ALPHA", "0.04"))
 STORY_SIG_MIN_AGE = 28
 STORY_SIG_FLOOR = 6
-STORY_SIG_WEEKS = 8
+STORY_SIG_WEEKS = 9
+_EV_FRESH = "(i.ev_date IS NULL OR i.ev_date >= i.dt::date - 60)"
 
 
 def _story_weeks(bank: str, product: str | None) -> tuple[dict[int, list[int]], dict[int, dict]]:
@@ -1635,12 +1679,13 @@ def _story_weeks(bank: str, product: str | None) -> tuple[dict[int, list[int]], 
               FROM review_story r
               JOIN review_story_member m ON m.story_id = r.story_id
               JOIN review_index i ON i.url = m.url
-             WHERE r.bank = :b AND r.status = 'active' AND {rd._CMP}{pq}
+             WHERE r.bank = :b AND r.status = 'active' AND {rd._CMP}{pq} AND {_EV_FRESH}
                AND i.dt >= {rd._WEEK_END} - make_interval(days => :d) AND i.dt < {rd._WEEK_END}
              GROUP BY 1, 2"""), {"b": bank, "product": product, "d": 7 * STORY_SIG_WEEKS}).all()
-        meta = {int(r[0]): {"title": r[1], "first_seen": _utc(r[2]), "issue": r[3]} for r in s.execute(text(
-            "SELECT story_id, title, first_seen, issue_main FROM review_story"
-            " WHERE bank = :b AND status = 'active'"), {"b": bank}).all()}
+        meta = {int(r[0]): {"title": r[1], "first_seen": _utc(r[2]), "issue": r[3], "medoid": r[4]}
+                for r in s.execute(text(
+                    "SELECT story_id, title, first_seen, issue_main, medoid_url FROM review_story"
+                    " WHERE bank = :b AND status = 'active'"), {"b": bank}).all()}
     weeks: dict[int, list[int]] = {}
     for sid, w, n in rows:
         if 0 <= int(w) < STORY_SIG_WEEKS:
@@ -1662,14 +1707,16 @@ def story_signals(bank: str, *, product: str | None = None, market: bool = True,
            and f <= now - timedelta(days=STORY_SIG_MIN_AGE)}
     if not old:
         return []
-    prior = RS.phi_prior([w[1:] for w in old.values()])
+    prior = RS.phi_prior([w[2:] for w in old.values()])
     pv, cand = {}, {}
     for sid, w in old.items():
-        base = [float(x) for x in w[1:]]
+        base = [float(x) for x in w[2:]]
         bw = sum(base) / len(base)
-        week_ok, _two = rd._practical(w[0], w[1], bw, floor_=STORY_SIG_FLOOR)
-        pv[sid] = RS.predictive_tail(int(w[0]), base, phi_prior=prior)
-        if week_ok:
+        week_ok, two_ok = rd._practical(w[0], w[1], bw, floor_=STORY_SIG_FLOOR)
+        p1 = RS.predictive_tail(int(w[0]), base, phi_prior=prior)
+        p2 = RS.predictive_tail(int(w[0] + w[1]), base, k=2, phi_prior=prior)
+        pv[sid] = rd._simes2(p1, p2)
+        if week_ok or two_ok:
             cand[sid] = bw
     q, _rej = RS.bh(pv, alpha=STORY_SIG_ALPHA)
     hit = [sid for sid in cand if q.get(sid) is not None and q[sid] <= STORY_SIG_ALPHA]
@@ -1680,19 +1727,29 @@ def story_signals(bank: str, *, product: str | None = None, market: bool = True,
         for sid, url in s.execute(text(f"""
                 SELECT m.story_id, i.url FROM review_story_member m
                   JOIN review_index i ON i.url = m.url
-                 WHERE m.story_id IN :ids AND {rd._CMP}
+                 WHERE m.story_id IN :ids AND {rd._CMP} AND {_EV_FRESH}
                    AND i.dt >= {rd._WEEK_END} - interval '7 days' AND i.dt < {rd._WEEK_END}
                    {"AND al_product_is(i.product, i.slices, :product)" if product else ""}
                  ORDER BY i.dt DESC""").bindparams(bindparam("ids", expanding=True)),
                 {"ids": hit, "product": product}).all():
             urls[int(sid)].append(url)
+        # без названия — изложение медоида, как в списке сюжетов: подпись проблемы
+        # на чипе читалась как всплеск всей проблемы
+        want = [m["medoid"] for sid in hit if (m := meta.get(sid) or {}) and not m.get("title")
+                and m.get("medoid")]
+        summ = dict(s.execute(text("""
+            SELECT url, summary FROM review_annotation
+            WHERE schema_version = :sv AND url IN :u""").bindparams(
+            bindparam("u", expanding=True)), {"sv": rd._ann_schema(), "u": want}).all()) if want else {}
     mk = _story_market(bank, hit) if market else {}
     out = []
     for sid in sorted(hit, key=lambda k: (q[k], -old[k][0])):
         w0, bw = old[sid][0], cand[sid]
         m = meta.get(sid) or {}
         o = cb.issue_obj(m.get("issue")) or {}
-        out.append({"story_id": sid, "title": m.get("title") or o.get("label") or f"Сюжет №{sid}",
+        title = (m.get("title") or _short(summ.get(m.get("medoid"))) or o.get("label")
+                 or f"Сюжет №{sid}")
+        out.append({"story_id": sid, "title": title, "prev_week": old[sid][1],
                     "named": bool(m.get("title")), "week": w0, "baseline_week": round(bw, 1),
                     "ratio": round(w0 / bw, 1) if bw >= 0.5 else None,
                     "p": pv[sid], "q": q[sid], "urls": urls.get(sid, []),
@@ -1714,6 +1771,7 @@ def _story_market(bank: str, ids: list[int], sim: float = SIM) -> dict[int, dict
             week = s.execute(text(f"""
                 SELECT i.bank, v.vec FROM review_index i JOIN review_summary_vec v ON v.url = i.url
                  WHERE i.bank <> :b AND coalesce(i.source, 'bankiru') = :src AND {rd._CMP}
+                   AND {_EV_FRESH}
                    AND i.dt >= {rd._WEEK_END} - interval '7 days' AND i.dt < {rd._WEEK_END}"""),
                 {"b": bank, "src": rd.CMP_SOURCE}).all()
     except Exception as e:  # noqa: BLE001

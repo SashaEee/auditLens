@@ -531,6 +531,20 @@ def test_tick_repeats_incomplete_full_pass_not_too_often(lite, monkeypatch):
     assert seen == [None, None, RD.SINCE_DAYS]
 
 
+def test_ok_stamp_only_when_most_banks_were_glued(lite, monkeypatch):
+    # отметка удачного прохода — для сторожа «Пульса»: проход, пропустивший все банки,
+    # её не двигает, хотя dedup_at пишется (ревью 04.11.2026)
+    answer = {"failed": 0, "banks": 2, "skipped_banks": {"А": "нет текстов", "Б": "нет текстов"}}
+    monkeypatch.setattr(RD, "run", lambda since_days=None, **kw: answer)
+    t = 1_800_000_000.0
+    RD.tick(now=t)
+    st = RD._state_get()
+    assert st.get(RD._AT_KEY) == t and RD._OK_KEY not in st
+    answer = {"failed": 0, "banks": 3, "skipped_banks": {"А": "нет текстов"}}
+    RD.tick(now=t + RD.EVERY_S + 1)
+    assert RD._state_get()[RD._OK_KEY] == t + RD.EVERY_S + 1
+
+
 # ── Миграция ─────────────────────────────────────────────────────────────────
 
 def test_migration_is_safe_for_hot_table():

@@ -691,7 +691,7 @@ def market_status(c: int, d: int, *, k: float = 1.0, phi: float = 1.0, min_marke
 
 def market_verdict(a: int, c: int, b: int, d: int, *, k: float = 1.0, phi: float = 1.0,
                    phi_market: float | None = None, alpha: float = 0.05,
-                   min_market: int = 20) -> dict:
+                   min_market: int = 20, min_bank: int = 0) -> dict:
     """Один вывод «банк и рынок» вместо bank_specific/market_flat.
 
     claim:
@@ -699,6 +699,9 @@ def market_verdict(a: int, c: int, b: int, d: int, *, k: float = 1.0, phi: float
       • faster         — обгоняет, рынок тоже растёт (или по нему неясно);
       • same           — рынок значимо растёт, банк от него значимо не отличается;
       • market_unknown — по рынку данных мало: о рынке ничего не утверждать;
+      • bank_unknown   — у банка в сопоставимом корпусе меньше min_bank жалоб (неделя +
+                         база): тест доли на нулях даёт «рынок растёт так же» про
+                         всплеск, посчитанный по другим площадкам (ревью 04.11.2026);
       • none           — ничего утверждать нельзя (данные есть, различия нет).
     Плюс совместимые поля: bank_specific (= обгоняет), market_flat (= ровный
     или падает — НЕ при нехватке данных), market_ratio, gap (отношение шансов)
@@ -707,7 +710,9 @@ def market_verdict(a: int, c: int, b: int, d: int, *, k: float = 1.0, phi: float
     mk = market_status(c, d, k=k, phi=phi if phi_market is None else phi_market,
                        min_market=min_market)
     flat = mk["status"] in ("flat", "down")
-    if sh["status"] == "low_market" or mk["status"] == "unknown":
+    if a + b < min_bank:
+        claim = "bank_unknown"
+    elif sh["status"] == "low_market" or mk["status"] == "unknown":
         claim = "market_unknown"
     elif sh["sig"]:
         claim = "only_bank" if flat else "faster"
@@ -716,7 +721,7 @@ def market_verdict(a: int, c: int, b: int, d: int, *, k: float = 1.0, phi: float
     else:
         claim = "none"
     return {"claim": claim, "bank_specific": claim in ("only_bank", "faster"),
-            "market_flat": flat and claim != "market_unknown",
+            "market_flat": flat and claim not in ("market_unknown", "bank_unknown"),
             "bank_ratio": sh["bank_ratio"], "market_ratio": mk["ratio"],
             "gap": sh["or"], "gap_lo": sh["lo"], "gap_hi": sh["hi"], "p": sh["p"],
             "share": sh, "market": mk}
@@ -752,6 +757,8 @@ def market_note(v: dict, who: str = "банка") -> str | None:
         return f"рынок растёт так же (×{_ru(mr)})"
     if claim == "market_unknown":
         return "по рынку данных мало для сравнения"
+    if claim == "bank_unknown":
+        return f"у {who} мало жалоб на banki.ru — с рынком не сравниваем"
     return None
 
 

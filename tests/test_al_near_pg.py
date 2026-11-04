@@ -378,3 +378,13 @@ def test_family_key_shorter_than_prefix_min_is_prefix(pg, monkeypatch):
     rows = F.search_near_sql([["списывают", "деньги"]])
     assert {r["url"] for r in rows} == {"a", "b"}
     assert F.search_near_sql([["списывают", "деньги", "каждый"]], count=True) == 1
+
+
+def test_capped_count_stops_early_and_agrees(pg):
+    # «есть ли хотя бы N» — без ранга и сортировки, тем же условием (04.11.2026)
+    _put(DOCS)
+    for groups in ([["навязали", "страховку"]], [["зачисляют", "выручку"]], [["не", "без"]],
+                   [["переводы", "себе"], ["отказ", "ипотеки"]]):
+        full = F.search_near_sql(groups, count=True)
+        assert F.search_near_sql(groups, count=True, cap=100) == full
+        assert F.search_near_sql(groups, count=True, cap=1) == min(full, 1)

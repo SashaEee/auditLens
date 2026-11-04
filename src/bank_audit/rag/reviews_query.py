@@ -224,7 +224,7 @@ def corpus_support(terms: list[str], cap: int = 50) -> dict[str, int]:
             # верхних по рангу кандидатов, «рядом» дальше потолка не видно
             try:
                 if sql:
-                    near[t] = len(bankiru_fts.search_near_sql([t.split()], limit=int(cap)))
+                    near[t] = bankiru_fts.search_near_sql([t.split()], count=True, cap=int(cap))
                     continue
             except Exception:  # noqa: BLE001 — запасной путь ниже
                 pass

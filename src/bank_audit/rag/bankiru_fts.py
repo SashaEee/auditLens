@@ -964,13 +964,16 @@ def search_near_sql(groups: list[list[str]], *, bank: str | None = None, city: s
                     month: str | None = None, since_ts=None, spans: list[int] | None = None,
                     extra_sql: str = "", params: dict | None = None, limit: int | None = None,
                     offset: int = 0, count: bool = False, gap: int = NEAR_GAP,
-                    _meta: dict | None = None) -> list[dict] | int:
+                    cap: int | None = None, _meta: dict | None = None) -> list[dict] | int:
     """Отзывы, где для какой-нибудь группы все её слова стоят рядом, — как search_near,
     но целиком в базе и без потолка. count=True — точное число таких отзывов, иначе
     строки той же формы, что у search_near, по rank убыв., dt убыв. (limit/offset —
     страница; с _meta в _meta["total"] ляжет и точный счёт). extra_sql — доп. условия
     на f.* (параметры — в params), применяются до LIMIT. Сбой базы — исключение, а не
-    пустой список: «слов нет» и «поиск не отработал» аудитор должен различать."""
+    пустой список: «слов нет» и «поиск не отработал» аудитор должен различать.
+    count=True с cap — «есть ли хотя бы cap»: без ранга и сортировки, база
+    останавливается на cap-м совпадении (проверка вариантов запроса по корпусу,
+    ревью 04.11.2026: полный счёт стоил секунды на каждый вариант)."""
     spans = list(spans or [])
     pairs = [([w for w in g if w.strip()], spans[k] if k < len(spans) else 0)
              for k, g in enumerate(groups) if g]
@@ -980,7 +983,7 @@ def search_near_sql(groups: list[list[str]], *, bank: str | None = None, city: s
     if not pairs:
         return 0 if count else []
     where, p = _filters(bank, city, month, since_ts)
-    clash = set(params or {}) & (set(p) | {"_npmin", "_nlim", "_noff"})
+    clash = set(params or {}) & (set(p) | {"_npmin", "_nlim", "_noff", "_ncap"})
     if clash or any(k.startswith(("_nq", "_nk", "_ns", "_nn")) for k in (params or {})):
         raise ValueError("search_near_sql: имена параметров заняты: "
                          f"{sorted(clash) or 'префикс _n'}")
@@ -1030,6 +1033,13 @@ def search_near_sql(groups: list[list[str]], *, bank: str | None = None, city: s
             # дважды (в фильтре g IS NOT NULL и в выдаче)
             which = " ".join(f"WHEN f.tsv @@ {q}{used[k][1]} THEN {k}" for k, q in enumerate(tq))
             extra = f" AND ({extra_sql})" if (extra_sql or "").strip() else ""
+            if count and cap is not None:
+                anyg = " OR ".join(f"(f.tsv @@ {q}{used[k][1]})" for k, q in enumerate(tq))
+                p["_ncap"] = max(0, int(cap))
+                return int(s.execute(text(f"""
+                    SELECT count(*) FROM (SELECT 1 FROM review_index f
+                                           WHERE ({pre}){where}{extra} AND ({anyg})
+                                           LIMIT :_ncap) z"""), p).scalar() or 0)
             inner = f"""SELECT f.url, f.review_id, f.source, f.bank, f.product, f.dt, f.city, f.tsv,
                                CASE {which} END AS g
                           FROM review_index f

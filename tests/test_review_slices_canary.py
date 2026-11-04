@@ -285,7 +285,9 @@ def test_tick_weekly_only_with_gold(monkeypatch):
     now = 1_800_000_000.0
     assert asyncio.run(C.tick(now)) == {"skipped": "no_gold"} and not marks and not runs
     state["gold"] = 260
-    assert asyncio.run(C.tick(now))["saved"] and marks == [now]
+    # отметка повтора ставится ДО прогона (перезапуск посреди прогона не повторяет его
+    # сразу), удачный прогон заменяет её на «сейчас»
+    assert asyncio.run(C.tick(now))["saved"] and marks == [now - C.EVERY_S + C.RETRY_S, now]
     state["last"] = now
     assert asyncio.run(C.tick(now + 6 * 86400)) == {"skipped": "not_due"} and len(runs) == 1
     # не вышло (ни одного решения) — повтор через сутки, а не через неделю и не каждый тик
@@ -357,3 +359,27 @@ def test_alert_on_recall_floor():
     assert any("полнота 0,5" in x for x in C.alerts(m))
     m["payroll"].update(fn=1, recall=round(6 / 7, 4))
     assert C.alerts(m) == []
+
+
+def test_incomplete_cascade_is_an_alert():
+    # каскад ответил на 1 из 30 (сбой провайдера в день канарейки): у всех срезов
+    # поддержка ниже порога, и без этого правила прогон выглядел бы «без тревоги»
+    async def go():
+        class Half:
+            sys = ""
+
+            async def ask(self, model, user):
+                return None, 0, 0          # модель так и не ответила (как Caller.ask)
+        gold = [{"url": f"u{k}", "review_id": k, "bank": "Б", "labels": {"payroll": k % 2 == 0}}
+                for k in range(30)]
+        bodies = lambda rows: {r["url"]: {"text": "жалоба " * 10} for r in rows}  # noqa: E731
+        return await C.run(gold, caller=Half(), bodies=bodies)
+    import bank_audit.rag.review_slices_canary as CC
+    orig = CC._previous, CC._save
+    CC._previous, CC._save = (lambda before: None), (lambda row: None)
+    try:
+        res = asyncio.run(go())
+    finally:
+        CC._previous, CC._save = orig
+    assert not res["saved"] and res["n"] == 0
+    assert res["reasons"] and res["reasons"][0].startswith("каскад ответил на 0 из 30")

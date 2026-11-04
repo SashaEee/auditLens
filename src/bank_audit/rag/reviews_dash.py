@@ -595,13 +595,22 @@ def overview(bank: str, product: str | None = None, days: int = 90,
         delta = per.delta_pct(total_cmp, total_prev) if ready else None
         # рост к рынку — по сопоставимому корпусу с обеих сторон (CMP_SOURCE): новый свой
         # источник жалоб на банк иначе выглядел как «банк растёт быстрее рынка»
-        vm = _vs_market(c_cmp, c_prev, m_cmp, m_prev, per.k) if ready else {}
+        # и только когда сопоставимый корпус банка заметен в его жалобах: иначе рост — с
+        # других площадок, и про него banki.ru молчит (ревью 04.11.2026)
+        cmp_ok = (c_cmp + c_prev >= CMP_MIN_BANK and total_cmp + total_prev > 0
+                  and (c_cmp + c_prev) / (total_cmp + total_prev) >= CMP_MIN_SHARE)
+        vm = _vs_market(c_cmp, c_prev, m_cmp, m_prev, per.k) if ready and cmp_ok else {}
+        # рост самого банка на banki.ru — в одну фразу с рынком идёт он, а не рост по
+        # всем площадкам (+40% всех площадок рядом с «рынок +5%, вместе с рынком»)
+        cmp_delta = (round(100.0 * (c_cmp / (c_prev * per.k) - 1), 1)
+                     if vm and c_prev else None)
         return {
             "bank": bc, "product": product, "days": per.days, "period": per.info(),
             "total": total_cur, "prev": total_prev, "cmp_n": total_cmp,
             "prev_expected": round(per.expected(total_prev)) if per.has_cmp else None,
             "delta_pct": delta,
             "market_delta_pct": vm.get("market_delta_pct"), "vs_market": vm.get("vs_market"),
+            "cmp_delta_pct": cmp_delta,
             "delta_vs_market_pct": vm.get("rel_pct"),
             "delta_low_n": bool(total_prev and min(total_cmp, total_prev) < 30),
             # прошлый период ещё размечается (сравнения нет, но будет)
@@ -1256,7 +1265,11 @@ def changes(bank: str, product: str | None = None, days: int = 90,
         # (новые сборщики, рост banki.ru) — не «стало хуже». dir: up — обгоняет
         # рынок (плохо), down — отстаёт, flat — вместе с рынком.
         dir_ = {"above": "up", "below": "down", "same": "flat"}.get(vs or "", "up" if up else "down")
-        mtxt = f" (рынок {'+' if mk >= 0 else '−'}{abs(_pct_int(mk))}%)" if mk is not None else ""
+        cd = ov.get("cmp_delta_pct")
+        sg = lambda x: f"{'+' if x >= 0 else '−'}{abs(_pct_int(x))}%"  # noqa: E731
+        # рынок — по banki.ru, и банк рядом с ним — тоже по banki.ru
+        mtxt = (f" (по banki.ru: банк {sg(cd)}, рынок {sg(mk)})" if mk is not None and cd is not None
+                else f" (рынок {sg(mk)})" if mk is not None else "")
         items.append({"kind": "volume", "dir": dir_, "rise": up, "vs_market": vs,
                       "market_delta_pct": mk, "rel_pct": ov.get("delta_vs_market_pct"),
                       "text": f"Жалоб {'больше' if up else 'меньше'} на {abs(_pct_int(ov['delta_pct']))}%{mtxt}",
@@ -2646,6 +2659,37 @@ def week_end() -> str | None:
 # собирают в основном Сбер — новый источник давал «рост только у Сбера» (план 04.11, К5).
 # Рост к собственной норме считается по всем источникам, «банк против рынка» — по этому.
 CMP_SOURCE = "bankiru"
+# Вывод «банк и рынок» — только когда сопоставимый корпус банка что-то говорит о его
+# всплеске: от CMP_MIN_BANK жалоб на banki.ru (неделя + база) и не меньше CMP_MIN_SHARE
+# всех его жалоб по теме. Иначе всплеск — с других площадок, и тест доли на banki.ru
+# про него молчит (ревью 04.11.2026: «рынок растёт так же» на нулях банка).
+CMP_MIN_BANK = 20
+CMP_MIN_SHARE = 0.3
+
+
+def _market_v(k: str, brow, crow, mrow, base_w: float, phi_b: float, phi_m: float) -> dict | None:
+    """market_verdict по теме k: банк — сопоставимый корпус (crow), рынок — без банка
+    (mrow); brow — все площадки банка, для доли сопоставимого корпуса."""
+    if mrow is None or crow is None:
+        return None
+    a, b = int(crow[f"{k}_w0"]), int(crow[f"{k}_b"])
+    v = _RS.market_verdict(a, int(mrow[f"{k}_w0"]), b, int(mrow[f"{k}_b"]), k=1 / base_w,
+                           phi=phi_b, phi_market=phi_m, min_bank=CMP_MIN_BANK)
+    tot = int(brow[f"{k}_w0"]) + int(brow[f"{k}_b"]) if brow is not None else 0
+    if v["claim"] != "bank_unknown" and tot and (a + b) / tot < CMP_MIN_SHARE:
+        v = {**v, "claim": "bank_unknown", "bank_specific": False, "market_flat": False}
+    return v
+
+
+def market_text(s: dict, who: str = "банка") -> str | None:
+    """Фраза о рынке для сигнала: из вердикта (market_claim), если он есть, — None
+    значит «о рынке молчать»; старая формула по отношениям — только для снимков без
+    вердикта (до 04.11.2026)."""
+    if "market_claim" in s:
+        return s.get("market_note") or None
+    if s.get("ratio") and s.get("market_ratio") is not None:
+        return market_phrase(s["ratio"], s["market_ratio"], who)
+    return None
 
 
 def _topic_week_counts(bank_canon: str | None, product: str | None,
@@ -2863,6 +2907,13 @@ def _accelerates(s: dict):
     return False if "accel" in s else None
 
 
+def _only_ok(t: dict) -> bool:
+    """«Только у банка» подтверждено: по вердикту — только only_bank (банк значимо
+    обгоняет при ровном рынке; «рынок ровный, различия нет» — не повод, ревью
+    04.11.2026); в старых снимках без вердикта — ровный рынок."""
+    return t.get("market_claim") == "only_bank" if "market_claim" in t else _is_flat(t)
+
+
 def _fix_chunk(chunk: str, topics: list[dict]) -> str:
     if not topics:
         return chunk
@@ -2880,6 +2931,12 @@ def _fix_chunk(chunk: str, topics: list[dict]) -> str:
         chunk = re.sub(r"\s*([.!?…]*)\s*$", lambda m: f" ({notes}){m.group(1)}", chunk, count=1)
     if loud:
         chunk = _ONLY_RX.sub(lambda m: f"у {m.group(1)} сильнее, чем по рынку", chunk)
+    elif not all(_only_ok(t) for t in topics):
+        # вердикт не подтверждает «только у»: «сильнее рынка» — если обгон значим,
+        # иначе просто «у банка», без утверждения о рынке
+        faster = any(t.get("market_claim") == "faster" for t in topics)
+        chunk = _ONLY_RX.sub(lambda m: f"у {m.group(1)} сильнее, чем по рынку" if faster
+                             else f"у {m.group(1)}", chunk)
     return re.sub(r"[ \t]{2,}", " ", chunk).replace(" .", ".").replace(" ,", ",")
 
 
@@ -2910,7 +2967,7 @@ def fix_market_claims(text: str | None, signals: list[dict] | None) -> str | Non
         parts = _SENT_RX.split(ln)
         out_lines.append(" ".join(_fix_chunk(p, _mentioned(p, signals)) for p in parts))
     text = "\n".join(out_lines)
-    if any(s.get("ratio") and _is_flat(s) for s in signals):
+    if any(s.get("ratio") and _only_ok(s) for s in signals):
         return text
     return _ONLY_RX.sub(lambda m: f"у {m.group(1)} сильнее, чем по рынку", text)
 
@@ -2961,9 +3018,7 @@ def week_pulse(bank: str, product: str | None = None) -> dict | None:
         # «быстрее рынка» — точный условный тест доли банка (банк/рынок × неделя/база),
         # а не отношение двух отношений: прежнее «×1,3 быстрее рынка» на малых числах
         # было шумом. «По рынку мало данных» — отдельный вывод, не «рынок ровный».
-        v = (_RS.market_verdict(int(crow[f"{k}_w0"]), int(mrow[f"{k}_w0"]), int(crow[f"{k}_b"]),
-                                int(mrow[f"{k}_b"]), k=1 / BASE_W, phi=phi_b, phi_market=phi_m)
-             if mrow is not None and crow is not None else None)
+        v = _market_v(k, brow, crow, mrow, BASE_W, phi_b, phi_m)
         diverge.append({
             "key": k, "label": t["label"], "short": t["short"],
             "risk": t["risk"], "week": w0, "baseline_week": round(bw, 1),
@@ -2975,7 +3030,7 @@ def week_pulse(bank: str, product: str | None = None) -> dict | None:
             "market_ratio": round(mratio, 2) if mratio else None,
             # без данных по рынку отношения нет: иначе потребители с порогом gap ≥ 1,15
             # показывали «быстрее рынка ×15» по теме, где у рынка ноль недель
-            "gap": (round(v["gap"], 2) if v and v.get("gap") and v["claim"] != "market_unknown"
+            "gap": (round(v["gap"], 2) if v and v.get("gap") and v["claim"] not in ("market_unknown", "bank_unknown")
                     else (None if v else (round(gap, 2) if gap else None))),
             "gap_lo": round(v["gap_lo"], 2) if v and v.get("gap_lo") else None,
             "market_claim": v["claim"] if v else "market_unknown",
@@ -3248,9 +3303,7 @@ def weekly_signals(bank: str, product: str | None = None) -> dict | None:
             ratio = (w0 / bw) if bw >= 0.5 else None
             excess = w0 - bw
             accel = w0 > w1 and w0 >= max(8, 1.4 * w1)
-            mv = (_RS.market_verdict(int(crow[f"{k}_w0"]), int(mrow[f"{k}_w0"]), int(crow[f"{k}_b"]),
-                                     int(mrow[f"{k}_b"]), k=1 / BASE_W, phi=phi_b, phi_market=phi_m)
-                  if mrow is not None and crow is not None else None)
+            mv = _market_v(k, brow, crow, mrow, BASE_W, phi_b, phi_m)
             mratio = round(mv["market_ratio"], 2) if mv and mv.get("market_ratio") is not None else None
             bank_specific = bool(mv and mv["bank_specific"])
             since = int(ch["since"])
@@ -3311,6 +3364,10 @@ def weekly_signals(bank: str, product: str | None = None) -> dict | None:
         tbw = tb / BASE_W
         overall = {"week": tw0, "baseline_week": round(tbw, 1),
                    "ratio": (round(tw0 / tbw, 1) if tbw >= 0.5 else None)}
+        # рынок — только banki.ru; рядом с ним — банк по тому же корпусу (cmp_ratio)
+        if crow is not None:
+            ctbw = int(crow["_tb"]) / BASE_W
+            overall["cmp_ratio"] = round(int(crow["_tw0"]) / ctbw, 2) if ctbw >= 0.5 else None
         if mrow is not None:
             mtbw = int(mrow["_tb"]) / BASE_W
             overall["market_ratio"] = round(int(mrow["_tw0"]) / mtbw, 2) if mtbw >= 0.5 else None

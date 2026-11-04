@@ -1013,10 +1013,26 @@ def _reviews_pipeline() -> dict:
     except Exception:  # noqa: BLE001
         out["flags_open"] = None
     try:
+        # канарейка срезов давно не отрабатывала при загруженном эталоне: от последнего
+        # прогона, а без прогонов — от загрузки эталона
+        r = _rows("""SELECT (SELECT count(*) FROM review_slice_gold) AS gold,
+                            extract(epoch FROM now() - coalesce(
+                                (SELECT max(run_at) FROM review_slice_canary),
+                                (SELECT min(added_at) FROM review_slice_gold))) / 86400 AS age""")
+        if r and int(r[0]["gold"] or 0):
+            out["canary_age_days"] = round(float(r[0]["age"] or 0), 1)
+    except Exception:  # noqa: BLE001 — до миграции 107 пункта нет
+        pass
+    try:
+        # по отметкам УДАЧНОГО прохода: отметка запуска пишется и тогда, когда пропущены
+        # все банки (ревью 04.11.2026); до первой удачной после выкатки — по запуску
         st = {r["k"]: r["v"] for r in _rows(
-            "SELECT k, v FROM review_index_state WHERE k IN ('dedup_at', 'review_stories_at')")}
+            "SELECT k, v FROM review_index_state WHERE k IN ('dedup_at', 'review_stories_at',"
+            " 'dedup_ok_at', 'review_stories_ok_at')")}
+        for ok, run in (("dedup_ok_at", "dedup_at"), ("review_stories_ok_at", "review_stories_at")):
+            st[ok] = st.get(ok) or st.get(run)
         import time as _t
-        for k, name in (("dedup_at", "dedup_age_h"), ("review_stories_at", "stories_age_h")):
+        for k, name in (("dedup_ok_at", "dedup_age_h"), ("review_stories_ok_at", "stories_age_h")):
             try:
                 out[name] = round((_t.time() - float(st[k])) / 3600, 1)
             except (KeyError, TypeError, ValueError):
