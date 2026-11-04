@@ -33,7 +33,8 @@ VOCAB = ["2025", "e-mail", "банк", "банкомат", "банка", "кар
          "страховка", "страхование", "кредит", "кредита", "кредитный", "зачисляют", "зачислили",
          "зачисление", "выручку", "выручка", "эквайринг", "эквайрингу", "перевод", "переводы",
          "переводить", "счёт", "счета", "счетчик", "деньги", "денег", "интернет-банк", "ипотеки",
-         "ипотека", "реструктуризации", "сотрудник", "клиент",
+         "ипотека", "реструктуризации", "сотрудник", "клиент", "списали", "списывают", "списание",
+         "спиннинг",
          "не", "по", "в", "с", "и", "на", "мне", "самому", "себе", "без", "уже"]
 
 _TABLE = """
@@ -58,6 +59,9 @@ def pg(monkeypatch):
     finally:
         raw.close()
     monkeypatch.setattr(db, "_Session", sessionmaker(bind=eng, expire_on_commit=False, future=True))
+    # «функция в базе есть» модуль запоминает — после теста вернуть, чтобы соседние
+    # тесты без базы не пошли путём SQL
+    monkeypatch.setattr(F, "_NEAR_SQL_OK", False)
     yield eng
     eng.dispose()
 
@@ -90,7 +94,9 @@ def _lexs(words: list[str]) -> list[str]:
 def _args(lexs: list[str], gap: int, words: int) -> tuple[list[str], int]:
     """Ключи и длина окна для al_near — ровно как их видит near_window."""
     keys = [x for x in dict.fromkeys(F.stem_key(x) for x in lexs) if x]
-    return keys, max(len(keys), words) - 1 + gap
+    pk = {F.stem_key(x): F.is_prefix(x) for x in lexs}
+    # началом слова — по решению кода (как в search_near_sql): «основа*»
+    return [x + ("*" if pk.get(x) else "") for x in keys], max(len(keys), words) - 1 + gap
 
 
 def _random_docs(rng: random.Random, n: int) -> dict[str, str]:
@@ -173,7 +179,9 @@ def _urls(rows):
 
 def test_spans_and_word_forms_like_search_near(pg):
     _put(DOCS)
-    cases = [([["навязали", "страховку"]], None, ["u1", "u7"]),
+    # семьи слов (04.11.2026): «навязали» находит и «навязывали»
+    fam = ["u1", "u2", "u7"] if F.FAMILY else ["u1", "u7"]
+    cases = [([["навязали", "страховку"]], None, fam),
              ([["не", "зачисляют", "выручку"]], None, ["u5", "u6"]),
              ([["зачисляют", "выручку"]], None, ["u6"]),
              ([["зачисляют", "выручку"]], [3], ["u5", "u6"]),        # служебные слова — позиции
@@ -189,7 +197,7 @@ def test_spans_and_word_forms_like_search_near(pg):
             {r["url"]: (r["rank"], r["terms"]) for r in old}
     # группа из одних стоп-слов ничего не ищет и не мешает остальным
     assert F.search_near_sql([["не", "без"]]) == [] and F.search_near_sql([], count=True) == 0
-    assert _urls(F.search_near_sql([["не", "без"], ["навязали", "страховку"]])) == ["u1", "u7"]
+    assert _urls(F.search_near_sql([["не", "без"], ["навязали", "страховку"]])) == fam
 
 
 def test_groups_or_agree_with_search_near(pg):
@@ -353,3 +361,20 @@ def test_benchmark_20k(pg):
           f"(в среднем {float(avg):.0f} лексем; попаданий {n}); "
           f"Python tsv::text + near_window: {dt_py:.3f} с — {rate_py:,.0f} строк/с")
     assert rate > 2000                                       # грубая страховка от деградации
+
+
+def test_family_key_shorter_than_prefix_min_is_prefix(pg, monkeypatch):
+    # 04.11.2026: «списывают» → основа «списыва» → семья «спис» (4 буквы) ищется началом
+    # слова, как в near_window; без метки правило длины искало бы «спис» целиком
+    monkeypatch.setattr(F, "FAMILY", True)
+    _put({"a": "Списали деньги без согласия", "b": "Деньги списывают каждый месяц",
+          "c": "Спиннинг и деньги"})
+    lexs = _lexs(["списывают", "деньги"])
+    keys, span = _args(lexs, 2, 2)
+    assert any(k.endswith("*") and len(k) == 5 for k in keys), keys
+    got = {u for (u,) in _sql("SELECT url FROM review_index WHERE al_near(tsv, :k, :s)",
+                               {"k": keys, "s": span})}
+    assert got == {"a", "b"}
+    rows = F.search_near_sql([["списывают", "деньги"]])
+    assert {r["url"] for r in rows} == {"a", "b"}
+    assert F.search_near_sql([["списывают", "деньги", "каждый"]], count=True) == 1

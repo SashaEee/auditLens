@@ -218,7 +218,16 @@ def corpus_support(terms: list[str], cap: int = 50) -> dict[str, int]:
     near: dict[str, int] = {}
     if multi:
         from . import bankiru_fts
+        sql = bankiru_fts.near_sql_ready()
         for t in multi:
+            # в базе (миграция 106) — до cap совпадений точно; в Python — только среди
+            # верхних по рангу кандидатов, «рядом» дальше потолка не видно
+            try:
+                if sql:
+                    near[t] = len(bankiru_fts.search_near_sql([t.split()], limit=int(cap)))
+                    continue
+            except Exception:  # noqa: BLE001 — запасной путь ниже
+                pass
             rows, _c = bankiru_fts.search_near([t.split()], cap=max(int(cap) * 6, 120))
             near[t] = min(len(rows), int(cap))
     terms = [t for t in terms if t not in near]

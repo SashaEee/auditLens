@@ -52,6 +52,7 @@ def _urls(rows):
 
 
 def test_near_words_with_word_forms(pg, monkeypatch):
+    monkeypatch.setattr(F, "FAMILY", True)
     rows, capped = F.search_near([["навязали", "страховку"]])
     # «навязали страховку» ↔ «страховка навязана» (падеж и залог — одна основа) и
     # ↔ «страховку не навязывали» (вид глагола — семья слов, FAMILY с 04.11.2026)

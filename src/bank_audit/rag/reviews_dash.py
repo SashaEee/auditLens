@@ -2176,8 +2176,28 @@ def search_set(q: str, bc: str | None, *, theme: str | None = None, esc: bool = 
     from . import reviews_query as _rq
     since_ts = (_dt.datetime.now() - _dt.timedelta(days=since)) if since else None
     wmeta: dict = {}
-    near = lambda groups, spans=None: bankiru_fts.search_near(  # noqa: E731
-        groups, bank=bc, city=city, month=plain_month, since_ts=since_ts, spans=spans, _meta=wmeta)
+    # «рядом» в базе (миграция 106, с 04.11.2026): фильтры вкладки — до отбора, без
+    # потолка NEAR_CAP. Прежде частый запрос («кредит» по банку) обрезался на 6000
+    # строк по рангу ещё до темы и продукта — нужные жалобы могли не дойти до фильтра.
+    # Без функции в базе — прежний путь через Python.
+    fq = ReviewQuery(bank=None, product=product, theme=theme, flag=flag, esc=esc,
+                     source=source, month=ev_month)
+    use_sql = bankiru_fts.near_sql_ready() and not fq.error()
+
+    def near(groups, spans=None):
+        if not use_sql:
+            return bankiru_fts.search_near(groups, bank=bc, city=city, month=plain_month,
+                                           since_ts=since_ts, spans=spans, _meta=wmeta)
+        fp: dict = {}
+        cond = fq.where_sql(fp, window=False, city=False)
+        try:
+            return bankiru_fts.search_near_sql(
+                groups, bank=bc, city=city, month=plain_month, since_ts=since_ts, spans=spans,
+                extra_sql=f"EXISTS (SELECT 1 FROM review_index i WHERE i.url = f.url AND {cond})",
+                params=fp), False
+        except Exception:  # noqa: BLE001 — «слов нет» и «поиск не отработал» различаем
+            wmeta["failed"] = True
+            return [], False
     words: list[dict] = []
     capped = False
     groups: list[list[str]] = []

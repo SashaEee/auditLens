@@ -950,12 +950,12 @@ def near_sql_ready() -> bool:
     return _NEAR_SQL_OK
 
 
-def _near_phrase(keys: list[str], span: int) -> str:
+def _near_phrase(keys: list[str], span: int, pk: dict[str, bool]) -> str:
     """Окно двух основ как фразовый tsquery: «a <d> b» при d = 0..span в обе стороны,
     с тем же правилом начала слова, что у al_near. Мера та же, но её считает C-код
     поиска, а не plpgsql — в 6 раз быстрее (замер 04.11.2026). Для трёх основ
     вариантов уже 3!·C(span+2, 2) — 90 при span 4, и выигрыш пропадает."""
-    a, b = ("'" + x + "'" + (":*" if len(x) >= _PREFIX_MIN else "") for x in keys)
+    a, b = ("'" + x + "'" + (":*" if pk.get(x) else "") for x in keys)
     return " | ".join([f"{a} <{d}> {b}" for d in range(span + 1)]
                       + [f"{b} <{d}> {a}" for d in range(1, span + 1)])
 
@@ -1000,10 +1000,13 @@ def search_near_sql(groups: list[list[str]], *, bank: str | None = None, city: s
                     continue
                 k = len(used)
                 keys = [x for x in dict.fromkeys(stem_key(x) for x in lexs) if x]
+                # началом слова или целиком — решает код, как в near_window (семьи слов
+                # делают началом и 4-буквенную общую часть видовой пары)
+                pk = {stem_key(x): is_prefix(x) for x in lexs}
                 # префильтр — тот же tsquery, что в search_near; окно — как near_window
                 p[f"_nq{k}"] = " & ".join(
                     "'" + stem_key(x).replace("'", "''") + "'"
-                    + (":*" if len(x) >= _PREFIX_MIN else "") for x in dict.fromkeys(lexs))
+                    + (":*" if is_prefix(x) else "") for x in dict.fromkeys(lexs))
                 span = max(len(keys), max(len(g), n)) - 1 + gap
                 plain = all(x.isalpha() for x in keys)
                 if len(keys) == 1 and plain and PREFIX >= _PREFIX_MIN:
@@ -1012,10 +1015,10 @@ def search_near_sql(groups: list[list[str]], *, bank: str | None = None, city: s
                     # на каждом стоила бы секунды
                     near = ""
                 elif len(keys) == 2 and plain and 0 <= span <= 40:
-                    p[f"_nn{k}"] = _near_phrase(keys, span)
+                    p[f"_nn{k}"] = _near_phrase(keys, span, pk)
                     near = f" AND f.tsv @@ to_tsquery(CAST('simple' AS regconfig), :_nn{k})"
                 else:
-                    p[f"_nk{k}"], p[f"_ns{k}"] = keys, span
+                    p[f"_nk{k}"], p[f"_ns{k}"] = [x + ("*" if pk.get(x) else "") for x in keys], span
                     near = f" AND al_near(f.tsv, CAST(:_nk{k} AS text[]), :_ns{k}, :_npmin)"
                 used.append((lexs, near))
             if not used:

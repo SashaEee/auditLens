@@ -17,6 +17,8 @@ def _setup(monkeypatch, head, words, keep=None):
     monkeypatch.setattr(RD, "search_reviews", fake_search)
     monkeypatch.setattr(bankiru_fts, "is_ready", lambda: True)
     monkeypatch.setattr(bankiru_fts, "search_near", lambda *a, **k: ([dict(w) for w in words], False))
+    # путь через Python: признак «функция в базе есть» модуль запоминает между тестами
+    monkeypatch.setattr(bankiru_fts, "near_sql_ready", lambda: False)
     monkeypatch.setattr(RD, "_keep_urls", lambda urls, **k: set(urls) if keep is None else keep)
     monkeypatch.setattr(RD, "_excluded", lambda urls, words: set())
     monkeypatch.setattr(RD, "_verify_sense", lambda q, rows: (rows, True))
@@ -228,3 +230,29 @@ def test_query_variants_keep_the_meaning():
     assert RD._variant_ok("не поступают деньги по эквайрингу", kept)
     assert RD._variant_ok("зачисление выручки эквайринг", kept)
     assert RD._variant_ok("ПСК", ["ПСК"])                         # запрос из одного слова — можно
+
+
+def test_sql_near_gets_tab_filters_and_failure_is_reported(monkeypatch):
+    # 04.11.2026: с миграцией 106 «рядом» считает база, фильтры вкладки — до отбора
+    # (EXISTS по индексу), без потолка; сбой — «поиск не отработал», не «слов нет»
+    head = [{"url": "a", "via": "слова", "date": "2026-10-01", "text": "x" * 50}]
+    _setup(monkeypatch, head, [])
+    monkeypatch.setattr(bankiru_fts, "near_sql_ready", lambda: True)
+    seen = {}
+
+    def fake_sql(groups, **kw):
+        seen.update(kw)
+        return [{"url": u, "date": "2026-10-01", "rank": 0.1} for u in ("a", "b")]
+    monkeypatch.setattr(bankiru_fts, "search_near_sql", fake_sql)
+    monkeypatch.setattr(bankiru_fts, "search_near", lambda *a, **k: (_ for _ in ()).throw(AssertionError))
+    m = RD.search_set("переводы самому себе", "Сбербанк", product="cards", theme="fees")["meta"]
+    assert m["n_words"] == 2 and not m["words_failed"]
+    assert seen["bank"] == "Сбербанк" and "EXISTS" in seen["extra_sql"]
+    assert "al_product_is" in seen["extra_sql"] and seen["params"]["product"] == "cards"
+    assert seen["params"]["tkey"] == "fees" and "bank" not in seen["params"]
+
+    def boom(groups, **kw):
+        raise RuntimeError("база недоступна")
+    monkeypatch.setattr(bankiru_fts, "search_near_sql", boom)
+    RD._SET_CACHE.clear()
+    assert RD.search_set("переводы самому себе", "Сбербанк")["meta"]["words_failed"] is True

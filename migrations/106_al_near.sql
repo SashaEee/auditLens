@@ -55,7 +55,10 @@ BEGIN
     SELECT array_agg((p * 256 + k.i)::int ORDER BY (p * 256 + k.i)::int) INTO ev
       FROM unnest(ks) WITH ORDINALITY AS k(key, i)
       JOIN unnest(tsv) AS u
-        ON u.lexeme = k.key OR (length(k.key) >= pmin AND starts_with(u.lexeme, k.key))
+        -- «основа*» — началом слова по решению кода (семьи слов: «спис*» из «списывают»
+        -- короче pmin, но ищется началом); без звёздочки — правило длины pmin
+        ON CASE WHEN right(k.key, 1) = '*' THEN starts_with(u.lexeme, left(k.key, -1))
+                ELSE u.lexeme = k.key OR (length(k.key) >= pmin AND starts_with(u.lexeme, k.key)) END
      CROSS JOIN unnest(u.positions) AS p;
     IF ev IS NULL THEN
         RETURN false;
