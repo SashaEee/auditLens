@@ -1400,6 +1400,7 @@ def new_stories(bank: str, *, days: int = HISTORY_DAYS, young_days: int = YOUNG_
 # ── Чтение: сюжеты для вкладки ──────────────────────────────────────────────
 
 BADGE_DAYS = 14         # значки «новый сюжет / вырос / вернулся / слился» — за две недели
+NEW_FIRST_DAYS = 30     # «новый сюжет» — и первая жалоба не старше месяца
 TITLE_MAX = 140         # заглушка названия из изложения медоида — не длиннее
 _BADGE_KINDS = ("appeared", "grew", "returned", "merged")
 
@@ -1544,12 +1545,12 @@ def list_stories(bank: str, *, product: str | None = None, days: int = 90, limit
             "n": x["n"], "n_window": x["n_window"],
             "first_seen": _iso(x["first"]), "last_seen": _iso(x["last"]),
             "issue_main": x["issue_main"], "issue_label": o.get("label"), "risk": o.get("risk"),
-            "status": x["status"], "badges": _badges(x, evs.get(x["story_id"], [])),
+            "status": x["status"], "badges": _badges(x, evs.get(x["story_id"], []), now),
             "top_urls": x["top_urls"], "urls": x["urls"]})
     return res
 
 
-def _badges(x: dict, evs: list) -> list[dict]:
+def _badges(x: dict, evs: list, now: datetime | None = None) -> list[dict]:
     """Значки сюжета из событий последних двух недель.
 
     «Вырос с A до B» — по составу, а не по detail события: в detail размер группы в
@@ -1559,7 +1560,12 @@ def _badges(x: dict, evs: list) -> list[dict]:
     тем же моментом, что и событие), B — n. Рост не своего продукта значка не даёт."""
     kinds = {k for k, _a, _d in evs}
     out = []
-    if "appeared" in kinds:
+    # «новый» — ещё и по первой жалобе сюжета, не только по дате записи в таблицу: при
+    # первом запуске (04.11.2026) событие appeared получили все сюжеты, в том числе
+    # живущие с лета. NEW_FIRST_DAYS с запасом: сюжет набирает три жалобы не за день
+    fresh = (now is None or x.get("first") is None
+             or x["first"] >= now - timedelta(days=NEW_FIRST_DAYS))
+    if "appeared" in kinds and fresh:
         out.append({"kind": "appeared", "label": "новый сюжет"})
     if "returned" in kinds:
         out.append({"kind": "returned", "label": "вернулся"})

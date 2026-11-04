@@ -1370,3 +1370,14 @@ def test_pg_list_stories_window_from_period(pgs):
                           _meta=meta)
     assert [(x["n"], x["n_window"]) for x in got] == [(6, 6)] and meta["total"] == 1
     assert RS.list_stories(BANK, t0=naive - timedelta(days=400), t1=naive - timedelta(days=30)) == []
+
+
+def test_new_badge_only_for_young_stories():
+    # первый запуск пишет appeared всем сюжетам — «новый» лишь тот, чья первая жалоба
+    # моложе двух недель
+    now = NOW
+    ev = [("appeared", now - timedelta(days=1), {})]
+    old = {"first": now - timedelta(days=60), "n": 5, "m": []}
+    young = {"first": now - timedelta(days=5), "n": 5, "m": []}
+    assert RS._badges(old, ev, now) == []
+    assert [b["kind"] for b in RS._badges(young, ev, now)] == ["appeared"]
