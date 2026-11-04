@@ -2995,11 +2995,14 @@ def _signal_entries(weeks: dict[str, list[int]]) -> dict[str, dict]:
     практический порог — всплеск недели, рост двух недель подряд или новая
     проблема (почти не было — и сразу ≥ 6)."""
     st: dict[str, dict] = {}
+    # общий разброс среза: по 7 неделям одной проблемы его не оценить; приор по всем
+    # проблемам удерживает долю ложных у номинала (review_stats.phi_prior)
+    prior = _RS.phi_prior([list(arr[2:9]) for arr in weeks.values()]) if weeks else None
     for k, arr in weeks.items():
         base = list(arr[2:9])
         b = sum(base)
         w0, w1 = int(arr[0]), int(arr[1])
-        p1, p2 = _nb_tail(w0, base), _nb_tail_sum(w0 + w1, base, 2)
+        p1, p2 = _nb_tail(w0, base, prior), _nb_tail_sum(w0 + w1, base, 2, prior)
         st[k] = {"w0": w0, "w1": w1, "b": b, "bw": b / 7.0, "p1": p1, "p2": p2,
                  "p": _simes2(p1, p2),
                  "fam": "main" if b / 7.0 >= _SIG_MIN_BASE else "rare"}
@@ -3020,17 +3023,18 @@ def _signal_entries(weeks: dict[str, list[int]]) -> dict[str, dict]:
         test = "week" if week_ok else ("new_topic" if new else "two_weeks")
         out[k] = {"test": test, "sustained": bool(two_ok), "new": bool(new),
                   "p": r["p"], "q": qv[k], "p1": r["p1"], "p2": r["p2"],
-                  "alpha": _SIG_ALPHA[r["fam"]], "fam": r["fam"], "fam_size": size[r["fam"]]}
+                  "alpha": _SIG_ALPHA[r["fam"]], "fam": r["fam"], "fam_size": size[r["fam"]],
+                  "prior": prior}
     return out
 
 
-def _signal_hold(w0: int, w1: int, base: list[int], entry: str) -> float | None:
+def _signal_hold(w0: int, w1: int, base: list[int], entry: str, prior=None) -> float | None:
     """p удержания: неделя (или две) против нормы ДО всплеска. None — уже не
     выше той нормы по практическому порогу (сигнал снимается)."""
     bw = sum(base) / 7.0
     week_ok, two_ok = _practical(w0, w1, bw, 6 if entry == "new_topic" else 8)
-    p1 = _nb_tail(w0, base) if week_ok else None
-    p2 = _nb_tail_sum(w0 + w1, base, 2) if two_ok else None
+    p1 = _nb_tail(w0, base, prior) if week_ok else None
+    p2 = _nb_tail_sum(w0 + w1, base, 2, prior) if two_ok else None
     if p1 is not None and p2 is not None:
         return _simes2(p1, p2)
     return p1 if p1 is not None else p2
@@ -3051,7 +3055,7 @@ def _signal_chain(daily: dict[str, list[int]], keys: list[str],
         hp: dict[str, float] = {}
         for k, ch in state.items():
             if k not in ent:
-                p = _signal_hold(weeks[k][0], weeks[k][1], ch["base"], ch["entry"])
+                p = _signal_hold(weeks[k][0], weeks[k][1], ch["base"], ch["entry"], ch.get("prior"))
                 if p is not None:
                     hp[k] = p
         hq = _bh(hp)
@@ -3143,7 +3147,7 @@ def weekly_signals(bank: str, product: str | None = None) -> dict | None:
                   "days_on": since + 1,
                   "sustained": bool(ch.get("sustained")),
                   "two_weeks": w0 + w1, "two_weeks_norm": round(2 * bw, 1),
-                  "p_two_weeks": round(_nb_tail_sum(w0 + w1, list(wk[2:9]), 2), 5),
+                  "p_two_weeks": round(_nb_tail_sum(w0 + w1, list(wk[2:9]), 2, ch.get("prior")), 5),
                   "family": ch.get("fam"), "family_size": ch.get("fam_size")}
             if since > 0:
                 s_["baseline_before"] = round(fbw, 1)
@@ -3249,11 +3253,20 @@ def _keep_urls(urls: list[str], *, theme: str | None, esc: bool,
                  if not (theme or esc or product or fcond or month or sc) else set())
 
 
-def _nb_tail(x: int, weeks: list[int]) -> float:
-    """P(X ≥ x) при недельной норме из истории — отрицательно-биномиальное
-    распределение с разбросом, оценённым по самим неделям (жалобы идут
-    волнами, и пуассоновский порог на них даёт ложные всплески). Если разброс
-    не больше среднего — обычный Пуассон."""
+def _nb_tail(x: int, weeks: list[int], prior=None) -> float:
+    """P(X ≥ x) при недельной норме из истории — предсказательный хвост
+    (rag/review_stats.predictive_tail): ошибка самой нормы из 7 недель и
+    перерассеяние с его собственной неопределённостью, prior — общий разброс среза
+    (phi_prior). Правило V6, включено 04.11.2026: прежде норма и разброс
+    подставлялись как точные, p занижалось в 2–4 раза — на нулевой модели 8,7 / 32 / 49
+    ложных эпизодов в год на срез при φ = 1 / 1,5 / 2, с V6 — 1,3 / 10 / 13; на истории
+    Сбера за полгода 14 эпизодов → 7 (крупные, вкл. чарджбэк 23.09, остались).
+    Решение и замеры — AuditLens_сигналы_решение_2026-11-04 (вне репозитория)."""
+    return _RS.predictive_tail(int(x), [float(w) for w in weeks], phi_prior=prior)
+
+
+def _nb_tail_v1(x: int, weeks: list[int]) -> float:
+    """Прежний хвост (до 04.11.2026) — для сравнения в замерах."""
     m, v = _base_mv(weeks)
     return _tail_mv(x, m, v)
 
@@ -3267,13 +3280,14 @@ def _base_mv(weeks: list[int]) -> tuple[float, float]:
     return m, v
 
 
-def _nb_tail_sum(x: int, weeks: list[int], k: int = 2) -> float:
-    """P(сумма k недель подряд ≥ x) при норме из истории.
+def _nb_tail_sum(x: int, weeks: list[int], k: int = 2, prior=None) -> float:
+    """P(сумма k недель подряд ≥ x) при норме из истории — тот же предсказательный
+    хвост, что у _nb_tail, на k недель (волны длиннее недели учтены в нём)."""
+    return _RS.predictive_tail(int(x), [float(w) for w in weeks], k=k, phi_prior=prior)
 
-    Среднее — k·m. Разброс — не меньше k·v и не меньше разброса сумм соседних
-    недель самой истории: жалобы идут волнами длиннее недели, и у независимых
-    недель разброс суммы вышел бы заниженным — «затяжной рост» ловился бы
-    на обычной волне."""
+
+def _nb_tail_sum_v1(x: int, weeks: list[int], k: int = 2) -> float:
+    """Прежний хвост суммы (до 04.11.2026) — для сравнения в замерах."""
     m, v = _base_mv(weeks)
     sums = [sum(weeks[i:i + k]) for i in range(len(weeks) - k + 1)]
     vs = 0.0

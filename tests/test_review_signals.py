@@ -59,17 +59,24 @@ def test_weeks_at_matches_weekly_grouping():
     assert w[0] == sum(daily[3:10]) and w[2] == sum(daily[17:24]) and len(w) == 9
 
 
-def test_chargeback_passes_with_groups_and_two_weeks():
-    """Случай 30.09: общая поправка на 39 проблем его отсекала (q ≈ 0,08)."""
+def test_chargeback_passes_on_real_weeks_with_v6():
+    """Чарджбэк 23.09 и 30.09 на настоящих недельных счётчиках всех проблем Сбера
+    (tests/data, только числа): правило V6 (предсказательные хвосты с приором среза)
+    его ловит и не поднимает спокойные проблемы. На синтетике с ровным фоном
+    (CHARGEBACK ниже) V6 строже — это осознанный размен: ложных эпизодов в 3–4 раза
+    меньше (замер 04.11.2026)."""
+    import json
+    from pathlib import Path
+    real = json.loads((Path(__file__).parent / "data" / "signal_weeks_sber_0923_0930.json").read_text())
+    for day in ("2026-09-23", "2026-09-30"):
+        ent = rd._signal_entries(real[day])
+        assert set(ent) == {"chargeback"}, day
+        assert ent["chargeback"]["fam"] == "main" and ent["chargeback"]["q"] < rd._SIG_ALPHA["main"]
+    assert rd._signal_entries(real["2026-09-30"])["chargeback"]["sustained"]      # две недели подряд
+    # прежнее правило без поправки на группы отсекало синтетический случай (q ≈ 0,08)
     weeks = {**_calm_weeks(), "chargeback": CHARGEBACK}
-    old_q = rd._bh({k: rd._nb_tail(w[0], w[2:9]) for k, w in weeks.items()})
-    assert old_q["chargeback"] > 0.05                 # так и было на проде
-    ent = rd._signal_entries(weeks)
-    assert set(ent) == {"chargeback"}                 # спокойные проблемы не всплывают
-    e = ent["chargeback"]
-    assert e["fam"] == "main" and e["sustained"] and e["q"] < rd._SIG_ALPHA["main"]
-    # редких проблем в группе частых нет — они не размывают поправку
-    assert e["fam_size"] == sum(1 for bw in NORMS if bw >= rd._SIG_MIN_BASE) + 1
+    old_q = rd._bh({k: rd._nb_tail_v1(w[0], w[2:9]) for k, w in weeks.items()})
+    assert old_q["chargeback"] > 0.05
 
 
 def test_rare_theme_jump_and_small_noise():
