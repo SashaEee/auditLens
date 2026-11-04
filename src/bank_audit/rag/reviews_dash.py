@@ -1927,6 +1927,24 @@ def _rerank(query: str, texts: list[str]) -> list[float] | None:
         return None
 
 
+def _pfx(w: str) -> str:
+    return w.lower().replace("ё", "е")[:5]
+
+
+def _variant_ok(variant: str, kept: list[str]) -> bool:
+    """Вариант запроса — отдельная группа «слова рядом», только если он сохраняет смысл.
+    Не годятся: одно слово при запросе из нескольких (вариант «эквайринг» к «не
+    зачисляют выручку по эквайрингу» находил любую жалобу на эквайринг — 218 вместо
+    нужных, 04.11.2026) и вариант из тех же слов запроса, только меньшим их числом."""
+    words = [w for w in variant.split() if w.strip()]
+    if not words:
+        return False
+    if len(kept) >= 2 and len(words) < 2:
+        return False
+    base = {_pfx(w) for w in kept}
+    return not ({_pfx(w) for w in words} <= base and len(words) < len(kept))
+
+
 _RERANK_TOP = int(os.getenv("REVIEWS_RERANK_TOP", "50"))
 
 
@@ -2069,7 +2087,8 @@ def search_set(q: str, bc: str | None, *, theme: str | None = None, esc: bool = 
             common = {c.lower() for c in (meta.get("common") or [])}
             kept = [t for t in base if t.lower() not in common] or base
             low = {t.lower() for t in base}
-            groups = [kept] + [v.split() for v in (meta.get("terms") or []) if v.lower() not in low]
+            groups = [kept] + [v.split() for v in (meta.get("terms") or [])
+                               if v.lower() not in low and _variant_ok(v, kept)]
             # окно первой группы — по всем словам запроса: служебные («не», «по») в
             # тексте тоже занимают позиции
             words, capped = near(groups, spans=[len(_WORD_RX.findall(pq["plain"]))])
@@ -2078,7 +2097,7 @@ def search_set(q: str, bc: str | None, *, theme: str | None = None, esc: bool = 
                 # («не зачисляют выручку» ↔ «не поступают деньги по эквайрингу»)
                 x = _rq.expand(pq["plain"], use_llm=True)
                 extra = [v.split() for v in (x.get("terms") or [])
-                         if v.lower() not in low and v.split() not in groups]
+                         if v.lower() not in low and v.split() not in groups and _variant_ok(v, kept)]
                 if extra:
                     more, c2 = near(extra)
                     have = {w["url"] for w in words}

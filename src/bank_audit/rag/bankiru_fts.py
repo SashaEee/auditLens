@@ -721,6 +721,11 @@ def _positions(tsv_text: str) -> dict[str, list[int]]:
 # «зачисл», и «не зачисляют выручку» не находило «не зачислили выручку». Поэтому
 # длинные основы сравниваются по началу (PREFIX символов), короткие — целиком.
 PREFIX = int(os.getenv("REVIEWS_NEAR_PREFIX", "6"))
+# Основа от 5 букв ищется как начало слова: «отказ» (отказ, отказе) должна находить
+# «отказали» (основа «отказа») — до 04.11.2026 короткие основы совпадали только
+# целиком, и «отказ в реструктуризации ипотеки» находил 2 жалобы за всё время.
+# Короче 5 — только целиком: «карт» как начало слова поймала бы «картридж».
+_PREFIX_MIN = int(os.getenv("REVIEWS_NEAR_PREFIX_MIN", "5"))
 
 
 def stem_key(lexeme: str) -> str:
@@ -736,7 +741,7 @@ def near_window(pos: dict[str, list[int]], lexemes: list[str], gap: int = NEAR_G
     lex = [x for x in dict.fromkeys(stem_key(x) for x in lexemes) if x]
     if not lex:
         return False
-    hits = {x: sorted(p for k, ps in pos.items() if k == x or (len(x) == PREFIX and k.startswith(x))
+    hits = {x: sorted(p for k, ps in pos.items() if k == x or (len(x) >= _PREFIX_MIN and k.startswith(x))
                       for p in ps) for x in lex}
     if any(not v for v in hits.values()):
         return False
@@ -821,7 +826,7 @@ def search_phrases(phrases: list[str], *, bank: str | None = None, city: str | N
 
 def search_near(groups: list[list[str]], *, bank: str | None = None, city: str | None = None,
                 month: str | None = None, since_ts=None, gap: int = NEAR_GAP,
-                spans: list[int] | None = None,
+                spans: list[int] | None = None, cap: int | None = None,
                 _meta: dict | None = None) -> tuple[list[dict], bool]:
     """Отзывы, где для какой-нибудь группы все её слова стоят рядом. (строки, обрезано ли).
     Сбой базы — пустой список и _meta["failed"]: «слов нет» и «поиск не отработал» —
@@ -836,7 +841,7 @@ def search_near(groups: list[list[str]], *, bank: str | None = None, city: str |
     if not groups:
         return [], False
     where, params = _filters(bank, city, month, since_ts)
-    params["cap"] = NEAR_CAP
+    params["cap"] = int(cap or NEAR_CAP)
     found: dict[str, dict] = {}
     capped = False
     try:
@@ -851,7 +856,7 @@ def search_near(groups: list[list[str]], *, bank: str | None = None, city: str |
                 # словарь обработал бы основу заново («навяза» → другая основа) и выкинул
                 # бы «сам» как стоп-слово — «навязали страховку» находила 0 (замер 03.11)
                 params["tq"] = " & ".join(
-                    "'" + stem_key(x).replace("'", "''") + "'" + (":*" if len(x) > PREFIX else "")
+                    "'" + stem_key(x).replace("'", "''") + "'" + (":*" if len(x) >= _PREFIX_MIN else "")
                     for x in dict.fromkeys(lexs))
                 rows = s.execute(text(f"""
                     SELECT f.url, f.review_id, f.source, f.bank, f.product, f.dt, f.city, f.tsv::text AS tsv,
@@ -860,7 +865,7 @@ def search_near(groups: list[list[str]], *, bank: str | None = None, city: str |
                      WHERE f.tsv @@ to_tsquery(CAST('simple' AS regconfig), :tq){where}
                      ORDER BY rank DESC, f.dt DESC
                      LIMIT :cap"""), params).mappings().all()
-                capped = capped or len(rows) >= NEAR_CAP
+                capped = capped or len(rows) >= params["cap"]
                 for r in rows:
                     if r["url"] in found:
                         continue

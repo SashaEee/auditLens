@@ -42,7 +42,8 @@ log = logging.getLogger(__name__)
 # Расширение — не обязательная часть поиска. Выключается без передеплоя.
 ENABLED = os.getenv("REVIEWS_QUERY_EXPAND", "1").lower() not in ("0", "false", "no")
 _TTL_DAYS = int(os.getenv("REVIEWS_QUERY_TTL_DAYS", "30"))
-_TIMEOUT_S = float(os.getenv("REVIEWS_QUERY_TIMEOUT_S", "12"))
+_TIMEOUT_S = float(os.getenv("REVIEWS_QUERY_TIMEOUT_S", "10"))
+_MODEL = os.getenv("REVIEWS_QUERY_MODEL", "google/gemini-3.1-flash-lite")
 _MAX_TERMS = int(os.getenv("REVIEWS_QUERY_MAX_TERMS", "12"))
 _NS = "rev_q"
 
@@ -63,8 +64,7 @@ _STOP = {
 
 _SYSTEM = (
     "Предметная область: РОЗНИЧНЫЕ БАНКОВСКИЕ ПРОДУКТЫ В РОССИИ и жалобы клиентов "
-    "на них. Сокращения раскрывай именно в этом смысле: например ПСК это полная "
-    "стоимость кредита, а не что-либо ещё.\n\n"
+    "на них. Сокращения из запроса раскрывай именно в этом смысле.\n\n"
     "Ты помогаешь аудитору банка искать жалобы клиентов в архиве отзывов. Аудитор "
     "пишет запрос профессиональным жаргоном и сокращениями, а клиенты в отзывах "
     "пишут бытовым языком и часто не знают официальных названий продуктов.\n\n"
@@ -78,8 +78,9 @@ _SYSTEM = (
     "— добавляй близкие по смыслу формулировки и однокоренные варианты;\n"
     "— НЕ расширяй тему: спросили про вклад — не добавляй кредит и ипотеку;\n"
     "— не придумывай названий продуктов, которых не существует;\n"
+    "— каждый вариант — про ту же ситуацию, что и запрос; ничего, чего в запросе нет;\n"
     "— от 4 до 10 вариантов, каждый с новой строки, без нумерации, кавычек и пояснений;\n"
-    "— вариант из нескольких слов пиши как есть, он будет искаться точной фразой."
+    "— вариант из нескольких слов будет искаться как эти слова рядом в тексте отзыва."
 )
 
 
@@ -137,13 +138,16 @@ def base_terms(query: str) -> list[str]:
 
 def _llm_terms(query: str) -> list[str]:
     """Расширение моделью. Любая осечка → пустой список, вызывающий не заметит."""
-    from ..ai.analyst import LLM_API_KEY, LLM_BASE_URL, fast_model
+    from ..ai.analyst import LLM_API_KEY, LLM_BASE_URL
     if not LLM_API_KEY:
         return []
     try:
         from openai import OpenAI
+        # лёгкая модель без рассуждений: DeepSeek-V4-Flash (быстрая модель по умолчанию)
+        # сначала рассуждает и в таймаут не укладывался — раскрытие молча пропадало
+        # (04.11.2026: «отказ в реструктуризации ипотеки» — ни одного варианта)
         c = OpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY,
-                   max_retries=1, timeout=_TIMEOUT_S)
+                   max_retries=0, timeout=_TIMEOUT_S)
         # _patch_client_reasoning_effort сюда НЕ годится: он оборачивает create в
         # корутину и рассчитан на AsyncOpenAI — на синхронном клиенте вызов молча
         # превращается в неожидаемый coroutine и расширение тихо отключается.
@@ -153,7 +157,7 @@ def _llm_terms(query: str) -> list[str]:
         effort = os.getenv("REVIEWS_QUERY_EFFORT", "none").lower()
         extra = {} if effort in ("off", "none", "") else {"reasoning_effort": effort}
         r = c.chat.completions.create(
-            model=fast_model(),
+            model=_MODEL,
             messages=[{"role": "system", "content": _SYSTEM},
                       {"role": "user", "content": f"Запрос аудитора: {query.strip()}"}],
             temperature=0, max_tokens=2000, extra_body=extra)
@@ -204,11 +208,23 @@ def corpus_support(terms: list[str], cap: int = 50) -> dict[str, int]:
     terms = [t for t in (terms or []) if t and t.strip()]
     if not terms:
         return {}
-    # многословный вариант проверяем ТОЧНОЙ ФРАЗОЙ. Без кавычек
-    # websearch_to_tsquery соединяет слова через И где угодно в тексте, и
-    # «правила дистанционного обслуживания» находится по трём словам вразброс —
-    # проверка перестаёт что-либо проверять и пропускает неверное раскрытие.
-    probe = {t: (f'"{t}"' if " " in t.strip() else t) for t in terms}
+    # многословный вариант проверяем той же мерой, что и поиск: слова рядом
+    # (bankiru_fts.search_near). Без этого websearch_to_tsquery соединяет слова через И
+    # где угодно в тексте, и «правила дистанционного обслуживания» находится по трём
+    # словам вразброс. До 04.11.2026 здесь была точная фраза — она строже поиска и
+    # отбрасывала живые перефразы: «отказали в реструктуризации ипотеки», «деньги с
+    # терминала не зачисляются» в архиве дословно почти не встречаются.
+    multi = [t for t in terms if " " in t.strip()]
+    near: dict[str, int] = {}
+    if multi:
+        from . import bankiru_fts
+        for t in multi:
+            rows, _c = bankiru_fts.search_near([t.split()], cap=max(int(cap) * 6, 120))
+            near[t] = min(len(rows), int(cap))
+    terms = [t for t in terms if t not in near]
+    if not terms:
+        return near
+    probe = {t: t for t in terms}
     try:
         with db.session() as s:
             rows = s.execute(text("""
@@ -222,10 +238,10 @@ def corpus_support(terms: list[str], cap: int = 50) -> dict[str, int]:
                      AS t(term, probe)
             """), {"terms": list(probe), "probes": list(probe.values()),
                    "cap": int(cap)}).all()
-        return {r[0]: int(r[1]) for r in rows}
+        return {**near, **{r[0]: int(r[1]) for r in rows}}
     except Exception as e:
         log.info("reviews_query: проверка по корпусу недоступна (%s) — беру как есть", e)
-        return {t: _MIN_SUPPORT for t in terms}
+        return {**near, **{t: _MIN_SUPPORT for t in terms}}
 
 
 # Во сколько раз слово может быть чаще самого редкого слова запроса, оставаясь

@@ -218,3 +218,13 @@ def test_word_matches_head_is_reranked(monkeypatch):
     RD._SET_CACHE.clear()
     got = RD.search_set("q", "Сбербанк", sort="date")              # «по дате» реранкер не трогает
     assert "words_reranked" not in got["meta"]
+
+
+def test_query_variants_keep_the_meaning():
+    """Вариант из одного слова или из части слов запроса — не отдельная группа."""
+    kept = ["зачисляют", "выручку", "эквайрингу"]
+    assert not RD._variant_ok("эквайринг", kept)
+    assert not RD._variant_ok("зачисляют эквайринг", kept)
+    assert RD._variant_ok("не поступают деньги по эквайрингу", kept)
+    assert RD._variant_ok("зачисление выручки эквайринг", kept)
+    assert RD._variant_ok("ПСК", ["ПСК"])                         # запрос из одного слова — можно
