@@ -784,7 +784,7 @@ PHRASE_CAP = int(os.getenv("REVIEWS_PHRASE_CAP", "20000"))
 
 
 def search_phrases(phrases: list[str], *, bank: str | None = None, city: str | None = None,
-                   month: str | None = None, since_ts=None,
+                   month: str | None = None, since_ts=None, also: str | None = None,
                    _meta: dict | None = None) -> tuple[list[dict], bool]:
     """Отзывы, где есть КАЖДАЯ фраза дословно (с точностью до словоформы) — phraseto_tsquery
     по индексу целиком в SQL. Раньше фраза искалась окном с разрывом 0 по первым 6000
@@ -801,10 +801,16 @@ def search_phrases(phrases: list[str], *, bank: str | None = None, city: str | N
             phrases = [p for p in phrases if p not in empty]
             if _meta is not None and empty:
                 _meta["stop_phrases"] = empty
-            if not phrases:
+            if not phrases and not (also or "").strip():
                 return [], False
             tq = " && ".join(f"phraseto_tsquery(CAST('russian' AS regconfig), :p{k})" for k in range(len(phrases)))
             params.update({f"p{k}": p for k, p in enumerate(phrases)})
+            if (also or "").strip():
+                tq = tq + " && " if tq else ""
+                # слова вне кавычек тоже обязательны: «"навязали страховку" ипотека» — фраза
+                # и ипотека, а не фраза где угодно (ревью 04.11.2026)
+                tq += "plainto_tsquery(CAST('russian' AS regconfig), :also)"
+                params["also"] = also
             params["cap"] = PHRASE_CAP
             rows = s.execute(text(f"""
                 SELECT f.url, f.review_id, f.source, f.bank, f.product, f.dt, f.city,

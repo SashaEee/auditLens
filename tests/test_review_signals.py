@@ -187,3 +187,26 @@ def test_week_pulse_faster_than_market_needs_a_real_test(monkeypatch):
     assert not d["noise"]["faster_sig"]                   # ×1,3 при ровном рынке — шум, не обгон
     assert d["thin"]["market_claim"] == "market_unknown" and not d["thin"]["market_flat"]
     assert not d["thin"]["faster_sig"] and "мало" in d["thin"]["market_note"]
+
+
+def test_week_pulse_uses_real_spread_of_weeks(monkeypatch):
+    """С перерассеянием недель (волны жалоб) умеренный обгон рынка — не «быстрее
+    рынка»; без волн тот же обгон значим (ревью 04.11.2026: при φ = 1 флаг горел
+    почти каждую неделю)."""
+    topics = [{"key": f"t{i}", "label": f"t{i}", "short": f"t{i}", "risk": "ops", "group": "g"} for i in range(8)]
+
+    def rows(wavy: bool):
+        b, m = {"_tw0": 200, "_tb": 1400}, {"_tw0": 3000, "_tb": 21000}
+        for i, t in enumerate(topics):
+            base = [4, 30, 6, 28, 5, 32, 5] if wavy else [15, 15, 15, 15, 15, 15, 15]
+            b.update({f"t{i}_w0": 40 if i == 0 else 15, f"t{i}_b": sum(base), f"t{i}_wk": [40 if i == 0 else 15, 15] + base})
+            m.update({f"t{i}_w0": 300, f"t{i}_b": 2100, f"t{i}_wk": [300, 300] + [300] * 7})
+        return b, m
+
+    monkeypatch.setattr(rd, "resolve_bank", lambda b: "Сбербанк")
+    for wavy, expect in ((False, True), (True, False)):
+        b, m = rows(wavy)
+        monkeypatch.setattr(rd, "_topic_week_counts", lambda bank, product, exclude_bank=None, b=b, m=m:
+                            (topics, m if exclude_bank else b))
+        d = {x["key"]: x for x in rd.week_pulse("Сбербанк")["diverge"]}
+        assert d["t0"]["faster_sig"] is expect, wavy

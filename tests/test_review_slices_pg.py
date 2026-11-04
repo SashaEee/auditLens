@@ -23,7 +23,7 @@ pytestmark = pytest.mark.skipif(not PG, reason="нужна живая база: 
 # индекс в тесте — только нужные срезам столбцы
 _INDEX = """
 DROP TABLE IF EXISTS review_slice_feedback, review_slice_active, review_slice, review_index,
-                     review_annotation CASCADE;
+                     review_annotation, review_slice_spend CASCADE;
 CREATE TABLE review_index (url text PRIMARY KEY, kind text, dt timestamptz, tsv tsvector,
                            channels text[], issue text, product text, bank text);
 CREATE TABLE review_annotation (url text, summary text, created_at timestamptz DEFAULT now());
@@ -39,7 +39,7 @@ def pg(monkeypatch):
     try:
         cur = raw.cursor()
         cur.execute(_INDEX)
-        for f in ("099_review_slices", "102_review_slices_registry"):
+        for f in ("099_review_slices", "102_review_slices_registry", "105_review_slice_spend"):
             cur.execute((ROOT / "migrations" / f"{f}.sql").read_text(encoding="utf-8"))
         raw.commit()
     finally:
@@ -114,10 +114,10 @@ def test_evidence_follows_active_version(pg):
     _slice("e2", "s6", ["us"], quote="банкомат съел карту")
     RS.apply_to_index()
     ev = RS.evidence_for(["e1", "e2", "нет такого"])
-    # field активен на s6 → основание s6 (общая цитата строки), svo — из s7, но
-    # цитата не сверилась с текстом — не показывается
+    # field активен на s6 → основание s6: цитата s6 с текстом не сверялась — её нет;
+    # svo — из s7, но цитата не сверилась с текстом — тоже не показывается
     e1 = {x["key"]: x for x in ev["e1"]}
-    assert e1["field"]["schema"] == "s6" and e1["field"]["quote"] == "курьер не приехал"
+    assert e1["field"]["schema"] == "s6" and e1["field"]["quote"] is None
     assert e1["svo"]["clause"] == "2" and e1["svo"]["quote"] is None
     assert [x["key"] for x in ev["e1"]] == ["field", "svo"]               # порядок реестра
     assert ev["e2"][0]["label"] == RS.LABELS["us"] and "нет такого" not in ev
@@ -186,9 +186,48 @@ def test_coverage_per_key(pg):
 def test_status_for_pulse(pg):
     _sql("INSERT INTO review_index (url, kind, dt, tsv) VALUES ('s1', 'complaint', now(), to_tsvector('russian', 'курьер'))")
     _slice("s1", "s6", ["field"])
-    RS.flag("s1", "field", "auditor1")
+    assert not RS.flag("s1", "field", "auditor1")          # в индексе среза ещё нет — отметку не берём
+    assert not RS.flag("https://evil.example/login", "field", "auditor1")
+    RS.apply_to_index()
+    assert RS.flag("s1", "field", "auditor1")
     st = RS.status()
     by = {k["key"]: k for k in st["keys"]}
     assert set(by) == set(RS.KEYS) and by["field"]["schema"] == "s6" and by["field"]["open_flags"] == 1
     assert by["field"]["gold"]["precision"] == RS.GOLD_0411["field"][0] and by["field"]["candidates"] == 1
     assert st["spend"]["s6"]["rows"] == 1
+
+
+def test_coverage_counts_current_schema_while_key_is_on_older_version(pg):
+    """Срез на s6, новые жалобы размечены только s7: индекс берёт s7 (_DESIRED), и
+    готовность их тоже считает — иначе срез пропадал из списка (ревью 04.11.2026)."""
+    _sql("""INSERT INTO review_index (url, kind, dt, tsv) VALUES
+            ('n1', 'complaint', now() - interval '1 day', to_tsvector('russian', 'курьер не приехал'))""")
+    _slice("n1", RS.SCHEMA, ["field"])
+    cov = RS.coverage(30)["keys"]["field"]
+    assert cov["schema"] == "s6" and cov["tagged"] == 1 and cov["ready"] is True
+
+
+def test_decide_twice_reports_already(pg):
+    _sql("INSERT INTO review_index (url, kind) VALUES ('d1', 'complaint')")
+    _slice("d1", "s6", ["us"])
+    RS.apply_to_index()
+    RS.flag("d1", "us", "auditor1")
+    fid = RS.open_flags()[0]["id"]
+    assert RS.decide_flag(fid, "kept", "team1")["decision"] == "kept"
+    got = RS.decide_flag(fid, "excluded", "team2")
+    assert got["already"] is True and _sql("SELECT slices FROM review_index WHERE url = 'd1'")[0][0] == ["us"]
+
+
+def test_daily_spend_is_a_ledger_not_moved_row_costs(pg):
+    """Суточный потолок — по журналу трат за сегодня; повтор вчерашней строки не
+    переносит её прошлые траты в сегодняшние (ревью 04.11.2026)."""
+    _sql("INSERT INTO review_slice (url, schema, tags, status, cost_rub, created_at) "
+         "VALUES ('y1', :s, '{}', 'failed', 500, now() - interval '1 day')", {"s": RS.SCHEMA})
+    _sql("INSERT INTO review_slice_spend (day, schema, rub) VALUES "
+         "((now() AT TIME ZONE 'Europe/Moscow')::date - 1, :s, 500)", {"s": RS.SCHEMA})
+    assert RS._spent(True) == 0
+    RS._log_spend(12.5)
+    RS._log_spend(7.5)
+    _sql("UPDATE review_slice SET cost_rub = cost_rub + 3, created_at = now() WHERE url = 'y1'")   # повтор
+    assert RS._spent(True) == 20 and RS._spent(False) == 503
+

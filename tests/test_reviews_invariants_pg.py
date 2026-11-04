@@ -121,3 +121,17 @@ def test_slice_product_counts_agree(pg):
         s.execute(text("UPDATE review_slice_active SET note = 'Срез давний', switched_at = now() - interval '90 days' "
                        "WHERE key = 'us'"))
     assert RD.products(B, 365, top=60)["slice_notes"] == {FIELD: "Срез стал строже"}
+
+
+def test_copy_counts_when_its_canonical_is_not_a_complaint(pg):
+    """Копия выпадает из чисел, только если её каноническая — жалоба: каноническую,
+    размеченную мусором или ещё не размеченную, заменяет копия (ревью 04.11.2026)."""
+    from sqlalchemy import text
+    per = RP.parse("90d")
+    assert {t["key"]: t["n"] for t in RD.themes(B, period=per)["themes"]}["chargeback"] == 10
+    with db.session() as s:
+        s.execute(text("UPDATE review_index SET kind = 'junk' WHERE url = 'https://r/0'"))
+    n = {t["key"]: t["n"] for t in RD.themes(B, period=per)["themes"]}["chargeback"]
+    assert n == 11                       # 9 своих + 2 копии, чья каноническая теперь мусор
+    assert RD.list_reviews_ex(B, theme="chargeback", period=per, limit=5)["total"] == 11
+

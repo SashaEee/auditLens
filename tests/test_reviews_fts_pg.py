@@ -81,6 +81,13 @@ def test_phrases_are_exact_and_all_required(pg):
     assert _urls(rows) == ["u1"]
     rows, _ = F.search_phrases(["навязали страховку", "эквайринг"])
     assert rows == []
+    rows, _ = F.search_phrases(["навязали страховку"], also="кредита")     # слово вне кавычек обязательно
+    assert _urls(rows) == ["u1"]
+    rows, _ = F.search_phrases(["навязали страховку"], also="ипотека")
+    assert rows == []
+    meta = {}
+    rows, _ = F.search_phrases(["не без"], also="выручку", _meta=meta)   # фраза из стоп-слов не глушит слово
+    assert _urls(rows) == ["u5", "u6"] and meta["stop_phrases"] == ["не без"]
     meta = {}
     rows, _ = F.search_phrases(["не без"], _meta=meta)            # одни стоп-слова
     assert rows == [] and meta["stop_phrases"] == ["не без"]
@@ -110,3 +117,11 @@ def test_expansion_variants_are_checked_like_the_search(pg):
     assert got["отказали в реструктуризации ипотеки"] == 1          # «отказал в реструктуризации ипотеки»
     assert got["правила дистанционного обслуживания"] == 0
     assert got["выручку"] == 1
+
+
+def test_minus_words_use_the_same_prefix_rule(pg, monkeypatch):
+    """«-зачислили» исключает и «зачисляют»: основа от 5 букв — начало слова, как в поиске."""
+    from bank_audit.rag import reviews_dash as RD
+    got = RD._excluded(["u5", "u6", "u3"], ["зачислили"])
+    assert got == {"u5", "u6"}
+

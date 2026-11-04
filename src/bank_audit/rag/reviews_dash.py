@@ -262,7 +262,14 @@ def _bank_clause(bank_canon, product):
 # Жалоба = отзыв, который разметка отнесла к претензиям, и не копия другого отзыва:
 # автор пишет одну историю на нескольких площадках — это одна жалоба (rag/review_dedup,
 # review_index.dup_of; с 04.11.2026, до того копии между площадками считались дважды)
-_CMP = "(i.kind IN ('complaint', 'mixed') AND i.dup_of IS NULL)"
+# Копия выпадает, только если её каноническая сама считается жалобой: каноническую
+# могли разметить как мусор (сбой чтения текста), вопрос или ещё не разметить — тогда
+# жалобу несёт копия (ревью 04.11.2026: иначе такая жалоба пропадала из всех чисел).
+_CANON_CMP = ("EXISTS (SELECT 1 FROM review_index c WHERE c.url = {a}.dup_of"
+              " AND c.kind IN ('complaint', 'mixed'))")
+_CMP = ("(i.kind IN ('complaint', 'mixed') AND (i.dup_of IS NULL OR NOT "
+        + _CANON_CMP.format(a="i") + "))")
+_CANON_CMP_F = _CANON_CMP.format(a="f")
 
 
 def _ann_schema() -> str:
@@ -1457,6 +1464,9 @@ def export_rows(bank: str, product: str | None = None, theme: str | None = None,
     if q and q.strip():
         got = search_set(q, bc, theme=theme, esc=esc, product=product, flag=flag, source=source,
                          city=city, month=month, days=days, period=period)
+        if got["meta"].get("failed") or got["meta"].get("words_failed"):
+            # пустой или неполный файл выглядел бы как «жалоб нет» (ревью 04.11.2026)
+            raise SearchFailed("поиск не отработал")
         order = [r["url"] for r in got["rows"]][:p["lim"]]
         extra += " AND i.url = ANY(:urls)"
         p["urls"] = order or ["-"]
@@ -1465,7 +1475,7 @@ def export_rows(bank: str, product: str | None = None, theme: str | None = None,
             SELECT i.url, i.review_id, i.source, i.bank, i.product, i.dt, i.city, i.rating,
                    i.issue, i.issues2, a.kind, a.esc, a.esc_to, a.no_consent, a.misled,
                    a.vulnerable, a.amount, a.event_date, a.code_fit, a.new_topic,
-                   a.summary, a.quote, a.url AS a_url
+                   a.summary, a.quote, i.kind AS ikind
             FROM review_index i
             LEFT JOIN review_annotation a ON a.url = i.url AND a.schema_version = :sv
             WHERE i.bank = :bank
@@ -1506,7 +1516,8 @@ def export_rows(bank: str, product: str | None = None, theme: str | None = None,
             "срез и основание": "; ".join(
                 x["label"] + (f" · п. {x['clause']}" if (x.get("clause") or "").isdigit() else "")
                 + (f" — «{x['quote']}»" if x.get("quote") else "") for x in sl.get(r["url"], [])),
-            "разметка": "" if r["a_url"] else "на разметке",
+            # как в ленте: неразмеченная — без вида текста в индексе (в т.ч. разметка не удалась)
+            "разметка": "" if r["ikind"] else "на разметке",
             "ссылка": r["url"],
             "текст": (bodies.get(r["url"]) or {}).get("text") or "",
         })
@@ -1712,7 +1723,8 @@ def _urls_by_topic(key: str, bank: str, product: str | None, *, days: int | None
     with db.session() as s:
         return list(s.execute(text(f"""
             SELECT f.url FROM review_index f
-            WHERE f.issue = :key AND f.kind IN ('complaint', 'mixed') AND f.dup_of IS NULL AND f.bank = :bank
+            WHERE f.issue = :key AND f.kind IN ('complaint', 'mixed')
+              AND (f.dup_of IS NULL OR NOT {_CANON_CMP_F}) AND f.bank = :bank
               AND (CAST(:product AS text) IS NULL OR al_product_is(f.product, f.slices, :product)){extra}
             ORDER BY f.dt DESC LIMIT :lim
         """), p).scalars().all())
@@ -1841,6 +1853,10 @@ def list_reviews(bank: str, product: str | None = None, theme: str | None = None
 # «Любое из слов» как определение не годится: «переводы самому себе» — 6 523
 # жалобы Сбера. Порог по косинусу тоже (мусор бывает «ближе» верного), поэтому
 # смысловая часть ограничена числом, а не расстоянием.
+class SearchFailed(RuntimeError):
+    """Поиск не отработал (сбой базы): выгрузка не должна молча отдать пустой список."""
+
+
 SENSE_CAP = int(os.getenv("REVIEWS_SEARCH_SENSE_CAP", "20"))
 _WORD_RX = re.compile(r"[0-9A-Za-zА-Яа-яЁё]{2,}")
 _SET_TTL = 600
@@ -1876,7 +1892,7 @@ def _excluded(urls: list[str], words: list[str]) -> set[str]:
         if not lex:
             return set()
         tq = " | ".join("'" + bankiru_fts.stem_key(x).replace("'", "''") + "'"
-                        + (":*" if len(x) > bankiru_fts.PREFIX else "") for x in lex)
+                        + (":*" if len(x) >= bankiru_fts._PREFIX_MIN else "") for x in lex)
         return set(s.execute(text("""SELECT url FROM review_index WHERE url = ANY(:u)
                                       AND tsv @@ to_tsquery(CAST('simple' AS regconfig), :tq)"""),
                              {"u": urls, "tq": tq}).scalars().all())
@@ -1985,7 +2001,12 @@ def _verify_sense(query: str, rows: list[dict]) -> tuple[list[dict], bool]:
     if sc is not None:
         order = sorted(range(len(rows)), key=lambda k: -sc[k])
         rows = [dict(rows[k], sense_score=round(sc[k], 3)) for k in order if sc[k] >= _SENSE_RR_MIN]
-    todo = [r for r in rows if (query, r["url"]) not in _SENSE_OK]
+    if len(_SENSE_OK) > 20000:
+        _SENSE_OK.clear()          # до записи: очистка между записью и чтением теряла вердикты
+    # вердикты из кэша — сразу в свой словарь: общий кэш может очистить параллельный запрос
+    verdicts: dict[str, bool] = {r["url"]: v for r in rows
+                                 if (v := _SENSE_OK.get((query, r["url"]))) is not None}
+    todo = [r for r in rows if r["url"] not in verdicts]
     ok_model = True
     if todo:
         parts = [todo[k:k + _SENSE_BATCH] for k in range(0, len(todo), _SENSE_BATCH)]
@@ -1998,10 +2019,10 @@ def _verify_sense(query: str, rows: list[dict]) -> tuple[list[dict], bool]:
                 continue
             for r, v in zip(part, verdict):
                 _SENSE_OK[(query, r["url"])] = v
-    if len(_SENSE_OK) > 20000:
-        _SENSE_OK.clear()
+                verdicts[r["url"]] = v
     if ok_model:
-        return [r for r in rows if _SENSE_OK.get((query, r["url"]))], True
+        # свои вердикты — из локального словаря: общий кэш мог очистить параллельный запрос
+        return [r for r in rows if verdicts.get(r["url"])], True
     if sc is not None:                     # модель не ответила — решает порог реранкера
         return [r for r in rows if r.get("sense_score", 0) >= _SENSE_RR_KEEP], True
     return rows, False
@@ -2062,6 +2083,12 @@ def search_set(q: str, bc: str | None, *, theme: str | None = None, esc: bool = 
     # месяц событий и неделя всплеска — фильтр по индексу (_keep_urls), не окно поиска
     ev_month = month if (month or "").startswith(("ev:", "sig:")) else None
     plain_month = None if ev_month else month
+    sg = _SIG_RX.match(month or "")
+    if sg:
+        # неделя всплеска — и окно поиска: иначе слова искались по всей истории, верхние
+        # NEAR_CAP по рангу отрезали жалобы самой недели ещё до фильтра (ревью 04.11.2026)
+        d0 = _dt.date.fromisoformat(sg.group(1)) - _dt.timedelta(days=6)
+        since = max(1, (_dt.date.today() - d0).days + 1)
     # верхушка слияния слов и смысла (RRF) — порядок и смысловые кандидаты
     head = search_reviews(pq["text"], bank=bc, product=None, since_days=since, theme_rx=None,
                           city=city, month=plain_month, k=60, strict=True, _meta=meta)
@@ -2080,7 +2107,9 @@ def search_set(q: str, bc: str | None, *, theme: str | None = None, esc: bool = 
         if pq["phrases"]:
             # точные фразы: жалоба должна содержать каждую (как в поисковиках)
             words, capped = bankiru_fts.search_phrases(pq["phrases"], bank=bc, city=city,
-                                                       month=plain_month, since_ts=since_ts, _meta=wmeta)
+                                                       month=plain_month, since_ts=since_ts,
+                                                       also=" ".join(_rq.base_terms(pq["plain"]))
+                                                       if pq["plain"].strip() else None, _meta=wmeta)
             groups = [p.split() for p in pq["phrases"]]
         else:
             base = _rq.base_terms(pq["plain"])
@@ -2489,7 +2518,7 @@ def segment_profile(bank: str, product: str | None = None, city: str | None = No
         flagged = any(c["city"] == city and c.get("anomaly") for c in g.get("cities") or [])
     else:
         t = trend(bank, product, basis="event" if ev else "pub") or {}
-        flagged = any(x.get("ym") == p["month"] and x.get("spike") for x in t.get("series") or [])
+        flagged = any(x.get("ym") == p.get("month") and x.get("spike") for x in t.get("series") or [])
     return {"n": n_seg, "base_n": n_base, "base_label": base_label, "rows": out[:8],
             "flagged": bool(flagged)}
 
@@ -2788,6 +2817,16 @@ def week_pulse(bank: str, product: str | None = None) -> dict | None:
     mrow = mlab[1] if mlab else None
     BASE_W = 7.0
     diverge = []
+    # разброс недель (перерассеяние) — общий по всем темам банка и рынка: жалобы идут
+    # волнами, и тест доли с φ = 1 на волнах давал «быстрее рынка» почти каждую неделю
+    # (ревью 04.11.2026: на нулевой модели с φ = 2 — в 47% недель)
+    def _phi(row) -> float:
+        if row is None:
+            return 1.0
+        ser = [list(row.get(f'{t["key"]}_wk') or [])[2:9] for t in theme_defs]
+        ser = [x for x in ser if len(x) == 7]
+        return max(1.0, _RS.pooled_overdispersion(ser)) if ser else 1.0
+    phi_b, phi_m = _phi(brow), _phi(mrow)
     for t in theme_defs:
         k = t["key"]
         w0, b = int(brow[f"{k}_w0"]), int(brow[f"{k}_b"])
@@ -2805,7 +2844,8 @@ def week_pulse(bank: str, product: str | None = None) -> dict | None:
         # «быстрее рынка» — точный условный тест доли банка (банк/рынок × неделя/база),
         # а не отношение двух отношений: прежнее «×1,3 быстрее рынка» на малых числах
         # было шумом. «По рынку мало данных» — отдельный вывод, не «рынок ровный».
-        v = (_RS.market_verdict(w0, int(mrow[f"{k}_w0"]), b, int(mrow[f"{k}_b"]), k=1 / BASE_W)
+        v = (_RS.market_verdict(w0, int(mrow[f"{k}_w0"]), b, int(mrow[f"{k}_b"]), k=1 / BASE_W,
+                                phi=phi_b, phi_market=phi_m)
              if mrow is not None else None)
         diverge.append({
             "key": k, "label": t["label"], "short": t["short"],
@@ -2816,7 +2856,10 @@ def week_pulse(bank: str, product: str | None = None) -> dict | None:
             "p": round(p, 5), "sig": p < PULSE_ALPHA / max(len(theme_defs), 1),
             "ratio": round(ratio, 2),
             "market_ratio": round(mratio, 2) if mratio else None,
-            "gap": round(v["gap"], 2) if v and v.get("gap") else (round(gap, 2) if gap else None),
+            # без данных по рынку отношения нет: иначе потребители с порогом gap ≥ 1,15
+            # показывали «быстрее рынка ×15» по теме, где у рынка ноль недель
+            "gap": (round(v["gap"], 2) if v and v.get("gap") and v["claim"] != "market_unknown"
+                    else (None if v else (round(gap, 2) if gap else None))),
             "gap_lo": round(v["gap_lo"], 2) if v and v.get("gap_lo") else None,
             "market_claim": v["claim"] if v else "market_unknown",
             "market_p": v["p"] if v else None,

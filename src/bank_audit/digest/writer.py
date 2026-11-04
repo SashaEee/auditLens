@@ -667,7 +667,9 @@ def _codes_evidence(codes: list[str]) -> dict | None:
         with db.session() as s:
             d90 = int(s.execute(text("""
                 SELECT count(*) FROM review_index
-                WHERE bank = 'Сбербанк' AND kind IN ('complaint', 'mixed') AND dup_of IS NULL AND issue = ANY(:c)
+                WHERE bank = 'Сбербанк' AND kind IN ('complaint', 'mixed') AND (dup_of IS NULL OR NOT EXISTS (
+                      SELECT 1 FROM review_index c WHERE c.url = review_index.dup_of
+                         AND c.kind IN ('complaint', 'mixed'))) AND issue = ANY(:c)
                   AND dt >= now() - interval '90 days' AND dt <= now()"""), {"c": codes}).scalar() or 0)
         if not d90:
             return None

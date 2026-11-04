@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 eee4e0da4b44735929ff99cdd980b63e1c882fc634f30ca0c05460edc2f61252): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 f37b47ad83b850a30c626ce93e97dbf304a2e6c660a3736df11523938770a8f3): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -5204,14 +5204,18 @@ function OverviewPage() {
   // «Исполнительным документам» (9 при норме 4,0, P≈0,02 на 40 проблем), а
   // лид рядом писал «остальное в пределах нормы» (аудит 03.10, согласовано).
   const nTh = pulse.checked && pulse.checked.themes || head.stats && head.stats.checked_themes || 40;
-  const dvAll = (pulse.diverge || []).filter(d => d.gap != null && d.gap >= 1.15);
+  // «обгоняет рынок» — по тесту доли (faster_sig, с 04.11.2026); в старых выпусках
+  // поля нет — там прежнее правило по отношению ростов
+  const newMethod = (pulse.diverge || []).some(d => d.faster_sig != null); // выпуск с тестом доли
+  const fasterOf = d => newMethod ? !!d.faster_sig : d.gap != null && d.gap >= 1.15;
+  const dvAll = (pulse.diverge || []).filter(fasterOf);
   const gapOf = x => x.gap != null ? x.gap : x.ratio && x.market_ratio ? x.ratio / x.market_ratio : null;
   const sigTop = (pulse.signals || []).map(x => ({
     ...x,
     ...((pulse.diverge || []).find(d => d.key === x.key) || {}),
     gap: gapOf((pulse.diverge || []).find(d => d.key === x.key) || x),
     confirmed: true
-  })).find(x => x.gap != null && x.gap >= 1.15) || null;
+  })).find(fasterOf) || null;
   const dv0 = sigTop || dvAll[0] || null;
   const dv = dv0 && {
     ...dv0,
@@ -8651,6 +8655,9 @@ function RvPassport({
 // «Не относится» не снимает срез сразу — отметку проверяет команда, иначе один
 // клик менял бы числа у всех.
 const rvSliceWhy = x => [x.clause && /^\d$/.test(x.clause) ? `п. ${x.clause} определения` : null, x.quote ? `«${x.quote}»` : null].filter(Boolean).join(" — ") || "срез по разметке модели";
+// отправленные в этой вкладке отметки: лента не перечитывается с сервера, и без памяти
+// кнопка возвращалась после перехода J/K — повтор слал команде ещё одно уведомление
+const RV_FLAGGED = new Set();
 function RvSlices({
   r
 }) {
@@ -8674,6 +8681,7 @@ function RvSlices({
         note: note.trim() || null
       })
     }).then(() => {
+      RV_FLAGGED.add(r.url + "|" + key);
       setSent(o => ({
         ...o,
         [key]: 1
@@ -8681,7 +8689,7 @@ function RvSlices({
       setOpen(null);
       setNote("");
       fbToast("Отметка у команды: если жалоба не относится, уберём её из среза", false);
-    }).catch(() => fbToast("Не получилось отправить — попробуйте ещё раз", true));
+    }).catch(() => fbToast("Не получилось отправить — попробуйте ещё раз", false));
   };
   return /*#__PURE__*/React.createElement("span", {
     className: "rv-sl"
@@ -8692,7 +8700,7 @@ function RvSlices({
     className: "rv-sl-l"
   }, x.label), (x.clause || x.quote) && /*#__PURE__*/React.createElement("span", {
     className: "rv-sl-why"
-  }, x.clause && /^\d$/.test(x.clause) ? /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 \u043F. ", x.clause) : null, x.quote ? /*#__PURE__*/React.createElement(React.Fragment, null, " \u2014 \xAB", x.quote, "\xBB") : null), sent[x.key] || x.flagged > 0 ? /*#__PURE__*/React.createElement("span", {
+  }, x.clause && /^\d$/.test(x.clause) ? /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 \u043F. ", x.clause) : null, x.quote ? /*#__PURE__*/React.createElement(React.Fragment, null, " \u2014 \xAB", x.quote, "\xBB") : null), sent[x.key] || x.flagged > 0 || RV_FLAGGED.has(r.url + "|" + x.key) ? /*#__PURE__*/React.createElement("span", {
     className: "rv-dim"
   }, " \xB7 \u043E\u0442\u043C\u0435\u0447\u0435\u043D\u043E \xAB\u043D\u0435 \u043E\u0442\u043D\u043E\u0441\u0438\u0442\u0441\u044F\xBB, \u043D\u0430 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0435") : open === x.key ? /*#__PURE__*/React.createElement("span", {
     className: "rv-sl-f"
@@ -8705,7 +8713,10 @@ function RvSlices({
     onChange: e => setNote(e.target.value),
     onKeyDown: e => {
       if (e.key === "Enter") send(x.key);
-      if (e.key === "Escape") setOpen(null);
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setOpen(null);
+      }
     }
   }), /*#__PURE__*/React.createElement("button", {
     className: "rv-lnkb",
@@ -10246,9 +10257,10 @@ function ReviewsPage({
     if (escOnly) sp.set("esc", "1");
     if (fCity) sp.set("city", fCity);
     if (fSrc) sp.set("source", fSrc);
+    if (fWeek) sp.set("month", fWeek); // неделя всплеска переживает F5 и ссылку
     const qs = sp.toString();
     history.replaceState(null, "", "#reviews" + (qs ? "?" + qs : ""));
-  }, [tab, bank, product, perKey, theme, flag, escOnly, fCity, fSrc]);
+  }, [tab, bank, product, perKey, theme, flag, escOnly, fCity, fSrc, fWeek]);
   // адрес → состояние: ссылка #reviews?… при уже открытой странице (своё
   // зеркалирование идёт через replaceState и сюда не попадает)
   const paramsKey = JSON.stringify(P),
@@ -10428,7 +10440,7 @@ function ReviewsPage({
   useEffect(() => {
     if (fView !== "groups") return;
     setClBusy(true);
-    apiFetch(`/api/reviews/clusters?bank=${enc(bank)}${pq()}${perQ}${theme ? `&theme=${theme}` : ""}` + `${flag ? `&flag=${enc(flag)}` : ""}${fCity ? `&city=${enc(fCity)}` : ""}${fSrc ? `&source=${fSrc}` : ""}${escOnly ? "&esc=1" : ""}`).then(d => {
+    apiFetch(`/api/reviews/clusters?bank=${enc(bank)}${pq()}${perQ}${fWeek ? `&month=${enc(fWeek)}` : ""}${theme ? `&theme=${theme}` : ""}` + `${flag ? `&flag=${enc(flag)}` : ""}${fCity ? `&city=${enc(fCity)}` : ""}${fSrc ? `&source=${fSrc}` : ""}${escOnly ? "&esc=1" : ""}`).then(d => {
       setCl(d);
       setClBusy(false);
     }).catch(() => {
@@ -10437,7 +10449,7 @@ function ReviewsPage({
       });
       setClBusy(false);
     });
-  }, [fView, bank, product, perKey, theme, flag, fCity, fSrc, escOnly]);
+  }, [fView, bank, product, perKey, theme, flag, fCity, fSrc, escOnly, fWeek]);
 
   // радар срочных аномалий — грузится ОТДЕЛЬНО (LLM), не блокирует дашборд
   useEffect(() => {
@@ -11786,7 +11798,7 @@ function ReviewsPage({
     n: 6,
     h: 104,
     gap: 14
-  }) : feedErr ? /*#__PURE__*/React.createElement(EmptyState, {
+  }) : feedErr || q && feedMeta && (feedMeta.failed || feedMeta.words_failed) && !(feed && feed.length) ? /*#__PURE__*/React.createElement(EmptyState, {
     title: feedErr === "unknown_bank" ? "Банка нет в корпусе" : q ? "Поиск не отработал" : "Лента не загрузилась",
     text: feedErr === "unknown_bank" ? "Отзывов по этому банку у нас нет — выберите другой банк в списке выше." : feedErr === "network" ? "Не удалось получить ответ сервера. Обновите страницу или повторите запрос." : "Запрос к корпусу отзывов не выполнился — это сбой, а не отсутствие жалоб по теме. Повторите; если повторяется, сообщите нам."
   }) : !feed || !feed.length ? /*#__PURE__*/React.createElement(EmptyState, {
@@ -22213,7 +22225,10 @@ function PuSliceFlags({
     }).then(() => {
       fbToast(decision === "excluded" ? "Жалоба убрана из среза" : "Срез оставлен", false);
       load();
-    }).catch(() => fbToast("Не получилось — попробуйте ещё раз", true)).finally(() => setBusy(0));
+    }).catch(e => {
+      fbToast(/409/.test(String(e && e.message || e)) ? "По этой отметке уже решили — список обновлён" : "Не получилось — попробуйте ещё раз", false);
+      load();
+    }).finally(() => setBusy(0));
   };
   return /*#__PURE__*/React.createElement("div", {
     className: "pu-card",
@@ -22237,11 +22252,13 @@ function PuSliceFlags({
     style: {
       maxWidth: 320
     }
-  }, /*#__PURE__*/React.createElement("a", {
+  }, /^https?:\/\//.test(x.url || "") ? /*#__PURE__*/React.createElement("a", {
     href: x.url,
     target: "_blank",
     rel: "noopener noreferrer"
-  }, [x.bank, x.date].filter(Boolean).join(" · ") || "открыть"), x.summary && /*#__PURE__*/React.createElement("div", {
+  }, [x.bank, x.date].filter(Boolean).join(" · ") || "открыть") : /*#__PURE__*/React.createElement("span", {
+    className: "t-cap"
+  }, x.url), x.summary && /*#__PURE__*/React.createElement("div", {
     className: "t-cap"
   }, x.summary)), /*#__PURE__*/React.createElement("td", {
     style: {

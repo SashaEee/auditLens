@@ -86,7 +86,7 @@ _CL_ON_FLY = 160      # сколько векторов досчитать пр�
 def clusters(bank: str, product: str | None = None, days: int = 90,
              theme: str | None = None, flag: str | None = None, city: str | None = None,
              source: str | None = None, esc: bool = False, limit: int = 2500,
-             period=None) -> dict | None:
+             period=None, month: str | None = None) -> dict | None:
     """Похожие жалобы группами: число, главная проблема, пример и ссылки.
 
     Берутся последние `limit` жалоб с фильтрами ленты. Группа — жалобы, чьи
@@ -96,16 +96,17 @@ def clusters(bank: str, product: str | None = None, days: int = 90,
     if not bc:
         return None
     per = rd._per(period, days, product)
-    key = f"cl:{bc}:{product}:{per.key}:{theme}:{flag}:{city}:{source}:{esc}:{limit}"
+    key = f"cl:{bc}:{product}:{per.key}:{theme}:{flag}:{city}:{source}:{esc}:{limit}:{month}"
     return rd._cached(key, lambda: _clusters(bc, product, per, theme, flag, city, source,
-                                             esc, limit), ttl=1800)
+                                             esc, limit, month), ttl=1800)
 
 
-def _clusters(bc, product, per, theme, flag, city, source, esc, limit) -> dict:
+def _clusters(bc, product, per, theme, flag, city, source, esc, limit, month=None) -> dict:
     import numpy as np
     p: dict = {"bank": bc, "product": product, "lim": limit, "sv": rd._ann_schema()}
     extra = rd._source_clause("i", source, p) or ""
-    extra += rd._win_clause("i", None, per, p)
+    # неделя всплеска (month=sig:…) задаёт своё окно — как в ленте
+    extra += rd._month_clause("i", month, p) if month else rd._win_clause("i", None, per, p)
     fcond = rd._flag_sql(flag)
     if fcond:
         extra += f" AND {fcond}"
@@ -487,7 +488,7 @@ def subs_status(username: str) -> list[dict]:
         if not signals:
             wp = rd.week_pulse(bank, product or None) or {}
             watch = [{k: d.get(k) for k in ("key", "label", "short", "week", "gap")}
-                     for d in (wp.get("diverge") or []) if (d.get("gap") or 0) >= 1.15][:2]
+                     for d in (wp.get("diverge") or []) if d.get("faster_sig")][:2]
         out.append({"bank": bank, "product": product or None,
                     "since": created.isoformat() if created else None,
                     "signals": signals, "watch": watch, "week_end": sig.get("week_end")})

@@ -294,7 +294,9 @@ def _edges(docs: list[_Doc], *, window_days: int, threshold: float,
     return edges
 
 
-def _decide(docs: list[_Doc], edges: dict[int, dict[int, float]]) -> dict[int, tuple[str, float]]:
+def _decide(docs: list[_Doc], edges: dict[int, dict[int, float]],
+            cross_source_only: bool = False,
+            src_extra: dict[str, str] | None = None) -> dict[int, tuple[str, float]]:
     """{номер копии: (адрес канонической, jaccard)} для незакреплённых строк.
 
     1. Строка, похожая на уже решённую (закреплённую), идёт к ней: к самой строке,
@@ -309,6 +311,23 @@ def _decide(docs: list[_Doc], edges: dict[int, dict[int, float]]) -> dict[int, t
     order = sorted(range(len(docs)), key=lambda k: _rank(docs[k]))
     out: dict[int, tuple[str, float]] = {}
     taken: set[int] = set()
+    # Только между площадками: у истории одна копия на площадку — автор переносит свой
+    # отзыв, а не пишет его пять раз. Пять почти одинаковых отзывов на sravni рядом с
+    # одним на banki.ru — пять человек по шаблону, к канонической уходит только одна
+    # (ревью 04.11.2026: все пять получали dup_of, и считалась одна жалоба).
+    # площадки канонических вне окна прохода — из индекса (src_extra), иначе неизвестны
+    src_of = {**(src_extra or {}), **{d.url: d.source for d in docs}}
+    has: dict[str, set[str]] = defaultdict(set)    # каноническая → площадки её копий
+    for d in docs:
+        if d.locked and d.cur:
+            has[d.cur].add(d.source)
+
+    def room(target: str, source: str) -> bool:
+        # площадка канонической неизвестна (она вне окна прохода) — не цепляем: иначе
+        # строка могла склеиться со своей же площадкой через закреплённую копию
+        src = src_of.get(target)
+        return not cross_source_only or (src is not None and source != src and source not in has[target])
+
     for u in order:
         d = docs[u]
         if d.locked:
@@ -319,21 +338,23 @@ def _decide(docs: list[_Doc], edges: dict[int, dict[int, float]]) -> dict[int, t
             if not dv.locked:
                 continue
             target = dv.cur or dv.url
-            if target == d.url:
-                continue                               # закреплённая копия этой самой строки
+            if target == d.url or not room(target, d.source):
+                continue                               # своя копия или у истории уже есть копия отсюда
             if best is None or _rank(dv) < _rank(docs[best[0]]):
                 best = (v, target, jv)
         if best:
             out[u] = (best[1], best[2])
+            has[best[1]].add(d.source)
             taken.add(u)
     for c in order:
         if c in taken or docs[c].locked:
             continue
         taken.add(c)
         for v in sorted(edges.get(c, {}), key=lambda k: _rank(docs[k])):
-            if v in taken or docs[v].locked:
+            if v in taken or docs[v].locked or not room(docs[c].url, docs[v].source):
                 continue
             out[v] = (docs[c].url, edges[c][v])
+            has[docs[c].url].add(docs[v].source)
             taken.add(v)
     # Каноническая из шага 1 могла сама стать копией на шаге 2 — ведём к корню,
     # чтобы dup_of всегда указывала на строку с пустой dup_of.
@@ -361,7 +382,7 @@ def _find(rows: Iterable[dict], *, window_days: int, threshold: float,
             docs.append(d)
     edges = _edges(docs, window_days=window_days, threshold=threshold,
                    cross_source_only=cross_source_only)
-    return docs, _decide(docs, edges)
+    return docs, _decide(docs, edges, cross_source_only)
 
 
 def find_dups(rows: Iterable[dict], *, window_days: int = WINDOW_DAYS, threshold: float = THRESHOLD,
@@ -536,7 +557,15 @@ def _bank_pass(bank: str, *, since: datetime, lo: datetime, window_days: int, th
         docs.append(d)
     edges = _edges(docs, window_days=window_days, threshold=threshold,
                    cross_source_only=cross_source_only)
-    out = _decide(docs, edges)
+    known = {d.url for d in docs}
+    curs = sorted({d.cur for d in docs if d.cur and d.cur not in known})
+    src_extra: dict[str, str] = {}
+    if curs and cross_source_only:
+        with db.session() as s:
+            src_extra = {u: (src or CANON_SOURCE) for u, src in s.execute(
+                text("SELECT url, source FROM review_index WHERE url IN :u").bindparams(
+                    bindparam("u", expanding=True)), {"u": curs}).all()}
+    out = _decide(docs, edges, cross_source_only, src_extra)
     src = {d.url: d.source for d in docs}
     for k, d in enumerate(docs):
         if d.locked:

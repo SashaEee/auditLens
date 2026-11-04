@@ -315,7 +315,13 @@ async def _process(ca: RA.Caller, items: list[dict]) -> tuple[list[dict], float]
     for k, x in enumerate(items):
         a = ra.get(k)
         if a is None:
-            continue                      # A не ответила — отзыв уйдёт в следующий прогон
+            # A не ответила — строка failed с её долей трат: повторится следующим прогоном,
+            # а деньги попадут в суточный потолок (иначе тот же пакет оплачивался каждый
+            # час мимо потолка, ревью 04.11.2026)
+            rows.append({"url": x["url"], "schema": SCHEMA, "tags": [], "status": "failed",
+                         "a": None, "b": None, "arb": None, "evidence": None, "quote": "",
+                         "rub": round(share, 4)})
+            continue
         b = rb.get(k) if k in need_b else None
         if k in need_b and b is None:
             status_b = "b_missing"
@@ -337,15 +343,40 @@ async def _process(ca: RA.Caller, items: list[dict]) -> tuple[list[dict], float]
     if rows:
         with db.session() as s:
             s.execute(_UPSERT, rows)
+    _log_spend(rub)
     return rows, rub
 
 
+_TODAY = "(now() AT TIME ZONE 'Europe/Moscow')::date"
+
+
 def _spent(today: bool) -> float:
+    """Траты версии: всего (по строкам) или за сегодня по Москве (по журналу трат —
+    review_slice_spend, миграция 105; без него — как раньше, по строкам)."""
     with db.session() as s:
+        if today:
+            try:
+                return float(s.execute(text(f"""SELECT coalesce(sum(rub), 0) FROM review_slice_spend
+                                                WHERE schema = :v AND day = {_TODAY}"""),
+                                       {"v": SCHEMA}).scalar() or 0)
+            except Exception:  # noqa: BLE001 — миграция ещё не накатана
+                s.rollback()
         return float(s.execute(text(
             "SELECT coalesce(sum(cost_rub), 0) FROM review_slice WHERE schema = :v"
             + (" AND created_at >= date_trunc('day', now() AT TIME ZONE 'Europe/Moscow')"
                " AT TIME ZONE 'Europe/Moscow'" if today else "")), {"v": SCHEMA}).scalar() or 0)
+
+
+def _log_spend(rub: float) -> None:
+    if rub <= 0:
+        return
+    try:
+        with db.session() as s:
+            s.execute(text(f"""INSERT INTO review_slice_spend (day, schema, rub) VALUES ({_TODAY}, :v, :r)
+                               ON CONFLICT (day, schema) DO UPDATE SET rub = review_slice_spend.rub + EXCLUDED.rub"""),
+                      {"v": SCHEMA, "r": round(rub, 4)})
+    except Exception:  # noqa: BLE001 — журнал трат не должен ронять разметку
+        log.warning("срезы: траты не записались в журнал", exc_info=True)
 
 
 def _todo(limit: int, urls: list[str] | None = None) -> list[dict]:
@@ -518,6 +549,10 @@ def coverage(days: int = 365) -> dict:
     """Готовность каждого среза: доля размеченных его кандидатов в активной версии за
     окно. Пока разметка не догнала (массовый прогон, новая версия), срез в списке
     продуктов не показывается: недоразмеченный срез показал бы заниженные числа.
+    Размеченным считается кандидат с годной строкой активной версии или текущей SCHEMA —
+    той, что пишет разметка: пока срез на прежней версии, новые жалобы получают строки
+    только новой, и индекс берёт их (_DESIRED); без этого готовность падала день за днём
+    и срез пропадал из списка (ревью 04.11.2026).
     Возвращает {"ready": все ли готовы, "keys": {срез: {candidates, tagged, share, ready}}}."""
     act = active()
     keys: dict[str, dict] = {}
@@ -525,12 +560,12 @@ def coverage(days: int = 365) -> dict:
         for key in KEYS:
             n, tagged = s.execute(text(f"""
                 SELECT count(*), count(*) FILTER (WHERE EXISTS (
-                           SELECT 1 FROM review_slice s WHERE s.url = i.url AND s.schema = :v
+                           SELECT 1 FROM review_slice s WHERE s.url = i.url AND s.schema IN (:v, :cur)
                               AND s.status NOT IN ('failed', 'failed_tie', 'b_missing')))
                   FROM review_index i
                  WHERE i.kind IN ('complaint', 'mixed') AND i.dt >= now() - make_interval(days => :d)
                    AND i.dt <= now() AND i.dt >= CAST(:since AS timestamp) AND {_key_candidates(key)}"""),
-                {"v": act[key], "d": days, "since": SINCE}).one()
+                {"v": act[key], "cur": SCHEMA, "d": days, "since": SINCE}).one()
             share = (tagged / n) if n else 1.0
             keys[key] = {"candidates": int(n), "tagged": int(tagged), "share": round(share, 4),
                          "ready": share >= READY_SHARE, "schema": act[key]}
@@ -555,7 +590,7 @@ def evidence_for(urls: list[str]) -> dict[str, list[dict]]:
             # её нет у отзыва — из самой свежей, где срез стоит
             rows = s.execute(text("""
                 SELECT DISTINCT ON (i.url, k.key) i.url, k.key, s.schema,
-                       s.evidence -> k.key AS ev, s.quote,
+                       s.evidence -> k.key AS ev, s.quote, s.tags,
                        (SELECT count(*) FROM review_slice_feedback f
                          WHERE f.url = i.url AND f.key = k.key AND f.decision IS NULL) AS flagged
                   FROM review_index i
@@ -573,8 +608,8 @@ def evidence_for(urls: list[str]) -> dict[str, list[dict]]:
     for r in rows:
         ev = r["ev"] if isinstance(r["ev"], dict) else {}
         quote = ev.get("quote") if ev.get("quote_ok") else None
-        if r["schema"] == "s6" and not quote:
-            quote = r["quote"] or None
+        # у s6 цитата одна на строку и с текстом не сверялась (fix_quote появился в s7):
+        # дословным основанием её не показываем — только пункт и цитату s7
         out.setdefault(r["url"], []).append({
             "key": r["key"], "label": LABELS.get(r["key"], r["key"]), "schema": r["schema"],
             "clause": ev.get("clause") or None, "quote": quote, "flagged": int(r["flagged"] or 0)})
@@ -589,6 +624,12 @@ def flag(url: str, key: str, username: str, note: str | None = None) -> bool:
     if key not in KEYS or not url or not username:
         return False
     with db.session() as s:
+        # отметка — только к жалобе из индекса, у которой этот срез стоит: адрес приходит
+        # от пользователя и потом показывается команде ссылкой (ревью 04.11.2026)
+        ok = s.execute(text("SELECT 1 FROM review_index WHERE url = :u AND :k = ANY(coalesce(slices, '{}'))"),
+                       {"u": url, "k": key}).first()
+        if not ok:
+            return False
         s.execute(text("""
             INSERT INTO review_slice_feedback (url, key, username, note) VALUES (:u, :k, :n, :c)
             ON CONFLICT (url, key, username) DO UPDATE SET note = coalesce(EXCLUDED.note, review_slice_feedback.note),
@@ -632,10 +673,12 @@ def decide_flag(fid: int, decision: str, by: str) -> dict | None:
                         {"i": fid}).mappings().first()
         if not row:
             return None
-        s.execute(text("""
+        n = s.execute(text("""
             UPDATE review_slice_feedback SET decision = :d, decided_by = :b, decided_at = now()
              WHERE url = :u AND key = :k AND decision IS NULL"""),
-            {"d": decision, "b": by, "u": row["url"], "k": row["key"]})
+            {"d": decision, "b": by, "u": row["url"], "k": row["key"]}).rowcount
+    if not n:              # уже решили (другой человек из команды по устаревшему списку)
+        return {"url": row["url"], "key": row["key"], "decision": None, "already": True}
     apply_to_index(urls=[row["url"]])
     return {"url": row["url"], "key": row["key"], "decision": decision}
 

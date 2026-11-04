@@ -2954,10 +2954,13 @@ def _rw():
 def reviews_clusters(bank: str = "Сбербанк", product: Optional[str] = None,
                      per=Depends(_review_period),
                      theme: Optional[str] = None, flag: Optional[str] = None,
-                     city: Optional[str] = None, source: Optional[str] = None, esc: int = 0):
-    """Похожие жалобы группами — с теми же фильтрами, что у ленты."""
+                     city: Optional[str] = None, source: Optional[str] = None, esc: int = 0,
+                     month: Optional[str] = None):
+    """Похожие жалобы группами — с теми же фильтрами, что у ленты (month=sig:… —
+    неделя всплеска)."""
     return _rw().clusters(bank, product or None, per.days, theme or None, flag or None,
-                          city or None, source or None, bool(esc), period=per) or {}
+                          city or None, source or None, bool(esc), period=per,
+                          month=month or None) or {}
 
 
 class ReviewUrls(BaseModel):
@@ -3014,7 +3017,7 @@ def reviews_slice_flag(req: SliceFlagIn, user: CurrentUser = Depends(get_current
     командой, а не сразу: один клик не должен менять числа у всех."""
     from ..rag import review_slices as rs
     if not rs.flag(req.url, req.key, user.username, req.note):
-        raise HTTPException(400, "неизвестный срез")
+        raise HTTPException(400, "жалоба не найдена в этом срезе")
     try:
         from . import inbox
         inbox.notify_team("team_slice", actor=user.username, link="#pulse?tab=inbox",
@@ -3045,6 +3048,8 @@ def reviews_slice_decide(fid: int, req: SliceDecisionIn, user: CurrentUser = Dep
     got = rs.decide_flag(fid, req.decision, user.username)
     if not got:
         raise HTTPException(400, "отметка не найдена или решение неизвестно")
+    if got.get("already"):
+        raise HTTPException(409, "по этой отметке уже приняли решение")
     return got
 
 
@@ -3166,10 +3171,13 @@ def reviews_export(bank: str = "Сбербанк", product: Optional[str] = None
     import csv
     import io
     from urllib.parse import quote as _q
-    rows = _rd().export_rows(bank, product=product or None, theme=theme or None,
-                             city=city or None, month=month or None,
-                             esc=bool(esc), limit=limit, flag=flag or None,
-                             source=source or None, period=per, q=(q or "").strip() or None)
+    try:
+        rows = _rd().export_rows(bank, product=product or None, theme=theme or None,
+                                 city=city or None, month=month or None,
+                                 esc=bool(esc), limit=limit, flag=flag or None,
+                                 source=source or None, period=per, q=(q or "").strip() or None)
+    except _rd().SearchFailed:
+        raise HTTPException(503, "Поиск не отработал из-за сбоя базы — повторите выгрузку через минуту")
     if rows is None:
         raise HTTPException(404, "банк не найден")
     flag_name = _rd().flag_label(flag)
@@ -3198,10 +3206,13 @@ def reviews_export_xlsx(bank: str = "Сбербанк", product: Optional[str] =
     from urllib.parse import quote as _q
     from ..rag import review_codebook as _cb
     from . import reviews_export
-    rows = _rd().export_rows(bank, product=product or None, theme=theme or None,
-                             city=city or None, month=month or None,
-                             esc=bool(esc), limit=limit, flag=flag or None,
-                             source=source or None, period=per, q=(q or "").strip() or None)
+    try:
+        rows = _rd().export_rows(bank, product=product or None, theme=theme or None,
+                                 city=city or None, month=month or None,
+                                 esc=bool(esc), limit=limit, flag=flag or None,
+                                 source=source or None, period=per, q=(q or "").strip() or None)
+    except _rd().SearchFailed:
+        raise HTTPException(503, "Поиск не отработал из-за сбоя базы — повторите выгрузку через минуту")
     if rows is None:
         raise HTTPException(404, "банк не найден")
     from ..rag import review_period as _rp

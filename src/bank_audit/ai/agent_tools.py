@@ -476,7 +476,11 @@ def tool_complaint_search(query: str, bank: str = SBER, product: Product | None 
                              limit=max(1, min(int(limit or 10), 25)), sort="auto") or {}
     sm = res.get("search") or {}
     return out({"query": query, "bank": bank, "product": product, "theme": theme,
-                "days": per.days, "total": res.get("total"), "error": res.get("error"),
+                "days": per.days, "total": res.get("total"),
+                # сбой поиска — не «0 жалоб»: модель должна сказать, что поиск не отработал
+                "error": res.get("error") or ("search_failed: поиск по словам не отработал (сбой базы), "
+                                              "число жалоб неизвестно — повторить позже"
+                                              if sm.get("failed") or sm.get("words_failed") else None),
                 # total = все жалобы, где слова запроса есть (by_words), плюс до 20
                 # похожих по смыслу без этих слов (by_sense) — то же число видит
                 # аудитор во вкладке; «нашлось N» говорить только по by_words

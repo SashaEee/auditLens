@@ -2667,11 +2667,15 @@ function OverviewPage(){
   // «Исполнительным документам» (9 при норме 4,0, P≈0,02 на 40 проблем), а
   // лид рядом писал «остальное в пределах нормы» (аудит 03.10, согласовано).
   const nTh=(pulse.checked&&pulse.checked.themes)||(head.stats&&head.stats.checked_themes)||40;
-  const dvAll=(pulse.diverge||[]).filter(d=>d.gap!=null&&d.gap>=1.15);
+  // «обгоняет рынок» — по тесту доли (faster_sig, с 04.11.2026); в старых выпусках
+  // поля нет — там прежнее правило по отношению ростов
+  const newMethod=(pulse.diverge||[]).some(d=>d.faster_sig!=null);   // выпуск с тестом доли
+  const fasterOf=d=>newMethod?!!d.faster_sig:(d.gap!=null&&d.gap>=1.15);
+  const dvAll=(pulse.diverge||[]).filter(fasterOf);
   const gapOf=x=>x.gap!=null?x.gap:(x.ratio&&x.market_ratio?x.ratio/x.market_ratio:null);
   const sigTop=(pulse.signals||[]).map(x=>({...x,...((pulse.diverge||[]).find(d=>d.key===x.key)||{}),
       gap:gapOf((pulse.diverge||[]).find(d=>d.key===x.key)||x),confirmed:true}))
-    .find(x=>x.gap!=null&&x.gap>=1.15)||null;
+    .find(fasterOf)||null;
   const dv0=sigTop||dvAll[0]||null;
   const dv=dv0&&{...dv0,confirmed:dv0.confirmed||(dv0.sig!=null?!!dv0.sig
     :poisSf(dv0.week,dv0.baseline_week)<0.05/nTh)};
@@ -4489,22 +4493,26 @@ function RvPassport({r}){
 // клик менял бы числа у всех.
 const rvSliceWhy=x=>[x.clause&&/^\d$/.test(x.clause)?`п. ${x.clause} определения`:null,
   x.quote?`«${x.quote}»`:null].filter(Boolean).join(" — ")||"срез по разметке модели";
+// отправленные в этой вкладке отметки: лента не перечитывается с сервера, и без памяти
+// кнопка возвращалась после перехода J/K — повтор слал команде ещё одно уведомление
+const RV_FLAGGED=new Set();
 function RvSlices({r}){
   const[sent,setSent]=useState({}),[open,setOpen]=useState(null),[note,setNote]=useState("");
   useEffect(()=>{setSent({});setOpen(null);setNote("");},[r.url]);
   const send=key=>{ apiFetch("/api/reviews/slice-flag",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({url:r.url,key,note:note.trim()||null})})
-    .then(()=>{setSent(o=>({...o,[key]:1}));setOpen(null);setNote("");
+    .then(()=>{RV_FLAGGED.add(r.url+"|"+key);setSent(o=>({...o,[key]:1}));setOpen(null);setNote("");
       fbToast("Отметка у команды: если жалоба не относится, уберём её из среза",false);})
-    .catch(()=>fbToast("Не получилось отправить — попробуйте ещё раз",true)); };
+    .catch(()=>fbToast("Не получилось отправить — попробуйте ещё раз",false)); };
   return <span className="rv-sl">{r.slices.map(x=><span key={x.key} className="rv-sl-i">
     <span className="rv-sl-l">{x.label}</span>
     {(x.clause||x.quote)&&<span className="rv-sl-why">{x.clause&&/^\d$/.test(x.clause)?<> · п. {x.clause}</>:null}
       {x.quote?<> — «{x.quote}»</>:null}</span>}
-    {sent[x.key]||x.flagged>0?<span className="rv-dim"> · отмечено «не относится», на проверке</span>
+    {sent[x.key]||x.flagged>0||RV_FLAGGED.has(r.url+"|"+x.key)?<span className="rv-dim"> · отмечено «не относится», на проверке</span>
       :open===x.key?<span className="rv-sl-f">
         <input className="rv-sl-in" autoFocus value={note} maxLength={300} placeholder="почему (необязательно)"
-          onChange={e=>setNote(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")send(x.key);if(e.key==="Escape")setOpen(null);}}/>
+          onChange={e=>setNote(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")send(x.key);
+            if(e.key==="Escape"){e.stopPropagation();setOpen(null);}}}/>
         <button className="rv-lnkb" onClick={()=>send(x.key)}>Отправить</button>
         <button className="rv-lnkb dim" onClick={()=>setOpen(null)}>Отмена</button></span>
       :<button className="rv-lnkb dim" onClick={()=>setOpen(x.key)}
@@ -5129,7 +5137,8 @@ function ReviewsPage({params}){
     if(cmp)sp.set("cmp",cmp);
     if(theme)sp.set("theme",theme); if(flag)sp.set("flag",flag);
     if(escOnly)sp.set("esc","1"); if(fCity)sp.set("city",fCity); if(fSrc)sp.set("source",fSrc);
-    const qs=sp.toString(); history.replaceState(null,"","#reviews"+(qs?"?"+qs:"")); },[tab,bank,product,perKey,theme,flag,escOnly,fCity,fSrc]);
+    if(fWeek)sp.set("month",fWeek);                      // неделя всплеска переживает F5 и ссылку
+    const qs=sp.toString(); history.replaceState(null,"","#reviews"+(qs?"?"+qs:"")); },[tab,bank,product,perKey,theme,flag,escOnly,fCity,fSrc,fWeek]);
   // адрес → состояние: ссылка #reviews?… при уже открытой странице (своё
   // зеркалирование идёт через replaceState и сюда не попадает)
   const paramsKey=JSON.stringify(P), firstParams=useRef(true);
@@ -5233,10 +5242,10 @@ function ReviewsPage({params}){
 
   // группы похожих — те же фильтры, что у ленты (без поиска: у него своя выдача)
   useEffect(()=>{ if(fView!=="groups")return; setClBusy(true);
-    apiFetch(`/api/reviews/clusters?bank=${enc(bank)}${pq()}${perQ}${theme?`&theme=${theme}`:""}`
+    apiFetch(`/api/reviews/clusters?bank=${enc(bank)}${pq()}${perQ}${fWeek?`&month=${enc(fWeek)}`:""}${theme?`&theme=${theme}`:""}`
       +`${flag?`&flag=${enc(flag)}`:""}${fCity?`&city=${enc(fCity)}`:""}${fSrc?`&source=${fSrc}`:""}${escOnly?"&esc=1":""}`)
       .then(d=>{setCl(d);setClBusy(false);}).catch(()=>{setCl({__err:true});setClBusy(false);});
-  },[fView,bank,product,perKey,theme,flag,fCity,fSrc,escOnly]);
+  },[fView,bank,product,perKey,theme,flag,fCity,fSrc,escOnly,fWeek]);
 
   // радар срочных аномалий — грузится ОТДЕЛЬНО (LLM), не блокирует дашборд
   useEffect(()=>{ setAnomBusy(true);setAnom(null);
@@ -5867,7 +5876,7 @@ function ReviewsPage({params}){
           </div>)}
         </>):
        feedBusy&&!(feed&&feed.length)?<RvSkelRows n={6} h={104} gap={14}/>:
-       feedErr?<EmptyState title={feedErr==="unknown_bank"?"Банка нет в корпусе":q?"Поиск не отработал":"Лента не загрузилась"}
+       (feedErr||(q&&feedMeta&&(feedMeta.failed||feedMeta.words_failed)&&!(feed&&feed.length)))?<EmptyState title={feedErr==="unknown_bank"?"Банка нет в корпусе":q?"Поиск не отработал":"Лента не загрузилась"}
          text={feedErr==="unknown_bank"?"Отзывов по этому банку у нас нет — выберите другой банк в списке выше.":
                feedErr==="network"?"Не удалось получить ответ сервера. Обновите страницу или повторите запрос.":
                "Запрос к корпусу отзывов не выполнился — это сбой, а не отсутствие жалоб по теме. Повторите; если повторяется, сообщите нам."}/>:
@@ -11564,7 +11573,8 @@ function PuSliceFlags({onOpenUser}){
   const decide=(id,decision)=>{ setBusy(id);
     apiFetch("/api/reviews/slice-flags/"+id,{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({decision})}).then(()=>{fbToast(decision==="excluded"?"Жалоба убрана из среза":"Срез оставлен",false);load();})
-      .catch(()=>fbToast("Не получилось — попробуйте ещё раз",true)).finally(()=>setBusy(0)); };
+      .catch(e=>{fbToast(/409/.test(String(e&&e.message||e))?"По этой отметке уже решили — список обновлён":"Не получилось — попробуйте ещё раз",false);load();})
+      .finally(()=>setBusy(0)); };
   return <div className="pu-card" style={{marginBottom:16}}>
     <div className="h"><span>Отметки «не относится к срезу» · {d.items.length}</span></div>
     <p className="t-cap" style={{margin:"-4px 0 10px"}}>Аудитор считает, что жалоба попала в срез «Аудита отзывов» по ошибке.
@@ -11573,7 +11583,9 @@ function PuSliceFlags({onOpenUser}){
       <thead><tr><th>срез</th><th>жалоба</th><th>основание</th><th>кто и почему</th><th/></tr></thead>
       <tbody>{d.items.map(x=><tr key={x.id}>
         <td>{x.label}</td>
-        <td style={{maxWidth:320}}><a href={x.url} target="_blank" rel="noopener noreferrer">{[x.bank,x.date].filter(Boolean).join(" · ")||"открыть"}</a>
+        <td style={{maxWidth:320}}>{/^https?:\/\//.test(x.url||"")
+          ?<a href={x.url} target="_blank" rel="noopener noreferrer">{[x.bank,x.date].filter(Boolean).join(" · ")||"открыть"}</a>
+          :<span className="t-cap">{x.url}</span>}
           {x.summary&&<div className="t-cap">{x.summary}</div>}</td>
         <td style={{maxWidth:260}} className="t-cap">{x.evidence?rvSliceWhy(x.evidence):"—"}</td>
         <td style={{maxWidth:220}}><button className="pu-link" onClick={()=>onOpenUser&&onOpenUser(x.username)}>{x.username}</button>

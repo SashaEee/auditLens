@@ -865,6 +865,16 @@ def _write(s, bank: str, now: datetime, groups: list[Cluster], m: Matching,
     put_member = text("""
         INSERT INTO review_story_member (story_id, url, added_at, sim) VALUES (:sid, :u, :now, :sim)
         ON CONFLICT (story_id, url) DO UPDATE SET sim = excluded.sim""").bindparams(*_ts("now"))
+    # участник, который больше не считается жалобой (по тому же правилу _CMP, что и все
+    # числа: копию с канонической-жалобой склейка пометила позже, жалобу переразметили
+    # в вопрос) — не участник; иначе копия с banki.ru и sravni считалась в сюжете дважды
+    del_copies = text(f"""DELETE FROM review_story_member WHERE story_id = :sid
+                         AND url IN (SELECT i.url FROM review_index i WHERE NOT coalesce({rd._CMP}, false))""")
+    fix_medoid = text("""UPDATE review_story SET medoid_url = (
+                             SELECT m.url FROM review_story_member m WHERE m.story_id = :sid
+                              ORDER BY m.sim DESC, m.url LIMIT 1)
+                          WHERE story_id = :sid AND medoid_url NOT IN (
+                             SELECT m.url FROM review_story_member m WHERE m.story_id = :sid)""")
     # числа — из состава после записи: в нём и жалобы, ушедшие из окна
     recount = text("""
         UPDATE review_story SET
@@ -896,6 +906,8 @@ def _write(s, bank: str, now: datetime, groups: list[Cluster], m: Matching,
         sid_of[k] = sid
         s.execute(put_member, [{"sid": sid, "u": u, "now": now, "sim": v}
                                for u, v in zip(g.ids, g.sims)])
+        s.execute(del_copies, {"sid": sid})
+        s.execute(fix_medoid, {"sid": sid})
         s.execute(recount, {"sid": sid})
     for sid, st in sorted(m.closed.items()):
         if st == "quiet":

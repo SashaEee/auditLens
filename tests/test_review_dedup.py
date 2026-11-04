@@ -387,7 +387,9 @@ def test_run_small_batches(lite):
     lite.add("k", STORY, source="bankiru", days_ago=2)
     for k in range(5):
         lite.add(f"s{k}", STORY_COPY, source="sravni_reviews", days_ago=3 + k)
-    r = RD.run(30, now=NOW, chunk=2)
+    # пять копий с одной площадки склеиваются только без ограничения «одна копия на
+    # площадку» — здесь проверяется запись пакетами, поэтому режим без ограничения
+    r = RD.run(30, now=NOW, chunk=2, cross_source_only=False)
     assert r["written"] == 5 and set(lite.bodies_calls) <= {1, 2}
     assert all(v == "k" for u, v in lite.dup_of().items() if u != "k")
 
@@ -537,3 +539,18 @@ def test_migration_is_safe_for_hot_table():
     assert "ALTER TABLE review_index ADD COLUMN IF NOT EXISTS dup_of text;" in sql
     assert "CREATE INDEX IF NOT EXISTS review_index_dup_of ON review_index (dup_of)" in sql
     assert "%" not in sql                                    # миграции идут через exec_driver_sql
+
+
+def test_cross_only_takes_one_copy_per_platform():
+    """Пять одинаковых отзывов на sravni и один на banki.ru: к канонической уходит одна
+    копия — остальные четыре остаются жалобами (разные люди по шаблону)."""
+    from datetime import datetime
+    text_ = STORY
+    rows = [{"url": "b", "bank": "Б", "dt": datetime(2026, 10, 1), "source": "bankiru", "text": text_}]
+    rows += [{"url": f"s{i}", "bank": "Б", "dt": datetime(2026, 10, 2 + i), "source": "sravni_reviews", "text": text_}
+             for i in range(5)]
+    rows += [{"url": "f1", "bank": "Б", "dt": datetime(2026, 10, 3), "source": "finuslugi_reviews", "text": text_}]
+    got = RD.find_dups(rows, cross_source_only=True)
+    assert sum(1 for k in got if k.startswith("s")) == 1 and got.get("f1") == "b"
+    assert set(got.values()) == {"b"}
+    assert len(RD.find_dups(rows, cross_source_only=False)) == 6     # без ограничения — все копии

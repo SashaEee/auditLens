@@ -68,6 +68,14 @@ def _date(s):
 
 def _month_label(ym: str) -> str:
     names = ("янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек")
+    if ym.startswith("sig:"):                  # неделя всплеска (reviews_dash._SIG_RX)
+        d = _date(ym[4:])
+        if d:
+            from datetime import timedelta
+            return f"неделя всплеска: {d - timedelta(days=6):%d.%m} — {d:%d.%m.%Y}"
+        return ym
+    if ym.startswith("ev:"):
+        return "события: " + _month_label(ym[3:])
     try:
         y, m = ym.split("-")
         return f"{names[int(m) - 1]} {y}"
@@ -151,7 +159,11 @@ def to_xlsx(rows: list[dict], filters: dict, *, limit: int | None = None) -> byt
     from openpyxl.styles import Alignment
     from openpyxl.utils import get_column_letter
 
-    a = _agg(rows)
+    # показатели и сводки — по размеченным жалобам, как счётчики вкладки; свежие
+    # неразмеченные есть на листе «Жалобы» с пометкой «на разметке», но в числа не идут
+    # (ревью 04.11.2026: иначе «Жалоб 2 460» против 2 400 на экране и строка «без темы»)
+    pending = sum(1 for r in rows if r.get("разметка"))
+    a = _agg([r for r in rows if not r.get("разметка")])
     bank = filters.get("bank") or "Сбербанк"
     what = " · ".join(x for x in (filters.get("product"), filters.get("theme"),
                                    filters.get("flag")) if x)
@@ -160,7 +172,8 @@ def to_xlsx(rows: list[dict], filters: dict, *, limit: int | None = None) -> byt
     if a["first"] and a["last"]:
         period = f"{a['first']:%d.%m.%Y} — {a['last']:%d.%m.%Y}"
     fl = describe_filters(filters)
-    sub = " · ".join([f"{a['total']:,} жалоб".replace(",", " "), period,
+    sub = " · ".join([f"{a['total']:,} жалоб".replace(",", " ")
+                      + (f" и {pending:,} на разметке".replace(",", " ") if pending else ""), period,
                       next(v for k, v in fl if k == "Период"),
                       "разметка ИИ, проверенные цитаты"])
     wb = Workbook()
@@ -287,7 +300,7 @@ def to_xlsx(rows: list[dict], filters: dict, *, limit: int | None = None) -> byt
     t.font = XL.font(16, name=SERIF)
     ws.row_dimensions[1].height = 26
     XL.stamp(ws, 2, text_=f"{stamp_line()} · {a['total']} жалоб · {ftxt}", span=10)
-    if limit and a["total"] >= limit:
+    if limit and len(rows) >= limit:
         w_ = ws.cell(row=3, column=1, value=f"Выгружены последние {limit} жалоб — сузьте "
                                             f"фильтры, чтобы получить полный срез.")
         w_.font = XL.font(9, color="warn_ink", bold=True)
