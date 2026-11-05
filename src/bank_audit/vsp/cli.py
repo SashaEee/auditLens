@@ -138,6 +138,11 @@ def main(argv: list[str] | None = None) -> int:
     dm.add_argument("--i-know-this-is-mass", action="store_true")
     sub.add_parser("status")
     sub.add_parser("signals")
+    lr = sub.add_parser("llm-read")
+    lr.add_argument("--limit", type=int, default=500)
+    lr.add_argument("--stage", choices=["screen", "card", "both"], default="both")
+    lr.add_argument("--ids", default=None, help="файл со списком review_id (эталон)")
+    sub.add_parser("schemes")
     a = p.parse_args(argv)
 
     settings = Settings.from_env()
@@ -161,6 +166,13 @@ def main(argv: list[str] | None = None) -> int:
     elif a.cmd == "report":
         from .report import completeness_report
         out = completeness_report(store, source=a.source, out=a.out)
+    elif a.cmd == "llm-read":
+        from .signals.llm_read import run as llm_run
+        ids = [x.strip() for x in open(a.ids, encoding="utf-8") if x.strip()] if a.ids else None
+        out = asyncio.run(llm_run(store, limit=a.limit, ids=ids, stage=a.stage))
+    elif a.cmd == "schemes":
+        from .signals.schemes import build as schemes_build
+        out = asyncio.run(schemes_build(store))
     elif a.cmd == "signals":
         from .mass import _signals
         out = asyncio.run(_signals(store))          # с отметкой signals:at — демон не повторит
