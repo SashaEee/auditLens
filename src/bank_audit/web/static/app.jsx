@@ -12412,6 +12412,7 @@ const PU2_CSS_INBOX=`
 /* отметки срезов */
 .pu2-ib-fl{padding:0 0 4px}
 .pu2-ib-fl .pu2-note{margin:0;padding:12px 20px 4px}
+.pu2-ib-fl .pu2-tw{position:relative}       /* скрытая подпись колонки (.vh) не выходит за прокрутку таблицы */
 .pu2-ib-ftbl{min-width:820px}
 .pu2-ib-ftbl td{vertical-align:top}
 .pu2-ib-fs{font-size:12.5px;color:var(--ink-3);margin-top:3px;text-wrap:pretty}

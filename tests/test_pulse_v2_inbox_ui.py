@@ -137,5 +137,9 @@ def test_phone_list_then_ticket(browser):
     page.locator(f"{DET} button", has_text="Назад к списку").click()
     page.wait_for_selector(f"{LIST} .pu2-ib-ti")
     assert page.locator(LIST).is_visible()
+    # таблица отметок прокручивается внутри карточки, не страница
+    page.locator(f"{CARD} .seg-btn", has_text="Отметки срезов").click()
+    page.wait_for_selector(f"{CARD} #pu2-flags tbody tr")
+    assert_no_hscroll(page)
     assert_page_ok(page)
     page.context.close()
