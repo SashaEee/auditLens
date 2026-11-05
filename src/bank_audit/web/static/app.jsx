@@ -12334,8 +12334,325 @@ function PuQualitySec(){ return <PuEmpty>Раздел в работе</PuEmpty>;
 // контекст для слияния параллельных правок, содержимого здесь нет.
 
 // ⟦pu2:inbox⟧ начало — раздел «Обращения»; правит только агент раздела
-const PU2_CSS_INBOX=``;
-function PuInboxSec(){ return <PuEmpty>Раздел в работе</PuEmpty>; }
+// «Обращения»: список слева и карточка справа (на телефоне — по очереди), ответ автору
+// с шаблонами и статусом; второй вид — «Отметки срезов» (не относится к срезу), его нет,
+// если /api/reviews/slice-flags отвечает 403. Открытое обращение — ctx.ticket (адрес
+// &ticket=N, поиск, ссылка из уведомления); вид «Отметки срезов» — по якорю pu2-flags
+// (ctx.go) или параметру адреса view=flags (уведомление team_slice).
+const PU2_CSS_INBOX=`
+.pu2-ib-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:12px 20px;border-bottom:1px solid var(--hair)}
+.pu2-ib-sum{font-size:13px;color:var(--ink-2);margin-right:auto;min-width:0}
+.pu2-ib-sum b{font-weight:600;color:var(--ink)}
+.pu2-ib-n{font-variant-numeric:tabular-nums;opacity:.7;margin-left:4px}
+.pu2-ib-sel{height:30px;border:1px solid var(--hair-2);border-radius:var(--r);background:var(--surface);color:var(--ink);
+  font:inherit;font-size:13px;padding:0 8px;max-width:100%}
+.pu2-ib-sel:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+
+/* список и карточка */
+.pu2-ib-split{display:grid;grid-template-columns:minmax(280px,360px) minmax(0,1fr);min-height:480px}
+.pu2-ib-list{border-right:1px solid var(--hair);min-width:0;max-height:760px;overflow-y:auto}
+.pu2-ib-ti{display:block;width:100%;text-align:left;font:inherit;color:inherit;background:none;border:0;border-top:1px solid var(--hair);
+  margin:0;padding:14px 20px;position:relative;cursor:pointer;transition:background-color var(--dur-quick) var(--ease-out)}
+.pu2-ib-ti:first-child{border-top:0}
+.pu2-ib-ti:hover{background:var(--paper-2)}
+.pu2-ib-ti:focus-visible{outline:2px solid var(--select);outline-offset:-2px}
+.pu2-ib-ti[aria-current="true"]{background:var(--select-soft)}
+.pu2-ib-ti[aria-current="true"]::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:2px;border-radius:2px;background:var(--select)}
+.pu2-ib-tl{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-3);min-width:0}
+.pu2-ib-tl>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pu2-ib-tl .pu2-badge{flex:none}
+.pu2-ib-tb{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:13.5px;line-height:1.45;
+  margin:4px 0 8px;color:var(--ink);overflow-wrap:anywhere}
+.pu2-ib-ti.unread .pu2-ib-tb{font-weight:600}
+.pu2-ib-ud{width:7px;height:7px;border-radius:50%;background:var(--ink);flex:none}
+.pu2-ib-sp{flex:1 1 auto}
+.pu2-ib-det{padding:22px 28px;min-width:0;display:flex;flex-direction:column;gap:18px}
+.pu2-ib-top{display:flex;align-items:flex-start;gap:10px}
+.pu2-ib-top>div{flex:1 1 auto;min-width:0}
+.pu2-ib-tm{display:flex;gap:6px 8px;flex-wrap:wrap;align-items:center;font-size:12.5px;color:var(--ink-3)}
+.pu2-ib-tm .pu2-person b{font-size:12.5px}
+.pu2-ib-body{margin:10px 0 0;font-size:15px;font-weight:500;line-height:1.6;max-width:68ch;color:var(--ink);white-space:pre-line;text-wrap:pretty;overflow-wrap:anywhere}
+.pu2-ib-x{flex:none;width:30px;height:30px;display:grid;place-items:center;border-radius:var(--r);border:0;background:none;color:var(--ink-3);cursor:pointer}
+.pu2-ib-x:hover{background:var(--paper-2);color:var(--ink)}
+.pu2-ib-x:focus-visible,.pu2-ib-back:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.pu2-ib-back{display:none;align-self:flex-start}
+.pu2-ib-shots{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.pu2-ib-shots a{display:block;border-radius:8px;overflow:hidden;border:1px solid var(--hair);background:var(--paper-2)}
+.pu2-ib-shots a:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.pu2-ib-shots img{display:block;width:100%;aspect-ratio:16/10;object-fit:cover}
+.pu2-ib-h{font-size:12px;font-weight:600;color:var(--ink-3);margin:0 0 8px}
+.pu2-ib-ctx{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 16px;font-size:12.5px;margin:0}
+.pu2-ib-ctx dt{color:var(--ink-3)}
+.pu2-ib-ctx dd{margin:0;color:var(--ink-2);overflow-wrap:anywhere;white-space:pre-line}
+.pu2-ib-ctx a{color:var(--ink)}
+.pu2-ib-ctx a:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.pu2-ib-th{display:flex;flex-direction:column;gap:8px}
+.pu2-ib-msg{border-radius:var(--r);padding:10px 12px;background:var(--paper-2);font-size:13.5px;line-height:1.5;color:var(--ink);
+  white-space:pre-line;overflow-wrap:anywhere;max-width:68ch}
+.pu2-ib-msg.team{background:var(--viz-soft);align-self:flex-end}
+.pu2-ib-msg>div{font-size:12px;color:var(--ink-3);margin-bottom:3px;white-space:normal}
+.pu2-ib-sys{font-size:12px;color:var(--ink-3)}
+.pu2-ib-reply{border:1px solid var(--hair-2);border-radius:var(--r-lg);background:var(--surface);overflow:hidden}
+.pu2-ib-reply:focus-within{border-color:var(--select);box-shadow:0 0 0 3px var(--select-soft)}
+.pu2-ib-reply textarea{display:block;width:100%;min-height:96px;border:0;resize:vertical;padding:12px 14px;background:transparent;
+  color:var(--ink);font:inherit;font-size:14px;line-height:1.5}
+.pu2-ib-reply textarea:focus,.pu2-ib-reply textarea:focus-visible{outline:none}
+.pu2-ib-rf{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:8px 10px;border-top:1px solid var(--hair);background:var(--paper)}
+.pu2-ib-tpl{height:26px;padding:0 9px;border-radius:999px;font:inherit;font-size:12px;color:var(--ink-2);background:none;
+  border:1px solid var(--hair-2);cursor:pointer;transition:border-color var(--dur-quick) var(--ease-out),color var(--dur-quick) var(--ease-out)}
+.pu2-ib-tpl:hover{border-color:var(--ink-4);color:var(--ink)}
+.pu2-ib-tpl:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.pu2-ib-err{font-size:12.5px;color:var(--accent-ink);margin:8px 0 0}
+.pu2-ib-ph{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;color:var(--ink-3);
+  font-size:13.5px;line-height:1.5;padding:40px 24px;min-height:320px}
+.pu2-ib-ph p{margin:0;max-width:44ch;text-wrap:balance}
+.pu2-ib-ph .pu2-ic{width:22px;height:22px;color:var(--ink-4)}
+.pu2-ib-empty{padding:18px 20px}
+
+/* отметки срезов */
+.pu2-ib-fl{padding:0 0 4px}
+.pu2-ib-fl .pu2-note{margin:0;padding:12px 20px 4px}
+.pu2-ib-ftbl{min-width:820px}
+.pu2-ib-ftbl td{vertical-align:top}
+.pu2-ib-fs{font-size:12.5px;color:var(--ink-3);margin-top:3px;text-wrap:pretty}
+.pu2-ib-fa{display:inline-flex;gap:6px}
+
+@media (max-width:760px){
+  .pu2-ib-bar{padding:12px 16px}
+  .pu2-ib-sum{flex:1 1 100%}
+  .pu2-ib-split{grid-template-columns:minmax(0,1fr);min-height:0}
+  .pu2-ib-list{border-right:0;max-height:none}
+  .pu2-ib-split.det .pu2-ib-list{display:none}
+  .pu2-ib-split:not(.det) .pu2-ib-det{display:none}
+  .pu2-ib-ti{padding:12px 16px}
+  .pu2-ib-det{padding:16px}
+  .pu2-ib-back{display:inline-flex}
+  .pu2-ib-x{display:none}
+  .pu2-ib-fl .pu2-note{padding:12px 16px 4px}
+  .pu2-ib-empty{padding:16px}
+}
+@media (prefers-reduced-motion:reduce){
+  .pu2-ib-ti,.pu2-ib-tpl{transition:none}
+}
+`;
+
+// view=flags из адреса: оболочка параметры разделу не передаёт и сразу переписывает адрес,
+// поэтому запрос вида ловится при загрузке и на hashchange и забирается разделом
+let _puIbView=null;
+const _puIbSubs=new Set();
+(function(){
+  const grab=()=>{ try{ const h=String(location.hash||"");
+    if(!/^#pulse\?/.test(h)) return;
+    const v=new URLSearchParams(h.slice(7)).get("view");
+    if(v==="flags"||v==="tickets"){ _puIbView={v,t:Date.now()}; _puIbSubs.forEach(f=>f()); } }catch{} };
+  try{ grab(); window.addEventListener("hashchange",grab); }catch{}
+})();
+const puIbTakeView=()=>{ const x=_puIbView; _puIbView=null; return x&&Date.now()-x.t<15000?x.v:null; };
+// «5 ч», «2 дн.» — часы ответа
+const puIbH=(h)=>h==null?"":+h>=48?`${puNum(Math.floor(+h/24))} дн.`:`${puDec(+h)} ч`;
+const puIbUnans=(t)=>!t.answered_at&&["new","accepted","in_progress"].includes(t.status);
+
+// ── «Отметки срезов»: убрать срез с жалобы или оставить ──
+function PuIbFlags({F}){
+  const c=usePu();
+  const[busy,setBusy]=useState(0);
+  const items=((F.d||{}).items)||[];
+  const decide=(id,decision)=>{ setBusy(id);
+    apiFetch("/api/reviews/slice-flags/"+id,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({decision})})
+      .then(()=>fbToast(decision==="excluded"?"Жалоба убрана из среза":"Срез оставлен"))
+      .catch(e=>fbToast(/409/.test(String((e&&e.message)||e))?"По этой отметке уже решили — список обновлён":"Не получилось — попробуйте ещё раз"))
+      .finally(()=>{ setBusy(0); F.reload(); if(c.reload) c.reload(); }); };
+  return <div id="pu2-flags" className="pu2-ib-fl">
+    <p className="pu2-note">Аудитор считает, что жалоба попала в срез «Аудита отзывов» по ошибке.
+      «Убрать» снимает срез с жалобы сразу и навсегда — переразметка его не вернёт.</p>
+    {F.err&&F.d===undefined?<div className="pu2-ib-empty"><PuLoadErr onRetry={F.reload}>Не удалось загрузить отметки.</PuLoadErr></div>
+      :F.d===undefined?<div className="pu2-ib-empty" role="status" aria-label="Загружаем отметки"><Skel h={90}/></div>
+      :!items.length?<div className="pu2-ib-empty"><PuEmpty>Отметок нет — всё разобрано.</PuEmpty></div>
+      :<div className="pu2-tw"><table className="pu2-tbl pu2-ib-ftbl">
+        <thead><tr><th scope="col" className="pu2-l">Срез</th><th scope="col" className="pu2-l">Жалоба</th>
+          <th scope="col" className="pu2-l">Основание</th><th scope="col" className="pu2-l">Кто и почему</th>
+          <th scope="col"><span className="vh">Решение</span></th></tr></thead>
+        <tbody>{items.map(x=><tr key={x.id} data-flag={x.id}>
+          <td className="pu2-l">{x.label||x.key||"—"}</td>
+          <td className="pu2-l" style={{maxWidth:320}}>{/^https?:\/\//.test(x.url||"")
+              ?<a href={x.url} target="_blank" rel="noopener noreferrer">{[x.bank,x.date&&puDay(x.date)].filter(Boolean).join(" · ")||"открыть"}</a>
+              :<span className="pu2-muted">{x.url||"—"}</span>}
+            {x.summary&&<div className="pu2-ib-fs">{x.summary}</div>}</td>
+          <td className="pu2-l pu2-ib-fs" style={{maxWidth:260}}>{x.evidence?rvSliceWhy(x.evidence):"—"}</td>
+          <td className="pu2-l" style={{maxWidth:220}}><PuPerson login={x.username} name={x.name||x.username} noAv
+              sub={x.created_at?puAgo(String(x.created_at).replace(" ","T")):undefined}/>
+            {x.note&&<div className="pu2-ib-fs">«{x.note}»</div>}</td>
+          <td className="pu2-nw"><span className="pu2-ib-fa">
+            <button type="button" className="btn btn-sm" disabled={busy===x.id} onClick={()=>decide(x.id,"excluded")}>Убрать</button>
+            <button type="button" className="btn btn-sm btn-ghost" disabled={busy===x.id} onClick={()=>decide(x.id,"kept")}>Оставить</button></span></td>
+        </tr>)}</tbody></table></div>}
+  </div>;
+}
+
+// ── карточка обращения: текст, снимки, контекст, переписка, ответ и статус ──
+function PuIbTicket({id,statuses,onClose,onChanged}){
+  const c=usePu();
+  const[t,setT]=useState(null), [st,setSt]=useState(""), [reply,setReply]=useState("");
+  const[busy,setBusy]=useState(false), [err,setErr]=useState(""), [n,setN]=useState(0);
+  const chg=useRef(onChanged); chg.current=onChanged;
+  useEffect(()=>{ let off=false; setT(null); setErr("");
+    // открытие помечает обращение прочитанным командой — список и бейдж раздела обновляются
+    apiFetch(`/api/admin/inbox/${id}`).then(x=>{ if(off) return; setT(x); setSt(x.status); if(chg.current) chg.current(); })
+      .catch(e=>{ if(!off) setT({error:true,nf:/^404/.test(String((e&&e.message)||""))}); });
+    return ()=>{ off=true; }; },[id,n]);
+  const save=()=>{ if(busy||!t||t.error) return;
+    if(st===t.status&&!reply.trim()){ setErr("Выберите статус или напишите ответ"); return; }
+    setBusy(true); setErr("");
+    const r=reply.trim();
+    sayPost(`/api/admin/inbox/${id}`,{status:st!==t.status?st:null,reply:r||null})
+      .then(x=>{ setT(x); setSt(x.status); setReply(""); fbToast(r?"Ответ ушёл автору":"Статус сохранён"); if(chg.current) chg.current(); })
+      .catch(e=>setErr((e&&e.message)||"Не получилось сохранить. Попробуйте ещё раз"))
+      .finally(()=>setBusy(false)); };
+  const head=<button type="button" className="btn btn-sm btn-ghost pu2-ib-back" onClick={onClose}>Назад к списку</button>;
+  if(!t) return <div className="pu2-ib-det" role="status" aria-label="Загружаем обращение">{head}<Skel h={18} w="60%"/><Skel h={90}/><Skel h={120}/></div>;
+  if(t.error) return <div className="pu2-ib-det">{head}
+    {t.nf?<PuEmpty>Обращение № {id} не найдено.</PuEmpty>
+      :<PuLoadErr onRetry={()=>setN(x=>x+1)}>Не удалось загрузить обращение № {id}.</PuLoadErr>}</div>;
+  const cx=t.context||{};
+  const ctxRows=[["Страница",cx.url],["Версия",cx.version],["Браузер",cx.browser],["Экран",cx.screen],["Тема",cx.theme],
+    ["Ошибки страницы",(cx.errors||[]).join("\n")]].filter(x=>x[1]);
+  const msgs=(t.messages||[]).filter((x,i)=>!(i===0&&x.role==="user"&&String(x.body||"").trim()===String(t.body||"").trim()));
+  const un=puIbUnans(t);
+  const ST=statuses&&Object.keys(statuses).length?statuses:SAY_STATUS_RU;
+  return <div className="pu2-ib-det">
+    <div className="pu2-ib-top">
+      <div>
+        <button type="button" className="btn btn-sm btn-ghost pu2-ib-back" onClick={onClose} style={{marginBottom:10}}>Назад к списку</button>
+        <div className="pu2-ib-tm">
+          <span>№ {t.ticket_id||id} · {t.kind_label||SAY_KIND_RU[t.kind]||"Обращение"} · {t.section_label||"AuditLens"} · {puAgo(t.created_at)} ·</span>
+          <PuPerson login={t.username} name={t.name||t.username} noAv/>
+          {un?<PuBadge lv="warn">Нужен первый ответ · {puWait(t.created_at)}</PuBadge>
+            :<PuBadge lv={t.status==="done"?"ok":undefined}>{t.status_label||ST[t.status]||t.status}</PuBadge>}
+          {t.confirmed===true&&<PuBadge lv="ok">автор: работает</PuBadge>}
+          {t.confirmed===false&&<PuBadge lv="bad">автор: не работает</PuBadge>}
+        </div>
+        <h3 className="pu2-ib-body">{t.body}</h3>
+      </div>
+      <button type="button" className="pu2-ib-x" onClick={onClose} aria-label="Закрыть обращение"><PuIcon n="close"/></button>
+    </div>
+    {(t.files||[]).length>0&&<div className="pu2-ib-shots">{t.files.map((f,i)=>
+      <a key={f.file_id} href={`/api/inbox/file/${f.file_id}`} target="_blank" rel="noopener noreferrer" aria-label={`Снимок экрана ${i+1} — открыть`}>
+        <img src={`/api/inbox/file/${f.file_id}`} alt={`Снимок экрана ${i+1}`} loading="lazy"/></a>)}</div>}
+    {ctxRows.length>0&&<div><h4 className="pu2-ib-h">Приложено автоматически</h4>
+      <dl className="pu2-ib-ctx">{ctxRows.map(([k,v])=><React.Fragment key={k}><dt>{k}</dt>
+        <dd>{k==="Страница"?<><a href={"/"+String(v).replace(/^\//,"")} target="_blank" rel="noopener noreferrer">{v}</a> · открыть ту же страницу</>:v}</dd>
+      </React.Fragment>)}</dl></div>}
+    <div><h4 className="pu2-ib-h">Переписка</h4>
+      <div className="pu2-ib-th">
+        {msgs.length===0&&<span className="pu2-ib-sys">Ответа ещё не было.</span>}
+        {msgs.map((x,i)=>x.role==="system"?<div key={i} className="pu2-ib-sys">{x.body} · {sayDate(x.at)}</div>
+          :<div key={i} className={"pu2-ib-msg"+(x.role==="team"?" team":"")}><div>{x.role==="team"?"Команда":"Автор"} · {sayDate(x.at)}</div>{x.body}</div>)}
+      </div></div>
+    <div>
+      <div className="pu2-ib-reply">
+        <label className="vh" htmlFor={"pu2-ib-ta-"+id}>Ответ автору</label>
+        <textarea id={"pu2-ib-ta-"+id} value={reply} maxLength={2000} aria-keyshortcuts={PU_MAC?"Meta+Enter":"Control+Enter"}
+          placeholder="Ответ увидит только автор — у строки «Обратная связь» загорится точка"
+          onChange={e=>{ setReply(e.target.value); if(err) setErr(""); }}
+          onKeyDown={e=>{ if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){ e.preventDefault(); save(); } }}/>
+        <div className="pu2-ib-rf">
+          {PU_TK_TPL.map(([l,x])=><button key={l} type="button" className="pu2-ib-tpl"
+            onClick={()=>setReply(r=>r?r+"\n"+x:x)}>{l}</button>)}
+          <span className="pu2-ib-sp"/>
+          <label className="vh" htmlFor={"pu2-ib-st-"+id}>Статус</label>
+          <select id={"pu2-ib-st-"+id} className="pu2-ib-sel" value={st} onChange={e=>{ setSt(e.target.value); if(err) setErr(""); }}>
+            {Object.entries(ST).map(([k,l])=><option key={k} value={k}>{l}</option>)}</select>
+          <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={save}>
+            {busy?"Сохраняю…":reply.trim()?"Ответить":"Сохранить статус"}</button>
+        </div>
+      </div>
+      {err&&<p className="pu2-ib-err" role="alert">{err}</p>}
+    </div>
+  </div>;
+}
+
+function PuInboxSec(){
+  const c=usePu(), m=c.m||{};
+  const tgt=c.target&&c.target.id;
+  const[view,setView]=useState(()=>puIbTakeView()||(tgt==="pu2-flags"?"flags":"tickets"));
+  const[st,setSt]=useState("open"), [kind,setKind]=useState("");
+  const[det,setDet]=useState(c.ticket!=null);
+  const url=`/api/admin/inbox?status=${st}${kind?"&kind="+encodeURIComponent(kind):""}`;
+  const L=usePuData(url,{ttl:60000});
+  const F=usePuData("/api/reviews/slice-flags",{ttl:120000});
+  const flagsOk=!(F.err&&F.err.status===403);
+  // переход с якорем (очередь «Требует внимания», поиск) и параметр адреса view=flags
+  useEffect(()=>{ if(tgt==="pu2-flags") setView("flags"); else if(tgt==="pu2-ticket") setView("tickets"); },[c.target]); // eslint-disable-line
+  useEffect(()=>{ const f=()=>{ const v=puIbTakeView(); if(v) setView(v); }; _puIbSubs.add(f); f();
+    return ()=>{ _puIbSubs.delete(f); }; },[]);
+  useEffect(()=>{ if(c.ticket!=null){ setDet(true); setView("tickets"); } },[c.ticket]);
+  useEffect(()=>{ if(view==="flags"&&!flagsOk) setView("tickets"); },[view,flagsOk]);
+  // бейдж раздела изменился (новое обращение, ответ из другой вкладки) — список свежий
+  const unread=(m.inbox||{}).unread, seenU=useRef(unread);
+  useEffect(()=>{ if(seenU.current===unread) return; seenU.current=unread; L.reload(); },[unread]); // eslint-disable-line
+  const d=L.d, cnt=(d&&d.counts)||m.inbox||{};
+  const kinds=(d&&d.kinds&&Object.keys(d.kinds).length?d.kinds:SAY_KIND_RU);
+  const list=((d&&d.tickets)||[]).filter(Boolean);
+  // сначала те, кто ждёт первого ответа; дальше — как отдаёт сервер (новые и дописанные сверху)
+  const rows=[...list.filter(puIbUnans),...list.filter(t=>!puIbUnans(t))];
+  const pick=(id)=>{ c.setTicket(id); setDet(true);
+    try{ if(matchMedia("(max-width: 760px)").matches) requestAnimationFrame(()=>{
+      const el=document.getElementById("pu2-ticket"); if(el) el.scrollIntoView({block:"start",behavior:puSmooth()}); }); }catch{} };
+  const close=()=>{ c.setTicket(null); setDet(false); };
+  const changed=useCallback(()=>{ puInvalidate("/api/admin/inbox?"); if(c.reload) c.reload(); },[c.reload]); // eslint-disable-line
+  const nf=((F.d||{}).items||[]).length;
+  const sum=[cnt.unanswered!=null?<span key="u">без ответа <b>{puNum(cnt.unanswered)}</b>{+cnt.unanswered>0&&cnt.oldest_unanswered_h!=null?`, дольше всех — ${puIbH(cnt.oldest_unanswered_h)}`:""}</span>
+      :cnt.unread!=null?<span key="u">ждут ответа <b>{puNum(cnt.unread)}</b></span>:null,
+    cnt.open!=null&&<span key="o">открытых <b>{puNum(cnt.open)}</b></span>,
+    cnt.total!=null&&<span key="t">всего <b>{puNum(cnt.total)}</b></span>].filter(Boolean);
+  const viewSeg=flagsOk&&<PuSeg label="Что показывать" value={view} onChange={setView}
+    options={[["tickets","Обращения"],["flags",<>Отметки срезов<span className="pu2-ib-n">{F.d!==undefined?puNum(nf):""}</span></>]]}/>;
+  return <div className="pu2-grid">
+    <PuCard id="pu2-inbox" flush ruled title="Обращения"
+      meta={cnt.median_answer_h!=null?<span className="pu2-hide-s">первый ответ за 30 дней — медиана {puIbH(cnt.median_answer_h)}</span>:null}
+      actions={viewSeg||null}>
+      {view==="flags"&&flagsOk?<PuIbFlags F={F}/>:<>
+        <div className="pu2-ib-bar">
+          <span className="pu2-ib-sum">{sum.map((x,i)=><React.Fragment key={i}>{i?" · ":""}{x}</React.Fragment>)}</span>
+          <PuSeg label="Статус обращений" value={st} onChange={v=>setSt(v)}
+            options={PU_TK_FILTER.map(([k,l])=>[k,<>{l}<span className="pu2-ib-n">{puNum(k==="all"?cnt.total:cnt[k])}</span></>])}/>
+          <label><span className="vh">Тип обращения</span>
+            <select className="pu2-ib-sel" value={kind} onChange={e=>setKind(e.target.value)}>
+              <option value="">Все типы</option>
+              {Object.entries(kinds).map(([k,l])=><option key={k} value={k}>{l}</option>)}</select></label>
+        </div>
+        <div className={"pu2-ib-split"+(det&&c.ticket!=null?" det":"")}>
+          <div className="pu2-ib-list" role={rows.length?"list":undefined} aria-label="Обращения">
+            {L.err&&d===undefined?<div className="pu2-ib-empty"><PuLoadErr onRetry={L.reload}>Не удалось загрузить обращения.</PuLoadErr></div>
+              :d===undefined?<div className="pu2-ib-empty" role="status" aria-label="Загружаем обращения">
+                  {[0,1,2,3].map(i=><Skel key={i} h={64} style={{marginTop:i?10:0}}/>)}</div>
+              :!rows.length?<div className="pu2-ib-empty"><PuEmpty>{st==="new"?"Новых обращений нет.":"Обращений нет."}
+                  {kind?" Сбросьте отбор по типу.":""}</PuEmpty></div>
+              :rows.map(t=>{ const un=puIbUnans(t);
+                return <div role="listitem" key={t.ticket_id}><button type="button" className={"pu2-ib-ti"+(t.unread?" unread":"")}
+                    aria-current={c.ticket===t.ticket_id?"true":undefined} data-ticket={t.ticket_id} onClick={()=>pick(t.ticket_id)}>
+                  <span className="pu2-ib-tl">{t.unread&&<span className="pu2-ib-ud" role="img" aria-label="новое"/>}
+                    <span>№ {t.ticket_id} · {t.kind_label||kinds[t.kind]||"Обращение"} · {t.section_label||"AuditLens"}</span></span>
+                  <span className="pu2-ib-tb">{t.body}</span>
+                  <span className="pu2-ib-tl"><span>{t.name||t.username}{t.updated_at?` · ${sayDate(t.updated_at)}`:""}
+                    {+t.n_files>0?` · ${puNum(t.n_files)} ${plural(+t.n_files,"снимок","снимка","снимков")}`:""}</span>
+                    <span className="pu2-ib-sp"/>
+                    {un?<PuBadge lv="warn">Нужен первый ответ · {puWait(t.created_at)}</PuBadge>
+                      :<PuBadge lv={t.status==="done"?"ok":undefined}>{t.status_label||t.status}</PuBadge>}</span>
+                </button></div>; })}
+          </div>
+          <div id="pu2-ticket">
+            {c.ticket!=null?<PuIbTicket key={c.ticket} id={c.ticket} statuses={d&&d.statuses} onClose={close} onChanged={changed}/>
+              :<div className="pu2-ib-det"><div className="pu2-ib-ph"><PuIcon n="inbox"/>
+                  <p>Выберите обращение слева. Они приходят из строки «Обратная связь» внизу меню; сверху — те, что ждут первого ответа.
+                    Ответ и статус автор увидит там же, где писал.</p></div></div>}
+          </div>
+        </div>
+      </>}
+    </PuCard>
+  </div>;
+}
 // ⟦pu2:inbox⟧ конец
 
 // ── граница: выше «Обращения», ниже «Системы» ────────────────────────────────
