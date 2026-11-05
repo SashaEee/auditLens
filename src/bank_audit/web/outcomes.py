@@ -410,6 +410,8 @@ def period(days: int, today: dt.date | None = None) -> tuple[dt.datetime | None,
 
 
 _CACHE: dict[tuple, tuple[float, dict]] = {}
+# периоды «Итогов» (дней; 0 — всё время): 14 — как период «Людей» и «Качества ИИ»
+PERIODS = (0, 7, 14, 30, 90)
 
 
 def _q(s, sql: str, p: dict) -> list[dict]:
@@ -631,7 +633,7 @@ def _build(raw: dict, since=None) -> dict:
 
 def report(viewer: str | None = None, with_me: bool | None = None, days: int = 0) -> dict:
     from . import telemetry
-    days = days if days in (0, 7, 30, 90) else 0
+    days = days if days in PERIODS else 0
     ex = telemetry.excluded(viewer, with_me)
     key = (days, tuple(ex))
     hit = _CACHE.get(key)

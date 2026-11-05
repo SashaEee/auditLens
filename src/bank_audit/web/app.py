@@ -3088,7 +3088,7 @@ def reviews_slice_flag(req: SliceFlagIn, user: CurrentUser = Depends(get_current
         raise HTTPException(400, "жалоба не найдена в этом срезе")
     try:
         from . import inbox
-        inbox.notify_team("team_slice", actor=user.username, link="#pulse?tab=inbox",
+        inbox.notify_team("team_slice", actor=user.username, link="#pulse?tab=inbox&view=flags",
                           ref={"label": rs.LABELS.get(req.key, req.key)})
     except Exception:  # noqa: BLE001 — отметка уже сохранена
         log.warning("срезы: команда не уведомлена об отметке", exc_info=True)

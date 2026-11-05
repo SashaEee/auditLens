@@ -1,0 +1,584 @@
+{
+ "runs": [
+  {
+   "run_id": 300,
+   "started_at": "2026-11-02T04:00:00+03:00",
+   "finished_at": "2026-11-02T04:07:00+03:00",
+   "model": "oss",
+   "trigger": "gate",
+   "score": 81.5,
+   "n_pass": 11,
+   "n_partial": 3,
+   "n_fail": 1,
+   "median_s": 31.0,
+   "note": null
+  },
+  {
+   "run_id": 299,
+   "started_at": "2026-10-26T04:00:00+03:00",
+   "finished_at": "2026-10-26T04:07:00+03:00",
+   "model": "oss",
+   "trigger": "gate",
+   "score": 84.0,
+   "n_pass": 12,
+   "n_partial": 2,
+   "n_fail": 1,
+   "median_s": 29.0,
+   "note": null
+  },
+  {
+   "run_id": 298,
+   "started_at": "2026-10-22T04:00:00+03:00",
+   "finished_at": "2026-10-22T04:07:00+03:00",
+   "model": "dsflash",
+   "trigger": "compare",
+   "score": 82.5,
+   "n_pass": 11,
+   "n_partial": 3,
+   "n_fail": 1,
+   "median_s": 24.0,
+   "note": null
+  },
+  {
+   "run_id": 297,
+   "started_at": "2026-10-19T04:00:00+03:00",
+   "finished_at": "2026-10-19T04:07:00+03:00",
+   "model": "oss",
+   "trigger": "gate-rollback",
+   "score": 84.0,
+   "n_pass": 12,
+   "n_partial": 2,
+   "n_fail": 1,
+   "median_s": 30.0,
+   "note": null
+  },
+  {
+   "run_id": 296,
+   "started_at": "2026-10-12T04:00:00+03:00",
+   "finished_at": "2026-10-12T04:07:00+03:00",
+   "model": "oss",
+   "trigger": "gate",
+   "score": 82.0,
+   "n_pass": 11,
+   "n_partial": 3,
+   "n_fail": 1,
+   "median_s": 30.5,
+   "note": null
+  },
+  {
+   "run_id": 295,
+   "started_at": "2026-10-05T04:00:00+03:00",
+   "finished_at": "2026-10-05T04:07:00+03:00",
+   "model": "oss",
+   "trigger": "gate",
+   "score": 83.0,
+   "n_pass": 12,
+   "n_partial": 1,
+   "n_fail": 2,
+   "median_s": 31.5,
+   "note": null
+  },
+  {
+   "run_id": 294,
+   "started_at": "2026-09-28T04:00:00+03:00",
+   "finished_at": "2026-09-28T04:07:00+03:00",
+   "model": "oss",
+   "trigger": "gate",
+   "score": 80.5,
+   "n_pass": 11,
+   "n_partial": 2,
+   "n_fail": 2,
+   "median_s": 33.0,
+   "note": null
+  },
+  {
+   "run_id": 293,
+   "started_at": "2026-09-21T04:00:00+03:00",
+   "finished_at": "2026-09-21T04:07:00+03:00",
+   "model": "oss",
+   "trigger": "admin",
+   "score": 79.0,
+   "n_pass": 10,
+   "n_partial": 4,
+   "n_fail": 1,
+   "median_s": 34.0,
+   "note": null
+  }
+ ],
+ "last_cases": [
+  {
+   "id": "S1",
+   "tab": "Обзор",
+   "title": "сигнал дня: причина всплеска",
+   "question": "Проверочный вопрос: сигнал дня: причина всплеска",
+   "verdict": "pass",
+   "seconds": 28.4,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (4/4)",
+     "ok": true,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 9,
+    "correct": true,
+    "key_fact": true,
+    "hallucination": false,
+    "issues": []
+   },
+   "answer": "Ответ агента на вопрос «сигнал дня: причина всплеска».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "S2",
+   "tab": "Обзор",
+   "title": "новость дня",
+   "question": "Проверочный вопрос: новость дня",
+   "verdict": "pass",
+   "seconds": 28.4,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (4/4)",
+     "ok": true,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 9,
+    "correct": true,
+    "key_fact": true,
+    "hallucination": false,
+    "issues": []
+   },
+   "answer": "Ответ агента на вопрос «новость дня».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "T1",
+   "tab": "Отзывы",
+   "title": "жалобы по продукту",
+   "question": "Проверочный вопрос: жалобы по продукту",
+   "verdict": "fail",
+   "seconds": 28.4,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "число «жалоб за неделю» = 388",
+     "ok": false,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 3,
+    "correct": false,
+    "key_fact": false,
+    "hallucination": false,
+    "issues": [
+     "число 412 против эталона 388 при допуске 2%"
+    ]
+   },
+   "answer": "Ответ агента на вопрос «жалобы по продукту».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "T2",
+   "tab": "Рынок",
+   "title": "сравнение с конкурентами",
+   "question": "Проверочный вопрос: сравнение с конкурентами",
+   "verdict": "pass",
+   "seconds": 28.4,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (4/4)",
+     "ok": true,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 9,
+    "correct": true,
+    "key_fact": true,
+    "hallucination": false,
+    "issues": []
+   },
+   "answer": "Ответ агента на вопрос «сравнение с конкурентами».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "T3",
+   "tab": "База знаний",
+   "title": "регулирование",
+   "question": "Проверочный вопрос: регулирование",
+   "verdict": "pass",
+   "seconds": 28.4,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (4/4)",
+     "ok": true,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 9,
+    "correct": true,
+    "key_fact": true,
+    "hallucination": false,
+    "issues": []
+   },
+   "answer": "Ответ агента на вопрос «регулирование».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "T4",
+   "tab": "Отзывы",
+   "title": "мошенничество вокруг продукта",
+   "question": "Проверочный вопрос: мошенничество вокруг продукта",
+   "verdict": "pass",
+   "seconds": 28.4,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (4/4)",
+     "ok": true,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 9,
+    "correct": true,
+    "key_fact": true,
+    "hallucination": false,
+    "issues": []
+   },
+   "answer": "Ответ агента на вопрос «мошенничество вокруг продукта».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "T5",
+   "tab": "Обзор",
+   "title": "разбор новости по ссылке",
+   "question": "Проверочный вопрос: разбор новости по ссылке",
+   "verdict": "pass",
+   "seconds": 28.4,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (4/4)",
+     "ok": true,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 9,
+    "correct": true,
+    "key_fact": true,
+    "hallucination": false,
+    "issues": []
+   },
+   "answer": "Ответ агента на вопрос «разбор новости по ссылке».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "P1",
+   "tab": "Обзор",
+   "title": "главное в выпуске",
+   "question": "Проверочный вопрос: главное в выпуске",
+   "verdict": "pass",
+   "seconds": 28.4,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (4/4)",
+     "ok": true,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 9,
+    "correct": true,
+    "key_fact": true,
+    "hallucination": false,
+    "issues": []
+   },
+   "answer": "Ответ агента на вопрос «главное в выпуске».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "P2",
+   "tab": "Рынок",
+   "title": "место Сбера",
+   "question": "Проверочный вопрос: место Сбера",
+   "verdict": "partial",
+   "seconds": 28.4,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (3/5)",
+     "ok": false,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 6,
+    "correct": true,
+    "key_fact": false,
+    "hallucination": false,
+    "issues": [
+     "2 из 10 ставок — прошлого месяца"
+    ]
+   },
+   "answer": "Ответ агента на вопрос «место Сбера».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "P3",
+   "tab": "Отзывы",
+   "title": "жалобы и эскалация",
+   "question": "Проверочный вопрос: жалобы и эскалация",
+   "verdict": "pass",
+   "seconds": 28.4,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (4/4)",
+     "ok": true,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 9,
+    "correct": true,
+    "key_fact": true,
+    "hallucination": false,
+    "issues": []
+   },
+   "answer": "Ответ агента на вопрос «жалобы и эскалация».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "P4",
+   "tab": "Банки",
+   "title": "рейтинг banki.ru",
+   "question": "Проверочный вопрос: рейтинг banki.ru",
+   "verdict": "pass",
+   "seconds": 28.4,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (4/4)",
+     "ok": true,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 9,
+    "correct": true,
+    "key_fact": true,
+    "hallucination": false,
+    "issues": []
+   },
+   "answer": "Ответ агента на вопрос «рейтинг banki.ru».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "P5",
+   "tab": "База знаний",
+   "title": "тариф из документа",
+   "question": "Проверочный вопрос: тариф из документа",
+   "verdict": "pass",
+   "seconds": 28.4,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (4/4)",
+     "ok": true,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 9,
+    "correct": true,
+    "key_fact": true,
+    "hallucination": false,
+    "issues": []
+   },
+   "answer": "Ответ агента на вопрос «тариф из документа».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "P6",
+   "tab": "Уязвимости",
+   "title": "лазейки за месяц",
+   "question": "Проверочный вопрос: лазейки за месяц",
+   "verdict": "partial",
+   "seconds": 28.4,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "ссылки на источники",
+     "ok": false,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 6,
+    "correct": true,
+    "key_fact": false,
+    "hallucination": false,
+    "issues": [
+     "нет ссылки на источник"
+    ]
+   },
+   "answer": "Ответ агента на вопрос «лазейки за месяц».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "P7",
+   "tab": "Отзывы",
+   "title": "что растёт на неделе",
+   "question": "Проверочный вопрос: что растёт на неделе",
+   "verdict": "partial",
+   "seconds": 28.4,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (2/4)",
+     "ok": false,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 6,
+    "correct": true,
+    "key_fact": false,
+    "hallucination": false,
+    "issues": [
+     "не названы два растущих продукта"
+    ]
+   },
+   "answer": "Ответ агента на вопрос «что растёт на неделе».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "P8",
+   "tab": "Уязвимости",
+   "title": "лазейки по продукту",
+   "question": "Проверочный вопрос: лазейки по продукту",
+   "verdict": "pass",
+   "seconds": 28.4,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (4/4)",
+     "ok": true,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 9,
+    "correct": true,
+    "key_fact": true,
+    "hallucination": false,
+    "issues": []
+   },
+   "answer": "Ответ агента на вопрос «лазейки по продукту».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  }
+ ],
+ "running": false
+}

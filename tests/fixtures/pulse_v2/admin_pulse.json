@@ -1,0 +1,4300 @@
+{
+ "days": 14,
+ "excluded": 3,
+ "today": {
+  "active": 23,
+  "views": 161,
+  "ai": 41,
+  "errors": 2,
+  "online": 4,
+  "users_total": 64
+ },
+ "dau": [
+  {
+   "d": "2026-10-23",
+   "users": 24,
+   "views": 168,
+   "off": false
+  },
+  {
+   "d": "2026-10-24",
+   "users": 3,
+   "views": 21,
+   "off": true
+  },
+  {
+   "d": "2026-10-25",
+   "users": 2,
+   "views": 14,
+   "off": true
+  },
+  {
+   "d": "2026-10-26",
+   "users": 27,
+   "views": 190,
+   "off": false
+  },
+  {
+   "d": "2026-10-27",
+   "users": 29,
+   "views": 204,
+   "off": false
+  },
+  {
+   "d": "2026-10-28",
+   "users": 26,
+   "views": 183,
+   "off": false
+  },
+  {
+   "d": "2026-10-29",
+   "users": 31,
+   "views": 218,
+   "off": false
+  },
+  {
+   "d": "2026-10-30",
+   "users": 22,
+   "views": 154,
+   "off": false
+  },
+  {
+   "d": "2026-10-31",
+   "users": 4,
+   "views": 28,
+   "off": true
+  },
+  {
+   "d": "2026-11-01",
+   "users": 1,
+   "views": 7,
+   "off": true
+  },
+  {
+   "d": "2026-11-02",
+   "users": 28,
+   "views": 197,
+   "off": false
+  },
+  {
+   "d": "2026-11-03",
+   "users": 30,
+   "views": 211,
+   "off": false
+  },
+  {
+   "d": "2026-11-04",
+   "users": 5,
+   "views": 35,
+   "off": true
+  },
+  {
+   "d": "2026-11-05",
+   "users": 23,
+   "views": 161,
+   "off": false
+  }
+ ],
+ "new_users": [
+  {
+   "d": "2026-10-27",
+   "n": 1
+  },
+  {
+   "d": "2026-10-29",
+   "n": 1
+  },
+  {
+   "d": "2026-11-02",
+   "n": 1
+  }
+ ],
+ "pages": [
+  {
+   "page": "overview",
+   "views": 612,
+   "users": 37,
+   "total_s": 29520
+  },
+  {
+   "page": "reviews",
+   "views": 488,
+   "users": 29,
+   "total_s": 23400
+  },
+  {
+   "page": "ai",
+   "views": 301,
+   "users": 24,
+   "total_s": 14400
+  },
+  {
+   "page": "loophole",
+   "views": 174,
+   "users": 12,
+   "total_s": 8280
+  },
+  {
+   "page": "foryou",
+   "views": 120,
+   "users": 18,
+   "total_s": 5760
+  },
+  {
+   "page": "market",
+   "views": 64,
+   "users": 9,
+   "total_s": 3060
+  },
+  {
+   "page": "knowledge",
+   "views": 22,
+   "users": 5,
+   "total_s": 1080
+  },
+  {
+   "page": "banks",
+   "views": 9,
+   "users": 3,
+   "total_s": 300
+  }
+ ],
+ "ai_per_day": [
+  {
+   "d": "2026-10-23",
+   "n": 28
+  },
+  {
+   "d": "2026-10-24",
+   "n": 3
+  },
+  {
+   "d": "2026-10-25",
+   "n": 2
+  },
+  {
+   "d": "2026-10-26",
+   "n": 31
+  },
+  {
+   "d": "2026-10-27",
+   "n": 35
+  },
+  {
+   "d": "2026-10-28",
+   "n": 29
+  },
+  {
+   "d": "2026-10-29",
+   "n": 33
+  },
+  {
+   "d": "2026-10-30",
+   "n": 22
+  },
+  {
+   "d": "2026-10-31",
+   "n": 4
+  },
+  {
+   "d": "2026-11-01",
+   "n": 1
+  },
+  {
+   "d": "2026-11-02",
+   "n": 34
+  },
+  {
+   "d": "2026-11-03",
+   "n": 43
+  },
+  {
+   "d": "2026-11-04",
+   "n": 6
+  },
+  {
+   "d": "2026-11-05",
+   "n": 41
+  }
+ ],
+ "features": {
+  "reports": 47,
+  "quick_saved": 58,
+  "shares": 23,
+  "ai_total": 312,
+  "ai_deep": 61,
+  "runs_ok": 288,
+  "runs_failed": 9,
+  "runs_stopped": 6,
+  "deep_p50_s": 142,
+  "deep_p95_s": 268,
+  "quick_p50_s": 34,
+  "deep_ok": 52,
+  "deep_failed": 5,
+  "report_opens": 64,
+  "fb_likes": 44,
+  "fb_dislikes": 6,
+  "ai_likes": 21,
+  "ai_dislikes": 4,
+  "profiles": 38,
+  "ratings_last": [
+   {
+    "kind": "ai_answer",
+    "d": "2026-11-04",
+    "age_days": 0
+   },
+   {
+    "kind": "news",
+    "d": "2026-11-04",
+    "age_days": 0
+   },
+   {
+    "kind": "digest_card",
+    "d": "2026-11-03",
+    "age_days": 1
+   },
+   {
+    "kind": "for_you",
+    "d": "2026-10-30",
+    "age_days": 5
+   }
+  ],
+  "ai_total_prev": 274,
+  "reports_prev": 41
+ },
+ "heatmap": [
+  {
+   "dow": 1,
+   "hour": 9,
+   "n": 4
+  },
+  {
+   "dow": 1,
+   "hour": 10,
+   "n": 24
+  },
+  {
+   "dow": 1,
+   "hour": 11,
+   "n": 44
+  },
+  {
+   "dow": 1,
+   "hour": 12,
+   "n": 36
+  },
+  {
+   "dow": 1,
+   "hour": 13,
+   "n": 28
+  },
+  {
+   "dow": 1,
+   "hour": 14,
+   "n": 12
+  },
+  {
+   "dow": 1,
+   "hour": 15,
+   "n": 32
+  },
+  {
+   "dow": 1,
+   "hour": 16,
+   "n": 40
+  },
+  {
+   "dow": 1,
+   "hour": 17,
+   "n": 36
+  },
+  {
+   "dow": 1,
+   "hour": 18,
+   "n": 24
+  },
+  {
+   "dow": 1,
+   "hour": 19,
+   "n": 12
+  },
+  {
+   "dow": 1,
+   "hour": 20,
+   "n": 4
+  },
+  {
+   "dow": 2,
+   "hour": 9,
+   "n": 8
+  },
+  {
+   "dow": 2,
+   "hour": 10,
+   "n": 28
+  },
+  {
+   "dow": 2,
+   "hour": 11,
+   "n": 48
+  },
+  {
+   "dow": 2,
+   "hour": 12,
+   "n": 40
+  },
+  {
+   "dow": 2,
+   "hour": 13,
+   "n": 32
+  },
+  {
+   "dow": 2,
+   "hour": 14,
+   "n": 16
+  },
+  {
+   "dow": 2,
+   "hour": 15,
+   "n": 36
+  },
+  {
+   "dow": 2,
+   "hour": 16,
+   "n": 44
+  },
+  {
+   "dow": 2,
+   "hour": 17,
+   "n": 32
+  },
+  {
+   "dow": 2,
+   "hour": 18,
+   "n": 20
+  },
+  {
+   "dow": 2,
+   "hour": 19,
+   "n": 8
+  },
+  {
+   "dow": 3,
+   "hour": 9,
+   "n": 4
+  },
+  {
+   "dow": 3,
+   "hour": 10,
+   "n": 20
+  },
+  {
+   "dow": 3,
+   "hour": 11,
+   "n": 40
+  },
+  {
+   "dow": 3,
+   "hour": 12,
+   "n": 44
+  },
+  {
+   "dow": 3,
+   "hour": 13,
+   "n": 28
+  },
+  {
+   "dow": 3,
+   "hour": 14,
+   "n": 12
+  },
+  {
+   "dow": 3,
+   "hour": 15,
+   "n": 28
+  },
+  {
+   "dow": 3,
+   "hour": 16,
+   "n": 36
+  },
+  {
+   "dow": 3,
+   "hour": 17,
+   "n": 32
+  },
+  {
+   "dow": 3,
+   "hour": 18,
+   "n": 24
+  },
+  {
+   "dow": 3,
+   "hour": 19,
+   "n": 8
+  },
+  {
+   "dow": 3,
+   "hour": 20,
+   "n": 4
+  },
+  {
+   "dow": 4,
+   "hour": 8,
+   "n": 4
+  },
+  {
+   "dow": 4,
+   "hour": 9,
+   "n": 8
+  },
+  {
+   "dow": 4,
+   "hour": 10,
+   "n": 32
+  },
+  {
+   "dow": 4,
+   "hour": 11,
+   "n": 48
+  },
+  {
+   "dow": 4,
+   "hour": 12,
+   "n": 40
+  },
+  {
+   "dow": 4,
+   "hour": 13,
+   "n": 36
+  },
+  {
+   "dow": 4,
+   "hour": 14,
+   "n": 16
+  },
+  {
+   "dow": 4,
+   "hour": 15,
+   "n": 32
+  },
+  {
+   "dow": 4,
+   "hour": 16,
+   "n": 40
+  },
+  {
+   "dow": 4,
+   "hour": 17,
+   "n": 28
+  },
+  {
+   "dow": 4,
+   "hour": 18,
+   "n": 20
+  },
+  {
+   "dow": 4,
+   "hour": 19,
+   "n": 12
+  },
+  {
+   "dow": 5,
+   "hour": 9,
+   "n": 4
+  },
+  {
+   "dow": 5,
+   "hour": 10,
+   "n": 24
+  },
+  {
+   "dow": 5,
+   "hour": 11,
+   "n": 36
+  },
+  {
+   "dow": 5,
+   "hour": 12,
+   "n": 32
+  },
+  {
+   "dow": 5,
+   "hour": 13,
+   "n": 24
+  },
+  {
+   "dow": 5,
+   "hour": 14,
+   "n": 8
+  },
+  {
+   "dow": 5,
+   "hour": 15,
+   "n": 24
+  },
+  {
+   "dow": 5,
+   "hour": 16,
+   "n": 28
+  },
+  {
+   "dow": 5,
+   "hour": 17,
+   "n": 20
+  },
+  {
+   "dow": 5,
+   "hour": 18,
+   "n": 12
+  },
+  {
+   "dow": 5,
+   "hour": 19,
+   "n": 4
+  },
+  {
+   "dow": 6,
+   "hour": 12,
+   "n": 3
+  },
+  {
+   "dow": 7,
+   "hour": 19,
+   "n": 2
+  }
+ ],
+ "latency": [
+  {
+   "path": "/api/reviews/search",
+   "n": 1840,
+   "p50": 420,
+   "p95": 3400,
+   "errs": 2
+  },
+  {
+   "path": "/api/overview/digest",
+   "n": 1210,
+   "p50": 95,
+   "p95": 310,
+   "errs": 0
+  },
+  {
+   "path": "/api/reviews/feed",
+   "n": 980,
+   "p50": 180,
+   "p95": 640,
+   "errs": 0
+  },
+  {
+   "path": "/api/chat/sessions",
+   "n": 640,
+   "p50": 60,
+   "p95": 190,
+   "errs": 0
+  },
+  {
+   "path": "/api/market/atlas",
+   "n": 210,
+   "p50": 520,
+   "p95": 1900,
+   "errs": 1
+  },
+  {
+   "path": "/api/me",
+   "n": 2100,
+   "p50": 35,
+   "p95": 120,
+   "errs": 0
+  }
+ ],
+ "errors_recent": [
+  {
+   "kind": "api_error",
+   "page": "/api/reviews/search",
+   "status": 504,
+   "msg": "Gateway Timeout",
+   "n": 2,
+   "users": 2,
+   "ts": "05.11 09:41"
+  },
+  {
+   "kind": "api_error",
+   "page": "/api/market/atlas",
+   "status": 500,
+   "msg": "KeyError: 'rate_6m'",
+   "n": 1,
+   "users": 1,
+   "ts": "31.10 12:40"
+  }
+ ],
+ "errors_total": 3,
+ "errors_per_day": [
+  {
+   "d": "2026-10-31",
+   "n": 1
+  },
+  {
+   "d": "2026-11-05",
+   "n": 2
+  }
+ ],
+ "tokens": [
+  {
+   "d": "2026-10-23",
+   "tin": 182000,
+   "tout": 21000
+  },
+  {
+   "d": "2026-10-24",
+   "tin": 182900,
+   "tout": 21150
+  },
+  {
+   "d": "2026-10-25",
+   "tin": 183800,
+   "tout": 21300
+  },
+  {
+   "d": "2026-10-26",
+   "tin": 184700,
+   "tout": 21450
+  },
+  {
+   "d": "2026-10-27",
+   "tin": 185600,
+   "tout": 21600
+  },
+  {
+   "d": "2026-10-28",
+   "tin": 186500,
+   "tout": 21750
+  },
+  {
+   "d": "2026-10-29",
+   "tin": 187400,
+   "tout": 21900
+  },
+  {
+   "d": "2026-10-30",
+   "tin": 188300,
+   "tout": 22050
+  },
+  {
+   "d": "2026-10-31",
+   "tin": 189200,
+   "tout": 22200
+  },
+  {
+   "d": "2026-11-01",
+   "tin": 190100,
+   "tout": 22350
+  },
+  {
+   "d": "2026-11-02",
+   "tin": 191000,
+   "tout": 22500
+  },
+  {
+   "d": "2026-11-03",
+   "tin": 191900,
+   "tout": 22650
+  },
+  {
+   "d": "2026-11-04",
+   "tin": 192800,
+   "tout": 22800
+  },
+  {
+   "d": "2026-11-05",
+   "tin": 193700,
+   "tout": 22950
+  }
+ ],
+ "digest": [
+  {
+   "section": "headline",
+   "status": "ok",
+   "d": "2026-11-05",
+   "at": "07:41",
+   "gen_ms": 41200,
+   "error": null
+  },
+  {
+   "section": "news",
+   "status": "ok",
+   "d": "2026-11-05",
+   "at": "07:38",
+   "gen_ms": 52800,
+   "error": null
+  },
+  {
+   "section": "reviews_pulse",
+   "status": "ok",
+   "d": "2026-11-05",
+   "at": "07:45",
+   "gen_ms": 33100,
+   "error": null
+  },
+  {
+   "section": "tariff_moves",
+   "status": "failed",
+   "d": "2026-11-05",
+   "at": "07:45",
+   "gen_ms": 60000,
+   "error": "модель не ответила за 60 секунд"
+  }
+ ],
+ "feed": [
+  {
+   "ts": "10:02",
+   "username": "akovaleva",
+   "name": "Анна Ковалёва",
+   "kind": "ai_query",
+   "page": null,
+   "status": null,
+   "deep": true
+  },
+  {
+   "ts": "09:58",
+   "username": "dorlov",
+   "name": "Дмитрий Орлов",
+   "kind": "page_view",
+   "page": "reviews",
+   "status": null,
+   "deep": null
+  },
+  {
+   "ts": "09:54",
+   "username": "msokolova",
+   "name": "Мария Соколова",
+   "kind": "share",
+   "page": null,
+   "status": null,
+   "deep": null
+  },
+  {
+   "ts": "09:41",
+   "username": "ilebedev",
+   "name": "Игорь Лебедев",
+   "kind": "api_error",
+   "page": "/api/reviews/search",
+   "status": 504,
+   "deep": null
+  },
+  {
+   "ts": "09:33",
+   "username": "esmirnova",
+   "name": "Елена Смирнова",
+   "kind": "ai_query",
+   "page": null,
+   "status": null,
+   "deep": false
+  },
+  {
+   "ts": "09:30",
+   "username": "ngromova",
+   "name": "Надежда Громова",
+   "kind": "page_view",
+   "page": "overview",
+   "status": null,
+   "deep": null
+  },
+  {
+   "ts": "09:20",
+   "username": "kgromov",
+   "name": "Кирилл Громов",
+   "kind": "page_view",
+   "page": "reviews",
+   "status": null,
+   "deep": null
+  },
+  {
+   "ts": "09:12",
+   "username": "apopov",
+   "name": "Андрей Попов",
+   "kind": "page_view",
+   "page": "loophole",
+   "status": null,
+   "deep": null
+  },
+  {
+   "ts": "09:12",
+   "username": "kgromov",
+   "name": "Кирилл Громов",
+   "kind": "api_error",
+   "page": "/api/reviews/search",
+   "status": 504,
+   "deep": null
+  },
+  {
+   "ts": "09:05",
+   "username": "yershova",
+   "name": "Юлия Ершова",
+   "kind": "page_view",
+   "page": "overview",
+   "status": null,
+   "deep": null
+  },
+  {
+   "ts": "08:58",
+   "username": "svkuznetsova",
+   "name": "Светлана Кузнецова",
+   "kind": "report_open",
+   "page": null,
+   "status": null,
+   "deep": null
+  },
+  {
+   "ts": "08:51",
+   "username": "akovaleva",
+   "name": "Анна Ковалёва",
+   "kind": "page_view",
+   "page": "ai",
+   "status": null,
+   "deep": null
+  },
+  {
+   "ts": "08:47",
+   "username": "esmirnova",
+   "name": "Елена Смирнова",
+   "kind": "page_view",
+   "page": "foryou",
+   "status": null,
+   "deep": null
+  },
+  {
+   "ts": "08:40",
+   "username": "dorlov",
+   "name": "Дмитрий Орлов",
+   "kind": "ai_query",
+   "page": null,
+   "status": null,
+   "deep": false
+  },
+  {
+   "ts": "08:33",
+   "username": "svkuznetsova",
+   "name": "Светлана Кузнецова",
+   "kind": "page_view",
+   "page": "market",
+   "status": null,
+   "deep": null
+  },
+  {
+   "ts": "08:21",
+   "username": "nbelova",
+   "name": "Наталья Белова",
+   "kind": "page_view",
+   "page": "overview",
+   "status": null,
+   "deep": null
+  }
+ ],
+ "reports_per_day": [
+  {
+   "d": "2026-10-23",
+   "n": 4
+  },
+  {
+   "d": "2026-10-26",
+   "n": 5
+  },
+  {
+   "d": "2026-10-27",
+   "n": 5
+  },
+  {
+   "d": "2026-10-28",
+   "n": 4
+  },
+  {
+   "d": "2026-10-29",
+   "n": 6
+  },
+  {
+   "d": "2026-10-30",
+   "n": 3
+  },
+  {
+   "d": "2026-11-02",
+   "n": 5
+  },
+  {
+   "d": "2026-11-03",
+   "n": 7
+  },
+  {
+   "d": "2026-11-04",
+   "n": 1
+  },
+  {
+   "d": "2026-11-05",
+   "n": 7
+  }
+ ],
+ "segments": {
+  "researchers": 24,
+  "readers": 8,
+  "casual": 9,
+  "sleepers": 23,
+  "active": 41
+ },
+ "ai_feedback": {
+  "items": [
+   {
+    "username": "akovaleva",
+    "name": "Анна Ковалёва",
+    "verdict": 1,
+    "question": "Сравни ставки по вкладам ТОП-10 банков на 6 месяцев",
+    "comment": "",
+    "mode": "deep",
+    "report_id": "4100",
+    "quote": null,
+    "reasons": [],
+    "created_at": "2026-11-04 17:00:00+03:00"
+   },
+   {
+    "username": "dorlov",
+    "name": "Дмитрий Орлов",
+    "verdict": 1,
+    "question": "Динамика жалоб на навязанные страховки в потребкредитах",
+    "comment": "",
+    "mode": "quick",
+    "report_id": null,
+    "quote": null,
+    "reasons": [],
+    "created_at": "2026-11-04 16:11:00+03:00"
+   },
+   {
+    "username": "dorlov",
+    "name": "Дмитрий Орлов",
+    "verdict": -1,
+    "question": "Сравни ставки по вкладам ТОП-10 банков на 6 месяцев",
+    "comment": "У ВТБ указана ставка прошлого месяца — 19,5% вместо 18%.",
+    "mode": "deep",
+    "report_id": "4187",
+    "quote": null,
+    "reasons": [
+     "ошибка в данных"
+    ],
+    "created_at": "2026-11-04 14:22:00+03:00"
+   },
+   {
+    "username": "esmirnova",
+    "name": "Елена Смирнова",
+    "verdict": 1,
+    "question": "Тарифы на обслуживание премиальных карт",
+    "comment": "",
+    "mode": "deep",
+    "report_id": "4103",
+    "quote": null,
+    "reasons": [],
+    "created_at": "2026-11-03 14:33:00+03:00"
+   },
+   {
+    "username": "ilebedev",
+    "name": "Игорь Лебедев",
+    "verdict": 1,
+    "question": "Комиссии за переводы СБП у ТОП-10 банков",
+    "comment": "",
+    "mode": "quick",
+    "report_id": null,
+    "quote": null,
+    "reasons": [],
+    "created_at": "2026-11-03 13:44:00+03:00"
+   },
+   {
+    "username": "afedorov",
+    "name": "Алексей Фёдоров",
+    "verdict": 1,
+    "question": "Какие банки подняли комиссию за снятие наличных в чужих банкоматах?",
+    "comment": "",
+    "mode": "quick",
+    "report_id": null,
+    "quote": null,
+    "reasons": [],
+    "created_at": "2026-11-03 12:55:00+03:00"
+   },
+   {
+    "username": "nbelova",
+    "name": "Наталья Белова",
+    "verdict": -1,
+    "question": "Сколько жалоб на кредитные карты Сбера за октябрь?",
+    "comment": "",
+    "mode": "quick",
+    "report_id": "4179",
+    "quote": null,
+    "reasons": [
+     "ошибка в данных",
+     "мало конкретики"
+    ],
+    "created_at": "2026-11-03 11:06:00+03:00"
+   },
+   {
+    "username": "pmorozov",
+    "name": "Павел Морозов",
+    "verdict": 1,
+    "question": "Что известно о новых требованиях ЦБ к раскрытию ПСК?",
+    "comment": "",
+    "mode": "quick",
+    "report_id": null,
+    "quote": null,
+    "reasons": [],
+    "created_at": "2026-11-02 10:17:00+03:00"
+   },
+   {
+    "username": "ngromova",
+    "name": "Надежда Громова",
+    "verdict": 1,
+    "question": "Условия кешбэка по дебетовым картам у крупных банков",
+    "comment": "",
+    "mode": "quick",
+    "report_id": null,
+    "quote": null,
+    "reasons": [],
+    "created_at": "2026-11-02 17:28:00+03:00"
+   },
+   {
+    "username": "kgromov",
+    "name": "Кирилл Громов",
+    "verdict": 1,
+    "question": "Жалобы на блокировки по 161-ФЗ за месяц",
+    "comment": "",
+    "mode": "deep",
+    "report_id": "4109",
+    "quote": null,
+    "reasons": [],
+    "created_at": "2026-11-02 16:39:00+03:00"
+   },
+   {
+    "username": "msokolova",
+    "name": "Мария Соколова",
+    "verdict": 1,
+    "question": "Сравни эквайринг для малого бизнеса у четырёх банков",
+    "comment": "",
+    "mode": "quick",
+    "report_id": null,
+    "quote": null,
+    "reasons": [],
+    "created_at": "2026-11-02 15:50:00+03:00"
+   },
+   {
+    "username": "rtikhonov",
+    "name": "Роман Тихонов",
+    "verdict": 1,
+    "question": "Как меняются ставки по накопительным счетам после решения ЦБ",
+    "comment": "",
+    "mode": "quick",
+    "report_id": null,
+    "quote": null,
+    "reasons": [],
+    "created_at": "2026-10-30 14:01:00+03:00"
+   },
+   {
+    "username": "afedorov",
+    "name": "Алексей Фёдоров",
+    "verdict": -1,
+    "question": "Какие банки подняли комиссию за снятие наличных в чужих банкоматах?",
+    "comment": "Часть изменений — ещё летние.",
+    "mode": "quick",
+    "report_id": null,
+    "quote": null,
+    "reasons": [
+     "мало конкретики"
+    ],
+    "created_at": "2026-10-30 13:12:00+03:00"
+   },
+   {
+    "username": "apopov",
+    "name": "Андрей Попов",
+    "verdict": 1,
+    "question": "Самозанятые: тарифы и ограничения в банках",
+    "comment": "",
+    "mode": "quick",
+    "report_id": null,
+    "quote": null,
+    "reasons": [],
+    "created_at": "2026-10-29 12:23:00+03:00"
+   },
+   {
+    "username": "vkarpov",
+    "name": "Виктор Карпов",
+    "verdict": 1,
+    "question": "Выездное обслуживание: на что жалуются клиенты",
+    "comment": "",
+    "mode": "quick",
+    "report_id": null,
+    "quote": null,
+    "reasons": [],
+    "created_at": "2026-10-29 11:34:00+03:00"
+   },
+   {
+    "username": "imedvedeva",
+    "name": "Ирина Медведева",
+    "verdict": 1,
+    "question": "Сравни ставки по вкладам ТОП-10 банков на 6 месяцев",
+    "comment": "",
+    "mode": "deep",
+    "report_id": "4115",
+    "quote": null,
+    "reasons": [],
+    "created_at": "2026-10-29 10:45:00+03:00"
+   },
+   {
+    "username": "otitov",
+    "name": "Олег Титов",
+    "verdict": 1,
+    "question": "Динамика жалоб на навязанные страховки в потребкредитах",
+    "comment": "",
+    "mode": "quick",
+    "report_id": null,
+    "quote": null,
+    "reasons": [],
+    "created_at": "2026-10-28 17:56:00+03:00"
+   },
+   {
+    "username": "ggrigoreva",
+    "name": "Галина Григорьева",
+    "verdict": 1,
+    "question": "Ипотечные программы с господдержкой: условия банков",
+    "comment": "",
+    "mode": "quick",
+    "report_id": null,
+    "quote": null,
+    "reasons": [],
+    "created_at": "2026-10-28 16:07:00+03:00"
+   },
+   {
+    "username": "mkorolev",
+    "name": "Максим Королёв",
+    "verdict": 1,
+    "question": "Тарифы на обслуживание премиальных карт",
+    "comment": "",
+    "mode": "deep",
+    "report_id": "4118",
+    "quote": null,
+    "reasons": [],
+    "created_at": "2026-10-27 15:18:00+03:00"
+   },
+   {
+    "username": "ilebedev",
+    "name": "Игорь Лебедев",
+    "verdict": -1,
+    "question": "Что известно о новых требованиях ЦБ к раскрытию ПСК?",
+    "comment": "",
+    "mode": "quick",
+    "report_id": null,
+    "quote": null,
+    "reasons": [
+     "не по делу"
+    ],
+    "created_at": "2026-10-27 14:29:00+03:00"
+   }
+  ],
+  "likes": 21,
+  "dislikes": 4,
+  "answers": 312,
+  "reasons": [
+   {
+    "key": "wrong",
+    "label": "ошибка в данных",
+    "n": 2
+   },
+   {
+    "key": "shallow",
+    "label": "мало конкретики",
+    "n": 2
+   },
+   {
+    "key": "offtopic",
+    "label": "не по делу",
+    "n": 1
+   }
+  ],
+  "by_day": [
+   {
+    "d": "2026-10-23",
+    "good": 2,
+    "bad": 0
+   },
+   {
+    "d": "2026-10-24",
+    "good": 0,
+    "bad": 0
+   },
+   {
+    "d": "2026-10-25",
+    "good": 0,
+    "bad": 0
+   },
+   {
+    "d": "2026-10-26",
+    "good": 3,
+    "bad": 0
+   },
+   {
+    "d": "2026-10-27",
+    "good": 1,
+    "bad": 1
+   },
+   {
+    "d": "2026-10-28",
+    "good": 2,
+    "bad": 0
+   },
+   {
+    "d": "2026-10-29",
+    "good": 3,
+    "bad": 0
+   },
+   {
+    "d": "2026-10-30",
+    "good": 1,
+    "bad": 1
+   },
+   {
+    "d": "2026-10-31",
+    "good": 0,
+    "bad": 0
+   },
+   {
+    "d": "2026-11-01",
+    "good": 0,
+    "bad": 0
+   },
+   {
+    "d": "2026-11-02",
+    "good": 4,
+    "bad": 0
+   },
+   {
+    "d": "2026-11-03",
+    "good": 3,
+    "bad": 1
+   },
+   {
+    "d": "2026-11-04",
+    "good": 2,
+    "bad": 1
+   },
+   {
+    "d": "2026-11-05",
+    "good": 0,
+    "bad": 0
+   }
+  ]
+ },
+ "persona": {
+  "users": [
+   {
+    "username": "apopov",
+    "name": "Андрей Попов",
+    "score": 12,
+    "recent": true,
+    "personal_on": false,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": true,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "vkarpov",
+    "name": "Виктор Карпов",
+    "score": 15,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": true,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "sosipov",
+    "name": "Степан Осипов",
+    "score": 17,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "lkomarova",
+    "name": "Людмила Комарова",
+    "score": 20,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": true,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "aandreeva",
+    "name": "Алла Андреева",
+    "score": 22,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "yershova",
+    "name": "Юлия Ершова",
+    "score": 22,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "gmelnikov",
+    "name": "Глеб Мельников",
+    "score": 25,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "vbelov",
+    "name": "Виктор Белов",
+    "score": 27,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "imedvedeva",
+    "name": "Ирина Медведева",
+    "score": 28,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": true,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "ovolkova",
+    "name": "Ольга Волкова",
+    "score": 30,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "ppanova",
+    "name": "Полина Панова",
+    "score": 30,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "dkudryavtsev",
+    "name": "Денис Кудрявцев",
+    "score": 33,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "iponomarev",
+    "name": "Илья Пономарёв",
+    "score": 35,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "tzaytseva",
+    "name": "Татьяна Зайцева",
+    "score": 35,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "kyakovleva",
+    "name": "Ксения Яковлева",
+    "score": 38,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "rtikhonov",
+    "name": "Роман Тихонов",
+    "score": 39,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": true,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "ipavlova",
+    "name": "Ирина Павлова",
+    "score": 40,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "otitov",
+    "name": "Олег Титов",
+    "score": 41,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": false,
+     "queries": true,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "tabramov",
+    "name": "Тимур Абрамов",
+    "score": 43,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "kgromov",
+    "name": "Кирилл Громов",
+    "score": 44,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": false,
+     "queries": true,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "vbelova",
+    "name": "Вера Белова",
+    "score": 46,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "zsavina",
+    "name": "Жанна Савина",
+    "score": 48,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "bzhukov",
+    "name": "Борис Жуков",
+    "score": 51,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "ogolubev",
+    "name": "Олег Голубев",
+    "score": 53,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "ggrigoreva",
+    "name": "Галина Григорьева",
+    "score": 54,
+    "recent": true,
+    "personal_on": false,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": false,
+     "queries": true,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "ngromova",
+    "name": "Надежда Громова",
+    "score": 54,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": false,
+     "queries": true,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "nzakharova",
+    "name": "Нина Захарова",
+    "score": 56,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": true,
+     "queries": false,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "ilebedev",
+    "name": "Игорь Лебедев",
+    "score": 58,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": true,
+     "queries": true,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "apavlov",
+    "name": "Артём Павлов",
+    "score": 59,
+    "recent": true,
+    "personal_on": false,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": true,
+     "queries": false,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "fefimov",
+    "name": "Фёдор Ефимов",
+    "score": 61,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": true,
+     "queries": false,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "pmorozov",
+    "name": "Павел Морозов",
+    "score": 63,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": true,
+     "queries": true,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "dmakarova",
+    "name": "Дарья Макарова",
+    "score": 64,
+    "recent": true,
+    "personal_on": false,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": true,
+     "queries": false,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "msokolova",
+    "name": "Мария Соколова",
+    "score": 65,
+    "recent": true,
+    "personal_on": false,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": true,
+     "queries": true,
+     "ai_ratings": true,
+     "note": true
+    }
+   },
+   {
+    "username": "gmelnikova",
+    "name": "Галина Мельникова",
+    "score": 66,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": true,
+     "queries": false,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "mkorolev",
+    "name": "Максим Королёв",
+    "score": 67,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": true,
+     "queries": true,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "svkuznetsova",
+    "name": "Светлана Кузнецова",
+    "score": 68,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": true,
+     "queries": true,
+     "ai_ratings": true,
+     "note": true
+    }
+   },
+   {
+    "username": "gshirokov",
+    "name": "Георгий Широков",
+    "score": 69,
+    "recent": true,
+    "personal_on": false,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": true,
+     "queries": false,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "afedorov",
+    "name": "Алексей Фёдоров",
+    "score": 71,
+    "recent": true,
+    "personal_on": false,
+    "parts": {
+     "desc": true,
+     "ratings": true,
+     "focus": true,
+     "queries": true,
+     "ai_ratings": true,
+     "note": true
+    }
+   },
+   {
+    "username": "mgolubeva",
+    "name": "Марина Голубева",
+    "score": 72,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": true,
+     "focus": true,
+     "queries": true,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "dorlov",
+    "name": "Дмитрий Орлов",
+    "score": 74,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": true,
+     "focus": true,
+     "queries": true,
+     "ai_ratings": true,
+     "note": true
+    }
+   },
+   {
+    "username": "lnosova",
+    "name": "Лариса Носова",
+    "score": 74,
+    "recent": true,
+    "personal_on": false,
+    "parts": {
+     "desc": true,
+     "ratings": true,
+     "focus": true,
+     "queries": false,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "nbelova",
+    "name": "Наталья Белова",
+    "score": 77,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": true,
+     "focus": true,
+     "queries": true,
+     "ai_ratings": true,
+     "note": true
+    }
+   },
+   {
+    "username": "akovaleva",
+    "name": "Анна Ковалёва",
+    "score": 82,
+    "recent": true,
+    "personal_on": false,
+    "parts": {
+     "desc": true,
+     "ratings": true,
+     "focus": true,
+     "queries": true,
+     "ai_ratings": true,
+     "note": true
+    }
+   },
+   {
+    "username": "esmirnova",
+    "name": "Елена Смирнова",
+    "score": 91,
+    "recent": true,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": true,
+     "focus": true,
+     "queries": true,
+     "ai_ratings": true,
+     "note": true
+    }
+   },
+   {
+    "username": "dponomareva",
+    "name": "Дарья Пономарёва",
+    "score": 16,
+    "recent": false,
+    "personal_on": true,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "knikitin",
+    "name": "Сергей Никитин",
+    "score": 18,
+    "recent": false,
+    "personal_on": true,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "myakovlev",
+    "name": "Максим Яковлев",
+    "score": 19,
+    "recent": false,
+    "personal_on": false,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "gmedvedev",
+    "name": "Георгий Медведев",
+    "score": 21,
+    "recent": false,
+    "personal_on": true,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "mabramova",
+    "name": "Марина Абрамова",
+    "score": 24,
+    "recent": false,
+    "personal_on": false,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "ssavin",
+    "name": "Степан Савин",
+    "score": 29,
+    "recent": false,
+    "personal_on": false,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "lzhukova",
+    "name": "Людмила Жукова",
+    "score": 32,
+    "recent": false,
+    "personal_on": true,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "atitova",
+    "name": "Алла Титова",
+    "score": 34,
+    "recent": false,
+    "personal_on": false,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "gzakharov",
+    "name": "Глеб Захаров",
+    "score": 37,
+    "recent": false,
+    "personal_on": true,
+    "parts": {
+     "desc": false,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "pefimova",
+    "name": "Полина Ефимова",
+    "score": 42,
+    "recent": false,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "dmakarov",
+    "name": "Денис Макаров",
+    "score": 45,
+    "recent": false,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "igrigorev",
+    "name": "Илья Григорьев",
+    "score": 47,
+    "recent": false,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": false
+    }
+   },
+   {
+    "username": "kshirokova",
+    "name": "Ксения Широкова",
+    "score": 50,
+    "recent": false,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": false,
+     "queries": false,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "tnosov",
+    "name": "Тимур Носов",
+    "score": 55,
+    "recent": false,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": true,
+     "queries": false,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "vosipova",
+    "name": "Вера Осипова",
+    "score": 58,
+    "recent": false,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": true,
+     "queries": false,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "zkoroleva",
+    "name": "Жанна Королёва",
+    "score": 60,
+    "recent": false,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": true,
+     "queries": false,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "bandreev",
+    "name": "Борис Андреев",
+    "score": 63,
+    "recent": false,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": true,
+     "queries": false,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "nkarpova",
+    "name": "Нина Карпова",
+    "score": 68,
+    "recent": false,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": false,
+     "focus": true,
+     "queries": false,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "apanov",
+    "name": "Артём Панов",
+    "score": 71,
+    "recent": false,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": true,
+     "focus": true,
+     "queries": false,
+     "ai_ratings": false,
+     "note": true
+    }
+   },
+   {
+    "username": "fkomarov",
+    "name": "Фёдор Комаров",
+    "score": 73,
+    "recent": false,
+    "personal_on": true,
+    "parts": {
+     "desc": true,
+     "ratings": true,
+     "focus": true,
+     "queries": false,
+     "ai_ratings": false,
+     "note": true
+    }
+   }
+  ],
+  "median": 47,
+  "gaps": [
+   {
+    "key": "ai_ratings",
+    "label": "3+ оценки ответов ИИ",
+    "miss": 57
+   },
+   {
+    "key": "ratings",
+    "label": "5+ оценок в «Для вас»",
+    "miss": 55
+   },
+   {
+    "key": "queries",
+    "label": "5+ вопросов ИИ",
+    "miss": 44
+   }
+  ],
+  "parts": [
+   {
+    "key": "desc",
+    "label": "Описание зоны ответственности"
+   },
+   {
+    "key": "ratings",
+    "label": "5+ оценок в «Для вас»"
+   },
+   {
+    "key": "focus",
+    "label": "3+ темы в фокусе"
+   },
+   {
+    "key": "queries",
+    "label": "5+ вопросов ИИ"
+   },
+   {
+    "key": "ai_ratings",
+    "label": "3+ оценки ответов ИИ"
+   },
+   {
+    "key": "note",
+    "label": "ИИ-нарратив собран"
+   }
+  ]
+ },
+ "retention": {
+  "segments": {
+   "core": 14,
+   "regular": 18,
+   "once": 12,
+   "churned": 6,
+   "new": 3
+  },
+  "active_7d": 34,
+  "active_prev_7d": 31,
+  "cohorts": [
+   {
+    "week": "2026-09-28",
+    "n": 6,
+    "w2": 4,
+    "w4": 3,
+    "w2_ready": 6,
+    "w4_ready": 6
+   },
+   {
+    "week": "2026-10-05",
+    "n": 4,
+    "w2": 2,
+    "w4": 2,
+    "w2_ready": 4,
+    "w4_ready": 4
+   },
+   {
+    "week": "2026-10-12",
+    "n": 3,
+    "w2": 2,
+    "w4": 0,
+    "w2_ready": 3,
+    "w4_ready": 0
+   },
+   {
+    "week": "2026-10-19",
+    "n": 2,
+    "w2": 1,
+    "w4": 0,
+    "w2_ready": 2,
+    "w4_ready": 0
+   },
+   {
+    "week": "2026-10-26",
+    "n": 3,
+    "w2": 0,
+    "w4": 0,
+    "w2_ready": 0,
+    "w4_ready": 0
+   }
+  ],
+  "at_risk": [
+   {
+    "username": "pmorozov",
+    "name": "Павел Морозов",
+    "last": "2026-10-23",
+    "gap_days": 13,
+    "days_60": 21,
+    "page": "ai",
+    "ai": 14
+   },
+   {
+    "username": "tzaytseva",
+    "name": "Татьяна Зайцева",
+    "last": "2026-10-27",
+    "gap_days": 9,
+    "days_60": 9,
+    "page": "reviews",
+    "ai": 3
+   }
+  ],
+  "churned": [
+   {
+    "username": "knikitin",
+    "name": "Сергей Никитин",
+    "last": "2026-09-25",
+    "gap_days": 41,
+    "days_60": 4,
+    "page": "overview",
+    "ai": 2,
+    "days_prev": 4
+   },
+   {
+    "username": "myakovlev",
+    "name": "Максим Яковлев",
+    "last": "2026-09-16",
+    "gap_days": 50,
+    "days_60": 2,
+    "page": "overview",
+    "ai": 0,
+    "days_prev": 2
+   },
+   {
+    "username": "lzhukova",
+    "name": "Людмила Жукова",
+    "last": "2026-09-16",
+    "gap_days": 50,
+    "days_60": 2,
+    "page": "overview",
+    "ai": 0,
+    "days_prev": 2
+   },
+   {
+    "username": "dmakarov",
+    "name": "Денис Макаров",
+    "last": "2026-09-16",
+    "gap_days": 50,
+    "days_60": 2,
+    "page": "overview",
+    "ai": 0,
+    "days_prev": 2
+   },
+   {
+    "username": "vosipova",
+    "name": "Вера Осипова",
+    "last": "2026-09-16",
+    "gap_days": 50,
+    "days_60": 2,
+    "page": "overview",
+    "ai": 0,
+    "days_prev": 2
+   },
+   {
+    "username": "apanov",
+    "name": "Артём Панов",
+    "last": "2026-09-16",
+    "gap_days": 50,
+    "days_60": 2,
+    "page": "overview",
+    "ai": 0,
+    "days_prev": 2
+   }
+  ],
+  "churned_total": 6,
+  "from_mail_7d": 5,
+  "seg_of": {
+   "akovaleva": "core",
+   "dorlov": "core",
+   "svkuznetsova": "core",
+   "esmirnova": "core",
+   "ilebedev": "core",
+   "afedorov": "core",
+   "nbelova": "core",
+   "pmorozov": "core",
+   "ngromova": "core",
+   "kgromov": "regular",
+   "msokolova": "regular",
+   "ovolkova": "regular",
+   "rtikhonov": "regular",
+   "tzaytseva": "regular",
+   "yershova": "once",
+   "apopov": "once",
+   "knikitin": "churned",
+   "vkarpov": "core",
+   "imedvedeva": "core",
+   "otitov": "core",
+   "ggrigoreva": "core",
+   "mkorolev": "core",
+   "lkomarova": "regular",
+   "dkudryavtsev": "regular",
+   "vbelova": "regular",
+   "apavlov": "regular",
+   "mgolubeva": "regular",
+   "gmelnikov": "regular",
+   "kyakovleva": "regular",
+   "bzhukov": "regular",
+   "dmakarova": "regular",
+   "sosipov": "regular",
+   "ppanova": "regular",
+   "tabramov": "regular",
+   "nzakharova": "regular",
+   "gshirokov": "once",
+   "aandreeva": "once",
+   "iponomarev": "once",
+   "zsavina": "once",
+   "fefimov": "once",
+   "lnosova": "once",
+   "vbelov": "once",
+   "ipavlova": "once",
+   "ogolubev": "once",
+   "gmelnikova": "once",
+   "myakovlev": "churned",
+   "lzhukova": "churned",
+   "dmakarov": "churned",
+   "vosipova": "churned",
+   "apanov": "churned"
+  }
+ },
+ "proposals": {
+  "pending": 2,
+  "oldest_days": 6,
+  "items": [
+   {
+    "proposal_id": 31,
+    "purpose": "digest",
+    "domain": "frankrg.com",
+    "title": "Frank Media — новости банков",
+    "author": "Елена Смирнова",
+    "created_at": "2026-10-30 11:20:00+03:00",
+    "age_days": 6
+   },
+   {
+    "proposal_id": 33,
+    "purpose": "digest",
+    "domain": "cbr.ru/press",
+    "title": "Пресс-релизы Банка России",
+    "author": "Дмитрий Орлов",
+    "created_at": "2026-11-03 15:05:00+03:00",
+    "age_days": 1
+   }
+  ]
+ },
+ "ingest": {
+  "queue": {
+   "enqueued": 940,
+   "done": 912,
+   "failed": 6,
+   "dropped": 0,
+   "duplicate": 22,
+   "depth": 0,
+   "inflight": 0,
+   "workers": 2
+  },
+  "per_day": [
+   {
+    "d": "2026-10-23",
+    "n": 70,
+    "empty": 3,
+    "p50": 2100,
+    "p95": 6400
+   },
+   {
+    "d": "2026-10-24",
+    "n": 20,
+    "empty": 3,
+    "p50": 2100,
+    "p95": 6400
+   },
+   {
+    "d": "2026-10-25",
+    "n": 20,
+    "empty": 3,
+    "p50": 2100,
+    "p95": 6400
+   },
+   {
+    "d": "2026-10-26",
+    "n": 73,
+    "empty": 3,
+    "p50": 2100,
+    "p95": 6400
+   },
+   {
+    "d": "2026-10-27",
+    "n": 74,
+    "empty": 3,
+    "p50": 2100,
+    "p95": 6400
+   },
+   {
+    "d": "2026-10-28",
+    "n": 75,
+    "empty": 3,
+    "p50": 2100,
+    "p95": 6400
+   },
+   {
+    "d": "2026-10-29",
+    "n": 76,
+    "empty": 3,
+    "p50": 2100,
+    "p95": 6400
+   },
+   {
+    "d": "2026-10-30",
+    "n": 77,
+    "empty": 3,
+    "p50": 2100,
+    "p95": 6400
+   },
+   {
+    "d": "2026-10-31",
+    "n": 20,
+    "empty": 3,
+    "p50": 2100,
+    "p95": 6400
+   },
+   {
+    "d": "2026-11-01",
+    "n": 20,
+    "empty": 3,
+    "p50": 2100,
+    "p95": 6400
+   },
+   {
+    "d": "2026-11-02",
+    "n": 80,
+    "empty": 3,
+    "p50": 2100,
+    "p95": 6400
+   },
+   {
+    "d": "2026-11-03",
+    "n": 81,
+    "empty": 3,
+    "p50": 2100,
+    "p95": 6400
+   },
+   {
+    "d": "2026-11-04",
+    "n": 20,
+    "empty": 3,
+    "p50": 2100,
+    "p95": 6400
+   },
+   {
+    "d": "2026-11-05",
+    "n": 83,
+    "empty": 3,
+    "p50": 2100,
+    "p95": 6400
+   }
+  ]
+ },
+ "collect": {
+  "ok": 860,
+  "hard": 12,
+  "soft": 64,
+  "reasons": [
+   {
+    "key": "ok",
+    "label": "проиндексировано",
+    "n": 860,
+    "hard": false
+   },
+   {
+    "key": "duplicate",
+    "label": "уже было",
+    "n": 51,
+    "hard": false
+   },
+   {
+    "key": "no_chunks",
+    "label": "нечего индексировать",
+    "n": 13,
+    "hard": false
+   },
+   {
+    "key": "captcha",
+    "label": "капча",
+    "n": 7,
+    "hard": true
+   },
+   {
+    "key": "fetch_failed",
+    "label": "не загрузилось",
+    "n": 5,
+    "hard": true
+   }
+  ],
+  "domains": [
+   {
+    "domain": "www.banki.ru",
+    "n": 6
+   },
+   {
+    "domain": "www.sravni.ru",
+    "n": 4
+   },
+   {
+    "domain": "frankrg.com",
+    "n": 2
+   }
+  ]
+ },
+ "search": {
+  "backends": [
+   {
+    "kind": "web_search",
+    "backend": "yandex",
+    "total": 1260,
+    "by_status": {
+     "ok": 1190,
+     "empty": 48,
+     "limited": 22
+    },
+    "p50_ok": 780
+   },
+   {
+    "kind": "web_search_chain",
+    "backend": "yandex_gw",
+    "total": 1180,
+    "by_status": {
+     "ok": 1180
+    },
+    "p50_ok": 820
+   },
+   {
+    "kind": "web_search_chain",
+    "backend": "fleet",
+    "total": 41,
+    "by_status": {
+     "ok": 41
+    },
+    "p50_ok": 2400
+   },
+   {
+    "kind": "web_search_chain",
+    "backend": "none",
+    "total": 9,
+    "by_status": {
+     "empty": 9
+    },
+    "p50_ok": null
+   },
+   {
+    "kind": "web_read",
+    "backend": "yandex_copy",
+    "total": 112,
+    "by_status": {
+     "ok": 104,
+     "error": 8
+    },
+    "p50_ok": 1300
+   }
+  ],
+  "gateway": {
+   "enabled": true,
+   "primary": "yandex",
+   "breaker_open": false,
+   "breaker_reason": null,
+   "copies_breaker_open": false,
+   "rps": 4
+  }
+ },
+ "reviews_search": {
+  "n": 1840,
+  "users": 31,
+  "p50": 400,
+  "p90": 1300,
+  "no_words": 212,
+  "failed": 0,
+  "unchecked": 40,
+  "zero_queries": [
+   "навязали страховку при рефинансировании",
+   "кэшбек не пришёл за такси",
+   "закрыли счёт самозанятого"
+  ]
+ },
+ "reviews_pipeline": {
+  "pending_old": 12,
+  "slices_not_ready": [],
+  "flags_open": 4,
+  "flags_oldest_days": 1.5,
+  "canary_age_days": 3.3,
+  "dedup_age_h": 6.2,
+  "stories_age_h": 20.5
+ },
+ "news_quality": {
+  "series": [
+   {
+    "d": "2026-10-23",
+    "n_items": 14,
+    "junk": 1,
+    "borderline": 3,
+    "relevant": 10,
+    "avg": 6.4,
+    "head": 5,
+    "strong": 4,
+    "missed": 1,
+    "rubric": "повод для проверки аудитора розницы"
+   },
+   {
+    "d": "2026-10-24",
+    "n_items": 9,
+    "junk": 0,
+    "borderline": 3,
+    "relevant": 5,
+    "avg": 6.6000000000000005,
+    "head": 4,
+    "strong": 2,
+    "missed": 0,
+    "rubric": "повод для проверки аудитора розницы"
+   },
+   {
+    "d": "2026-10-25",
+    "n_items": 9,
+    "junk": 0,
+    "borderline": 3,
+    "relevant": 5,
+    "avg": 6.800000000000001,
+    "head": 4,
+    "strong": 2,
+    "missed": 0,
+    "rubric": "повод для проверки аудитора розницы"
+   },
+   {
+    "d": "2026-10-26",
+    "n_items": 14,
+    "junk": 0,
+    "borderline": 3,
+    "relevant": 10,
+    "avg": 6.4,
+    "head": 4,
+    "strong": 4,
+    "missed": 0,
+    "rubric": "повод для проверки аудитора розницы"
+   },
+   {
+    "d": "2026-10-27",
+    "n_items": 14,
+    "junk": 1,
+    "borderline": 3,
+    "relevant": 10,
+    "avg": 6.6000000000000005,
+    "head": 4,
+    "strong": 4,
+    "missed": 0,
+    "rubric": "повод для проверки аудитора розницы"
+   },
+   {
+    "d": "2026-10-28",
+    "n_items": 14,
+    "junk": 0,
+    "borderline": 3,
+    "relevant": 10,
+    "avg": 6.800000000000001,
+    "head": 5,
+    "strong": 4,
+    "missed": 0,
+    "rubric": "повод для проверки аудитора розницы"
+   },
+   {
+    "d": "2026-10-29",
+    "n_items": 14,
+    "junk": 0,
+    "borderline": 3,
+    "relevant": 10,
+    "avg": 6.4,
+    "head": 4,
+    "strong": 4,
+    "missed": 1,
+    "rubric": "повод для проверки аудитора розницы"
+   },
+   {
+    "d": "2026-10-30",
+    "n_items": 14,
+    "junk": 0,
+    "borderline": 3,
+    "relevant": 10,
+    "avg": 6.6000000000000005,
+    "head": 4,
+    "strong": 4,
+    "missed": 0,
+    "rubric": "повод для проверки аудитора розницы"
+   },
+   {
+    "d": "2026-10-31",
+    "n_items": 9,
+    "junk": 1,
+    "borderline": 3,
+    "relevant": 5,
+    "avg": 6.800000000000001,
+    "head": 4,
+    "strong": 2,
+    "missed": 0,
+    "rubric": "повод для проверки аудитора розницы"
+   },
+   {
+    "d": "2026-11-01",
+    "n_items": 9,
+    "junk": 0,
+    "borderline": 3,
+    "relevant": 5,
+    "avg": 6.4,
+    "head": 4,
+    "strong": 2,
+    "missed": 0,
+    "rubric": "повод для проверки аудитора розницы"
+   },
+   {
+    "d": "2026-11-02",
+    "n_items": 14,
+    "junk": 0,
+    "borderline": 3,
+    "relevant": 10,
+    "avg": 6.6000000000000005,
+    "head": 5,
+    "strong": 4,
+    "missed": 0,
+    "rubric": "повод для проверки аудитора розницы"
+   },
+   {
+    "d": "2026-11-03",
+    "n_items": 14,
+    "junk": 0,
+    "borderline": 3,
+    "relevant": 10,
+    "avg": 6.800000000000001,
+    "head": 4,
+    "strong": 4,
+    "missed": 0,
+    "rubric": "повод для проверки аудитора розницы"
+   },
+   {
+    "d": "2026-11-04",
+    "n_items": 9,
+    "junk": 1,
+    "borderline": 3,
+    "relevant": 5,
+    "avg": 6.4,
+    "head": 4,
+    "strong": 2,
+    "missed": 1,
+    "rubric": "повод для проверки аудитора розницы"
+   },
+   {
+    "d": "2026-11-05",
+    "n_items": 14,
+    "junk": 0,
+    "borderline": 3,
+    "relevant": 10,
+    "avg": 6.6000000000000005,
+    "head": 4,
+    "strong": 4,
+    "missed": 0,
+    "rubric": "повод для проверки аудитора розницы"
+   }
+  ],
+  "today": {
+   "d": "2026-11-05",
+   "n_items": 14,
+   "junk": 0,
+   "borderline": 3,
+   "relevant": 10,
+   "avg": 6.6000000000000005,
+   "head": 4,
+   "strong": 4,
+   "missed": 0,
+   "rubric": "повод для проверки аудитора розницы"
+  },
+  "clicks": [
+   {
+    "d": "2026-10-23",
+    "n": 9,
+    "users": 6
+   },
+   {
+    "d": "2026-10-24",
+    "n": 0,
+    "users": 0
+   },
+   {
+    "d": "2026-10-25",
+    "n": 0,
+    "users": 0
+   },
+   {
+    "d": "2026-10-26",
+    "n": 12,
+    "users": 6
+   },
+   {
+    "d": "2026-10-27",
+    "n": 13,
+    "users": 6
+   },
+   {
+    "d": "2026-10-28",
+    "n": 9,
+    "users": 6
+   },
+   {
+    "d": "2026-10-29",
+    "n": 10,
+    "users": 6
+   },
+   {
+    "d": "2026-10-30",
+    "n": 11,
+    "users": 6
+   },
+   {
+    "d": "2026-10-31",
+    "n": 0,
+    "users": 0
+   },
+   {
+    "d": "2026-11-01",
+    "n": 0,
+    "users": 0
+   },
+   {
+    "d": "2026-11-02",
+    "n": 9,
+    "users": 6
+   },
+   {
+    "d": "2026-11-03",
+    "n": 10,
+    "users": 6
+   },
+   {
+    "d": "2026-11-04",
+    "n": 0,
+    "users": 0
+   },
+   {
+    "d": "2026-11-05",
+    "n": 12,
+    "users": 6
+   }
+  ],
+  "top_clicked": [
+   {
+    "url": "https://news.example/deposits-rates",
+    "title": "Банки снижают ставки по вкладам вслед за ключевой",
+    "n": 14
+   },
+   {
+    "url": "https://news.example/psk-rules",
+    "title": "ЦБ уточнил правила раскрытия ПСК",
+    "n": 9
+   },
+   {
+    "url": "https://news.example/sbp-fees",
+    "title": "Комиссии за переводы через СБП: что изменится с января",
+    "n": 7
+   }
+  ],
+  "cards": {
+   "useful": 44,
+   "noise": 6,
+   "users": 17
+  },
+  "stream": {
+   "sources": [
+    {
+     "source": "rss_cbr",
+     "last_ok_at": "2026-11-05T09:51:00+03:00",
+     "last_error": null,
+     "items_24h": 40,
+     "label": "Банк России"
+    },
+    {
+     "source": "rss_frankrg",
+     "last_ok_at": "2026-11-05T09:50:00+03:00",
+     "last_error": null,
+     "items_24h": 53,
+     "label": "Frank Media"
+    },
+    {
+     "source": "tg_banksta",
+     "last_ok_at": "2026-11-05T09:49:00+03:00",
+     "last_error": null,
+     "items_24h": 66,
+     "label": "Banksta"
+    },
+    {
+     "source": "rss_banki",
+     "last_ok_at": "2026-11-05T09:48:00+03:00",
+     "last_error": null,
+     "items_24h": 79,
+     "label": "Banki.ru — новости"
+    },
+    {
+     "source": "rss_rbc_fin",
+     "last_ok_at": "2026-11-05T09:47:00+03:00",
+     "last_error": null,
+     "items_24h": 92,
+     "label": "РБК Финансы"
+    },
+    {
+     "source": "search_ya",
+     "last_ok_at": "2026-11-05T09:46:00+03:00",
+     "last_error": null,
+     "items_24h": 105,
+     "label": "Поиск Яндекса"
+    }
+   ],
+   "items_24h": 412,
+   "relevant_24h": 118,
+   "strong_24h": 11,
+   "events_24h": 260,
+   "yield_14d": [
+    {
+     "source": "rss_cbr",
+     "items": 300,
+     "relevant": 80,
+     "strong": 9,
+     "published": 6,
+     "label": "Банк России"
+    },
+    {
+     "source": "rss_frankrg",
+     "items": 390,
+     "relevant": 100,
+     "strong": 12,
+     "published": 7,
+     "label": "Frank Media"
+    },
+    {
+     "source": "tg_banksta",
+     "items": 480,
+     "relevant": 120,
+     "strong": 15,
+     "published": 8,
+     "label": "Banksta"
+    },
+    {
+     "source": "rss_banki",
+     "items": 570,
+     "relevant": 140,
+     "strong": 18,
+     "published": 9,
+     "label": "Banki.ru — новости"
+    },
+    {
+     "source": "rss_rbc_fin",
+     "items": 660,
+     "relevant": 160,
+     "strong": 21,
+     "published": 10,
+     "label": "РБК Финансы"
+    },
+    {
+     "source": "search_ya",
+     "items": 750,
+     "relevant": 180,
+     "strong": 24,
+     "published": 11,
+     "label": "Поиск Яндекса"
+    }
+   ],
+   "search_14d": {
+    "events": 140,
+    "only_search": 31,
+    "only_search_strong": 6,
+    "only_search_published": 4
+   }
+  }
+ },
+ "review_sources": {
+  "sources": [
+   {
+    "source": "bankiru",
+    "label": "banki.ru — корпус",
+    "week": 1210,
+    "norm": 1180,
+    "status": "норма",
+    "external": true,
+    "last_item": "2026-11-03",
+    "last_run": null,
+    "last_run_status": null,
+    "last_error": null
+   },
+   {
+    "source": "banki_reviews",
+    "label": "banki.ru — наш сбор",
+    "week": 390,
+    "norm": 370,
+    "status": "норма",
+    "external": false,
+    "last_item": "2026-11-05",
+    "last_run": "2026-11-05T06:10:00+03:00",
+    "last_run_status": "ok",
+    "last_error": null
+   },
+   {
+    "source": "sravni_reviews",
+    "label": "sravni.ru",
+    "week": 260,
+    "norm": 240,
+    "status": "норма",
+    "external": false,
+    "last_item": "2026-11-04",
+    "last_run": "2026-11-05T06:25:00+03:00",
+    "last_run_status": "ok",
+    "last_error": null
+   },
+   {
+    "source": "finuslugi_reviews",
+    "label": "finuslugi.ru",
+    "week": 51,
+    "norm": 48,
+    "status": "норма",
+    "external": false,
+    "last_item": "2026-11-04",
+    "last_run": "2026-11-05T06:40:00+03:00",
+    "last_run_status": "ok",
+    "last_error": null
+   },
+   {
+    "source": "otzovik_reviews",
+    "label": "Отзовик",
+    "week": 42,
+    "norm": 180,
+    "status": "просел",
+    "external": false,
+    "last_item": "2026-11-02",
+    "last_run": "2026-11-04T06:55:00+03:00",
+    "last_run_status": "failed",
+    "last_error": "сайт ответил 403 — сбор остановлен на второй странице"
+   }
+  ],
+  "gone_banks": [],
+  "week_end": "2026-11-04"
+ },
+ "signal_journal": {
+  "days": 180,
+  "episodes": 41,
+  "rated": 18,
+  "confirmed": 13,
+  "false": 5,
+  "precision": 72,
+  "by_bank": [
+   {
+    "bank": "Сбербанк",
+    "episodes": 14,
+    "rated": 8,
+    "precision": 75
+   },
+   {
+    "bank": "ВТБ",
+    "episodes": 9,
+    "rated": 4,
+    "precision": 50
+   },
+   {
+    "bank": "Т-Банк",
+    "episodes": 6,
+    "rated": 3,
+    "precision": 100
+   }
+  ]
+ },
+ "personalization": {
+  "ctr": 18.4,
+  "users": [
+   {
+    "username": "akovaleva",
+    "name": "Анна Ковалёва",
+    "score": 82,
+    "views": 6,
+    "clicks": 1,
+    "clicks_issue": 2,
+    "fb": 3
+   },
+   {
+    "username": "dorlov",
+    "name": "Дмитрий Орлов",
+    "score": 74,
+    "views": 6,
+    "clicks": 1,
+    "clicks_issue": 2,
+    "fb": 3
+   },
+   {
+    "username": "svkuznetsova",
+    "name": "Светлана Кузнецова",
+    "score": 68,
+    "views": 6,
+    "clicks": 1,
+    "clicks_issue": 2,
+    "fb": 3
+   },
+   {
+    "username": "kgromov",
+    "name": "Кирилл Громов",
+    "score": 44,
+    "views": 2,
+    "clicks": 0,
+    "clicks_issue": 0,
+    "fb": 0
+   },
+   {
+    "username": "vbelova",
+    "name": "Вера Белова",
+    "score": 46,
+    "views": 2,
+    "clicks": 0,
+    "clicks_issue": 0,
+    "fb": 0
+   },
+   {
+    "username": "msokolova",
+    "name": "Мария Соколова",
+    "score": 65,
+    "views": 2,
+    "clicks": 0,
+    "clicks_issue": 0,
+    "fb": 3
+   },
+   {
+    "username": "ggrigoreva",
+    "name": "Галина Григорьева",
+    "score": 54,
+    "views": 6,
+    "clicks": 1,
+    "clicks_issue": 2,
+    "fb": 0
+   },
+   {
+    "username": "ilebedev",
+    "name": "Игорь Лебедев",
+    "score": 58,
+    "views": 6,
+    "clicks": 1,
+    "clicks_issue": 2,
+    "fb": 3
+   },
+   {
+    "username": "mgolubeva",
+    "name": "Марина Голубева",
+    "score": 72,
+    "views": 2,
+    "clicks": 0,
+    "clicks_issue": 0,
+    "fb": 0
+   },
+   {
+    "username": "ngromova",
+    "name": "Надежда Громова",
+    "score": 54,
+    "views": 6,
+    "clicks": 1,
+    "clicks_issue": 2,
+    "fb": 3
+   },
+   {
+    "username": "lkomarova",
+    "name": "Людмила Комарова",
+    "score": 20,
+    "views": 2,
+    "clicks": 0,
+    "clicks_issue": 0,
+    "fb": 0
+   },
+   {
+    "username": "imedvedeva",
+    "name": "Ирина Медведева",
+    "score": 28,
+    "views": 6,
+    "clicks": 1,
+    "clicks_issue": 2,
+    "fb": 0
+   },
+   {
+    "username": "apopov",
+    "name": "Андрей Попов",
+    "score": 12,
+    "views": 2,
+    "clicks": 0,
+    "clicks_issue": 0,
+    "fb": 0
+   },
+   {
+    "username": "kyakovleva",
+    "name": "Ксения Яковлева",
+    "score": 38,
+    "views": 2,
+    "clicks": 0,
+    "clicks_issue": 0,
+    "fb": 0
+   },
+   {
+    "username": "yershova",
+    "name": "Юлия Ершова",
+    "score": 22,
+    "views": 2,
+    "clicks": 0,
+    "clicks_issue": 0,
+    "fb": 3
+   },
+   {
+    "username": "gmelnikov",
+    "name": "Глеб Мельников",
+    "score": 25,
+    "views": 2,
+    "clicks": 0,
+    "clicks_issue": 0,
+    "fb": 0
+   },
+   {
+    "username": "esmirnova",
+    "name": "Елена Смирнова",
+    "score": 91,
+    "views": 6,
+    "clicks": 1,
+    "clicks_issue": 2,
+    "fb": 3
+   },
+   {
+    "username": "dkudryavtsev",
+    "name": "Денис Кудрявцев",
+    "score": 33,
+    "views": 2,
+    "clicks": 0,
+    "clicks_issue": 0,
+    "fb": 0
+   },
+   {
+    "username": "otitov",
+    "name": "Олег Титов",
+    "score": 41,
+    "views": 6,
+    "clicks": 1,
+    "clicks_issue": 2,
+    "fb": 0
+   },
+   {
+    "username": "bzhukov",
+    "name": "Борис Жуков",
+    "score": 51,
+    "views": 2,
+    "clicks": 0,
+    "clicks_issue": 0,
+    "fb": 0
+   }
+  ]
+ },
+ "topics": {
+  "banks": [
+   {
+    "slug": "sberbank",
+    "name": "Сбербанк",
+    "n": 38
+   },
+   {
+    "slug": "vtb",
+    "name": "ВТБ",
+    "n": 21
+   },
+   {
+    "slug": "alfabank",
+    "name": "Альфа-Банк",
+    "n": 17
+   },
+   {
+    "slug": "tbank",
+    "name": "Т-Банк",
+    "n": 15
+   },
+   {
+    "slug": "gazprombank",
+    "name": "Газпромбанк",
+    "n": 8
+   },
+   {
+    "slug": "raiffeisen",
+    "name": "Райффайзенбанк",
+    "n": 5
+   }
+  ]
+ },
+ "eval": {
+  "hermes": {
+   "score": 81.5,
+   "model": "oss",
+   "d": "2026-11-02",
+   "age_days": 3,
+   "trigger": "gate",
+   "prev": 84.0,
+   "delta": -2.5
+  },
+  "deep": {
+   "score": 77.0,
+   "model": "default",
+   "d": "2026-10-30",
+   "age_days": 6,
+   "trigger": "gate",
+   "prev": 76.0,
+   "delta": 1.0
+  }
+ },
+ "inbox": {
+  "new": 3,
+  "open": 4,
+  "unread": 3,
+  "total": 18,
+  "oldest_new_days": 2,
+  "unanswered": 3,
+  "oldest_unanswered_h": 50,
+  "median_answer_h": 5.0
+ },
+ "mail": {
+  "connected": 32,
+  "sigma": 21,
+  "private": 9,
+  "sso": 2,
+  "active": 39,
+  "active_connected": 24,
+  "pending": 3,
+  "sent": 214,
+  "codes": 31,
+  "failed": 1,
+  "promo": {
+   "shown": 38,
+   "connect": 21,
+   "later": 9
+  },
+  "people": [
+   {
+    "username": "akovaleva",
+    "name": "Анна Ковалёва",
+    "email": "akovaleva@corp.example",
+    "source": "user",
+    "since": "06.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "sigma"
+   },
+   {
+    "username": "dorlov",
+    "name": "Дмитрий Орлов",
+    "email": "dorlov@corp.example",
+    "source": "user",
+    "since": "07.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "sigma"
+   },
+   {
+    "username": "svkuznetsova",
+    "name": "Светлана Кузнецова",
+    "email": "svkuznetsova@corp.example",
+    "source": "user",
+    "since": "08.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "sigma"
+   },
+   {
+    "username": "ilebedev",
+    "name": "Игорь Лебедев",
+    "email": "ilebedev@corp.example",
+    "source": "user",
+    "since": "10.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "sigma"
+   },
+   {
+    "username": "afedorov",
+    "name": "Алексей Фёдоров",
+    "email": "afedorov@mail.example",
+    "source": "user",
+    "since": "11.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "private"
+   },
+   {
+    "username": "nbelova",
+    "name": "Наталья Белова",
+    "email": "nbelova@corp.example",
+    "source": "user",
+    "since": "12.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "sigma"
+   },
+   {
+    "username": "pmorozov",
+    "name": "Павел Морозов",
+    "email": "pmorozov@corp.example",
+    "source": "user",
+    "since": "13.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "sigma"
+   },
+   {
+    "username": "ngromova",
+    "name": "Надежда Громова",
+    "email": "ngromova@corp.example",
+    "source": "user",
+    "since": "14.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "sigma"
+   },
+   {
+    "username": "kgromov",
+    "name": "Кирилл Громов",
+    "email": "kgromov@corp.example",
+    "source": "user",
+    "since": "15.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "sigma"
+   },
+   {
+    "username": "msokolova",
+    "name": "Мария Соколова",
+    "email": "msokolova@mail.example",
+    "source": "user",
+    "since": "16.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "private"
+   },
+   {
+    "username": "ovolkova",
+    "name": "Ольга Волкова",
+    "email": "ovolkova@corp.example",
+    "source": "user",
+    "since": "17.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "sigma"
+   },
+   {
+    "username": "yershova",
+    "name": "Юлия Ершова",
+    "email": "yershova@mail.example",
+    "source": "user",
+    "since": "20.10.2026",
+    "sent": 2,
+    "failed": 0,
+    "last_mail": "04.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "private"
+   },
+   {
+    "username": "vkarpov",
+    "name": "Виктор Карпов",
+    "email": "vkarpov@corp.example",
+    "source": "user",
+    "since": "23.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "sigma"
+   },
+   {
+    "username": "imedvedeva",
+    "name": "Ирина Медведева",
+    "email": "imedvedeva@corp.example",
+    "source": "sso",
+    "since": "24.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "sso"
+   },
+   {
+    "username": "otitov",
+    "name": "Олег Титов",
+    "email": "otitov@corp.example",
+    "source": "sso",
+    "since": "25.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "sso"
+   },
+   {
+    "username": "ggrigoreva",
+    "name": "Галина Григорьева",
+    "email": "ggrigoreva@mail.example",
+    "source": "user",
+    "since": "26.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "private"
+   },
+   {
+    "username": "mkorolev",
+    "name": "Максим Королёв",
+    "email": "mkorolev@corp.example",
+    "source": "user",
+    "since": "27.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "sigma"
+   },
+   {
+    "username": "apavlov",
+    "name": "Артём Павлов",
+    "email": "apavlov@corp.example",
+    "source": "user",
+    "since": "06.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "sigma"
+   },
+   {
+    "username": "gmelnikov",
+    "name": "Глеб Мельников",
+    "email": "gmelnikov@mail.example",
+    "source": "user",
+    "since": "08.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "private"
+   },
+   {
+    "username": "bzhukov",
+    "name": "Борис Жуков",
+    "email": "bzhukov@corp.example",
+    "source": "user",
+    "since": "10.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "sigma"
+   },
+   {
+    "username": "tabramov",
+    "name": "Тимур Абрамов",
+    "email": "tabramov@corp.example",
+    "source": "user",
+    "since": "14.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "sigma"
+   },
+   {
+    "username": "nzakharova",
+    "name": "Нина Захарова",
+    "email": "nzakharova@mail.example",
+    "source": "user",
+    "since": "15.10.2026",
+    "sent": 8,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "private"
+   },
+   {
+    "username": "iponomarev",
+    "name": "Илья Пономарёв",
+    "email": "iponomarev@corp.example",
+    "source": "user",
+    "since": "18.10.2026",
+    "sent": 2,
+    "failed": 0,
+    "last_mail": "04.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "sigma"
+   },
+   {
+    "username": "vbelov",
+    "name": "Виктор Белов",
+    "email": "vbelov@corp.example",
+    "source": "user",
+    "since": "22.10.2026",
+    "sent": 2,
+    "failed": 0,
+    "last_mail": "04.11 11:00",
+    "excluded": false,
+    "active": true,
+    "kind": "sigma"
+   },
+   {
+    "username": "myakovlev",
+    "name": "Максим Яковлев",
+    "email": "myakovlev@corp.example",
+    "source": "user",
+    "since": "26.10.2026",
+    "sent": 2,
+    "failed": 0,
+    "last_mail": "04.11 11:00",
+    "excluded": false,
+    "active": false,
+    "kind": "sigma"
+   },
+   {
+    "username": "vosipova",
+    "name": "Вера Осипова",
+    "email": "vosipova@mail.example",
+    "source": "user",
+    "since": "29.10.2026",
+    "sent": 2,
+    "failed": 0,
+    "last_mail": "04.11 11:00",
+    "excluded": false,
+    "active": false,
+    "kind": "private"
+   },
+   {
+    "username": "apanov",
+    "name": "Артём Панов",
+    "email": "apanov@corp.example",
+    "source": "user",
+    "since": "30.10.2026",
+    "sent": 2,
+    "failed": 0,
+    "last_mail": "04.11 11:00",
+    "excluded": false,
+    "active": false,
+    "kind": "sigma"
+   },
+   {
+    "username": "bandreev",
+    "name": "Борис Андреев",
+    "email": "bandreev@corp.example",
+    "source": "user",
+    "since": "09.10.2026",
+    "sent": 2,
+    "failed": 0,
+    "last_mail": "04.11 11:00",
+    "excluded": false,
+    "active": false,
+    "kind": "sigma"
+   },
+   {
+    "username": "ssavin",
+    "name": "Степан Савин",
+    "email": "ssavin@mail.example",
+    "source": "user",
+    "since": "11.10.2026",
+    "sent": 2,
+    "failed": 0,
+    "last_mail": "04.11 11:00",
+    "excluded": false,
+    "active": false,
+    "kind": "private"
+   },
+   {
+    "username": "tnosov",
+    "name": "Тимур Носов",
+    "email": "tnosov@corp.example",
+    "source": "user",
+    "since": "13.10.2026",
+    "sent": 2,
+    "failed": 0,
+    "last_mail": "04.11 11:00",
+    "excluded": false,
+    "active": false,
+    "kind": "sigma"
+   },
+   {
+    "username": "igrigorev",
+    "name": "Илья Григорьев",
+    "email": "igrigorev@corp.example",
+    "source": "user",
+    "since": "17.10.2026",
+    "sent": 2,
+    "failed": 0,
+    "last_mail": "04.11 11:00",
+    "excluded": false,
+    "active": false,
+    "kind": "sigma"
+   },
+   {
+    "username": "zkoroleva",
+    "name": "Жанна Королёва",
+    "email": "zkoroleva@mail.example",
+    "source": "user",
+    "since": "18.10.2026",
+    "sent": 2,
+    "failed": 0,
+    "last_mail": "04.11 11:00",
+    "excluded": false,
+    "active": false,
+    "kind": "private"
+   },
+   {
+    "username": "oaleksandrov",
+    "name": "Олег Александров",
+    "email": "oaleksandrov@corp.example",
+    "source": "user",
+    "since": "06.10.2026",
+    "sent": 12,
+    "failed": 0,
+    "last_mail": "05.11 11:00",
+    "excluded": true,
+    "active": true,
+    "kind": "sigma"
+   }
+  ]
+ },
+ "slice_canary": [
+  {
+   "run_at": "2026-11-02T04:10:00+03:00",
+   "schema": "s7",
+   "n": 120,
+   "metrics": {
+    "payroll": {
+     "precision": 0.9,
+     "recall": 0.93,
+     "tp": 18,
+     "fp": 2,
+     "fn": 1
+    },
+    "us": {
+     "precision": 0.88,
+     "recall": 0.9,
+     "tp": 19,
+     "fp": 2,
+     "fn": 2
+    },
+    "field": {
+     "precision": 0.86,
+     "recall": 0.93,
+     "tp": 20,
+     "fp": 2,
+     "fn": 1
+    },
+    "selfemp": {
+     "precision": 0.9,
+     "recall": 0.9,
+     "tp": 21,
+     "fp": 2,
+     "fn": 2
+    },
+    "youth": {
+     "precision": 0.88,
+     "recall": 0.93,
+     "tp": 22,
+     "fp": 2,
+     "fn": 1
+    },
+    "svo": {
+     "precision": 0.86,
+     "recall": 0.9,
+     "tp": 23,
+     "fp": 2,
+     "fn": 2
+    }
+   },
+   "rub": 182.4,
+   "note": "",
+   "alert": false,
+   "reasons": []
+  },
+  {
+   "run_at": "2026-10-26T04:10:00+03:00",
+   "schema": "s7",
+   "n": 120,
+   "metrics": {
+    "payroll": {
+     "precision": 0.88,
+     "recall": 0.93,
+     "tp": 18,
+     "fp": 2,
+     "fn": 2
+    },
+    "us": {
+     "precision": 0.86,
+     "recall": 0.9,
+     "tp": 19,
+     "fp": 2,
+     "fn": 1
+    },
+    "field": {
+     "precision": 0.9,
+     "recall": 0.93,
+     "tp": 20,
+     "fp": 2,
+     "fn": 2
+    },
+    "selfemp": {
+     "precision": 0.88,
+     "recall": 0.9,
+     "tp": 21,
+     "fp": 2,
+     "fn": 1
+    },
+    "youth": {
+     "precision": 0.86,
+     "recall": 0.93,
+     "tp": 22,
+     "fp": 2,
+     "fn": 2
+    },
+    "svo": {
+     "precision": 0.9,
+     "recall": 0.9,
+     "tp": 23,
+     "fp": 2,
+     "fn": 1
+    }
+   },
+   "rub": 179.4,
+   "note": "",
+   "alert": false,
+   "reasons": []
+  },
+  {
+   "run_at": "2026-10-19T04:10:00+03:00",
+   "schema": "s7",
+   "n": 120,
+   "metrics": {
+    "payroll": {
+     "precision": 0.86,
+     "recall": 0.93,
+     "tp": 18,
+     "fp": 2,
+     "fn": 1
+    },
+    "us": {
+     "precision": 0.9,
+     "recall": 0.9,
+     "tp": 19,
+     "fp": 2,
+     "fn": 2
+    },
+    "field": {
+     "precision": 0.88,
+     "recall": 0.93,
+     "tp": 20,
+     "fp": 2,
+     "fn": 1
+    },
+    "selfemp": {
+     "precision": 0.86,
+     "recall": 0.9,
+     "tp": 21,
+     "fp": 2,
+     "fn": 2
+    },
+    "youth": {
+     "precision": 0.9,
+     "recall": 0.93,
+     "tp": 22,
+     "fp": 2,
+     "fn": 1
+    },
+    "svo": {
+     "precision": 0.88,
+     "recall": 0.9,
+     "tp": 23,
+     "fp": 2,
+     "fn": 2
+    }
+   },
+   "rub": 176.4,
+   "note": "",
+   "alert": false,
+   "reasons": []
+  },
+  {
+   "run_at": "2026-10-12T04:10:00+03:00",
+   "schema": "s7",
+   "n": 120,
+   "metrics": {
+    "payroll": {
+     "precision": 0.9,
+     "recall": 0.93,
+     "tp": 18,
+     "fp": 2,
+     "fn": 2
+    },
+    "us": {
+     "precision": 0.88,
+     "recall": 0.9,
+     "tp": 19,
+     "fp": 2,
+     "fn": 1
+    },
+    "field": {
+     "precision": 0.86,
+     "recall": 0.93,
+     "tp": 20,
+     "fp": 2,
+     "fn": 2
+    },
+    "selfemp": {
+     "precision": 0.9,
+     "recall": 0.9,
+     "tp": 21,
+     "fp": 2,
+     "fn": 1
+    },
+    "youth": {
+     "precision": 0.88,
+     "recall": 0.93,
+     "tp": 22,
+     "fp": 2,
+     "fn": 2
+    },
+    "svo": {
+     "precision": 0.86,
+     "recall": 0.9,
+     "tp": 23,
+     "fp": 2,
+     "fn": 1
+    }
+   },
+   "rub": 173.4,
+   "note": "",
+   "alert": false,
+   "reasons": []
+  }
+ ],
+ "health": {
+  "days": [
+   "2026-10-23",
+   "2026-10-24",
+   "2026-10-25",
+   "2026-10-26",
+   "2026-10-27",
+   "2026-10-28",
+   "2026-10-29",
+   "2026-10-30",
+   "2026-10-31",
+   "2026-11-01",
+   "2026-11-02",
+   "2026-11-03",
+   "2026-11-04",
+   "2026-11-05"
+  ],
+  "off": [
+   1,
+   2,
+   8,
+   9,
+   12
+  ],
+  "server": [
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "w",
+   "o",
+   "o",
+   "o",
+   "o",
+   "w"
+  ],
+  "digest": [
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "w",
+   "o",
+   "o",
+   "b"
+  ],
+  "reviews": [
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "w",
+   "b",
+   "b",
+   "b"
+  ],
+  "news": [
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o"
+  ],
+  "slices": [
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "w",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o"
+  ],
+  "rsearch": [
+   "n",
+   "n",
+   "n",
+   "n",
+   "n",
+   "n",
+   "n",
+   "n",
+   "n",
+   "n",
+   "n",
+   "n",
+   "o",
+   "o"
+  ],
+  "web": [
+   "o",
+   "o",
+   "o",
+   "w",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o"
+  ],
+  "ingest": [
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o",
+   "o"
+  ]
+ },
+ "with_me": false,
+ "hidden_n": 2,
+ "is_owner": true
+}

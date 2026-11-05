@@ -1,0 +1,336 @@
+{
+ "keys": [
+  {
+   "key": "payroll",
+   "label": "Зарплатные проекты",
+   "schema": "s7",
+   "switched_at": "2026-11-01T12:00:00+03:00",
+   "note": null,
+   "candidates": 1840,
+   "tagged": 1828,
+   "share": 0.9935,
+   "ready": true,
+   "open_flags": 2,
+   "gold": {
+    "precision": 0.92,
+    "recall": 0.96,
+    "precision_s6": 0.73
+   }
+  },
+  {
+   "key": "us",
+   "label": "УС — банкоматы и терминалы",
+   "schema": "s7",
+   "switched_at": "2026-11-01T12:00:00+03:00",
+   "note": null,
+   "candidates": 3120,
+   "tagged": 3111,
+   "share": 0.9971,
+   "ready": true,
+   "open_flags": 1,
+   "gold": {
+    "precision": 0.95,
+    "recall": 0.9,
+    "precision_s6": 0.6
+   }
+  },
+  {
+   "key": "field",
+   "label": "Выездной сервис — курьеры и выезд",
+   "schema": "s7",
+   "switched_at": "2026-11-01T12:00:00+03:00",
+   "note": null,
+   "candidates": 960,
+   "tagged": 956,
+   "share": 0.9958,
+   "ready": true,
+   "open_flags": 1,
+   "gold": {
+    "precision": 0.85,
+    "recall": 0.97,
+    "precision_s6": 0.73
+   }
+  },
+  {
+   "key": "selfemp",
+   "label": "Самозанятые и «Своё дело»",
+   "schema": "s7",
+   "switched_at": "2026-11-01T12:00:00+03:00",
+   "note": null,
+   "candidates": 410,
+   "tagged": 408,
+   "share": 0.9951,
+   "ready": true,
+   "open_flags": 0,
+   "gold": {
+    "precision": 0.94,
+    "recall": 1.0,
+    "precision_s6": null
+   }
+  },
+  {
+   "key": "youth",
+   "label": "Дети и молодёжь",
+   "schema": "s7",
+   "switched_at": "2026-11-01T12:00:00+03:00",
+   "note": null,
+   "candidates": 280,
+   "tagged": 279,
+   "share": 0.9964,
+   "ready": true,
+   "open_flags": 0,
+   "gold": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "precision_s6": null
+   }
+  },
+  {
+   "key": "svo",
+   "label": "Участники СВО",
+   "schema": "s7",
+   "switched_at": "2026-11-01T12:00:00+03:00",
+   "note": null,
+   "candidates": 150,
+   "tagged": 150,
+   "share": 1.0,
+   "ready": true,
+   "open_flags": 0,
+   "gold": {
+    "precision": 1.0,
+    "recall": 0.85,
+    "precision_s6": null
+   }
+  }
+ ],
+ "spend": {
+  "s6": {
+   "rows": 38200,
+   "rub": 9150
+  },
+  "s7": {
+   "rows": 41800,
+   "rub": 11320
+  }
+ },
+ "schema": "s7",
+ "sieve": {
+  "sieved": 12400,
+  "flagged": 380,
+  "rub": 2140
+ },
+ "canary": [
+  {
+   "run_at": "2026-11-02T04:10:00+03:00",
+   "schema": "s7",
+   "n": 120,
+   "metrics": {
+    "payroll": {
+     "precision": 0.9,
+     "recall": 0.93,
+     "tp": 18,
+     "fp": 2,
+     "fn": 1
+    },
+    "us": {
+     "precision": 0.88,
+     "recall": 0.9,
+     "tp": 19,
+     "fp": 2,
+     "fn": 2
+    },
+    "field": {
+     "precision": 0.86,
+     "recall": 0.93,
+     "tp": 20,
+     "fp": 2,
+     "fn": 1
+    },
+    "selfemp": {
+     "precision": 0.9,
+     "recall": 0.9,
+     "tp": 21,
+     "fp": 2,
+     "fn": 2
+    },
+    "youth": {
+     "precision": 0.88,
+     "recall": 0.93,
+     "tp": 22,
+     "fp": 2,
+     "fn": 1
+    },
+    "svo": {
+     "precision": 0.86,
+     "recall": 0.9,
+     "tp": 23,
+     "fp": 2,
+     "fn": 2
+    }
+   },
+   "rub": 182.4,
+   "note": "",
+   "alert": false,
+   "reasons": []
+  },
+  {
+   "run_at": "2026-10-26T04:10:00+03:00",
+   "schema": "s7",
+   "n": 120,
+   "metrics": {
+    "payroll": {
+     "precision": 0.88,
+     "recall": 0.93,
+     "tp": 18,
+     "fp": 2,
+     "fn": 2
+    },
+    "us": {
+     "precision": 0.86,
+     "recall": 0.9,
+     "tp": 19,
+     "fp": 2,
+     "fn": 1
+    },
+    "field": {
+     "precision": 0.9,
+     "recall": 0.93,
+     "tp": 20,
+     "fp": 2,
+     "fn": 2
+    },
+    "selfemp": {
+     "precision": 0.88,
+     "recall": 0.9,
+     "tp": 21,
+     "fp": 2,
+     "fn": 1
+    },
+    "youth": {
+     "precision": 0.86,
+     "recall": 0.93,
+     "tp": 22,
+     "fp": 2,
+     "fn": 2
+    },
+    "svo": {
+     "precision": 0.9,
+     "recall": 0.9,
+     "tp": 23,
+     "fp": 2,
+     "fn": 1
+    }
+   },
+   "rub": 179.4,
+   "note": "",
+   "alert": false,
+   "reasons": []
+  },
+  {
+   "run_at": "2026-10-19T04:10:00+03:00",
+   "schema": "s7",
+   "n": 120,
+   "metrics": {
+    "payroll": {
+     "precision": 0.86,
+     "recall": 0.93,
+     "tp": 18,
+     "fp": 2,
+     "fn": 1
+    },
+    "us": {
+     "precision": 0.9,
+     "recall": 0.9,
+     "tp": 19,
+     "fp": 2,
+     "fn": 2
+    },
+    "field": {
+     "precision": 0.88,
+     "recall": 0.93,
+     "tp": 20,
+     "fp": 2,
+     "fn": 1
+    },
+    "selfemp": {
+     "precision": 0.86,
+     "recall": 0.9,
+     "tp": 21,
+     "fp": 2,
+     "fn": 2
+    },
+    "youth": {
+     "precision": 0.9,
+     "recall": 0.93,
+     "tp": 22,
+     "fp": 2,
+     "fn": 1
+    },
+    "svo": {
+     "precision": 0.88,
+     "recall": 0.9,
+     "tp": 23,
+     "fp": 2,
+     "fn": 2
+    }
+   },
+   "rub": 176.4,
+   "note": "",
+   "alert": false,
+   "reasons": []
+  },
+  {
+   "run_at": "2026-10-12T04:10:00+03:00",
+   "schema": "s7",
+   "n": 120,
+   "metrics": {
+    "payroll": {
+     "precision": 0.9,
+     "recall": 0.93,
+     "tp": 18,
+     "fp": 2,
+     "fn": 2
+    },
+    "us": {
+     "precision": 0.88,
+     "recall": 0.9,
+     "tp": 19,
+     "fp": 2,
+     "fn": 1
+    },
+    "field": {
+     "precision": 0.86,
+     "recall": 0.93,
+     "tp": 20,
+     "fp": 2,
+     "fn": 2
+    },
+    "selfemp": {
+     "precision": 0.9,
+     "recall": 0.9,
+     "tp": 21,
+     "fp": 2,
+     "fn": 1
+    },
+    "youth": {
+     "precision": 0.88,
+     "recall": 0.93,
+     "tp": 22,
+     "fp": 2,
+     "fn": 2
+    },
+    "svo": {
+     "precision": 0.86,
+     "recall": 0.9,
+     "tp": 23,
+     "fp": 2,
+     "fn": 1
+    }
+   },
+   "rub": 173.4,
+   "note": "",
+   "alert": false,
+   "reasons": []
+  }
+ ]
+}

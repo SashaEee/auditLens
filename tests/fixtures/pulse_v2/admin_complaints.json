@@ -1,0 +1,92 @@
+{
+ "days": 14,
+ "items": [
+  {
+   "username": "dorlov",
+   "kind": "ai_answer",
+   "item_key": "msg:91234",
+   "at": "04.11 14:22",
+   "question": "Сравни ставки по вкладам ТОП-10 банков на 6 месяцев",
+   "comment": "У ВТБ указана ставка прошлого месяца — 19,5% вместо 18%.",
+   "title": null,
+   "mode": "deep",
+   "report_id": "4187",
+   "session_id": "8812",
+   "reasons": [
+    "ошибка в данных"
+   ],
+   "name": "Дмитрий Орлов",
+   "verdict": -1
+  },
+  {
+   "username": "nbelova",
+   "kind": "ai_answer",
+   "item_key": "msg:90871",
+   "at": "03.11 16:05",
+   "question": "Сколько жалоб на кредитные карты Сбера за октябрь?",
+   "comment": "",
+   "title": null,
+   "mode": "quick",
+   "report_id": "4179",
+   "session_id": "8790",
+   "reasons": [
+    "ошибка в данных",
+    "мало конкретики"
+   ],
+   "name": "Наталья Белова",
+   "verdict": -1
+  },
+  {
+   "username": "afedorov",
+   "kind": "ai_answer",
+   "item_key": "msg:89410",
+   "at": "30.10 11:47",
+   "question": "Какие банки подняли комиссию за снятие наличных в чужих банкоматах?",
+   "comment": "Часть изменений — ещё летние.",
+   "title": null,
+   "mode": "quick",
+   "report_id": null,
+   "session_id": "8701",
+   "reasons": [
+    "мало конкретики"
+   ],
+   "name": "Алексей Фёдоров",
+   "verdict": -1
+  },
+  {
+   "username": "ilebedev",
+   "kind": "ai_answer",
+   "item_key": "msg:88702",
+   "at": "27.10 10:15",
+   "question": "Что известно о новых требованиях ЦБ к раскрытию ПСК?",
+   "comment": "",
+   "title": null,
+   "mode": "quick",
+   "report_id": null,
+   "session_id": "8655",
+   "reasons": [
+    "не по делу"
+   ],
+   "name": "Игорь Лебедев",
+   "verdict": -1
+  },
+  {
+   "username": "ovolkova",
+   "kind": "digest_card",
+   "item_key": "https://news.example/deposits-rates",
+   "at": "26.10 09:02",
+   "question": null,
+   "comment": "Это общий фон, а не повод для проверки.",
+   "title": "Банки снижают ставки по вкладам вслед за ключевой",
+   "mode": null,
+   "report_id": null,
+   "session_id": null,
+   "reasons": [
+    "не по делу"
+   ],
+   "name": "Ольга Волкова",
+   "verdict": -1
+  }
+ ],
+ "total": 5
+}

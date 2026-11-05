@@ -1,0 +1,232 @@
+{
+ "user": {
+  "username": "akovaleva",
+  "name": "Анна Ковалёва",
+  "named": true,
+  "hidden": false,
+  "first_seen": "01.06.2026",
+  "last_seen": "05.11 10:01",
+  "last_seen_ago_s": 120,
+  "has_note": true,
+  "days_active": 16,
+  "views": 434,
+  "time_s": 35800,
+  "visits": 32,
+  "errors": 0,
+  "ai": 22,
+  "deep": 5,
+  "reports": 5,
+  "quick": 4,
+  "shares": 2,
+  "likes": 3,
+  "dislikes": 0,
+  "today_views": 38,
+  "top_pages": [
+   "overview",
+   "reviews",
+   "ai"
+  ],
+  "online": true
+ },
+ "profile": {
+  "role_desc": "Аудит розничных продуктов: вклады, карты, ипотека",
+  "profile_note": "Анна проверяет розничные продукты: чаще всего — вклады и кредитные карты. Спрашивает про ставки конкурентов и жалобы клиентов.",
+  "note_at": "28.10.2026",
+  "interests": {
+   "counters": {
+    "products": {
+     "Вклады": 14,
+     "Кредитные карты": 9,
+     "Ипотека": 4
+    },
+    "banks": {
+     "Сбербанк": 18,
+     "ВТБ": 7
+    }
+   },
+   "pinned": [
+    "Вклады"
+   ],
+   "custom": []
+  },
+  "timezone": "Europe/Moscow"
+ },
+ "by_day": [
+  {
+   "d": "2026-10-23",
+   "views": 38,
+   "time_s": 3300
+  },
+  {
+   "d": "2026-10-26",
+   "views": 38,
+   "time_s": 3300
+  },
+  {
+   "d": "2026-10-27",
+   "views": 14,
+   "time_s": 1100
+  },
+  {
+   "d": "2026-10-28",
+   "views": 38,
+   "time_s": 3300
+  },
+  {
+   "d": "2026-10-29",
+   "views": 38,
+   "time_s": 3300
+  },
+  {
+   "d": "2026-10-30",
+   "views": 14,
+   "time_s": 1100
+  },
+  {
+   "d": "2026-11-02",
+   "views": 38,
+   "time_s": 3300
+  },
+  {
+   "d": "2026-11-03",
+   "views": 38,
+   "time_s": 3300
+  },
+  {
+   "d": "2026-11-05",
+   "views": 38,
+   "time_s": 3300
+  }
+ ],
+ "pages": [
+  {
+   "page": "ai",
+   "views": 96,
+   "total_s": 14200
+  },
+  {
+   "page": "reviews",
+   "views": 71,
+   "total_s": 9800
+  },
+  {
+   "page": "overview",
+   "views": 52,
+   "total_s": 4100
+  },
+  {
+   "page": "market",
+   "views": 18,
+   "total_s": 1500
+  }
+ ],
+ "questions": [
+  {
+   "at": "05.11 10:02",
+   "question": "Комиссии за переводы СБП у ТОП-10 банков",
+   "mode": "deep",
+   "report_id": null,
+   "answer_len": 0
+  },
+  {
+   "at": "04.11 15:31",
+   "question": "Условия кешбэка по дебетовым картам у крупных банков",
+   "mode": "quick",
+   "report_id": null,
+   "answer_len": 2310
+  },
+  {
+   "at": "04.11 11:12",
+   "question": "Жалобы на блокировки по 161-ФЗ за месяц",
+   "mode": "deep",
+   "report_id": "4170",
+   "answer_len": 19800
+  },
+  {
+   "at": "03.11 16:40",
+   "question": "Как меняются ставки по накопительным счетам после решения ЦБ",
+   "mode": "quick",
+   "report_id": null,
+   "answer_len": 1840
+  }
+ ],
+ "reports": [
+  {
+   "report_id": 4170,
+   "question": "Жалобы на блокировки по 161-ФЗ за месяц",
+   "title": "Блокировки по 161-ФЗ: жалобы за месяц",
+   "mode": "deep",
+   "status": "ok",
+   "elapsed_s": 148,
+   "at": "04.11 11:15",
+   "body_len": 19800
+  },
+  {
+   "report_id": 4152,
+   "question": "Детские карты: условия и жалобы родителей",
+   "title": "Детские карты: условия и жалобы",
+   "mode": "deep",
+   "status": "ok",
+   "elapsed_s": 131,
+   "at": "29.10 10:05",
+   "body_len": 17600
+  }
+ ],
+ "ratings": [
+  {
+   "kind": "ai_answer",
+   "verdict": 1,
+   "item_key": "msg:91022",
+   "at": "04.11 11:20",
+   "question": "Жалобы на блокировки по 161-ФЗ за месяц",
+   "comment": null,
+   "title": null,
+   "report_id": "4170",
+   "session_id": "8805",
+   "reasons": []
+  },
+  {
+   "kind": "news",
+   "verdict": 1,
+   "item_key": "https://news.example/psk-rules",
+   "at": "03.11 09:14",
+   "question": null,
+   "comment": null,
+   "title": "ЦБ уточнил правила раскрытия ПСК",
+   "report_id": null,
+   "session_id": null,
+   "reasons": null
+  }
+ ],
+ "errors": [],
+ "trail": [
+  {
+   "at": "05.11 10:02:11",
+   "kind": "page_view",
+   "page": "ai",
+   "dur_ms": null,
+   "status": null
+  },
+  {
+   "at": "05.11 10:01:40",
+   "kind": "page_leave",
+   "page": "reviews",
+   "dur_ms": 412000,
+   "status": null
+  },
+  {
+   "at": "05.11 09:54:48",
+   "kind": "page_view",
+   "page": "reviews",
+   "dur_ms": null,
+   "status": null
+  },
+  {
+   "at": "05.11 09:40:02",
+   "kind": "page_view",
+   "page": "overview",
+   "dur_ms": null,
+   "status": null
+  }
+ ]
+}

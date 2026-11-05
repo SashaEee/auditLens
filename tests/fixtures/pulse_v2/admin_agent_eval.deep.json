@@ -1,0 +1,465 @@
+{
+ "runs": [
+  {
+   "run_id": 200,
+   "started_at": "2026-10-30T04:00:00+03:00",
+   "finished_at": "2026-10-30T04:24:00+03:00",
+   "model": "default",
+   "trigger": "gate",
+   "score": 77.0,
+   "n_pass": 8,
+   "n_partial": 3,
+   "n_fail": 1,
+   "median_s": 151.0,
+   "note": null
+  },
+  {
+   "run_id": 199,
+   "started_at": "2026-10-23T04:00:00+03:00",
+   "finished_at": "2026-10-23T04:24:00+03:00",
+   "model": "default",
+   "trigger": "gate",
+   "score": 76.0,
+   "n_pass": 8,
+   "n_partial": 2,
+   "n_fail": 2,
+   "median_s": 158.0,
+   "note": null
+  },
+  {
+   "run_id": 198,
+   "started_at": "2026-10-16T04:00:00+03:00",
+   "finished_at": "2026-10-16T04:24:00+03:00",
+   "model": "default",
+   "trigger": "gate",
+   "score": 74.0,
+   "n_pass": 7,
+   "n_partial": 4,
+   "n_fail": 1,
+   "median_s": 162.0,
+   "note": null
+  },
+  {
+   "run_id": 197,
+   "started_at": "2026-10-09T04:00:00+03:00",
+   "finished_at": "2026-10-09T04:24:00+03:00",
+   "model": "default",
+   "trigger": "admin",
+   "score": 75.5,
+   "n_pass": 8,
+   "n_partial": 2,
+   "n_fail": 2,
+   "median_s": 149.0,
+   "note": null
+  },
+  {
+   "run_id": 196,
+   "started_at": "2026-10-02T04:00:00+03:00",
+   "finished_at": "2026-10-02T04:24:00+03:00",
+   "model": "default",
+   "trigger": "gate",
+   "score": 74.0,
+   "n_pass": 7,
+   "n_partial": 3,
+   "n_fail": 2,
+   "median_s": 171.0,
+   "note": null
+  },
+  {
+   "run_id": 195,
+   "started_at": "2026-09-25T04:00:00+03:00",
+   "finished_at": "2026-09-25T04:24:00+03:00",
+   "model": "default",
+   "trigger": "gate",
+   "score": 72.0,
+   "n_pass": 7,
+   "n_partial": 2,
+   "n_fail": 3,
+   "median_s": 166.0,
+   "note": null
+  }
+ ],
+ "last_cases": [
+  {
+   "id": "D1",
+   "tab": "Рынок",
+   "title": "топ-5 вкладов и позиция Сбера",
+   "question": "Проверочный вопрос: топ-5 вкладов и позиция Сбера",
+   "verdict": "pass",
+   "seconds": 152.0,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (4/4)",
+     "ok": true,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 9,
+    "correct": true,
+    "key_fact": true,
+    "hallucination": false,
+    "issues": []
+   },
+   "answer": "Ответ агента на вопрос «топ-5 вкладов и позиция Сбера».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "D2",
+   "tab": "Рынок",
+   "title": "ипотека: Сбер и рынок, господдержка",
+   "question": "Проверочный вопрос: ипотека: Сбер и рынок, господдержка",
+   "verdict": "partial",
+   "seconds": 152.0,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "ссылки на источники",
+     "ok": false,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 6,
+    "correct": true,
+    "key_fact": false,
+    "hallucination": false,
+    "issues": [
+     "нет ссылки на программу ДОМ.РФ"
+    ]
+   },
+   "answer": "Ответ агента на вопрос «ипотека: Сбер и рынок, господдержка».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "D3",
+   "tab": "Рынок",
+   "title": "эквайринг четырёх банков (веб)",
+   "question": "Проверочный вопрос: эквайринг четырёх банков (веб)",
+   "verdict": "pass",
+   "seconds": 152.0,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (4/4)",
+     "ok": true,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 9,
+    "correct": true,
+    "key_fact": true,
+    "hallucination": false,
+    "issues": []
+   },
+   "answer": "Ответ агента на вопрос «эквайринг четырёх банков (веб)».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "D4",
+   "tab": "Рынок",
+   "title": "оффер конкурента: реагировать?",
+   "question": "Проверочный вопрос: оффер конкурента: реагировать?",
+   "verdict": "pass",
+   "seconds": 152.0,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (4/4)",
+     "ok": true,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 9,
+    "correct": true,
+    "key_fact": true,
+    "hallucination": false,
+    "issues": []
+   },
+   "answer": "Ответ агента на вопрос «оффер конкурента: реагировать?».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "D5",
+   "tab": "Процесс",
+   "title": "клиентский путь дебетовой карты (веб)",
+   "question": "Проверочный вопрос: клиентский путь дебетовой карты (веб)",
+   "verdict": "pass",
+   "seconds": 152.0,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (4/4)",
+     "ok": true,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 9,
+    "correct": true,
+    "key_fact": true,
+    "hallucination": false,
+    "issues": []
+   },
+   "answer": "Ответ агента на вопрос «клиентский путь дебетовой карты (веб)».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "D6",
+   "tab": "Отзывы",
+   "title": "основные жалобы Сбера",
+   "question": "Проверочный вопрос: основные жалобы Сбера",
+   "verdict": "pass",
+   "seconds": 152.0,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (4/4)",
+     "ok": true,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 9,
+    "correct": true,
+    "key_fact": true,
+    "hallucination": false,
+    "issues": []
+   },
+   "answer": "Ответ агента на вопрос «основные жалобы Сбера».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "D7",
+   "tab": "Отзывы",
+   "title": "жалобы по кредитным картам",
+   "question": "Проверочный вопрос: жалобы по кредитным картам",
+   "verdict": "partial",
+   "seconds": 152.0,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (3/5)",
+     "ok": false,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 6,
+    "correct": true,
+    "key_fact": false,
+    "hallucination": false,
+    "issues": [
+     "пропущены жалобы на льготный период"
+    ]
+   },
+   "answer": "Ответ агента на вопрос «жалобы по кредитным картам».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "D8",
+   "tab": "Отзывы",
+   "title": "уникальные жалобы конкурентов",
+   "question": "Проверочный вопрос: уникальные жалобы конкурентов",
+   "verdict": "pass",
+   "seconds": 152.0,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (4/4)",
+     "ok": true,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 9,
+    "correct": true,
+    "key_fact": true,
+    "hallucination": false,
+    "issues": []
+   },
+   "answer": "Ответ агента на вопрос «уникальные жалобы конкурентов».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "D9",
+   "tab": "Уязвимости",
+   "title": "лазейки по кредитным картам",
+   "question": "Проверочный вопрос: лазейки по кредитным картам",
+   "verdict": "partial",
+   "seconds": 152.0,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (2/4)",
+     "ok": false,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 6,
+    "correct": true,
+    "key_fact": false,
+    "hallucination": false,
+    "issues": [
+     "не разобраны схемы с кешбэком"
+    ]
+   },
+   "answer": "Ответ агента на вопрос «лазейки по кредитным картам».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "D10",
+   "tab": "Нормы",
+   "title": "раскрытие ПСК: Сбер и ВТБ (веб)",
+   "question": "Проверочный вопрос: раскрытие ПСК: Сбер и ВТБ (веб)",
+   "verdict": "fail",
+   "seconds": 152.0,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": false,
+     "hard": true
+    },
+    {
+     "check": "есть ответ",
+     "ok": false,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 3,
+    "correct": false,
+    "key_fact": false,
+    "hallucination": false,
+    "issues": [
+     "ответ оборвался на середине"
+    ]
+   },
+   "answer": "Ответ агента на вопрос «раскрытие ПСК: Сбер и ВТБ (веб)».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "D11",
+   "tab": "Обзор",
+   "title": "разбор новости дня",
+   "question": "Проверочный вопрос: разбор новости дня",
+   "verdict": "pass",
+   "seconds": 152.0,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (4/4)",
+     "ok": true,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 9,
+    "correct": true,
+    "key_fact": true,
+    "hallucination": false,
+    "issues": []
+   },
+   "answer": "Ответ агента на вопрос «разбор новости дня».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  },
+  {
+   "id": "D12",
+   "tab": "Отзывы",
+   "title": "всплеск жалоб (кнопка сигнала)",
+   "question": "Проверочный вопрос: всплеск жалоб (кнопка сигнала)",
+   "verdict": "pass",
+   "seconds": 152.0,
+   "tools": [],
+   "error": null,
+   "checks": [
+    {
+     "check": "есть ответ",
+     "ok": true,
+     "hard": true
+    },
+    {
+     "check": "по теме (4/4)",
+     "ok": true,
+     "hard": false
+    }
+   ],
+   "judge": {
+    "score": 9,
+    "correct": true,
+    "key_fact": true,
+    "hallucination": false,
+    "issues": []
+   },
+   "answer": "Ответ агента на вопрос «всплеск жалоб (кнопка сигнала)».\n\n- пункт первый\n- пункт второй",
+   "empty_attempts": null
+  }
+ ],
+ "running": false
+}
