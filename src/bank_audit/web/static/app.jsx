@@ -11609,15 +11609,16 @@ function VProgress({p}){
   return <section className="vprog" aria-label="Ход сбора и чтения">
     <button className="vprog-h" onClick={()=>setOpen(!open)} aria-expanded={open}>
       <b>Идёт сбор и чтение отзывов</b>
-      <span>модель прочитала {read}%</span>{bar(read,"Прочитано моделью")}
-      <span>карточек {cards}%</span>{bar(cards,"Карточки историй")}
+      <span>отбор {read}%</span>{bar(read,"Отбор: прочитано моделью")}
+      <span>подробные карточки {cards}%</span>{bar(cards,"Подробные карточки историй")}
       <span className="note">{open?"Свернуть":"Подробнее"}</span></button>
     {open&&<div className="vprog-d">
       <div><b>Сбор.</b> 2ГИС — {vN(cd["2gis"]||0)} {vPl(cd["2gis"]||0,"отделение","отделения","отделений")}, {vN(rv["2gis"]||0)} {vPl(rv["2gis"]||0,"отзыв","отзыва","отзывов")}, вся история.
         {" "}Яндекс Карты — {vN(cd.yandex||0)} {vPl(cd.yandex||0,"отделение","отделения","отделений")}, {vN(rv.yandex||0)} {vPl(rv.yandex||0,"отзыв","отзыва","отзывов")}
         {ys.points?(ys.finished?" · поиск отделений закончен":` · поиск отделений: ${vN(ys.done)} из ${vN(ys.points)} точек`):""}.</div>
-      <div><b>Чтение моделью.</b> Отобрано {vN(p.screened)} из ~{vN(p.with_text)} отзывов с текстом; историй о возможных нарушениях — {vN(p.relevant)};
-        {" "}подробных карточек — {vN(p.carded)}.</div>
+      <div><b>Чтение моделью.</b> Сначала модель быстро читает каждый отзыв и отбирает истории о возможных нарушениях:
+        прочитано {vN(p.screened)} из ~{vN(p.with_text)} отзывов с текстом, отобрано {vN(p.relevant)}.
+        {" "}Потом по каждой отобранной пишет подробную карточку: готово {vN(p.carded)} из {vN(p.relevant)}.</div>
       <div className="note">Пока чтение идёт, списки и числа во вкладке растут: расчёт обновляется каждые 2 часа. Отзывы, которые модель ещё не прочитала, учтены по словам.</div>
     </div>}
   </section>;
