@@ -825,7 +825,9 @@ def test_v2_bell_links_open_pulse_and_other_pages(browser):
     toast.wait_for()
     toast.get_by_role("button", name="Открыть").click()
     page.wait_for_function("() => location.hash.startsWith('#reviews')")
-    assert "active" in (_nav(page, "Аудит отзывов").get_attribute("class") or "")
+    # пункт меню подсвечивается после перерисовки, а не в момент смены адреса
+    page.wait_for_function("(el) => el.classList.contains('active')",
+                           arg=_nav(page, "Аудит отзывов").element_handle())
     assert not page.errors, page.errors
     page.context.close()
 
