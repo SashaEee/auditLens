@@ -2343,6 +2343,257 @@ function Sept3Strip(){
   </div>;
 }
 
+// ─── Новогодний выпуск: 15 декабря — 14 января ────────────────────────────
+// Праздник в оформлении, а не в данных: ночная обложка на главной, гирлянда
+// под шапкой, звезда над знаком и снег за страницей. Цифры, графики, отчёты,
+// PDF и раздел «Аудит уязвимостей» не меняются. Концепция — docs/NEW_YEAR.md.
+// ?ny=1 — предпросмотр в любой день; ?ny=eve | new | old — 31 декабря, январь,
+// Старый Новый год; ?ny=0 — без оформления на этот заход. Выбор человека
+// хранится на этом компьютере, как тема: выключенное оформление вернётся
+// в следующем сезоне, выключенный снег — нет.
+const NY_PHASES=["pre","eve","new","old"];
+function nyInSeason(d){ const m=d.getMonth(), n=d.getDate(); return (m===11&&n>=15)||(m===0&&n<=14); }
+// pre — декабрь до 31-го, eve — 31 декабря, new — январь, old — Старый Новый год (13–14 января)
+function nyPhaseOf(d){ const m=d.getMonth(), n=d.getDate();
+  if(m===0) return n>=13?"old":"new";
+  return m===11&&n===31?"eve":"pre"; }
+// Год, который наступает или уже наступил: в январе — текущий, иначе — следующий
+function nyYearOf(d,phase){ return d.getFullYear()+(d.getMonth()===0&&(phase==="new"||phase==="old")?0:1); }
+// Сколько осталось: 31 декабря — часы и минуты до полуночи, раньше — дни по календарю
+function nyLeft(d,phase,year){
+  if(phase==="eve"){ const mid=new Date(d); mid.setHours(24,0,0,0);
+    const m=Math.max(0,Math.ceil((mid-d)/60000)); return {h:Math.floor(m/60),m:m%60}; }
+  const today=new Date(d.getFullYear(),d.getMonth(),d.getDate());
+  return {days:Math.max(1,Math.round((new Date(year,0,1)-today)/86400000))};
+}
+const nyStore=(()=>{
+  const q=(()=>{ try{ return (new URLSearchParams(location.search).get("ny")||"").toLowerCase(); }catch{ return ""; } })();
+  const read=k=>{ try{ return localStorage.getItem(k); }catch{ return null; } };
+  const write=(k,v)=>{ try{ if(v==null) localStorage.removeItem(k); else localStorage.setItem(k,v); }catch{} };
+  const now=new Date();
+  const preview=q==="1"||NY_PHASES.includes(q);
+  const avail=q!=="0"&&(preview||nyInSeason(now));
+  // ключ выключения — на сезон: кто выключил в этом году, в следующем увидит снова
+  const offKey="al-ny-off-"+nyYearOf(now,nyPhaseOf(now));
+  let s={avail,preview,phase:NY_PHASES.includes(q)?q:null,
+    on:avail&&(preview||read(offKey)!=="1"), snow:read("al-ny-snow")!=="off"};
+  const subs=new Set();
+  const apply=()=>{ document.documentElement.classList.toggle("ny",s.on);
+    const ic=document.querySelector('link[rel="icon"]');
+    if(ic) ic.setAttribute("href",s.on?"/static/favicon-ny.svg":"/static/favicon.svg"); };
+  apply();
+  return {
+    get:()=>s,
+    sub:f=>{ subs.add(f); return ()=>{ subs.delete(f); }; },
+    set:p=>{ s={...s,...p};
+      if("on" in p) write(offKey,p.on?null:"1");
+      if("snow" in p) write("al-ny-snow",p.snow?null:"off");
+      apply(); subs.forEach(f=>f(s)); },
+  };
+})();
+function useNewYear(){
+  const[s,setS]=useState(nyStore.get);
+  useEffect(()=>{ setS(nyStore.get()); return nyStore.sub(setS); },[]);
+  return s;
+}
+function useReducedMotion(){
+  const[r,setR]=useState(()=>matchMedia("(prefers-reduced-motion: reduce)").matches);
+  useEffect(()=>{ const m=matchMedia("(prefers-reduced-motion: reduce)"), h=e=>setR(e.matches);
+    m.addEventListener("change",h); return()=>m.removeEventListener("change",h); },[]);
+  return r;
+}
+const nyReduced=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+// Детерминированный «случай»: лампы мерцают вразнобой, но одинаково при каждой отрисовке
+const nyRnd=i=>{ const x=Math.sin(i*12.9898+4.1)*43758.5453; return x-Math.floor(x); };
+
+// Гирлянда: провод провисает фестонами от нижней кромки шапки, лампы висят на
+// нём и качаются — от прокрутки и когда рядом проводят мышью. Нажатия она не
+// перехватывает: близость курсора считаем сами, по координатам.
+function nyGarlandGeo(w){
+  if(w<60) return {d:"",hooks:[],bulbs:[]};
+  const k=Math.max(2,Math.round(w/250)), seg=w/k, sag=8, nb=Math.max(3,Math.round(seg/40));
+  let d=""; const hooks=[], bulbs=[];
+  for(let j=0;j<k;j++){
+    const x0=j*seg;
+    // квадратичная кривая: контрольная точка на двойной глубине даёт провис sag посередине
+    d+=`M${x0.toFixed(1)} .5Q${(x0+seg/2).toFixed(1)} ${2*sag+.5} ${(x0+seg).toFixed(1)} .5`;
+    hooks.push(x0);
+    for(let m=0;m<nb;m++){
+      const t=(m+1)/(nb+1), i=bulbs.length, r=nyRnd(i);
+      const tilt=Math.atan(4*sag*(1-2*t)/seg)*180/Math.PI;
+      bulbs.push({x:x0+t*seg,y:.5+4*sag*t*(1-t),rot:tilt*.6+(m%2?6:-6)+(r-.5)*8,
+        c:i%3,d:3+r*2.6,dl:-nyRnd(i+101)*5});
+    }
+  }
+  hooks.push(w);
+  return {d,hooks,bulbs};
+}
+function NyGarland(){
+  const ref=useRef(null);
+  const[w,setW]=useState(0);
+  useEffect(()=>{ const bar=ref.current&&ref.current.parentElement; if(!bar) return;
+    const ro=new ResizeObserver(()=>setW(bar.clientWidth)); ro.observe(bar); setW(bar.clientWidth);
+    return()=>ro.disconnect(); },[]);
+  const g=useMemo(()=>nyGarlandGeo(w),[w]);
+  useEffect(()=>{ const host=ref.current; if(!host||!g.bulbs.length) return;
+    const els=[...host.querySelectorAll(".ny-b")], busy=new Map();
+    const swing=(el,i,amp,ms)=>{ const now=performance.now(); if(nyReduced()||now-(busy.get(i)||0)<ms*.45) return;
+      busy.set(i,now); const r=g.bulbs[i].rot;
+      el.animate([{transform:`rotate(${r}deg)`},{transform:`rotate(${r+amp}deg)`},{transform:`rotate(${r-amp*.55}deg)`},
+        {transform:`rotate(${r+amp*.25}deg)`},{transform:`rotate(${r}deg)`}],{duration:ms,easing:"cubic-bezier(.3,.6,.4,1)"}); };
+    // мышь рядом с лампой — лампа качается в сторону движения
+    let px=null, raf=0;
+    const onMove=e=>{ const prev=px; px={x:e.clientX,y:e.clientY,dx:prev?e.clientX-prev.x:0};
+      if(raf) return; raf=requestAnimationFrame(()=>{ raf=0; const b=host.getBoundingClientRect();
+        if(!px||px.y<b.top-6||px.y>b.top+30||px.x<b.left||px.x>b.right) return;
+        const x=px.x-b.left;
+        g.bulbs.forEach((bl,i)=>{ if(Math.abs(bl.x-x)<16) swing(els[i],i,(px.dx>=0?1:-1)*Math.min(26,8+Math.abs(px.dx)*1.6),1500); }); }); };
+    // прокрутка — качается вся нитка, сильнее при резкой прокрутке
+    let lastY=scrollY, lastT=0;
+    const onScroll=()=>{ const now=performance.now(), v=scrollY-lastY; lastY=scrollY;
+      if(now-lastT<420||Math.abs(v)<6) return; lastT=now;
+      const amp=Math.max(-14,Math.min(14,-v*.35));
+      els.forEach((el,i)=>swing(el,i,amp*(.7+nyRnd(i+7)*.6),1700)); };
+    addEventListener("pointermove",onMove,{passive:true}); addEventListener("scroll",onScroll,{passive:true});
+    return()=>{ removeEventListener("pointermove",onMove); removeEventListener("scroll",onScroll); cancelAnimationFrame(raf); };
+  },[g]);
+  return <div ref={ref} className="ny-garland" aria-hidden="true">
+    {w>0&&<svg className="ny-wire" width={w} height="18" viewBox={`0 0 ${w} 18`}>
+      <path d={g.d}/>{g.hooks.map((x,i)=><circle key={i} cx={x} cy=".8" r="1.8"/>)}
+    </svg>}
+    {g.bulbs.map((b,i)=><i key={i} className={"ny-b ny-c"+b.c}
+      style={{left:b.x,top:b.y,"--r":b.rot.toFixed(1)+"deg","--d":b.d.toFixed(2)+"s","--dl":b.dl.toFixed(2)+"s"}}><b/></i>)}
+  </div>;
+}
+
+// Снег. Один движок на два места: за страницей (host=null, весь экран) и
+// внутри обложки (host — её элемент, гуще, крупнее, курсор раздувает хлопья).
+// В скрытой вкладке и вне экрана стоит; на слабых машинах (≤2 ядер или
+// ≤2 ГБ) — вдвое реже и 30 кадров в секунду. Цвет — CSS-цвет холста (токен).
+function nySnowRun(cv,{host=null,area=16000,max=120,big=1,push=false}={}){
+  const ctx=cv.getContext("2d"); if(!ctx) return ()=>{};
+  const weak=(navigator.hardwareConcurrency||8)<=2||(navigator.deviceMemory||8)<=2;
+  const frame=weak?1000/30:0;
+  let W=0,H=0,flakes=[],raf=0,last=0,time=0,color="",seen=true,ptr=null;
+  const make=top=>{ const z=Math.random();
+    return {x:Math.random()*W,y:top?-6-Math.random()*20:Math.random()*H,vx:0,
+      r:(.7+z*z*2.4)*big,v:(10+z*34)*(big>1?.8:1),a:.35+z*.6,amp:4+z*12,f:.15+Math.random()*.35,
+      ph:Math.random()*6.283,star:z>(big>1?.8:.88)&&Math.random()<.55}; };
+  const size=()=>{ const dpr=Math.min(devicePixelRatio||1,1.5);
+    W=host?host.clientWidth:innerWidth; H=host?host.clientHeight:innerHeight;
+    cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr); ctx.setTransform(dpr,0,0,dpr,0,0);
+    const n=Math.min(max,Math.round(W*H/(weak?area*2:area)));
+    while(flakes.length<n) flakes.push(make(false)); flakes.length=n; };
+  // Браузер не разобрал цвет — холст остался бы с чёрной заливкой: лучше без снега, чем с сажей
+  const paint=()=>{ const c=getComputedStyle(cv).color; ctx.fillStyle="#010203"; ctx.fillStyle=c;
+    color=ctx.fillStyle==="#010203"?"":c; };
+  const draw=()=>{ ctx.clearRect(0,0,W,H); if(!color) return;
+    ctx.fillStyle=color; ctx.strokeStyle=color; ctx.lineWidth=.8*big; ctx.lineCap="round";
+    for(const p of flakes){ const x=p.x+Math.sin(time*p.f+p.ph)*p.amp; ctx.globalAlpha=p.a; ctx.beginPath();
+      if(p.star){ for(let k=0;k<3;k++){ const an=k*Math.PI/3+p.ph+time*.2, dx=Math.cos(an)*p.r*1.9, dy=Math.sin(an)*p.r*1.9;
+          ctx.moveTo(x-dx,p.y-dy); ctx.lineTo(x+dx,p.y+dy); } ctx.stroke(); }
+      else{ ctx.arc(x,p.y,p.r,0,6.283); ctx.fill(); } }
+    ctx.globalAlpha=1; };
+  const tick=ts=>{ raf=requestAnimationFrame(tick);
+    if(last&&frame&&ts-last<frame) return;
+    const dt=last?Math.min(.1,(ts-last)/1000):0; last=ts; time+=dt;
+    const wind=Math.sin(time*.07)*6;
+    for(let i=0;i<flakes.length;i++){ const p=flakes[i];
+      if(ptr){ const dx=p.x-ptr.x, dy=p.y-ptr.y, d2=dx*dx+dy*dy;
+        if(d2<6400){ const d=Math.sqrt(d2)||1, f=(80-d)/80; p.vx+=dx/d*f*260*dt; p.y+=dy/d*f*40*dt; } }
+      p.vx*=Math.pow(.12,dt);
+      p.y+=p.v*dt; p.x+=(wind*(.4+p.r/3)+p.vx)*dt;
+      if(p.y-p.r*3>H||p.x<-30||p.x>W+30) flakes[i]=make(true); }
+    draw(); };
+  const start=()=>{ if(!raf&&!document.hidden&&seen&&W*H>0){ last=0; raf=requestAnimationFrame(tick); } };
+  const stop=()=>{ cancelAnimationFrame(raf); raf=0; };
+  const onVis=()=>document.hidden?stop():start();
+  size(); paint(); start();
+  const offs=[];
+  const on=(t,ev,f,o)=>{ t.addEventListener(ev,f,o); offs.push(()=>t.removeEventListener(ev,f,o)); };
+  on(document,"visibilitychange",onVis);
+  if(host){
+    const ro=new ResizeObserver(()=>{ size(); start(); }); ro.observe(host); offs.push(()=>ro.disconnect());
+    const io=new IntersectionObserver(([e])=>{ seen=e.isIntersecting; seen?start():stop(); }); io.observe(host); offs.push(()=>io.disconnect());
+    if(push){ on(host,"pointermove",e=>{ const b=host.getBoundingClientRect(); ptr={x:e.clientX-b.left,y:e.clientY-b.top}; },{passive:true});
+      on(host,"pointerleave",()=>{ ptr=null; }); }
+  } else on(window,"resize",size);
+  const mo=new MutationObserver(paint); mo.observe(document.documentElement,{attributes:true,attributeFilter:["class"]});
+  offs.push(()=>mo.disconnect());
+  return ()=>{ stop(); offs.forEach(f=>f()); };
+}
+function NySnow(){
+  const ref=useRef(null);
+  useEffect(()=>{ if(ref.current) return nySnowRun(ref.current); },[]);
+  return ReactDOM.createPortal(<canvas ref={ref} className="ny-snow" aria-hidden="true"/>,document.body);
+}
+// Звезда над знаком: «A» — треугольник, то есть уже почти ёлка. Форма — та же
+// четырёхлучевая искра, что у ИИ в интерфейсе.
+const NyStar=()=><path className="ny-star" d="M53.5 -5.5L56.4 2.6 64.5 5.5 56.4 8.4 53.5 16.5 50.6 8.4 42.5 5.5 50.6 2.6Z"/>;
+// Подпись под отсчётом — одна короткая фраза, без канцелярских шуток
+const NY_NOTE={pre:"Спасибо за этот год. Команда AuditLens",
+  eve:"Последний день года. Не задерживайтесь на работе.",
+  new:"Гирлянду снимем 15 января.",
+  old:"Завтра снимаем гирлянду."};
+
+// Ночная обложка выпуска. Крупные цифры года с шапками снега; последняя
+// прокручивается, как счётчик: 2026 → 2027 (при наведении и по нажатию).
+// После полуночи — один раз, при первом взгляде — прокручивается сама:
+// это событие, а не украшение. Внутри идёт снег, курсор его раздувает.
+function NyCover(){
+  const ny=useNewYear();
+  const reduce=useReducedMotion();
+  const host=useRef(null), cv=useRef(null);
+  const[now,setNow]=useState(()=>new Date());
+  const phase=ny.phase||nyPhaseOf(now);
+  const year=nyYearOf(now,phase);
+  const after=phase==="new"||phase==="old";
+  const hideKey="al-ny-cover-"+year, turnKey="al-ny-turned-"+year;
+  const[hidden,setHidden]=useState(()=>{ try{ return localStorage.getItem(hideKey)==="1"; }catch{ return false; } });
+  const[rolled,setRolled]=useState(()=>{ if(!after) return false;
+    try{ return localStorage.getItem(turnKey)==="1"; }catch{ return true; } });
+  useEffect(()=>{ const id=setInterval(()=>setNow(new Date()),phase==="eve"?15000:300000);
+    return()=>clearInterval(id); },[phase]);
+  useEffect(()=>{ if(!after||!ny.on||hidden||rolled) return;
+    const id=setTimeout(()=>{ setRolled(true); if(!ny.preview){ try{ localStorage.setItem(turnKey,"1"); }catch{} } },700);
+    return()=>clearTimeout(id); },[after,ny.on,hidden]);
+  const show=ny.on&&!hidden;
+  useEffect(()=>{ if(show&&!reduce&&cv.current&&host.current)
+    return nySnowRun(cv.current,{host:host.current,area:2600,max:110,big:1.35,push:true}); },[show,reduce]);
+  if(!show) return null;
+  const was=String(year-1), will=String(year);
+  // крутятся только изменившиеся цифры (2029 → 2030 — две)
+  const roll=()=>setRolled(r=>{ if(r){ setTimeout(()=>setRolled(true),reduce?0:260); return false; } return true; });
+  const left=nyLeft(now,phase,year);
+  const hide=()=>{ try{ localStorage.setItem(hideKey,"1"); }catch{} setHidden(true); };
+  const lastCh=[...will].reduce((a,ch,i)=>ch!==was[i]?i:a,-1);
+  return <section ref={host} className={"ny-cover"+(rolled?" rolled":"")} aria-label="Новогодний выпуск">
+    {!reduce&&<canvas ref={cv} className="ny-cover-snow" aria-hidden="true"/>}
+    <button type="button" className="ny-yr" onClick={roll} onMouseEnter={()=>{ if(!after) setRolled(true); }}
+            aria-label={rolled?`${will} год. Прокрутить ещё раз`:`Прокрутить на ${will} год`}>
+      {[...will].map((ch,i)=>ch===was[i]
+        ?<span key={i} className="ny-dg" aria-hidden="true"><span className="ny-n" data-d={ch}>{ch}</span></span>
+        :<span key={i} className="ny-dg ny-roll" aria-hidden="true">
+           <span className="ny-col"><span className="ny-n" data-d={was[i]}>{was[i]}</span><span className="ny-n" data-d={ch}>{ch}</span></span>
+         </span>)}
+      {lastCh>=0&&<svg className="ny-spark" viewBox="0 0 10 10" aria-hidden="true"><path d="M5 0L6.2 3.8 10 5 6.2 6.2 5 10 3.8 6.2 0 5 3.8 3.8Z"/></svg>}
+    </button>
+    <div className="ny-cd">
+      {after
+        ?<div className="ny-cd-v ny-cd-greet">{phase==="old"?"Старый Новый год":"С Новым годом"}</div>
+        :<><div className="ny-cd-l">до Нового года</div>
+           <div className="ny-cd-v">{phase==="eve"
+             ?<>{left.h?<>{left.h}<small> ч </small></>:null}{left.m}<small> мин</small></>
+             :<>{left.days}<small> {plural(left.days,"день","дня","дней")}</small></>}</div></>}
+      <div className="ny-cd-n">{NY_NOTE[phase]}</div>
+    </div>
+    <button type="button" className="ny-x" onClick={hide} aria-label="Скрыть до следующего года" data-tip="Скрыть до следующего года">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+           strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </section>;
+}
+
 // ─── Сегментированный переключатель: подложка едет, а не перекрашивается ───
 // Ставится один раз на все .seg в приложении: сама находит активную кнопку,
 // подставляет общую подложку и двигает её пружиной. Пока подложки нет,
@@ -2569,6 +2820,7 @@ function OverviewPage(){
   // дополнение 15:00 — свёрнуто в строку; раскрытие помним до конца сессии
   const[updOpen,setUpdOpen]=useState(()=>{try{return sessionStorage.getItem("al-ov-upd")==="1";}catch{return false;}});
   const me=useMe();
+  const ny=useNewYear();
   // Переход «Разобраться»/плитка/строка тарифов и «Назад» возвращали на верх
   // страницы — читатель терял место. Запоминаем прокрутку при уходе со страницы
   useEffect(()=>{
@@ -2734,6 +2986,7 @@ function OverviewPage(){
 
   return <div className="fade-in ov">
     <Sept3Strip/>
+    <NyCover/>
     <div className="fy-seg-mob"><OvSeg page="overview"/></div>
     {/* ⓪ ЛИЧНЫЙ СЛОЙ — опциональная полоса (prefs.personal_band_home), над передовицей */}
     <PersonalBand/>
@@ -2743,7 +2996,7 @@ function OverviewPage(){
         <div className="eyebrow">
           {/* «Брифинг № <день года>» — главная задумана как брифинг-газета, номер
               выпуска часть этого языка (решение владельца, 25.09) */}
-          Брифинг №{issueNum} · {issueDate.toLocaleDateString("ru",{weekday:"long",day:"numeric",month:"long"})} · розница / УВА
+          Брифинг №{issueNum} · {issueDate.toLocaleDateString("ru",{weekday:"long",day:"numeric",month:"long"})} · розница / УВА{ny.on?" · новогодний выпуск":""}
         </div>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
           {/* role=status: диктор объявляет «обновляется…» и новое время выпуска */}
@@ -15471,6 +15724,8 @@ function ProfilePage(){
   // сбой сохранения и загрузки — честно, а не «Сохранено ✓» (аудит 03.10, КАР-03)
   const[pfErr,setPfErr]=useState("");
   const[loadErr,setLoadErr]=useState(false);
+  const nyS=useNewYear();
+  const reduceMotion=useReducedMotion();
 
   const applyMe=(d)=>{ setData(d);
     const p=d.prefs||{}; setSelfDesc(p.self_description||"");
@@ -15645,6 +15900,26 @@ function ProfilePage(){
         </div>}
       </>}
     </div>
+
+    {/* Новогоднее оформление — только в сезон (или в предпросмотре ?ny=1).
+        Настройка этого компьютера, как тема: применяется сразу, без «Сохранить». */}
+    {nyS.avail&&<div className="surface pf-card ny-pf">
+      <div className="eyebrow" style={{marginBottom:6}}>Новогоднее оформление</div>
+      <div className="pf-row">
+        <div><div className="pf-row-t">Оформление</div><div className="pf-row-d">Обложка на главной, гирлянда и звезда над логотипом. Данные не меняются.</div></div>
+        <button type="button" role="switch" aria-checked={nyS.on} aria-label="Новогоднее оформление"
+                className={"pf-toggle"+(nyS.on?" on":"")} onClick={()=>nyStore.set({on:!nyS.on})}><span/></button>
+      </div>
+      <div className="pf-row">
+        <div><div className="pf-row-t">Снег</div><div className="pf-row-d">{reduceMotion
+          ?"Выключен: в системе уменьшено движение."
+          :"Идёт за карточками, по краям страницы."}</div></div>
+        <button type="button" role="switch" aria-checked={nyS.on&&nyS.snow&&!reduceMotion} aria-label="Снег"
+                disabled={!nyS.on||reduceMotion}
+                className={"pf-toggle"+(nyS.on&&nyS.snow&&!reduceMotion?" on":"")} onClick={()=>nyStore.set({snow:!nyS.snow})}><span/></button>
+      </div>
+      <div className="ny-pf-note">Только для этого компьютера. В следующем декабре оформление включится снова.</div>
+    </div>}
 
     {/* Настройки */}
     <div className="surface pf-card">
@@ -16526,6 +16801,8 @@ function Shell(){
   const aiPrevRun=useRef(false);
   const pageCurRef=useRef(null);
   const{theme,setTheme}=useTheme();
+  const ny=useNewYear();
+  const reduceMotion=useReducedMotion();
   // плашка о перебоях: свёрнута сегодня (дата МСК в localStorage) → значок в шапке
   const turb=useTurbBanner();
   const turbKey=turb?"al-turb:"+(turb.v||""):null;
@@ -16914,6 +17191,7 @@ function Shell(){
           <svg className="rail-mark" viewBox="0 0 100 100" aria-hidden="true">
             <path fill="#1F4DFF" d="M47.5 13 L59.5 13 L89.5 89 L75.5 89 Z"/>
             <path fill="currentColor" fillRule="evenodd" d="M47.5 13 L57.5 13 L83.5 89 L66.5 89 L58.5 67 L36.5 67 L27.5 89 L10.5 89 Z M47.5 36 L56.5 58 L38.5 58 Z"/>
+            {ny.on&&<NyStar/>}
           </svg>
           <span className="rail-name">AuditLens</span>
           {appInfo?.env_label&&<span className="rail-env">{appInfo.env_label}</span>}
@@ -17089,8 +17367,10 @@ function Shell(){
                   onClick={e=>setTheme(theme==="dark"?"light":"dark",e.currentTarget)}>
             <ThemeIcon/>
           </button>
+          {ny.on&&<NyGarland/>}
         </div>
         {turbOpen&&<TurbBanner b={turb} onAck={ackTurb}/>}
+        {ny.on&&ny.snow&&!reduceMotion&&<NySnow/>}
         <div className="content" ref={contentRef}>
           {loopholeMounted&&<div className={page==="loophole"?"loophole-host loophole-host--active":"loophole-host"} style={{display:page==="loophole"?"flex":"none",height:"100%"}}>
             <LoopholePage record={page==="loophole"&&pageParams&&/^\d+$/.test(pageParams.record||"")?pageParams.record:null}/>

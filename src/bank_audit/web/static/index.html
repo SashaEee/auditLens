@@ -1035,6 +1035,123 @@ td .dr-conflict{padding:0 4px 0px;font-size:11px}
 .s3-hide:hover{color:var(--ink-2)}
 @media(max-width:760px){.s3-line span{display:none}.s3-line b{font-size:13px}}
 @media(prefers-reduced-motion:reduce){.s3-leaf{transition:none}.s3-berry{animation-duration:.01s}}
+/* ─── Новогодний выпуск: 15 декабря — 14 января (docs/NEW_YEAR.md) ───────
+   Праздник живёт в оформлении, а не в данных: ночная обложка на главной,
+   гирлянда под шапкой, звезда над знаком, снег за страницей. Таблицы,
+   графики, плашки, отчёты и печать не меняются. Красного и зелёного нет:
+   здесь они значат «риск» и «Сбер». Золото — в украшениях и цифрах года на
+   обложке, но не в тексте интерфейса: там жёлтый значит «внимание».
+   Токены живут под html.ny — класс ставит nyStore в app.jsx. */
+html.ny{
+  --ny-gold:  oklch(80% 0.12 88);          /* шампанское: звезда, лампы, цифры года */
+  --ny-frost: oklch(78% 0.07 232);         /* иней: лампы, холодный свет обложки */
+  --ny-pearl: oklch(97% 0.02 85);          /* тёплый белый: лампы, блики */
+  --ny-snow:  oklch(74% 0.045 245 / .6);   /* снег на светлой бумаге — голубоватый, белого не видно */
+  --ny-halo:  4px;                         /* свечение ламп: днём едва заметно */
+  --ny-night:      oklch(23% 0.04 262);    /* обложка — ночь в обеих темах */
+  --ny-night-ink:  oklch(97% 0.008 85);
+  --ny-night-ink-2:oklch(80% 0.02 250);
+  --ny-flake:      oklch(98% 0.008 240 / .9);
+  --ny-cap:        oklch(99% 0.006 240);   /* снег на цифрах */
+  --ny-focus:      oklch(85% 0.05 255);    /* фокус на ночи — светлый графит, как в тёмной теме */
+}
+html.ny.dark{
+  --ny-gold:  oklch(88% 0.10 92);          /* светлее и желтее, чтобы не спорить с --warn */
+  --ny-frost: oklch(84% 0.07 228);
+  --ny-pearl: oklch(95% 0.025 85);
+  --ny-snow:  oklch(95% 0.012 245 / .55);
+  --ny-sky:   oklch(72% 0.06 245 / .09);   /* зимняя ночь: холодный свет над шапкой */
+  --ny-halo:  10px;
+  --ny-night: oklch(20% 0.035 262);
+}
+/* Звезда на вершине знака: «A» — треугольник, то есть уже почти ёлка */
+html.ny .rail-mark{overflow:visible}
+.ny-star{fill:var(--ny-gold);transform-box:fill-box;transform-origin:center;
+  transition:transform var(--dur-base) var(--ease-spring)}
+.rail-brand:hover .ny-star{transform:rotate(45deg) scale(1.15)}
+
+/* Гирлянда. Нажатия не перехватывает; качание — Web Animations по transform,
+   мерцание — прозрачностью верхнего слоя лампы: всё на композиторе. */
+.ny-garland{position:absolute;left:0;right:0;top:100%;height:26px;pointer-events:none;z-index:1}
+.ny-wire{position:absolute;left:0;top:0;overflow:visible}
+.ny-wire path{fill:none;stroke:var(--ink-4);stroke-width:1.1;opacity:.8}
+.ny-wire circle{fill:var(--ink-4)}
+.ny-b{position:absolute;width:8px;height:13px;margin-left:-4px;transform-origin:50% 0;transform:rotate(var(--r));will-change:transform}
+.ny-b::before{content:"";position:absolute;left:2px;top:0;width:4px;height:4px;border-radius:1px;background:var(--ink-4)}
+.ny-b::after,.ny-b b{content:"";position:absolute;left:0;top:3.5px;width:8px;height:9.5px;border-radius:50%/42% 42% 58% 58%}
+.ny-b::after{background:color-mix(in oklab,var(--b),var(--paper) 60%);
+  box-shadow:inset 0 0 0 .5px color-mix(in oklab,var(--ink),transparent 78%)}
+.ny-b b{background:radial-gradient(circle at 34% 30%,var(--ny-pearl) 0 16%,var(--b) 48%);
+  box-shadow:0 0 var(--ny-halo) calc(var(--ny-halo) / 4) color-mix(in oklab,var(--b),transparent 30%),
+             inset 0 0 0 .5px color-mix(in oklab,var(--ink),transparent 82%)}
+.ny-c0{--b:var(--ny-gold)}.ny-c1{--b:var(--ny-frost)}.ny-c2{--b:var(--ny-pearl)}
+@media (prefers-reduced-motion:no-preference){
+  .ny-b b{animation:ny-tw var(--d) ease-in-out var(--dl) infinite}
+}
+@keyframes ny-tw{0%,100%{opacity:1}50%{opacity:.35}}
+
+/* Снег идёт за страницей: виден на полях и под шапкой, но не поверх карточек
+   с данными — у них непрозрачный фон. */
+.ny-snow{position:fixed;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none;color:var(--ny-snow)}
+html.ny.dark .ny-snow{background:radial-gradient(120% 50% at 50% -6%,var(--ny-sky),transparent 72%)}
+
+/* Ночная обложка выпуска — на главной, над передовицей. Ночь в обеих темах:
+   в светлой это самое тёмное место страницы, в тёмной — чуть синее бумаги. */
+.ny-cover{position:relative;isolation:isolate;overflow:hidden;display:flex;align-items:flex-end;justify-content:space-between;
+  flex-wrap:wrap;gap:12px 28px;margin:4px 0 24px;padding:16px 56px 17px 24px;border-radius:12px;color:var(--ny-night-ink);
+  background:radial-gradient(48% 130% at 12% 125%,color-mix(in oklab,var(--ny-gold),transparent 78%),transparent 66%),
+             radial-gradient(42% 120% at 98% -30%,color-mix(in oklab,var(--ny-frost),transparent 80%),transparent 64%),
+             var(--ny-night);
+  box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--ny-night-ink),transparent 90%),var(--shadow-2)}
+.ny-cover-snow{position:absolute;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none;color:var(--ny-flake)}
+/* Цифры года. Изменившаяся цифра — колонка из двух, едет вверх с пружиной */
+.ny-yr{position:relative;display:flex;margin:0 0 -.07em -.02em;padding:0;border:0;background:none;cursor:pointer;
+  color:var(--ny-gold);font-family:'Instrument Serif',Georgia,serif;font-weight:400;font-size:clamp(64px,6.4vw,92px);
+  line-height:.8;letter-spacing:-.01em;font-variant-numeric:lining-nums;border-radius:8px}
+.ny-dg{position:relative;display:block;height:.9em}
+.ny-roll{overflow:hidden}
+.ny-col{display:block;transition:transform .9s cubic-bezier(.2,1.3,.3,1)}
+.ny-cover.rolled .ny-col{transform:translateY(-.9em)}
+.ny-n{position:relative;display:block;height:.9em;padding-top:.1em}
+/* Снег на цифре — верхний срез той же цифры: белый, чуть толще, с неровным
+   нижним краем, приподнят над вершиной. Ложится точно по форме знака.
+   Сдвиг — через top, не transform: дробный сдвиг слоя с маской давал шов. */
+.ny-n::after{content:attr(data-d);position:absolute;left:0;top:-.026em;padding-top:.1em;color:var(--ny-cap);
+  -webkit-text-stroke:.03em var(--ny-cap);
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='10' preserveAspectRatio='none'%3E%3Cpath d='M0 0H30V5.5C25 8.5 20 9.5 15 6.5S5 3.5 0 5.5Z'/%3E%3C/svg%3E") 0 .065em/.26em .09em repeat-x;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='10' preserveAspectRatio='none'%3E%3Cpath d='M0 0H30V5.5C25 8.5 20 9.5 15 6.5S5 3.5 0 5.5Z'/%3E%3C/svg%3E") 0 .065em/.26em .09em repeat-x}
+.ny-spark{position:absolute;right:-.1em;top:-.02em;width:.15em;height:.15em;fill:var(--ny-gold);opacity:0;
+  transform:scale(.2) rotate(-60deg);transition:opacity .25s ease .45s,transform .6s var(--ease-bounce) .45s}
+.ny-cover.rolled .ny-spark{opacity:1;transform:none}
+.ny-cd{display:flex;flex-direction:column;align-items:flex-end;text-align:right;min-width:0;padding-bottom:2px}
+/* снег идёт и под подписью: тёмный ореол цвета ночи держит буквы читаемыми */
+.ny-cd{text-shadow:0 0 6px var(--ny-night),0 0 14px var(--ny-night)}
+.ny-cd-l{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ny-night-ink-2)}
+.ny-cd-v{font-family:'Instrument Serif',Georgia,serif;font-size:clamp(34px,3.1vw,44px);line-height:1;letter-spacing:-.01em;
+  color:var(--ny-night-ink);font-variant-numeric:lining-nums;white-space:nowrap}
+.ny-cd-v small{font-size:.56em;font-style:italic;letter-spacing:0;color:var(--ny-night-ink-2)}
+.ny-cd-greet{font-style:italic;font-size:clamp(32px,2.9vw,42px)}
+.ny-cd-n{margin-top:6px;font-size:13px;line-height:1.4;color:var(--ny-night-ink-2);text-wrap:pretty}
+.ny-x{position:absolute;top:10px;right:10px;width:30px;height:30px;display:grid;place-items:center;border-radius:var(--r);
+  color:var(--ny-night-ink-2);transition:background var(--dur-quick) var(--ease-out),color var(--dur-quick) var(--ease-out),transform var(--dur-press) var(--ease-out)}
+.ny-x:hover{color:var(--ny-night-ink);background:color-mix(in oklab,var(--ny-night-ink),transparent 88%)}
+.ny-x:active,.ny-yr:active{transform:scale(var(--press))}
+.ny-yr:focus-visible,.ny-x:focus-visible{outline:2px solid var(--ny-focus);outline-offset:3px}
+/* телефон: цифры и отсчёт — строкой, подпись — под ними во всю ширину */
+@media(max-width:760px){
+  .ny-cover{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-areas:"yr l" "yr v" "n n";
+    column-gap:16px;row-gap:0;align-items:end;padding:14px 44px 15px 16px;margin-bottom:20px}
+  .ny-yr{grid-area:yr;font-size:56px}
+  .ny-cd{display:contents;text-align:left}
+  .ny-cd-l{grid-area:l}
+  .ny-cd-v{grid-area:v;font-size:30px}
+  .ny-cd-greet{font-size:27px;white-space:normal}
+  .ny-cd-n{grid-area:n;margin-top:10px;font-size:12.5px}
+}
+@media(pointer:coarse){.ny-x::after{content:"";position:absolute;inset:-7px}}
+@media(prefers-reduced-motion:reduce){.ny-col,.ny-spark,.ny-star{transition:none!important}}
+/* Профиль: переключатели оформления применяются сразу, без «Сохранить» */
+.ny-pf .pf-toggle:disabled{opacity:.45;cursor:default}
+.ny-pf-note{margin-top:10px;font-size:12px;color:var(--ink-3)}
 .dr-viz{margin:16px 0 20px;max-width:100%;overflow:hidden;position:relative;contain:layout paint;isolation:isolate;font-family:'Geist',system-ui,sans-serif;font-size:13px;line-height:1.35;color:var(--ink)}
 /* свой банк в визуализациях — зелёным, как во всей системе: красный = риск */
 .dr-viz .viz{width:100%;max-width:100%;--accent:var(--sber);--accent-soft:var(--sber-soft)}
@@ -1104,7 +1221,7 @@ td .dr-conflict{padding:0 4px 0px;font-size:11px}
 @media print{
   .topbar,.rail,.chat-input-wrap,.deep-toggle,.dr-doc-toc,
   .typing,.tools-tl,.kbd-help,.al-thread-head,.al-runbar,.dr-con-wrap,
-  .quick-tools,.quick-upsell{display:none !important}
+  .quick-tools,.quick-upsell,.ny-garland,.ny-snow,.ny-cover{display:none !important}
   body{background:#fff;color:#000;font-size:11pt}
   .chat-feed{padding:0}
   .chat-msg{max-width:100% !important;page-break-inside:avoid;margin:0 0 6mm}
