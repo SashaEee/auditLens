@@ -68,6 +68,7 @@
 }
 
 *,*::before,*::after{box-sizing:border-box}
+[hidden]{display:none!important}
 body{margin:0;background:var(--canvas);color:var(--ink);font:14px/1.5 var(--sans);font-feature-settings:"ss01","cv11";
   -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:16px}
@@ -85,7 +86,8 @@ input,select,textarea{font:inherit;color:inherit}
 /* ── оболочка приложения ── */
 .app{display:grid;grid-template-columns:var(--rail) minmax(0,1fr);background:var(--paper);border:1px solid var(--hair);
   border-radius:14px;min-height:calc(100vh - 32px);overflow:clip;box-shadow:var(--shadow-1)}
-.rail{border-right:1px solid var(--hair);padding:14px 12px;display:flex;flex-direction:column;gap:2px;
+.rail-col{border-right:1px solid var(--hair);min-width:0}
+.rail{padding:14px 12px;display:flex;flex-direction:column;gap:2px;
   position:sticky;top:16px;height:calc(100vh - 32px);min-height:600px}
 .brand{display:flex;align-items:center;gap:9px;padding:6px 8px 18px;font-weight:600;font-size:15px;letter-spacing:-.01em}
 .brand svg{width:22px;height:22px}
@@ -120,7 +122,7 @@ input,select,textarea{font:inherit;color:inherit}
 .dot.pulse::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:1.5px solid var(--pos);opacity:0;animation:ping 2.4s var(--ease-out) infinite}
 @keyframes ping{0%{transform:scale(.5);opacity:.7}80%,100%{transform:scale(1.5);opacity:0}}
 h1.brief{font-family:var(--serif);font-weight:500;font-size:clamp(26px,2.5vw,34px);line-height:1.2;letter-spacing:-.018em;margin:0;
-  text-wrap:balance;max-width:42ch;font-variation-settings:"opsz" 48}
+  text-wrap:balance;max-width:820px;font-variation-settings:"opsz" 48}
 h1.brief .q{color:var(--ink-3)}
 .brief-sub{margin:12px 0 0;color:var(--ink-2);font-size:14px;max-width:72ch;text-wrap:pretty}
 .brief-sub a{border-bottom:1px solid var(--hair-2)}
@@ -144,6 +146,7 @@ h1.brief .q{color:var(--ink-3)}
   background:var(--surface);color:var(--ink-3);font-size:13px;min-width:210px;transition:border-color var(--dur-quick) var(--ease-out)}
 .find:hover{border-color:var(--ink-4);color:var(--ink-2)}
 .find .k{margin-left:auto;display:inline-flex;gap:3px}
+.find .lbl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 kbd{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);border:1px solid var(--hair-2);border-bottom-width:2px;border-radius:4px;padding:0 4px;line-height:15px;background:var(--paper)}
 .seg{display:inline-flex;background:var(--paper-2);border:1px solid var(--hair);border-radius:var(--r);padding:2px;gap:2px;flex:none}
 .seg button{height:26px;padding:0 10px;border-radius:4px;font-size:12.5px;color:var(--ink-3);white-space:nowrap;
@@ -286,7 +289,7 @@ button.u:hover{transform:scale(1.3)}
 .person b{display:block;font-weight:500;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .person small{display:block;font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 button.person:hover b{text-decoration:underline;text-decoration-color:var(--ink-4);text-underline-offset:3px}
-.coh{width:100%;border-collapse:separate;border-spacing:0 4px;font-size:12.5px}
+.coh{width:100%;border-collapse:separate;border-spacing:0 4px;font-size:12.5px;table-layout:fixed}
 .coh th{font-weight:500;color:var(--ink-3);text-align:left;padding:0 6px 2px 0;font-size:12px}
 .coh td{padding:0 6px 0 0}
 .coh .wk{color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums}
@@ -314,8 +317,8 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .tbl .l{text-align:left}
 .tbl th:first-child,.tbl td:first-child{padding-left:0}
 .tbl th:last-child,.tbl td:last-child{padding-right:0}
-.flush .tbl th:first-child,.flush .tbl td:first-child{padding-left:20px}
-.flush .tbl th:last-child,.flush .tbl td:last-child{padding-right:20px}
+.flush>.tw .tbl th:first-child,.flush>.tw .tbl td:first-child{padding-left:20px}
+.flush>.tw .tbl th:last-child,.flush>.tw .tbl td:last-child{padding-right:20px}
 .tbl tbody tr.click{cursor:pointer;transition:background var(--dur-quick) var(--ease-out)}
 .tbl tbody tr.click:hover{background:var(--paper-2)}
 .tbl tr.dim td{color:var(--ink-3)}
@@ -366,7 +369,11 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .ex:first-of-type{border-top:0}
 .ex q{quotes:"«" "»"}
 .ex small{grid-column:1/-1;color:var(--ink-3);font-size:12px}
-.subh{font-size:13px;font-weight:600;margin:20px 0 4px;color:var(--ink-2)}
+.subh{font-size:13px;font-weight:600;margin:20px 0 6px;color:var(--ink-2)}
+.rdays{display:flex;gap:4px;align-items:flex-end;height:46px}
+.rdays>span{flex:1;display:flex;flex-direction:column-reverse;align-items:center;gap:2px;height:100%;border-bottom:1px solid var(--hair);padding-bottom:3px;min-width:0}
+.rdays i{width:7px;height:7px;border-radius:50%;background:var(--viz);flex:none}
+.rdays i.b{background:transparent;box-shadow:inset 0 0 0 2px var(--neg)}
 
 /* ── обращения ── */
 .split{display:grid;grid-template-columns:minmax(280px,360px) minmax(0,1fr);min-height:560px}
@@ -442,7 +449,12 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .bars2 .col i{display:block;border-radius:2px;background:var(--viz)}
 .bars2 .col i.o{background:var(--viz-3)}
 .bars2 .col.prev{opacity:.5}
-.dots-row{display:flex;flex-wrap:wrap;gap:3px;max-width:200px}
+.dots-row{display:flex;flex-wrap:wrap;gap:3px;max-width:230px}
+.reach-f{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:32px;padding:18px 20px 20px;border-top:1px solid var(--hair)}
+.reach-f>*{min-width:0}
+.reach-f .hbar{grid-template-columns:minmax(0,170px) minmax(0,1fr) auto}
+.bars2-x{display:flex;gap:4px;margin-top:6px;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.bars2-x span{flex:1;min-width:0;white-space:nowrap;overflow:visible}
 .dots-row i{width:7px;height:12px;border-radius:2px;background:var(--paper-2);box-shadow:inset 0 0 0 1px var(--hair)}
 .dots-row i.on{background:var(--viz);box-shadow:none}
 
@@ -531,7 +543,7 @@ footer.foot{margin-top:40px;padding-top:16px;border-top:1px solid var(--hair);di
 }
 @media (max-width:900px){
   .app{grid-template-columns:minmax(0,1fr)}
-  .rail{display:none}
+  .rail-col{display:none}
   .menu-btn{display:inline-grid!important}
   .top{padding:0 20px}
   .page{padding:24px 20px 32px}
@@ -550,8 +562,8 @@ footer.foot{margin-top:40px;padding-top:16px;border-top:1px solid var(--hair);di
   .card{padding:16px}
   .flush>.ch{padding:16px 16px 0}
   .fbar{padding:12px 16px}
-  .flush .tbl th:first-child,.flush .tbl td:first-child{padding-left:16px}
-  .flush .tbl th:last-child,.flush .tbl td:last-child{padding-right:16px}
+  .flush>.tw .tbl th:first-child,.flush>.tw .tbl td:first-child{padding-left:16px}
+  .flush>.tw .tbl th:last-child,.flush>.tw .tbl td:last-child{padding-right:16px}
   .kv{font-size:30px}
   .useg{grid-template-columns:repeat(2,minmax(0,1fr))}
   .statrow{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -573,6 +585,7 @@ footer.foot{margin-top:40px;padding-top:16px;border-top:1px solid var(--hair);di
   .qi{grid-template-columns:28px minmax(0,1fr)}
   .qi .btn{grid-column:2;justify-self:start;margin-top:2px}
   .duo{gap:24px}
+  .reach-f{grid-template-columns:minmax(0,1fr);gap:16px;padding:16px}
 }
 @media (max-width:420px){.c3{grid-column:1/-1}.chip-mock{display:none}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
@@ -618,7 +631,7 @@ footer.foot{margin-top:40px;padding-top:16px;border-top:1px solid var(--hair);di
 </svg>
 
 <div class="app" id="app">
-  <nav class="rail" aria-label="Разделы AuditLens">
+  <div class="rail-col"><nav class="rail" aria-label="Разделы AuditLens">
     <a class="brand" href="#overview" aria-label="AuditLens">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 21.5 21h-4.2L12 10.4 6.7 21H2.5z" fill="currentColor"/></svg>AuditLens</a>
     <div class="rg">Анализ</div>
@@ -634,7 +647,7 @@ footer.foot{margin-top:40px;padding-top:16px;border-top:1px solid var(--hair);di
     <div class="sp"></div>
     <a class="ri" href="#overview"><span class="n"></span><svg class="ic" aria-hidden="true"><use href="#i-msg"/></svg>Обратная связь</a>
     <div class="me"><span class="av">ВИ</span><div><b>Владелец инструмента</b><span>Внутренний аудит</span></div></div>
-  </nav>
+  </nav></div>
 
   <div class="main">
     <header class="top">
@@ -852,7 +865,7 @@ function brief(){
   const M=["","один","два","три","четыре","пять"], F=["","одно","два","три","четыре","пять"], cap=s=>s[0].toUpperCase()+s.slice(1);
   const tail=ni&&nt?`${cap(M[ni])} ${plural(ni,"сбой","сбоя","сбоев")} и ${F[nt]} ${plural(nt,"дело","дела","дел")} ждут вас.`
     :ni?`${cap(M[ni])} ${plural(ni,"сбой","сбоя","сбоев")}.`:nt?`${cap(F[nt])} ${plural(nt,"дело ждёт","дела ждут","дел ждут")} вас.`:"Всё спокойно.";
-  $("#brief").innerHTML=`${D.today.active} ${plural(D.today.active,"человек","человека","человек")} сегодня, ${D.today.ai} ${plural(D.today.ai,"вопрос","вопроса","вопросов")} ИИ-помощнику. <span class="q">${tail}</span>`;
+  $("#brief").innerHTML=`${D.today.active} ${plural(D.today.active,"человек","человека","человек")} сегодня, ${D.today.ai} ${plural(D.today.ai,"вопрос","вопроса","вопросов")} <span style="white-space:nowrap">ИИ-помощнику.</span> <span class="q">${tail}</span>`;
   $("#briefSub").innerHTML=`За неделю активны 34 человека — на 3 больше, чем неделей раньше. Проверочный набор ИИ — 81,5 из 100. Траты отдела идут к 82% месячного лимита.`;
 }
 
@@ -878,11 +891,11 @@ function vOverview(){
   <button class="card kpi c3" type="button" data-go="people">
     <span class="kl">Активны за 7 дней ${ic("users")}</span><span class="kv">34<small>из 64</small></span>
     <span class="ks"><span class="delta up">${ic("up")}3</span>к прошлой неделе</span>
-    <span class="viz">${spark(D.dau,"Человек в день за 14 дней",true)}</span></button>
+    <span class="viz">${sbars(D.dau,"Человек в день за 14 дней")}</span></button>
   <button class="card kpi c3" type="button" data-go="quality">
     <span class="kl">Вопросы ИИ-помощнику ${ic("spark")}</span><span class="kv">312<small>за 14 дней</small></span>
     <span class="ks"><span class="delta up">${ic("up")}38</span>к прошлым 14 дням · 47 — отчёты</span>
-    <span class="viz">${sbars(D.ai,"Вопросы по дням за 14 дней")}</span></button>
+    <span class="viz">${spark(D.ai,"Вопросы по дням за 14 дней",true)}</span></button>
   <button class="card kpi c3" type="button" data-go="quality">
     <span class="kl">Проверочный набор ИИ ${ic("check")}</span><span class="kv">81,5<small>из 100</small></span>
     <span class="ks"><span class="delta">${ic("down")}2,5</span>к прогону 26 октября</span>
@@ -903,12 +916,12 @@ function vOverview(){
   const live=`<section class="card c4 wide" aria-labelledby="h-l">
     <div class="ch"><h2 id="h-l">Сейчас в инструменте</h2><span class="meta live"><span class="dot ok pulse"></span>${D.today.online} онлайн</span></div>
     <div class="onl"><span class="avs">${PEOPLE.filter(p=>p.last==="онлайн").map(p=>`<button class="av" type="button" data-person="${p.id}" data-tip="${p.name}" aria-label="${p.name}">${ini(p.name)}</button>`).join("")}</span></div>
-    <div>${D.feed.map(e=>`<div class="fe${e.bad?" bad":""}"><time>${e.t}</time><div><span class="who">${e.n}</span> <span class="what">${esc(e.w)}</span></div></div>`).join("")}</div>
+    <div>${D.feed.slice(0,5).map(e=>`<div class="fe${e.bad?" bad":""}"><time>${e.t}</time><div><span class="who">${e.n}</span> <span class="what">${esc(e.w)}</span></div></div>`).join("")}</div>
   </section>`;
   return `<div class="grid">${q}${sy}${k}${aud}${live}</div>`;
 }
 function dauChart(){
-  const w=720,h=196,pad=28,pb=26,pt=12,n=D.dau.length,mx=35,g=10,bw=(w-pad-g*(n-1))/n;
+  const narrow=window.innerWidth<640, w=narrow?380:720,h=narrow?200:236,pad=24,pb=24,pt=14,n=D.dau.length,mx=35,g=narrow?5:10,bw=(w-pad-g*(n-1))/n;
   const y=v=>pt+(h-pt-pb)*(1-v/mx);
   let s=`<div class="chart"><svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Человек в день за 14 дней: в будни 22–31, в выходные 1–4">`;
   [0,10,20,30].forEach(t=>{s+=`<line class="gl" x1="${pad}" x2="${w}" y1="${y(t)}" y2="${y(t)}"/><text class="ax" x="${pad-8}" y="${y(t)+4}" text-anchor="end">${t}</text>`;});
@@ -936,12 +949,17 @@ function vPeople(){
       <span><b>${p.name}</b><small>последний визит ${p.last} · ${p.ai} ${plural(p.ai,"вопрос","вопроса","вопросов")} ИИ · «Аудит отзывов»</small></span></button>
       <button class="btn sm" type="button" data-copy="${p.id}">${ic("copy","sm")}Текст письма</button></div>`).join("")}
     <p class="note">Короткий личный текст: что появилось с последнего визита и просьба написать, если что-то мешало. Отправляете вы сами.</p>
+    <h3 class="subh" style="margin-top:22px">Ушли · 6 <span class="muted" style="font-weight:400">были активны 1–3 месяца назад</span></h3>
+    ${PEOPLE.filter(p=>p.seg===4).slice(0,3).map(p=>`<div class="prow"><button class="person" type="button" data-person="${p.id}"><span class="av">${ini(p.name)}</span>
+      <span><b>${p.name}</b><small>последний визит ${p.last}${p.id==="knikitin"?" · 7 вопросов ИИ · «ИИ-помощник»":""}</small></span></button>
+      <button class="btn sm" type="button" data-copy="${p.id}">${ic("copy","sm")}Текст письма</button></div>`).join("")}
+    <button class="lnk" type="button" data-pf="silent" style="margin-top:8px">Все, кто молчит, — в списке ниже ${ic("right")}</button>
   </section>`;
   const C=[["28 сент.",6,4,3],["5 окт.",4,2,2],["12 окт.",3,2,null],["19 окт.",2,1,null],["26 окт.",3,null,null]];
   const cell=(v,n)=>v==null?`<div class="cell wait">рано</div>`:`<div class="cell" style="background:color-mix(in oklab,var(--viz),transparent ${Math.round(90-60*v/n)}%)" data-tip="${v} из ${n} — ${Math.round(v/n*100)}%" tabindex="0">${v} из ${n}</div>`;
   const coh=`<section class="card c6" aria-labelledby="h-coh">
     <div class="ch"><h2 id="h-coh">Новички возвращаются?</h2><span class="meta">по неделе первого визита</span></div>
-    <table class="coh"><thead><tr><th>Неделя</th><th>Пришли</th><th>Вернулись на 2-й неделе</th><th>на 4-й</th></tr></thead>
+    <table class="coh"><colgroup><col style="width:22%"><col style="width:14%"><col><col></colgroup><thead><tr><th>Неделя</th><th>Пришли</th><th>Вернулись на 2-й неделе</th><th>на 4-й неделе</th></tr></thead>
     <tbody>${C.map(c=>`<tr><td class="wk">с ${c[0]}</td><td class="wk">${c[1]}</td><td>${cell(c[2],c[1])}</td><td>${cell(c[3],c[1])}</td></tr>`).join("")}</tbody></table>
     <p class="note">Счётчики вместо процентов: в когорте 2–6 человек, и один человек сдвигает долю на 20–50 пунктов. Процент — в подсказке.</p>
   </section>`;
@@ -988,12 +1006,13 @@ function vPeople(){
       <div><b>3</b><span>ждут кода</span><small>указали адрес, но не подтвердили</small></div>
       <div><b>214</b><span>писем ушло</span><small>не ушло 1 · кодов 31</small></div>
       <div><b>21 из 38</b><span>приняли приглашение</span><small>ответили «Не сейчас» — 9</small></div>
-      <div><b>18,4</b><span>клика на 100 открытий «Для вас»</span><small>медиана готовности профиля — 46%</small></div>
+      <div><b>38 из 64</b><span>описали зону ответственности</span><small>медиана готовности профиля — 46%, чаще не хватает тем в фокусе · 18,4 клика на 100 открытий «Для вас»</small></div>
     </div></section>`;
   return `<div class="grid">${life}${atr}${coh}${dir}${secs}${heat}${mail}</div>`;
 }
 
 /* ═══ Качество ИИ ═══ */
+const RG=[2,0,0,3,1,1,3,1,0,0,4,2,0,1], RB=[0,0,0,0,1,0,0,1,0,0,0,1,1,0];
 function vQuality(){
   const e=D.eval[S.eng], last=e.runs[e.runs.length-1], prev=e.runs[e.runs.length-2], dl=Math.round((last-prev)*10)/10;
   const ev=`<section class="card c4" aria-labelledby="h-ev">
@@ -1009,13 +1028,17 @@ function vQuality(){
     <div class="kpi bare"><span class="kv">288<small>из 303 готовы</small></span></div>
     <div class="stack" style="margin-top:14px" role="img" aria-label="Готово 288, сорвалось 9, остановили сами 6"><i style="flex:288;background:var(--viz)"></i><i style="flex:9;background:var(--neg)"></i><i style="flex:6;background:var(--viz-3)"></i></div>
     <div class="leg"><span><i class="sw2" style="background:var(--viz)"></i>готово 288</span><span><i class="sw2" style="background:var(--neg)"></i>сорвалось 9</span><span><i class="sw2" style="background:var(--viz-3)"></i>остановили сами 6</span></div>
-    <div class="stats"><div class="stat"><b>34 с</b><span>ответ, медиана</span></div><div class="stat"><b>2 мин 22 с</b><span>отчёт, медиана; 95% — до 4 мин 28 с</span></div></div>
+    <div class="stats"><div class="stat"><b>34 с</b><span>ответ, медиана</span></div><div class="stat" data-tip="95% отчётов готовы за 4 мин 28 с" tabindex="0"><b>2 мин 22 с</b><span>отчёт, медиана</span></div></div>
   </section>`;
   const rt=`<section class="card c4" aria-labelledby="h-rt">
     <div class="ch"><h2 id="h-rt">Оценки ответов</h2><span class="meta">${S.period} дней</span></div>
     <div class="duo"><div class="kpi bare"><span class="kl">${ic("like")}Хорошо</span><span class="kv">21</span></div>
       <div class="kpi bare"><span class="kl">${ic("dislike")}Плохо</span><span class="kv" style="color:var(--accent-ink)">4</span></div></div>
-    <p class="note" style="margin-top:16px">Оценили 25 ответов из 312, последняя оценка — вчера. Доли не считаем: на таком числе оценок они вводят в заблуждение.</p>
+    <h3 class="subh">Когда оценивали</h3>
+    <div class="rdays" role="img" aria-label="Оценки по дням: 21 хорошая, 4 плохие">${RG.map((g,i)=>`<span data-tip="${wd(i)}, ${dd(i)}: хорошо ${g}, плохо ${RB[i]}">${Array.from({length:RB[i]},()=>`<i class="b"></i>`).join("")}${Array.from({length:g},()=>`<i></i>`).join("")}</span>`).join("")}</div>
+    <div class="bullet-leg"><span>23 окт</span><span>сегодня</span></div>
+    <p class="note">Оценили 25 ответов из 312, последняя оценка — вчера. Доли не считаем: на таком числе оценок они вводят в заблуждение.</p>
+    <div class="stats"><div class="stat"><b>44 · <span style="color:var(--accent-ink)">6</span></b><span>хорошо · плохо: новости и проверки</span></div></div>
   </section>`;
   const cases=[["К-12","Сколько жалоб на кредитные карты Сбера за неделю","Аудит отзывов","bad","провал","число 412 против эталона 388 при допуске 2%"],
     ["К-07","Сравни ставки по вкладам ТОП-10 банков на полгода","Рынок · позиция","warn","частично","2 из 10 ставок — прошлого месяца"],
@@ -1024,6 +1047,10 @@ function vQuality(){
     <div class="ch"><h2 id="h-evc">Что не прошло проверку · прогон ${D.eval.hermes.last}</h2><button class="btn sm" type="button" data-toast="Прогон запущен — обычно 15–20 минут">${ic("play","sm")}Запустить прогон</button></div>
     <div class="tw"><table class="tbl"><thead><tr><th class="l">Вопрос</th><th class="l hide-s">Раздел</th><th class="l">Итог</th><th class="l">Что не так</th></tr></thead>
     <tbody>${cases.map(c=>`<tr class="click" tabindex="0" data-toast="Ответ агента раскроется под строкой"><td class="l"><span class="muted">${c[0]}</span> ${c[1]}</td><td class="l hide-s muted">${c[2]}</td><td class="l"><span class="badge ${c[3]}">${c[4]}</span></td><td class="l muted">${c[5]}</td></tr>`).join("")}</tbody></table></div>
+    <h3 class="subh" style="padding:0 20px;margin-top:18px">Прогоны</h3>
+    <div class="tw"><table class="tbl"><thead><tr><th class="l">Когда</th><th class="l">Модель</th><th class="l hide-s">Запуск</th><th>Итог</th><th>Зачёт</th><th>Частично</th><th>Провал</th><th>Медиана</th></tr></thead><tbody>
+      ${[["2 ноября","gpt-oss-120b","еженедельная проверка","81,5",21,2,1,"31 с"],["26 октября","gpt-oss-120b","еженедельная проверка","84",22,2,0,"29 с"],["22 октября","DeepSeek-V4-Flash","сравнение моделей","82,5",21,3,0,"24 с"],["19 октября","gpt-oss-120b","после отката","84",22,1,1,"30 с"]]
+        .map(r=>`<tr><td class="l">${r[0]}</td><td class="l">${r[1]}</td><td class="l hide-s muted">${r[2]}</td><td><b style="font-weight:600">${r[3]}</b></td><td>${r[4]}</td><td>${r[5]}</td><td class="${r[6]?"neg":"muted"}">${r[6]}</td><td>${r[7]}</td></tr>`).join("")}</tbody></table></div>
   </section>`;
   const cmp=`<section class="card c7" aria-labelledby="h-cmp">
     <div class="ch"><h2 id="h-cmp">Жалобы</h2><span class="meta">на ответы ИИ и новости выпуска</span></div>
@@ -1097,14 +1124,18 @@ const SDET={
     <tr><td class="l">Сравни</td><td>610</td><td>640</td><td class="l"><span class="badge ok">норма</span></td><td class="l muted">сегодня 06:20</td></tr>
     <tr><td class="l">2ГИС</td><td>380</td><td>360</td><td class="l"><span class="badge ok">норма</span></td><td class="l muted">сегодня 05:40</td></tr></tbody></table></div>
     <p class="note">Пропал из корпуса банк «Восход»: при его потоке за 12 дней тишины ждали бы 10 и больше жалоб.</p>`,
-  news:()=>`<div class="kv4"><div><b>412</b><span>материалов за сутки</span></div><div><b>96</b><span>про розницу</span></div><div><b>11</b><span>сильных поводов</span></div><div><b>4 из 5</b><span>заголовок дня, судья</span></div></div><p class="note">В выпуске 1 лишняя новость из 14, пропущенных сильных поводов нет. Аудиторы отметили: полезно — 31, не по делу — 4.</p>`,
+  news:()=>`<div class="kv4"><div><b>412</b><span>материалов за сутки</span></div><div><b>96</b><span>про розницу</span></div><div><b>11</b><span>сильных поводов</span></div><div><b>4 из 5</b><span>заголовок дня, судья</span></div></div><p class="note">В выпуске 1 лишняя новость из 14, пропущенных сильных поводов нет. Аудиторы отметили: полезно — 31, не по делу — 4.</p>
+    <div class="tw" style="margin-top:12px"><table class="tbl"><thead><tr><th class="l">Источник · 14 дней</th><th>Собрано</th><th>Про розницу</th><th>Сильных</th><th>В выпуске</th></tr></thead><tbody>
+      <tr><td class="l">Интерфакс</td><td>1 240</td><td>310</td><td>38</td><td>21</td></tr><tr><td class="l">Банки.ру · новости</td><td>860</td><td>402</td><td>27</td><td>18</td></tr>
+      <tr><td class="l">ЦБ · пресс-релизы</td><td>96</td><td>71</td><td>19</td><td>14</td></tr><tr><td class="l">РБК · финансы</td><td>1 020</td><td>188</td><td style="color:var(--warn-ink)" data-tip="Больше 20 материалов и ни одного сильного: кандидат на исключение" tabindex="0">0</td><td>0</td></tr></tbody></table></div>
+    <p class="note">Что открывали чаще за 14 дней: «ЦБ ужесточил требования к раскрытию ПСК» — 14 раз, «Банки снижают ставки по вкладам» — 9.</p>`,
   slices:()=>`<div class="tw"><table class="tbl"><thead><tr><th class="l">Срез</th><th>Размечено</th><th>Точность / полнота</th><th>«Не относится»</th></tr></thead><tbody>
     <tr><td class="l">Кредитные карты</td><td>99%</td><td>0,94 / 0,91</td><td>2</td></tr><tr><td class="l">Вклады</td><td>98%</td><td>0,92 / 0,90</td><td class="muted">—</td></tr>
     <tr><td class="l">Ипотека</td><td>97%</td><td>0,95 / 0,88</td><td>1</td></tr><tr><td class="l">Переводы</td><td><span class="badge warn">92% · доразметка</span></td><td>0,90 / 0,86</td><td>1</td></tr></tbody></table></div>
     <p class="note">Канарейка 2 ноября — без тревог. Склейка копий — 6 часов назад. Сигналы радара: подтвердились 8 из 11 отмеченных.</p>`,
   rsearch:()=>`<div class="kv4"><div><b>1 840</b><span>запросов от 29 человек</span></div><div><b>0,4 с</b><span>медиана</span></div><div><b>2,1 с</b><span>9 из 10 быстрее</span></div><div><b>180</b><span>без совпадений по словам</span></div></div>`,
   web:()=>`<div class="kv4"><div><b>1 204</b><span>Яндекс нашёл</span></div><div><b>88</b><span>честно пусто</span></div><div><b>41</b><span>выручил запасной поиск</span></div><div><b>57</b><span>страниц из копий</span></div></div>`,
-  ingest:()=>`<div class="kv4"><div><b>0</b><span>в очереди</span></div><div><b>1 240</b><span>обработано</span></div><div><b>0</b><span>отброшено</span></div><div><b>12</b><span>сбоев: капча 7, сеть 5</span></div></div><p class="note">Счётчики очереди обнуляются при перезапуске: пустая очередь не значит, что фон стоит.</p>`
+  ingest:()=>`<div class="kv4"><div><b>0</b><span>в очереди</span></div><div><b>1 240</b><span>обработано</span></div><div><b>0</b><span>отброшено</span></div><div><b>12</b><span>сбоев: капча 7, сеть 5</span></div></div><p class="note">Чаще всего срывается: sravni.ru — 5 (капча), consultant.ru — 3 (сеть). Счётчики очереди обнуляются при перезапуске: пустая очередь не значит, что фон стоит.</p>`
 };
 function vSystems(){
   const ok=D.systems.filter(x=>x.lv==="ok").length;
@@ -1161,24 +1192,50 @@ function vResults(){
       </div>
       <div>
         <div class="bars2" role="img" aria-label="Траты по дням за 14 дней: AuditLens и другие задачи отдела">${c.days.map((d,i)=>`<span class="col${i<9?" prev":""}" data-tip="${wd(i)}, ${dd(i)}: отдел ${rub(d[0])}, AuditLens ${rub(d[1])}"><i style="height:${(d[1]/mxd*100).toFixed(1)}%"></i><i class="o" style="height:${((d[0]-d[1])/mxd*100).toFixed(1)}%"></i></span>`).join("")}</div>
+        <div class="bars2-x" aria-hidden="true">${c.days.map((d,i)=>`<span>${i===0?"23 окт":i===10?"2 нояб":i===13?"сег.":""}</span>`).join("")}</div>
         <div class="leg"><span><i class="sw2" style="background:var(--viz)"></i>AuditLens</span><span><i class="sw2" style="background:var(--viz-3)"></i>другие задачи отдела</span><span class="muted">бледнее — октябрь</span></div>
         <h3 class="subh">Модели AuditLens · ноябрь и октябрь</h3>
         ${[["gpt-oss-120b",6100,21400],["Qwen3.6-35B-A3B",4300,15800],["gpt-4.1",2900,11200],["BGE-M3, эмбеддинги",1500,6900]].map(m=>`<div class="hbar"><span class="lb">${m[0]}</span><span class="tr"><i style="width:${(m[1]/6100*100).toFixed(0)}%"></i></span><span class="vv"><b>${rub(m[1])}</b> · ${rub(m[2])}</span></div>`).join("")}
-      </div></div></section>`;
-  const U=[["Аудит розничного бизнеса",18,16,14,9],["Аудит кредитных рисков",22,12,9,4],["Аудит операционной деятельности",20,9,7,3],["Аудит ИТ",15,6,4,2],["Методология и качество",8,5,4,2]];
-  const reach=`<section class="card flush c12" aria-labelledby="h-reach"><div class="ch"><h2 id="h-reach">Охват подразделений</h2><span class="meta">по кадровой выгрузке от 1 ноября · ФИО не хранятся</span></div>
-    <div class="tw" style="margin-top:4px"><table class="tbl"><thead><tr><th class="l">Подразделение</th><th>Штат</th><th class="l">Пользуются</th><th>Активны 30 дней</th><th>Постоянные</th></tr></thead><tbody>
-    ${U.map(u=>`<tr><td class="l" style="white-space:nowrap">${u[0]}</td><td>${u[1]}</td><td class="l"><span style="display:flex;align-items:center;gap:12px;min-width:250px"><span class="dots-row" role="img" aria-label="${u[2]} из ${u[1]}">${Array.from({length:u[1]},(_,i)=>`<i${i<u[2]?' class="on"':""}></i>`).join("")}</span><b style="font-weight:500;white-space:nowrap">${u[2]} из ${u[1]}</b></span></td><td>${u[3]}</td><td>${u[4]}</td></tr>`).join("")}
-    <tr><td class="l"><b>Итого</b></td><td><b>83</b></td><td class="l"><b>48 из 83</b></td><td><b>38</b></td><td><b>20</b></td></tr></tbody></table></div>
-    <div class="fbar" style="border-top:1px solid var(--hair);border-bottom:0"><span class="note" style="margin:0">Ещё 16 человек — из других подразделений. Постоянные — заходили 5 и больше разных дней.</span><span class="sp"></span><button class="btn sm" type="button" data-toast="Загрузка кадровой выгрузки .xlsx — только у владельца">Обновить штат</button></div></section>`;
+      </div></div>
+    <h3 class="subh" style="margin-top:22px">По месяцам</h3>
+    <div class="tw"><table class="tbl"><thead><tr><th class="l">Месяц</th><th>Отдел</th><th>AuditLens</th><th>Доля AuditLens</th></tr></thead><tbody>
+      <tr><td class="l">ноябрь 2026, идёт</td><td>41 200 ₽</td><td>14 800 ₽</td><td>36%</td></tr>
+      <tr><td class="l">октябрь 2026</td><td>268 400 ₽</td><td>96 300 ₽</td><td>36%</td></tr>
+      <tr><td class="l">сентябрь 2026</td><td>231 900 ₽</td><td>71 200 ₽</td><td>31%</td></tr>
+      <tr><td class="l">август 2026</td><td>198 000 ₽</td><td class="muted" data-tip="Приложение работало на общем ключе отдела — его траты не выделены" tabindex="0">—</td><td class="muted">—</td></tr></tbody></table></div>
+  </section>`;
+  /* Охват по ТБ: строки и подписи — как отдаёт /api/admin/pulse/reach (web/org_reach.py:
+     подпись ТБ — из «… по СЗБ» вышестоящего подразделения, «Центр» — без номера). Сортировка — по охвату. */
+  const U=[["Центр",18,16,14,212,9,61.5],["СЗБ",9,7,6,74,4,18.2],["СРБ",11,8,6,88,3,20.4],["ПБ",8,5,4,41,2,9.8],["УБ",7,4,3,36,2,7.1],["ВВБ",7,4,3,22,1,6.0],
+    ["СибБ",8,4,2,18,1,5.2],["ЮЗБ",7,3,2,15,1,3.9],["ДВБ",5,2,1,6,0,1.4],["БВБ",6,2,1,9,1,2.0],["ЦЧБ",5,1,1,3,0,0.6]];
+  const T=U.reduce((a,u)=>a.map((v,i)=>i?v+u[i]:v),["Итого",0,0,0,0,0,0]);
+  const pc=(a,b)=>Math.round(a/b*100)+"%";
+  const R=[["Аудиторы",58,38],["Эксперты и специалисты",17,10],["Руководители",12,7],["Прочие",4,1]];
+  const reach=`<section class="card flush c12" aria-labelledby="h-reach"><div class="ch"><h2 id="h-reach">Охват по территориальным банкам</h2><span class="meta">кадровая выгрузка от 1 ноября · всё время · ФИО не хранятся</span></div>
+    <div style="padding:4px 20px 18px"><div class="statrow" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+      <div><b>${T[2]} из ${T[1]}</b><span>работающих пользуются · ${pc(T[2],T[1])}</span><small>без уволенных и служебных учёток</small></div>
+      <div><b>${T[3]}</b><span>активны за 30 дней</span><small>сотрудники из штата</small></div>
+      <div><b>8</b><span>не из штата</span><small>другие подразделения · 5 за 30 дней</small></div>
+      <div><b>${fmt(T[4])}</b><span>вопросов ИИ от штата</span><small>задавали 41 человек</small></div></div></div>
+    <div class="tw"><table class="tbl"><thead><tr><th class="l">ТБ</th><th>Штат</th><th class="l">Пользуются</th><th>Охват</th><th>Активны 30 дней</th><th>Вопросы ИИ</th><th>Постоянные</th><th>Часы</th></tr></thead><tbody>
+    ${U.map(u=>`<tr><td class="l" style="white-space:nowrap;font-weight:500">${u[0]}</td><td>${u[1]}</td>
+      <td class="l"><span style="display:flex;align-items:center;gap:12px;min-width:220px"><span class="dots-row" role="img" aria-label="${u[2]} из ${u[1]}">${Array.from({length:u[1]},(_,i)=>`<i${i<u[2]?' class="on"':""}></i>`).join("")}</span><span style="white-space:nowrap">${u[2]} из ${u[1]}</span></span></td>
+      <td><b style="font-weight:600">${pc(u[2],u[1])}</b></td><td>${u[3]}</td><td>${u[4]}</td><td>${u[5]||`<span class="muted">—</span>`}</td><td>${dec(u[6])}</td></tr>`).join("")}
+    <tr><td class="l"><b>${T[0]}</b></td><td><b>${T[1]}</b></td><td class="l"><b>${T[2]} из ${T[1]}</b></td><td><b>${pc(T[2],T[1])}</b></td><td><b>${T[3]}</b></td><td><b>${T[4]}</b></td><td><b>${T[5]}</b></td><td><b>${dec(T[6])}</b></td></tr></tbody></table></div>
+    <div class="reach-f"><div><h3 class="subh" style="margin-top:0">По должностям</h3>
+      ${R.map(r=>`<div class="hbar"><span class="lb">${r[0]}</span><span class="tr"><i style="width:${(r[2]/r[1]*100).toFixed(0)}%"></i></span><span class="vv"><b>${r[2]} из ${r[1]}</b> · ${pc(r[2],r[1])}</span></div>`).join("")}</div>
+      <div><p class="note" style="margin-top:0">Сотрудник ТБ — табельный номер в логине совпал со штатом (49) или совпали имя и фамилия (7). Постоянные — заходили 5 и больше разных дней. Численность штата Центра задана отдельно — наведите на число в приложении, там видно и число по выгрузке.</p>
+      <button class="btn sm" type="button" style="margin-top:12px" data-toast="Загрузка кадровой выгрузки .xlsx — только у владельца">Обновить штат (.xlsx)</button></div></div>
+  </section>`;
   const fb=`<section class="card c12" aria-labelledby="h-fb"><div class="ch"><h2 id="h-fb">Обратная связь и дела</h2><span class="meta">${perL}</span></div>
     <div class="statrow" style="grid-template-columns:repeat(4,minmax(0,1fr))"><div><b>46</b><span>предложений по доработкам</span><small>сделано 29, ждут ответа 3</small></div><div><b>12</b><span>заявок на источники</span><small>одобрено 7, отклонено 3, ждут 2</small></div>
     <div><b>37</b><span>аудит-дел</span><small>сбор материалов — 33, в работе — 3, с анализом — 1</small></div><div><b>118</b><span>отметок экспертов по схемам</span><small>«Аудит уязвимостей», выгрузок — 22</small></div></div></section>`;
   return `<div class="vtools">
       <div class="seg" role="group" aria-label="Период итогов">${[[0,"Всё время"],[90,"90 дней"],[30,"30 дней"],[7,"7 дней"]].map(x=>`<button type="button" aria-pressed="${S.oc===x[0]}" data-oc="${x[0]}">${x[1]}</button>`).join("")}</div>
       <span class="sp"></span><span class="note hide-s" style="margin:0">Запросы размечаются каждую ночь в 03:40 · последняя разметка — сегодня</span>
+      <button class="btn sm" type="button" data-toast="Разметка запущена: 37 запросов, обычно несколько минут">Разметить новые</button>
       <button class="btn sm" type="button" data-toast="Та же сводка файлом — для письма руководству">${ic("download","sm")}Скачать Excel</button></div>
-    <div class="grid">${kp}${fun}${banks}${dir}${cost}${reach}${fb}</div>`;
+    <div class="grid">${kp}${reach}${fun}${banks}${dir}${cost}${fb}</div>`;
 }
 
 /* ═══ Карточка человека: боковой лист ═══ */
@@ -1324,6 +1381,7 @@ document.addEventListener("click",e=>{
 });
 function isDark(){const a=document.documentElement.getAttribute("data-theme");return a?a==="dark":matchMedia("(prefers-color-scheme: dark)").matches;}
 function syncTheme(){const dk=isDark();$("#themeBtn").innerHTML=ic(dk?"sun":"moon");$("#themeBtn").setAttribute("aria-label",dk?"Светлая тема":"Тёмная тема");}
+let rb=window.innerWidth<640;window.addEventListener("resize",()=>{const nb=window.innerWidth<640;if(nb!==rb){rb=nb;if(S.view==="overview")render();}});
 window.addEventListener("hashchange",()=>{const h=location.hash.slice(1);if(h!==S.view&&TABS.some(t=>t[0]===h)){S.view=h;render();}});
 
 const th=store.get("pu2-theme","");if(th==="dark"||th==="light")document.documentElement.setAttribute("data-theme",th);
