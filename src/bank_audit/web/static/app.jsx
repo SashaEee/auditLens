@@ -13813,6 +13813,19 @@ function PuQualitySec(){
 // (ctx.go) или параметру адреса view=flags (уведомление team_slice).
 const PU2_CSS_INBOX=`
 .pu2-ib-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:12px 20px;border-bottom:1px solid var(--hair)}
+.pu2-ib-mail{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:10px 20px;border-bottom:1px solid var(--hair);font-size:13px;color:var(--ink-2)}
+.pu2-ib-mail>.btn{margin-left:auto}
+.pu2-ib-mail.edit{display:grid;gap:8px}
+.pu2-ib-mh{font-weight:600;color:var(--ink)}
+.pu2-ib-mbad{color:var(--accent-ink)}
+.pu2-ib-mnote{margin:0;color:var(--ink-3);font-size:12.5px;max-width:90ch}
+.pu2-ib-mrow{display:grid;grid-template-columns:minmax(150px,220px) minmax(0,1fr) auto;gap:8px;align-items:center}
+.pu2-ib-mrow>span{font-size:13px;color:var(--ink-2)}
+label.pu2-ib-mrow{grid-template-columns:minmax(150px,220px) minmax(0,1fr)}
+.pu2-ib-mrow input,.pu2-ib-mrow select{height:32px;border-radius:8px;border:1px solid var(--hair);background:var(--surface);color:var(--ink);padding:0 10px;font:inherit;font-size:13px;min-width:0}
+.pu2-ib-mbtns{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.pu2-ib-mbtns .sp{flex:1}
+@media(max-width:640px){.pu2-ib-mrow,label.pu2-ib-mrow{grid-template-columns:1fr}}
 .pu2-ib-sum{font-size:13px;color:var(--ink-2);margin-right:auto;min-width:0}
 .pu2-ib-sum b{font-weight:600;color:var(--ink)}
 .pu2-ib-n{font-variant-numeric:tabular-nums;opacity:.7;margin-left:4px}
@@ -14045,6 +14058,49 @@ function PuIbTicket({id,statuses,onClose,onChanged}){
   </div>;
 }
 
+// кому уходят письма об обращениях: все — владельцу, по разделам — ответственным (web/inbox_mail.py)
+function PuIbMail(){
+  const L=usePuData("/api/admin/inbox-mail",{ttl:300000});
+  const[edit,setEdit]=useState(false),[all,setAll]=useState(""),[rows,setRows]=useState([]);
+  const[busy,setBusy]=useState(false),[err,setErr]=useState(null);
+  const d=L.d;
+  if(!d||(L.err&&L.err.status===403)) return null;
+  const secs=d.known_sections||[];
+  const secLabel=k=>(secs.find(s=>s.key===k)||{label:k}).label;
+  const who=xs=>xs.length?xs.map((r,i)=><React.Fragment key={i}>{i?", ":""}<span className={r.ok?"":"pu2-ib-mbad"}
+      title={r.ok?r.email:r.why}>{r.name||r.email||r.entry}{r.ok?"":" — почта не подключена"}</span></React.Fragment>):"никому";
+  const split=v=>v.split(/[,;\n]/).map(x=>x.trim()).filter(Boolean);
+  const start=()=>{ setAll(d.all.map(r=>r.entry).join(", "));
+    setRows(Object.entries(d.sections).map(([k,xs])=>({k,v:xs.map(r=>r.entry).join(", ")})));
+    setErr(null); setEdit(true); };
+  const save=()=>{ const sections={}; rows.forEach(r=>{ if(r.k&&split(r.v).length) sections[r.k]=split(r.v); });
+    setBusy(true); setErr(null);
+    sayPost("/api/admin/inbox-mail",{all:split(all),sections})
+      .then(()=>{ puInvalidate("/api/admin/inbox-mail"); setEdit(false); })
+      .catch(e=>setErr(e.message)).finally(()=>setBusy(false)); };
+  if(!edit) return <div className="pu2-ib-mail">
+    <span className="pu2-ib-mh">Письма об обращениях</span>
+    <span>все — {who(d.all)}</span>
+    {Object.entries(d.sections).map(([k,xs])=><span key={k}>· «{secLabel(k)}» — ещё {who(xs)}</span>)}
+    <button type="button" className="btn btn-sm" onClick={start}>Изменить</button></div>;
+  return <div className="pu2-ib-mail edit">
+    <span className="pu2-ib-mh">Письма об обращениях</span>
+    <p className="pu2-ib-mnote">Логин сотрудника — письмо на почту, которую он подключил в колокольчике; можно вписать и адрес.
+      На некорпоративную почту уходит только номер обращения, без текста и снимков.</p>
+    <label className="pu2-ib-mrow"><span>Все обращения</span>
+      <input value={all} onChange={e=>setAll(e.target.value)} placeholder="логины или адреса через запятую"/></label>
+    {rows.map((r,i)=><div key={i} className="pu2-ib-mrow">
+      <select value={r.k} onChange={e=>setRows(rs=>rs.map((x,j)=>j===i?{...x,k:e.target.value}:x))} aria-label="Раздел">
+        <option value="">Раздел…</option>{secs.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select>
+      <input value={r.v} onChange={e=>setRows(rs=>rs.map((x,j)=>j===i?{...x,v:e.target.value}:x))} placeholder="кому ещё по этому разделу" aria-label="Кому"/>
+      <button type="button" className="btn btn-sm" aria-label="Убрать правило" onClick={()=>setRows(rs=>rs.filter((_,j)=>j!==i))}>✕</button></div>)}
+    <div className="pu2-ib-mbtns">
+      <button type="button" className="btn btn-sm" onClick={()=>setRows(rs=>[...rs,{k:"",v:""}])}>+ правило для раздела</button>
+      <span className="sp"/>{err&&<span className="pu2-ib-mbad" role="alert">{err}</span>}
+      <button type="button" className="btn btn-sm" onClick={()=>setEdit(false)} disabled={busy}>Отмена</button>
+      <button type="button" className="btn btn-sm btn-primary" onClick={save} disabled={busy}>{busy?"Сохраняю…":"Сохранить"}</button></div>
+  </div>;
+}
 function PuInboxSec(){
   const c=usePu(), m=c.m||{};
   const tgt=c.target&&c.target.id;
@@ -14086,6 +14142,7 @@ function PuInboxSec(){
       meta={cnt.median_answer_h!=null?<span className="pu2-hide-s">первый ответ за 30 дней — медиана {puIbH(cnt.median_answer_h)}</span>:null}
       actions={viewSeg||null}>
       {view==="flags"&&flagsOk?<PuIbFlags F={F}/>:<>
+        <PuIbMail/>
         <div className="pu2-ib-bar">
           <span className="pu2-ib-sum">{sum.map((x,i)=><React.Fragment key={i}>{i?" · ":""}{x}</React.Fragment>)}</span>
           <PuSeg label="Статус обращений" value={st} onChange={v=>setSt(v)}

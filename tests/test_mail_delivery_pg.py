@@ -154,7 +154,7 @@ def test_tick_sends_personal_now_and_the_rest_in_the_morning(pg, sent, monkeypat
     _notice("u2", "case_reply", 40)                           # личная почта → без подробностей
     _notice("u3", "case_mention", 40)                         # адрес из системы входа → не пишем
     r = MD.tick(MON_9)
-    assert r == {"users": 2, "instant": 2, "digest": 1, "errors": 0}
+    assert r == {"users": 2, "instant": 2, "digest": 1, "brief": 0, "errors": 0}
     by = {(x["to"], "digest" if x["bulk"] else "instant"): x["mail"] for x in sent}
     inst1, dig1, inst2 = (by[("anna@corp.example.ru", "instant")], by[("anna@corp.example.ru", "digest")],
                           by[("pavel@example.org", "instant")])
@@ -163,7 +163,7 @@ def test_tick_sends_personal_now_and_the_rest_in_the_morning(pg, sent, monkeypat
     assert "Карты" not in inst2["html"] and "выписку" not in inst2["html"] and "Ирина" not in inst2["html"]
     assert "Ответ на ваше сообщение в деле" in inst2["subject"] and "№ 12" in inst2["subject"]
     # каждое событие — один раз: второй проход ничего не шлёт
-    assert MD.tick(MON_9 + timedelta(minutes=1)) == {"users": 2, "instant": 0, "digest": 0, "errors": 0}
+    assert MD.tick(MON_9 + timedelta(minutes=1)) == {"users": 2, "instant": 0, "digest": 0, "brief": 0, "errors": 0}
     left = _sql("SELECT username, kind FROM app_notice WHERE emailed_at IS NULL AND read_at IS NULL ORDER BY 1, 2")
     assert [tuple(x.values()) for x in left] == [("u1", "case_items"), ("u3", "case_mention")]
     # сводка — раз в день, даже если днём появилось новое
@@ -182,7 +182,7 @@ def test_no_morning_digest_on_weekends_and_settings_respected(pg, sent):
     assert MD.tick(sat)["digest"] == 0
     _sql("""UPDATE app_user SET prefs = '{"mail": {"digest": false, "instant": false}}' WHERE username = 'u1'""")
     _notice("u1", "case_mention", 15)
-    assert MD.tick(MON_9) == {"users": 2, "instant": 0, "digest": 0, "errors": 0}
+    assert MD.tick(MON_9) == {"users": 2, "instant": 0, "digest": 0, "brief": 0, "errors": 0}
 
 
 def test_failed_send_releases_events_for_the_next_tick(pg, sent, monkeypatch):

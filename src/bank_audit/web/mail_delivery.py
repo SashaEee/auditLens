@@ -467,6 +467,14 @@ def tick(now: datetime | None = None) -> dict:
     if not mailer.configured() or mailer.paused():
         return {**out, "skipped": True}
     now = now or _now()
+    try:
+        from . import inbox_mail
+        r = inbox_mail.tick(now)
+        if r.get("mails"):
+            out["tickets"] = r["mails"]
+    except Exception as e:  # noqa: BLE001 — сбой письма об обращении не держит остальную рассылку
+        out["errors"] += 1
+        log.warning("[mail] обращения: %s", e)
     msk = now.astimezone(MSK)
     digest_due = _workday(msk.date()) and msk.hour >= DIGEST_HOUR
     brief_due = _workday(msk.date()) and msk.hour >= BRIEF_HOUR
@@ -492,7 +500,7 @@ async def mail_background_loop() -> None:
     while True:
         try:
             r = await asyncio.to_thread(tick)
-            if r.get("instant") or r.get("digest") or r.get("errors"):
+            if r.get("instant") or r.get("digest") or r.get("errors") or r.get("tickets"):
                 log.info("[mail] рассылка: %s", r)
         except Exception as e:  # noqa: BLE001
             log.warning("[mail] тик рассылки: %s", e)

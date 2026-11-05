@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 517fe5a54f72eafb42343eec573dfdd1d8322853b2faa7ccd55996172363e107): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 17aa5637a385931b6b36446283d5e7832ec1059612150fa26cfb760c962e8ad5): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -28091,6 +28091,19 @@ function PuQualitySec() {
 // (ctx.go) или параметру адреса view=flags (уведомление team_slice).
 const PU2_CSS_INBOX = `
 .pu2-ib-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:12px 20px;border-bottom:1px solid var(--hair)}
+.pu2-ib-mail{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:10px 20px;border-bottom:1px solid var(--hair);font-size:13px;color:var(--ink-2)}
+.pu2-ib-mail>.btn{margin-left:auto}
+.pu2-ib-mail.edit{display:grid;gap:8px}
+.pu2-ib-mh{font-weight:600;color:var(--ink)}
+.pu2-ib-mbad{color:var(--accent-ink)}
+.pu2-ib-mnote{margin:0;color:var(--ink-3);font-size:12.5px;max-width:90ch}
+.pu2-ib-mrow{display:grid;grid-template-columns:minmax(150px,220px) minmax(0,1fr) auto;gap:8px;align-items:center}
+.pu2-ib-mrow>span{font-size:13px;color:var(--ink-2)}
+label.pu2-ib-mrow{grid-template-columns:minmax(150px,220px) minmax(0,1fr)}
+.pu2-ib-mrow input,.pu2-ib-mrow select{height:32px;border-radius:8px;border:1px solid var(--hair);background:var(--surface);color:var(--ink);padding:0 10px;font:inherit;font-size:13px;min-width:0}
+.pu2-ib-mbtns{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.pu2-ib-mbtns .sp{flex:1}
+@media(max-width:640px){.pu2-ib-mrow,label.pu2-ib-mrow{grid-template-columns:1fr}}
 .pu2-ib-sum{font-size:13px;color:var(--ink-2);margin-right:auto;min-width:0}
 .pu2-ib-sum b{font-weight:600;color:var(--ink)}
 .pu2-ib-n{font-variant-numeric:tabular-nums;opacity:.7;margin-left:4px}
@@ -28537,6 +28550,131 @@ function PuIbTicket({
     role: "alert"
   }, err)));
 }
+
+// кому уходят письма об обращениях: все — владельцу, по разделам — ответственным (web/inbox_mail.py)
+function PuIbMail() {
+  const L = usePuData("/api/admin/inbox-mail", {
+    ttl: 300000
+  });
+  const [edit, setEdit] = useState(false),
+    [all, setAll] = useState(""),
+    [rows, setRows] = useState([]);
+  const [busy, setBusy] = useState(false),
+    [err, setErr] = useState(null);
+  const d = L.d;
+  if (!d || L.err && L.err.status === 403) return null;
+  const secs = d.known_sections || [];
+  const secLabel = k => (secs.find(s => s.key === k) || {
+    label: k
+  }).label;
+  const who = xs => xs.length ? xs.map((r, i) => /*#__PURE__*/React.createElement(React.Fragment, {
+    key: i
+  }, i ? ", " : "", /*#__PURE__*/React.createElement("span", {
+    className: r.ok ? "" : "pu2-ib-mbad",
+    title: r.ok ? r.email : r.why
+  }, r.name || r.email || r.entry, r.ok ? "" : " — почта не подключена"))) : "никому";
+  const split = v => v.split(/[,;\n]/).map(x => x.trim()).filter(Boolean);
+  const start = () => {
+    setAll(d.all.map(r => r.entry).join(", "));
+    setRows(Object.entries(d.sections).map(([k, xs]) => ({
+      k,
+      v: xs.map(r => r.entry).join(", ")
+    })));
+    setErr(null);
+    setEdit(true);
+  };
+  const save = () => {
+    const sections = {};
+    rows.forEach(r => {
+      if (r.k && split(r.v).length) sections[r.k] = split(r.v);
+    });
+    setBusy(true);
+    setErr(null);
+    sayPost("/api/admin/inbox-mail", {
+      all: split(all),
+      sections
+    }).then(() => {
+      puInvalidate("/api/admin/inbox-mail");
+      setEdit(false);
+    }).catch(e => setErr(e.message)).finally(() => setBusy(false));
+  };
+  if (!edit) return /*#__PURE__*/React.createElement("div", {
+    className: "pu2-ib-mail"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "pu2-ib-mh"
+  }, "\u041F\u0438\u0441\u044C\u043C\u0430 \u043E\u0431 \u043E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u044F\u0445"), /*#__PURE__*/React.createElement("span", null, "\u0432\u0441\u0435 \u2014 ", who(d.all)), Object.entries(d.sections).map(([k, xs]) => /*#__PURE__*/React.createElement("span", {
+    key: k
+  }, "\xB7 \xAB", secLabel(k), "\xBB \u2014 \u0435\u0449\u0451 ", who(xs))), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-sm",
+    onClick: start
+  }, "\u0418\u0437\u043C\u0435\u043D\u0438\u0442\u044C"));
+  return /*#__PURE__*/React.createElement("div", {
+    className: "pu2-ib-mail edit"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "pu2-ib-mh"
+  }, "\u041F\u0438\u0441\u044C\u043C\u0430 \u043E\u0431 \u043E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u044F\u0445"), /*#__PURE__*/React.createElement("p", {
+    className: "pu2-ib-mnote"
+  }, "\u041B\u043E\u0433\u0438\u043D \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u0430 \u2014 \u043F\u0438\u0441\u044C\u043C\u043E \u043D\u0430 \u043F\u043E\u0447\u0442\u0443, \u043A\u043E\u0442\u043E\u0440\u0443\u044E \u043E\u043D \u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0438\u043B \u0432 \u043A\u043E\u043B\u043E\u043A\u043E\u043B\u044C\u0447\u0438\u043A\u0435; \u043C\u043E\u0436\u043D\u043E \u0432\u043F\u0438\u0441\u0430\u0442\u044C \u0438 \u0430\u0434\u0440\u0435\u0441. \u041D\u0430 \u043D\u0435\u043A\u043E\u0440\u043F\u043E\u0440\u0430\u0442\u0438\u0432\u043D\u0443\u044E \u043F\u043E\u0447\u0442\u0443 \u0443\u0445\u043E\u0434\u0438\u0442 \u0442\u043E\u043B\u044C\u043A\u043E \u043D\u043E\u043C\u0435\u0440 \u043E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u044F, \u0431\u0435\u0437 \u0442\u0435\u043A\u0441\u0442\u0430 \u0438 \u0441\u043D\u0438\u043C\u043A\u043E\u0432."), /*#__PURE__*/React.createElement("label", {
+    className: "pu2-ib-mrow"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0412\u0441\u0435 \u043E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u044F"), /*#__PURE__*/React.createElement("input", {
+    value: all,
+    onChange: e => setAll(e.target.value),
+    placeholder: "\u043B\u043E\u0433\u0438\u043D\u044B \u0438\u043B\u0438 \u0430\u0434\u0440\u0435\u0441\u0430 \u0447\u0435\u0440\u0435\u0437 \u0437\u0430\u043F\u044F\u0442\u0443\u044E"
+  })), rows.map((r, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    className: "pu2-ib-mrow"
+  }, /*#__PURE__*/React.createElement("select", {
+    value: r.k,
+    onChange: e => setRows(rs => rs.map((x, j) => j === i ? {
+      ...x,
+      k: e.target.value
+    } : x)),
+    "aria-label": "\u0420\u0430\u0437\u0434\u0435\u043B"
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "\u0420\u0430\u0437\u0434\u0435\u043B\u2026"), secs.map(s => /*#__PURE__*/React.createElement("option", {
+    key: s.key,
+    value: s.key
+  }, s.label))), /*#__PURE__*/React.createElement("input", {
+    value: r.v,
+    onChange: e => setRows(rs => rs.map((x, j) => j === i ? {
+      ...x,
+      v: e.target.value
+    } : x)),
+    placeholder: "\u043A\u043E\u043C\u0443 \u0435\u0449\u0451 \u043F\u043E \u044D\u0442\u043E\u043C\u0443 \u0440\u0430\u0437\u0434\u0435\u043B\u0443",
+    "aria-label": "\u041A\u043E\u043C\u0443"
+  }), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-sm",
+    "aria-label": "\u0423\u0431\u0440\u0430\u0442\u044C \u043F\u0440\u0430\u0432\u0438\u043B\u043E",
+    onClick: () => setRows(rs => rs.filter((_, j) => j !== i))
+  }, "\u2715"))), /*#__PURE__*/React.createElement("div", {
+    className: "pu2-ib-mbtns"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-sm",
+    onClick: () => setRows(rs => [...rs, {
+      k: "",
+      v: ""
+    }])
+  }, "+ \u043F\u0440\u0430\u0432\u0438\u043B\u043E \u0434\u043B\u044F \u0440\u0430\u0437\u0434\u0435\u043B\u0430"), /*#__PURE__*/React.createElement("span", {
+    className: "sp"
+  }), err && /*#__PURE__*/React.createElement("span", {
+    className: "pu2-ib-mbad",
+    role: "alert"
+  }, err), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-sm",
+    onClick: () => setEdit(false),
+    disabled: busy
+  }, "\u041E\u0442\u043C\u0435\u043D\u0430"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-sm btn-primary",
+    onClick: save,
+    disabled: busy
+  }, busy ? "Сохраняю…" : "Сохранить")));
+}
 function PuInboxSec() {
   const c = usePu(),
     m = c.m || {};
@@ -28643,7 +28781,7 @@ function PuInboxSec() {
     actions: viewSeg || null
   }, view === "flags" && flagsOk ? /*#__PURE__*/React.createElement(PuIbFlags, {
     F: F
-  }) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(PuIbMail, null), /*#__PURE__*/React.createElement("div", {
     className: "pu2-ib-bar"
   }, /*#__PURE__*/React.createElement("span", {
     className: "pu2-ib-sum"

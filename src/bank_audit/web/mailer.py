@@ -82,11 +82,12 @@ def build(to: str, mail: dict, *, bulk: bool = False) -> EmailMessage:
     m.set_content(mail["text"])
     m.add_alternative(mail["html"], subtype="html")
     from .mail_templates import inline_images
-    images = inline_images(mail["html"])
+    images = [(cid, data, "png") for cid, data in inline_images(mail["html"])]
+    images += [(c, d, s) for c, d, s in (mail.get("images") or []) if f"cid:{c}" in mail["html"]]
     if images:
         html_part = m.get_payload()[1]
-        for cid, data in images:
-            html_part.add_related(data, maintype="image", subtype="png", cid=f"<{cid}>", disposition="inline")
+        for cid, data, sub in images:
+            html_part.add_related(data, maintype="image", subtype=sub, cid=f"<{cid}>", disposition="inline")
     return m
 
 

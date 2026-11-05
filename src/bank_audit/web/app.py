@@ -1036,6 +1036,29 @@ def inbox_file(fid: int, user: CurrentUser = Depends(get_current_user)):
                              "X-Content-Type-Options": "nosniff"})
 
 
+class InboxMailIn(BaseModel):
+    all: list[str] = []
+    sections: dict[str, list[str]] = {}
+
+
+@app.get("/api/admin/inbox-mail")
+def admin_inbox_mail_get(user: CurrentUser = Depends(get_current_user)):
+    """Кому уходят письма об обращениях: все — владельцу, по разделам — ответственным."""
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    from . import inbox_mail
+    return inbox_mail.describe()
+
+
+@app.post("/api/admin/inbox-mail")
+def admin_inbox_mail_set(req: InboxMailIn, user: CurrentUser = Depends(get_current_user)):
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "admin only")
+    from . import inbox_mail
+    inbox_mail.set_routes(req.all, req.sections, user.username)
+    return inbox_mail.describe()
+
+
 @app.get("/api/admin/inbox")
 def admin_inbox(status: str = "open", kind: Optional[str] = None, section: Optional[str] = None,
                 user: CurrentUser = Depends(get_current_user)):
