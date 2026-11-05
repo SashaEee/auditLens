@@ -10801,21 +10801,27 @@ function VSummary({s,f,setF,scope}){
 
 function VGosbTable({rows,f,setF,subj}){
   const[all,setAll]=useState(false);
-  if(!rows||!rows.length)return <section className="card"><div className="eyebrow">ГОСБ</div><div className="vempty">Нет данных по ГОСБ</div></section>;
-  const top=rows.slice(0,8);
+  if(!rows||!rows.length)return null;
+  const top=rows.slice(0,10);
   const shown=all?rows:(f.gosb&&!top.some(r=>r.gosb===f.gosb)?[...top,...rows.filter(r=>r.gosb===f.gosb)]:top);
   const pick=g=>setF({gosb:f.gosb===g?"":g});
-  return <section className="card"><div className="eyebrow">ГОСБ · {subj||"вся сеть"}</div>
-    <h2 className="vh2">Где больше тяжёлых историй</h2>
-    <div className="tbl-wrap"><table className="vtbl"><thead><tr><th>ГОСБ</th><th className="num">В списке</th><th className="num">За год</th>
-      <th className="num">Годом раньше</th><th className="num">На 100 отзывов</th><th>Чаще всего</th></tr></thead>
+  const trend=r=>{if(!r.heavy_prev&&!r.heavy)return null;const d=r.heavy-r.heavy_prev;
+    return d===0?<span className="note">без изменений</span>:<span className={d>0?"vup":"note"} title={`годом раньше ${r.heavy_prev}`}>{d>0?"▲ +":"▼ −"}{Math.abs(d)}</span>;};
+  return <section className="card" style={{padding:"18px 18px 10px"}}>
+    <div className="row" style={{flexWrap:"wrap",gap:10}}><div><div className="eyebrow">ГОСБ · {subj||"вся сеть"}</div>
+      <h2 className="vh2">Где больше тяжёлых историй</h2></div><span className="sp"/>
+      {f.gosb&&<button className="btn btn-ghost vsm" onClick={()=>setF({gosb:""})}>Снять выбор ГОСБ {f.gosb}</button>}</div>
+    <div className="tbl-wrap"><table className="vtbl vgosb"><thead><tr>
+      <th>ГОСБ</th><th>Регион</th><th className="num" title="Отделений, у которых есть отзывы за год">С отзывами</th><th className="num" title="Отделений в списке «Где стоит проверить»">В списке</th>
+      <th className="num">Тяжёлых за год</th><th title="Тяжёлых историй за год против года раньше">К прошлому году</th><th className="num" title="Тяжёлые истории за год на 100 отзывов за год, если отзывов 50 и больше">На 100 отзывов</th><th>Чаще всего</th></tr></thead>
       <tbody>{shown.map(r=><tr key={r.gosb} className={"click"+(f.gosb===r.gosb?" on":"")} tabIndex={0} aria-selected={f.gosb===r.gosb}
         onClick={()=>pick(r.gosb)} onKeyDown={vEnter(()=>pick(r.gosb))}>
-        <td><b>{r.gosb}</b>{!subj&&r.subject_name?<div className="note">{r.subject_name}</div>:null}</td>
-        <td className="num">{vN(r.listed)}</td><td className="num">{vN(r.heavy)}</td><td className="num">{vN(r.heavy_prev)}</td>
+        <td><b>{r.gosb}</b></td><td>{r.subject_name||"—"}</td><td className="num">{vN(r.with_data)}</td>
+        <td className="num">{r.listed?<b>{vN(r.listed)}</b>:"—"}</td><td className="num">{vN(r.heavy)}</td><td>{trend(r)}</td>
         <td className="num">{vX(r.per100)}</td><td>{r.top_action||"—"}</td></tr>)}</tbody></table></div>
-    {rows.length>8&&<button className="vmore" onClick={()=>setAll(!all)}>{all?"Свернуть":`Все ГОСБ (${rows.length})`}</button>}
-    <p className="note">Нажмите на строку — список отделений покажет только этот ГОСБ, второй клик снимет выбор. «На 100 отзывов» — тяжёлые истории за год на 100 отзывов за год, если отзывов 50 и больше.</p>
+    <div className="row" style={{gap:12,margin:"8px 0 4px",flexWrap:"wrap"}}>
+      {rows.length>10&&<button className="vmore" onClick={()=>setAll(!all)}>{all?"Свернуть":`Все ГОСБ (${rows.length})`}</button>}
+      <span className="note">Нажмите на строку — список ниже покажет только этот ГОСБ; второй клик снимет выбор.</span></div>
   </section>;
 }
 
@@ -10838,7 +10844,7 @@ function VTable({f,openPoint,plan}){
     <button className={"vth"+(sort===k?" on":"")} onClick={()=>setS(k)}>{l}{sort===k?" ↓":""}</button></th>;
   return <>
     <p className="note">{vN(d.total)} {vPl(d.total,"отделение","отделения","отделений")} с историями клиентов за {f.fresh?"3 месяца":"2 года"}. Нажмите на заголовок столбца — таблица отсортируется по нему.</p>
-    <div className="tbl-wrap"><table className="vtbl"><thead><tr><th>Отделение</th>
+    <div className="tbl-wrap"><table className="vtbl vrank"><thead><tr><th>Отделение</th>
       {th("heavy","Тяжёлых","Тяжёлых историй за период")}{th("clients","Клиентов","Разных клиентов с тяжёлыми историями")}
       {th("per100","На 100 отзывов","Тяжёлых историй за 2 года на 100 отзывов за 2 года")}{th("last","Последняя","Дата последней истории")}
       {th("vulnerable","Пожилые","Истории пожилых и уязвимых клиентов")}{th("named","Есть имя","Истории, где назван сотрудник")}
@@ -10872,8 +10878,7 @@ function VspHome3({f,setF,openPoint,plan}){
     {d.source==="слова"&&<div className="box" style={{fontSize:13.5}}>Предварительно: истории пока найдены по словам. Модель читает все отзывы — список станет точнее по ходу чтения.</div>}
     <VReact items={d.react} onOpen={openPoint}/>
     <VSummary s={d.summary} f={f} setF={setF} scope={scope}/>
-    <div className="vgrid2">
-      <section className="card">
+    <section className="card vmapcard">
         <div className="map-head"><div><div className="eyebrow">Карта</div>
           <h2 className="vh2">Где клиенты описывают нарушения</h2></div><span className="sp"/>
           <div className="vcrumb"><button className="vmore" onClick={()=>setF({subject:"",gosb:""})}>Вся сеть</button>
@@ -10885,9 +10890,8 @@ function VspHome3({f,setF,openPoint,plan}){
             <span><span className="sw" style={{boxShadow:"inset 0 0 0 1.5px var(--ink)"}}/>выше сети с учётом объёма</span>
             <span><span className="sw" style={{background:"repeating-linear-gradient(135deg,var(--surface) 0 3px,var(--paper-2) 3px 6px)",boxShadow:"inset 0 0 0 1px var(--hair)"}}/>мало данных</span>
             <span className="note">Карта показывает, где искать, а не где хуже. Нажмите на регион — вкладки отфильтруются по нему.</span></>}/>
-      </section>
-      <VGosbTable rows={d.gosb_table} f={f} setF={setF} subj={subj}/>
-    </div>
+    </section>
+    <VGosbTable rows={d.gosb_table} f={f} setF={setF} subj={subj}/>
     <section className="card" style={{padding:"18px 18px 10px"}}>
       <div className="row" style={{flexWrap:"wrap",gap:10}}><div><div className="eyebrow">{view==="list"?"Главный список":"Рейтинг"}</div>
         <h2 className="vh2">{view==="list"?<>Где стоит проверить · {vN(d.list.length)} {vPl(d.list.length,"отделение","отделения","отделений")}{scope||d.filtered?` (всего в списке ${vN(d.total)})`:""}</>:"Все отделения с историями клиентов"}</h2>

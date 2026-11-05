@@ -4400,8 +4400,8 @@ html.dark .vsp{--shadow-3:0 1px 0 oklch(0% 0 0 / .35),0 16px 48px oklch(0% 0 0 /
 .vsp .vsum-sep{width:1px;align-self:stretch;background:var(--hair);margin:0 4px}
 .vsp .vrow.v2{grid-template-columns:minmax(0,1fr) auto 20px;align-items:start}
 .vsp .btn.vsm{height:28px;padding:0 10px;font-size:12.5px;white-space:nowrap}
-.vsp .vtbl td:first-child{min-width:240px}
-.vsp .vtbl td:nth-last-child(2){min-width:140px}
+.vsp .vrank td:first-child{min-width:240px}
+.vsp .vrank td:nth-last-child(2){min-width:140px}
 .vsp .seg.vseg button[aria-pressed="true"]{background:var(--surface);box-shadow:var(--shadow-1),inset 0 0 0 1px var(--hair)}
 .vsp .vth{font:inherit;color:inherit;letter-spacing:inherit;text-transform:inherit;padding:0;cursor:pointer;white-space:nowrap}
 .vsp .vth.on{color:var(--ink)}
@@ -4459,6 +4459,14 @@ html.dark .vsp{--shadow-3:0 1px 0 oklch(0% 0 0 / .35),0 16px 48px oklch(0% 0 0 /
 .vsp .vprog-b i{display:block;height:100%;background:var(--accent)}
 .vsp .vprog-d{display:grid;gap:6px;font-size:13.5px;padding:8px 0 4px;max-width:110ch}
 @media (max-width:640px){.vsp .vdl{grid-template-columns:1fr}.vsp .vdl dt{margin-top:6px}}
+
+/* карта во всю ширину, плитки не больше ~52px — подписи регионов помещаются; таблица ГОСБ без прокрутки */
+.vsp .vmapcard .tiles{max-width:1040px;margin:0 auto}
+.vsp .vgosb th{white-space:normal;vertical-align:bottom;max-width:120px;line-height:1.25}
+.vsp .vgosb td{white-space:nowrap}
+.vsp .vgosb td:nth-child(2),.vsp .vgosb td:last-child{white-space:normal;min-width:150px}
+@media (max-width:1180px){.vsp .vgosb th:nth-child(3),.vsp .vgosb td:nth-child(3){display:none}.vsp .vgosb td:nth-child(2),.vsp .vgosb td:last-child{min-width:110px}}
+.vsp .tbl-wrap{padding-bottom:2px}
 </style>
 </head>
 <body>
