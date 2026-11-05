@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 04f139c16f9ef5d56d47e937f0c9a998143d45f10733029d93bac1be61753c1c): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 ea5529efc0e655b9c016cd30eaecdb24eab68004819ced2c735420762db57d79): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -21477,17 +21477,32 @@ function VHighlight({
   text,
   quote
 }) {
-  if (!quote) return /*#__PURE__*/React.createElement(React.Fragment, null, text);
+  // цитата бывает склеена из кусков через «...» — подсвечиваем каждый кусок, найденный дословно
+  if (!quote || !text) return /*#__PURE__*/React.createElement(React.Fragment, null, text);
   const n = s => s.toLowerCase().replace(/ё/g, "е");
-  const q = quote.trim().replace(/^[«"“„]+|[»"”.…]+$/g, "").slice(0, 120);
-  const i = q.length >= 8 ? n(text).indexOf(n(q)) : -1;
-  if (i < 0) return /*#__PURE__*/React.createElement(React.Fragment, null, text);
-  let j = i + q.length;
-  const full = n(quote.trim().replace(/^[«"“„]+|[»"”.…]+$/g, ""));
-  if (full.length > q.length && n(text).slice(i, i + full.length) === full) j = i + full.length;
-  return /*#__PURE__*/React.createElement(React.Fragment, null, text.slice(0, i), /*#__PURE__*/React.createElement("mark", {
-    className: "vq"
-  }, text.slice(i, j)), text.slice(j));
+  const nt = n(text);
+  const parts = quote.split(/\s*(?:\.{3}|…)\s*/).map(p => p.trim().replace(/^[«"“„]+|[»"”.…]+$/g, "")).filter(p => p.length >= 8);
+  const spans = [];
+  parts.forEach(p => {
+    const q = n(p).slice(0, 160);
+    const i = nt.indexOf(q);
+    if (i >= 0) spans.push([i, i + q.length]);
+  });
+  if (!spans.length) return /*#__PURE__*/React.createElement(React.Fragment, null, text);
+  spans.sort((x, y) => x[0] - y[0]);
+  const out = [];
+  let pos = 0;
+  spans.forEach(([i, j], k) => {
+    if (i < pos) return;
+    out.push(text.slice(pos, i));
+    out.push(/*#__PURE__*/React.createElement("mark", {
+      key: k,
+      className: "vq"
+    }, text.slice(i, j)));
+    pos = j;
+  });
+  out.push(text.slice(pos));
+  return /*#__PURE__*/React.createElement(React.Fragment, null, out);
 }
 function VEvidencePanel({
   rid,

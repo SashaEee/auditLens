@@ -56,3 +56,13 @@ def test_two_stage_with_dups_and_spam(db_url, monkeypatch):
     assert data["money_rub"] == 50000 and data["quote_ok"] is True
     assert rows[("2gis:r1", lr.SCREEN_VERSION)].relevant == 0
     assert asyncio.run(lr.run(st, limit=100))["screen"]["read_unique"] == 0                  # прочитанное не перечитывается
+
+
+def test_quote_ok_accepts_fragments_joined_by_ellipsis():
+    from bank_audit.vsp.signals.llm_read import quote_ok
+    text = ("Сотрудник банка выписала нам 2 квитанции, ничего не разъясняя. Оказалось, нам без объяснений оформили "
+            "2 разные страховки. На вопрос сотрудник ответила, что и эта страховка является обязательной.")
+    assert quote_ok("оказалось, нам без объяснений оформили 2 разные страховки... сотрудник ответила, что и эта "
+                    "страховка является обязательной", text)
+    assert not quote_ok("нам без объяснений оформили 2 разные страховки... и заставили подписать отказ", text)
+    assert quote_ok("Сотрудник банка выписала нам 2 квитанции", text) and not quote_ok("", text)

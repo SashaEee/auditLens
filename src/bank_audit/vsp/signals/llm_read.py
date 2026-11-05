@@ -181,9 +181,18 @@ def card(x: dict, n: int) -> str:
 
 
 def quote_ok(q: str, text: str) -> bool:
-    """Цитата дословно есть в тексте (с точностью до пробелов) — модели «причёсывают» цитаты."""
-    n = lambda z: re.sub(r"\s+", " ", (z or "").strip(" .…\"«»")).lower()
-    return bool(q) and n(q)[:120] in n(text)
+    """Цитата дословно есть в тексте (с точностью до пробелов) — модели «причёсывают» цитаты.
+    Модель часто склеивает цитату из кусков через «...»: тогда дословно должен быть каждый
+    кусок (замер 05.11 на проде: 8 из 20 цитат были такими и ложно считались пересказом)."""
+    n = lambda z: re.sub(r"\s+", " ", (z or "").strip(" .…\"«»“”„")).lower().replace("ё", "е")
+    if not q:
+        return False
+    nt = n(text)
+    parts = [n(p) for p in re.split(r"\s*(?:\.{3}|…)\s*", q)]
+    parts = [p for p in parts if len(p) >= 8]
+    if len(parts) > 1:
+        return all(p[:120] in nt for p in parts)
+    return n(q)[:120] in nt
 
 
 def _b(v) -> int:

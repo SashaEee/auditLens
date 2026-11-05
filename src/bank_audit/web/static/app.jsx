@@ -10924,14 +10924,19 @@ function VPlanPanel({plan,onClose,openPoint}){
 
 // ── «Проверка истории»: полный отзыв, что увидела модель, проверки кодом ─────
 function VHighlight({text,quote}){
-  if(!quote)return <>{text}</>;
+  // цитата бывает склеена из кусков через «...» — подсвечиваем каждый кусок, найденный дословно
+  if(!quote||!text)return <>{text}</>;
   const n=s=>s.toLowerCase().replace(/ё/g,"е");
-  const q=quote.trim().replace(/^[«"“„]+|[»"”.…]+$/g,"").slice(0,120);
-  const i=q.length>=8?n(text).indexOf(n(q)):-1;
-  if(i<0)return <>{text}</>;
-  let j=i+q.length;const full=n(quote.trim().replace(/^[«"“„]+|[»"”.…]+$/g,""));
-  if(full.length>q.length&&n(text).slice(i,i+full.length)===full)j=i+full.length;
-  return <>{text.slice(0,i)}<mark className="vq">{text.slice(i,j)}</mark>{text.slice(j)}</>;
+  const nt=n(text);
+  const parts=quote.split(/\s*(?:\.{3}|…)\s*/).map(p=>p.trim().replace(/^[«"“„]+|[»"”.…]+$/g,"")).filter(p=>p.length>=8);
+  const spans=[];
+  parts.forEach(p=>{const q=n(p).slice(0,160);const i=nt.indexOf(q);if(i>=0)spans.push([i,i+q.length]);});
+  if(!spans.length)return <>{text}</>;
+  spans.sort((x,y)=>x[0]-y[0]);
+  const out=[];let pos=0;
+  spans.forEach(([i,j],k)=>{if(i<pos)return;out.push(text.slice(pos,i));out.push(<mark key={k} className="vq">{text.slice(i,j)}</mark>);pos=j;});
+  out.push(text.slice(pos));
+  return <>{out}</>;
 }
 function VEvidencePanel({rid,onClose,openPoint}){
   const d=useVFetch(`/api/vsp/evidence/${encodeURIComponent(rid)}`);

@@ -24,6 +24,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
 from .people import stem
+from .llm_read import quote_ok as llm_quote_ok
 
 # действие → как называем, что может объяснить безобидно, что снимет вопрос, что запросить, что проверить
 ACTIONS: dict[str, dict] = {
@@ -171,7 +172,7 @@ def stories_from(recs, llm: dict[str, dict], rule_cases: list[dict]) -> tuple[li
                     w.lower().replace("ё", "е")[:4] in low for w in emp.split()[:2]):
                 emp = ""                                     # имя должно быть в самом отзыве
             out.append(_story(r, severity=int(d.get("severity") or 0), fault=fault, actions=acts,
-                              quote=d.get("quote") or "", quote_ok=bool(d.get("quote_ok")),
+                              quote=d.get("quote") or "", quote_ok=llm_quote_ok(d.get("quote") or "", r.text or ""),
                               episode=d.get("episode") or "", scheme=d.get("scheme_free") or "",
                               vulnerable=bool(d.get("vulnerability")), employee=emp,
                               money=d.get("money_rub"), products=d.get("products") or [], source="модель",
