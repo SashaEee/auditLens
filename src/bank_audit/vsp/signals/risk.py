@@ -340,8 +340,14 @@ def assess(points: dict[str, dict], stories: list[dict], recs, people_rows: list
     return out
 
 
+CONF_RANK = {"высокая": 0, "средняя": 1, "низкая": 2}
+
+
 def order_key(a: dict) -> tuple:
-    return (-a["severity"], -a["n_signals"], -(a.get("ratio") or 0), -a["heavy_clients"])
+    """Порядок списка: тяжесть сильнейшей истории, уверенность (одинаковые тексты и массовые
+    жалобы на продукт — вниз), число независимых признаков, редкость среди похожих."""
+    conf = CONF_RANK.get((a.get("confidence") or {}).get("level"), 2)
+    return (-a["severity"], conf, -a["n_signals"], -(a.get("ratio") or 0), -a["heavy_clients"])
 
 
 def map_tiles(points: dict[str, dict], assessed: dict[str, dict], recs, *, now: datetime) -> dict[str, dict]:
