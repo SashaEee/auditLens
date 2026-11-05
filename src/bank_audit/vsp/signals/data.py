@@ -108,5 +108,6 @@ def load(store: Store, *, sources: tuple[str, ...] = ("2gis", "yandex")) -> tupl
                 provider=raw.get("provider"), confirmed=bool(raw.get("confirmed_by")),
                 author_total=raw.get("author_reviews_count"),
                 hidden=(raw.get("hiding_reason") or None), text=txt, words=txt.count(" ") + 1 if txt else 0,
-                gone=r.gone_at is not None, replied=bool(r.organization_reply)))
+                gone=r.gone_at is not None, replied=bool(r.organization_reply),
+                extra={"raw_text": r.review_text} if r.review_text else {}))
     return out, {"branches": br, "cards": cards}

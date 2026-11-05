@@ -116,6 +116,12 @@ def test_signals_end_to_end(db_url):
     st.save_reviews([_rev(f"g{r}", f"ring{a}{r}", 5, datetime(2025, 6, 2 + i + a, 12, tzinfo=UTC), f"ring{a}",
                           total=20, text=f"хорошо {a} {r}")
                      for a in range(3) for i, r in enumerate(("100", "101", "102", "5"))])
+    # возможные нарушения: один сотрудник в жалобах трёх разных клиентов, плюс оформление без согласия
+    bad = ["Менеджер Ольга навязала страховку к кредиту, отказаться не дала",
+           "Менеджер Ольга навязала подписку, сказала без неё не одобрят",
+           "Оформили кредитную карту без моего согласия, менеджер Ольга даже не объяснила условия"]
+    st.save_reviews([_rev("g6", f"bad{i}", 1, datetime(2026, 2, 3 + 9 * i, 12, tzinfo=UTC), f"badauth{i}", text=t)
+                     for i, t in enumerate(bad)])
     out = run(st)
     rid = latest_run(st)
     assert rid == out["run_id"] and out["episodes_branch"] >= 1
@@ -135,9 +141,14 @@ def test_signals_end_to_end(db_url):
     assert f["series_share"] > 0.5 and f["template_share"] > 0.9
     assert {w["key"] for w in f["why"]} >= {"ratio", "oneoff_share", "series_share"}
     score, d = bs[camp_point]
-    assert score >= 40 and "кампания отзывов за год" in d["reasons"]
+    assert "массовая волна пятёрок от новых аккаунтов" in d["reasons"] and d["campaign_score"] >= 40
     assert d["rating_wo_episodes"] < d["rating_all"]
-    assert max(s for p, (s, _) in bs.items() if p != camp_point) < 40
+    bad_point = f"b{ids['6']}"
+    score6, d6 = bs[bad_point]
+    assert score6 >= 40 and d6["severe_24m"] == 1 and d6["serious_24m"] == 2, (score6, d6["reasons"])
+    assert any("«Ольга»" in r and "3 разных клиентов" in r for r in d6["reasons"])
+    assert max(s for p, (s, _) in bs.items() if p != bad_point) < 40       # оценки сами по себе — не повод
+    assert out["cases_by_type"]["mis_selling"] == 2 and out["persons"]["complaints"] >= 1
     assert au["praiser"] == "хвалебщик сети"
     assert ("ring", 3, 4) in groups and any(k == "same_text" and n_p == 3 for k, _, n_p in groups)
     assert net["calendar"] and net["subjects"]["MOW"]["points"] == 8 and "tile_grid" in net

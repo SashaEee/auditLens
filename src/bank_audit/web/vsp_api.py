@@ -30,7 +30,8 @@ from fastapi.responses import Response
 from sqlalchemy import and_, create_engine, event, func, select
 
 from ..vsp.regions import BY_CODE, subject_name
-from ..vsp.storage import (author_groups, authors, branch_stats, branches, episodes, network, reviews,
+from ..vsp.signals.risks import BY_KEY as RISK, TYPES as RISK_TYPES
+from ..vsp.storage import (author_groups, authors, branch_stats, branches, cases, episodes, network, persons, reviews,
                            signal_runs, source_branches, sync_state)
 from .auth import CurrentUser, get_current_user
 from . import telemetry
@@ -82,9 +83,15 @@ def engine():
             if eng.dialect.name == "postgresql":
                 @event.listens_for(eng, "connect")
                 def _ro(dbapi_conn, _rec):          # вкладка в базу сборщика не пишет
+                    # вне транзакции: иначе SET откатится вместе со служебной транзакцией пула
+                    ac = getattr(dbapi_conn, "autocommit", None)
+                    if ac is not None:
+                        dbapi_conn.autocommit = True
                     cur = dbapi_conn.cursor()
                     cur.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
                     cur.close()
+                    if ac is not None:
+                        dbapi_conn.autocommit = ac
             _ENGINE = eng
         return _ENGINE
 
@@ -133,13 +140,25 @@ def _run() -> dict:
             a = dict(x)
             a["detail"] = json.loads(a.pop("detail_json") or "{}")
             auth.append(a)
+        try:
+            case_rows = [dict(x) for x in c.execute(select(cases).where(cases.c.run_id == rid)).mappings()]
+            pers = []
+            for x in c.execute(select(persons).where(persons.c.run_id == rid)).mappings():
+                d_ = dict(x)
+                d_["detail"] = json.loads(d_.pop("detail_json") or "{}")
+                pers.append(d_)
+        except Exception:  # noqa: BLE001 — прогон до появления таблиц случаев
+            case_rows, pers = [], []
     ep_rids = set()
     for e in eps:
         if e["level"] == "branch":
             ep_rids.update(e["review_ids"])
-    run = {"id": rid, "version": r["version"], "finished_at": r["finished_at"],
+    case_by_rid: dict[str, list[str]] = defaultdict(list)
+    for c_ in case_rows:
+        case_by_rid[c_["review_id"]].append(RISK[c_["type"]].label if c_["type"] in RISK else c_["type"])
+    run = {"id": rid, "version": r["version"], "case_by_rid": case_by_rid, "finished_at": r["finished_at"],
            "stats": json.loads(r["stats_json"] or "{}"), "points": pts, "episodes": eps, "network": net,
-           "groups": groups, "praisers": auth, "ep_rids": ep_rids}
+           "groups": groups, "praisers": auth, "ep_rids": ep_rids, "cases": case_rows, "persons": pers}
     _CACHE.update(run=run, at=now)
     return run
 
@@ -275,7 +294,35 @@ def overview(user: CurrentUser = Depends(get_current_user)):
                                                                           "few", "n_12m")}})
     feed = sorted((e for e in eps if e["level"] == "branch" and e["strength"] != "слабый"),
                   key=lambda e: e["end"], reverse=True)[:8]
+    c12 = [c for c in run["cases"] if _aware(c["at"]) >= year_ago]
+    c24 = [c for c in run["cases"] if _aware(c["at"]) >= now - timedelta(days=730)]
+    sev_rev = {}
+    for c in c12:
+        sev_rev[c["review_id"]] = max(sev_rev.get(c["review_id"], 0), c["severity"] or 0)
+    top_cases = _case_items(run, [c for c in c24 if (c["severity"] or 0) >= 3])
+    top_cases.sort(key=lambda x: x["at"] or "", reverse=True)
+    with engine().connect() as cn:
+        ids = [x["id"] for x in top_cases[:12]]
+        texts = dict(cn.execute(select(reviews.c.review_id, reviews.c.review_text).where(
+            reviews.c.review_id.in_(ids or ["-"]))).all())
+    for x in top_cases[:12]:
+        x["text"] = texts.get(x["id"])
+    pers = sorted(run["persons"], key=lambda x: -(x["score"] or 0))
+    by_type = Counter(c["type"] for c in {(c["review_id"], c["type"]): c for c in c24}.values())
     return {
+        "kpi2": {"severe_12m": sum(1 for v in sev_rev.values() if v >= 3),
+                 "serious_12m": sum(1 for v in sev_rev.values() if v == 2),
+                 "focus": sum(1 for p in pts.values() if p["score"] >= 40),
+                 "people_complaints": sum(1 for x in pers if x["kind"] == "complaints"),
+                 "praise_waves": sum(1 for x in pers if x["kind"] == "praise_wave"),
+                 "favoritism": len({c["point"] for c in c24 if c["type"] == "favoritism"}),
+                 "collusion": len(run["praisers"]) + sum(1 for g in run["groups"] if g["kind"] == "ring")},
+        "top_cases": top_cases[:12],
+        "case_types": [{"key": t.key, "label": t.label, "hint": t.hint, "severity": t.severity,
+                        "n": by_type.get(t.key, 0)} for t in RISK_TYPES],
+        "people_top": [{"id": x["id"], "kind": x["kind"], "name": x["name"], "n": x["n"], "authors": x["authors"],
+                        "first": _iso(x["first_at"]), "last": _iso(x["last_at"]),
+                        "place": _pt_brief(pts.get(x["point"]))} for x in pers[:10]],
         "run": {"id": run["id"], "version": run["version"], "finished_at": _iso(run["finished_at"]),
                 "stats": run["stats"]},
         "kpi": {
@@ -359,6 +406,7 @@ def _review_row(r, run) -> dict:
             "author": (r["author_ref"] or "")[:8] or None, "confirmed": bool(raw.get("confirmed_by")),
             "author_total": raw.get("author_reviews_count"), "hidden": raw.get("hiding_reason") or None,
             "gone": r["gone_at"] is not None, "in_episode": r["review_id"] in run["ep_rids"],
+            "case_types": run.get("case_by_rid", {}).get(r["review_id"], []),
             "point": (f"b{r['branch_id']}" if r["branch_id"] else f"{r['source']}:{r['source_branch_id']}"),
             "url": r["source_url"]}
 
@@ -458,11 +506,15 @@ def branch_profile(point: str, user: CurrentUser = Depends(get_current_user)):
                                 .order_by(reviews.c.review_date.desc()).limit(30)).mappings())
         cards = []
         if p.get("branch_id"):
+            card_where = source_branches.c.branch_id == p["branch_id"]
+        else:                                   # точка без привязки к реестру — сама карточка площадки
+            src, _, sbid = point.partition(":")
+            card_where = and_(source_branches.c.source == src, source_branches.c.source_branch_id == sbid)
+        if True:
             for x in c.execute(select(source_branches.c.source, source_branches.c.source_branch_id,
                                       source_branches.c.url, source_branches.c.declared_reviews,
                                       source_branches.c.declared_rating, source_branches.c.match_method,
-                                      source_branches.c.raw_json).where(
-                    source_branches.c.branch_id == p["branch_id"])).mappings():
+                                      source_branches.c.raw_json).where(card_where)).mappings():
                 raw = json.loads(x["raw_json"] or "{}") or {}
                 st = c.execute(select(sync_state.c.completeness, sync_state.c.oldest_review_date,
                                       sync_state.c.last_sync_at).where(
@@ -490,9 +542,10 @@ def branch_profile(point: str, user: CurrentUser = Depends(get_current_user)):
 NAMES_SCAN = 20000          # фильтр «упомянут сотрудник» — среди стольких свежих отзывов выборки
 
 REVIEW_FLAGS = {
-    "episode": "в эпизоде кампании", "oneoff": "автор без других отзывов", "confirmed": "подтверждён операцией",
-    "hidden": "помечен площадкой", "gone": "пропал из выдачи", "neg": "1–2★", "five": "5★",
-    "reply": "с ответом банка", "names": "упомянут сотрудник",
+    "case": "возможное нарушение", "names": "назван сотрудник", "neg": "оценка 1–2", "gone": "удалён с площадки",
+    "hidden": "площадка пометила как подозрительный", "oneoff": "новый аккаунт (других отзывов нет)",
+    "episode": "из массовой волны пятёрок", "confirmed": "оставлен после операции", "five": "оценка 5",
+    "reply": "банк ответил",
 }
 
 
@@ -510,6 +563,9 @@ def _reviews_query(c, run, point, flag, q, source, since, until, limit, offset):
         cond.append(reviews.c.review_text.ilike(f"%{q}%"))
     if flag == "episode":
         ids = list(run["ep_rids"])[:20000]
+        cond.append(reviews.c.review_id.in_(ids or ["-"]))
+    elif flag == "case":
+        ids = list({c["review_id"] for c in run["cases"]})[:20000]
         cond.append(reviews.c.review_id.in_(ids or ["-"]))
     elif flag == "neg":
         cond.append(reviews.c.rating <= 2)
@@ -608,6 +664,101 @@ def group_card(gid: int, user: CurrentUser = Depends(get_current_user)):
             "score": g["score"], "reviews": out}
 
 
+def _aware(d):
+    return d if d is None or d.tzinfo else d.replace(tzinfo=UTC)
+
+
+def _case_items(run, rows: list[dict]) -> list[dict]:
+    """Случаи → по одному на отзыв (у отзыва бывает несколько типов), самые тяжёлые первыми."""
+    by: dict[str, dict] = {}
+    for c in rows:
+        x = by.setdefault(c["review_id"], {"id": c["review_id"], "point": c["point"], "at": _iso(c["at"]),
+                                           "rating": c["rating"], "source": c["source"], "types": [], "severity": 0,
+                                           "quote": c["quote"]})
+        x["types"].append({"key": c["type"], "label": RISK[c["type"]].label if c["type"] in RISK else c["type"]})
+        if (c["severity"] or 0) > x["severity"]:
+            x["severity"], x["quote"] = c["severity"], c["quote"]
+    pts = run["points"]
+    out = list(by.values())
+    for x in out:
+        x["place"] = _pt_brief(pts.get(x["point"]))
+    return out
+
+
+RISK_GUIDE = {
+    "check": [
+        {"where": "запрос в ГОСБ", "text": "Обращения клиента по внутренним каналам за ту же дату: было ли разбирательство и чем закончилось"},
+        {"where": "запрос в центр", "text": "Операции клиента и действия сотрудников в системе за дату визита: кто проводил, что оформлено"},
+        {"where": "на месте", "text": "Документы по операции: заявления, согласия, подписи клиента; запись камер, если срок хранения позволяет"},
+    ],
+    "limits": ["Это слова клиента, а не установленный факт", "Поиск по фразам находит и ложные совпадения — "
+               "смотрите цитату и полный текст", "Отзывы, удалённые площадкой до начала сбора, не видны"],
+}
+
+
+@router.get("/cases")
+def case_list(type: Optional[str] = None, severity: int = 0, period: str = "24m", subject: Optional[str] = None,
+              gosb: Optional[str] = None, point: Optional[str] = None, q: Optional[str] = None, limit: int = 50,
+              offset: int = 0, user: CurrentUser = Depends(get_current_user)):
+    _need(user)
+    run = _run()
+    since = datetime.now(UTC) - timedelta(days={"12m": 365, "24m": 730, "90d": 90}.get(period, 99999))
+    rows = [c for c in run["cases"] if _aware(c["at"]) >= since and (not type or c["type"] == type)
+            and (c["severity"] or 0) >= severity and (not subject or c["subject"] == subject)
+            and (not gosb or c["gosb"] == gosb) and (not point or c["point"] == point)
+            and (not q or q.lower() in (c["quote"] or "").lower())]
+    items = _case_items(run, rows)
+    items.sort(key=lambda x: (-x["severity"], x["at"] or ""), reverse=False)
+    items.sort(key=lambda x: (x["severity"], x["at"] or ""), reverse=True)
+    page = items[offset:offset + min(limit, 200)]
+    with engine().connect() as c:
+        ids = [x["id"] for x in page]
+        texts = dict(c.execute(select(reviews.c.review_id, reviews.c.review_text).where(
+            reviews.c.review_id.in_(ids or ["-"]))).all())
+        urls = dict(c.execute(select(reviews.c.review_id, reviews.c.source_url).where(
+            reviews.c.review_id.in_(ids or ["-"]))).all())
+    for x in page:
+        x["text"] = texts.get(x["id"])
+        x["url"] = urls.get(x["id"])
+    counts = Counter(c["type"] for c in rows)
+    return {"total": len(items), "items": page,
+            "types": [{"key": t.key, "label": t.label, "hint": t.hint, "severity": t.severity, "n": counts.get(t.key, 0)}
+                      for t in RISK_TYPES], "guide": RISK_GUIDE}
+
+
+@router.get("/people")
+def people_list(kind: Optional[str] = None, subject: Optional[str] = None, limit: int = 100,
+                user: CurrentUser = Depends(get_current_user)):
+    _need(user)
+    run = _run()
+    pts = run["points"]
+    rows = [x for x in run["persons"] if (not kind or x["kind"] == kind)
+            and (not subject or (pts.get(x["point"]) or {}).get("subject") == subject)]
+    rows.sort(key=lambda x: -(x["score"] or 0))
+    return {"total": len(rows), "items": [{
+        "id": x["id"], "kind": x["kind"], "name": x["name"], "n": x["n"], "authors": x["authors"],
+        "first": _iso(x["first_at"]), "last": _iso(x["last_at"]), "score": x["score"],
+        "types": [{"key": k, "label": RISK[k].label if k in RISK else k, "n": v}
+                  for k, v in (x["detail"].get("types") or {}).items()],
+        "oneoff": x["detail"].get("oneoff"), "full_name": x["detail"].get("full_name"),
+        "place": _pt_brief(pts.get(x["point"]))} for x in rows[:min(limit, 300)]]}
+
+
+@router.get("/people/{pid}")
+def person_card(pid: int, user: CurrentUser = Depends(get_current_user)):
+    _need(user)
+    run = _run()
+    x = next((p for p in run["persons"] if p["id"] == pid), None)
+    if not x:
+        raise HTTPException(404, "не найдено")
+    with engine().connect() as c:
+        ids = (x["detail"].get("review_ids") or [])[:80]
+        rows = list(c.execute(select(reviews).where(reviews.c.review_id.in_(ids or ["-"]))
+                              .order_by(reviews.c.review_date)).mappings())
+    return {"id": pid, "kind": x["kind"], "name": x["name"], "n": x["n"], "authors": x["authors"],
+            "place": _pt_brief(run["points"].get(x["point"])), "reviews": [_review_row(r, run) for r in rows]}
+
+
 @router.get("/completeness")
 def completeness(user: CurrentUser = Depends(get_current_user)):
     _need(user)
@@ -680,9 +831,25 @@ def export_candidates(subject: Optional[str] = None, gosb: Optional[str] = None,
         data2.append([e["score"], e["strength"], p.get("name"), p.get("city"), e["start"].date(), e["end"].date(),
                       e["n"], e["expected"], e["ratio"], f.get("oneoff_share"), f.get("series_share"),
                       f.get("month_end_share"), f.get("confirmed_share"), f.get("hidden")])
-    x = _xlsx("Аудит сети ВСП · кандидаты в проверку",
-              [("Кандидаты", head, data, {"Почему в поле зрения", "Адрес"}), ("Эпизоды кампаний", head2, data2, set())])
-    return _xlsx_response(x, "ВСП_кандидаты_в_проверку.xlsx")
+    head3 = ["Дата", "Что случилось", "Серьёзность", "Отделение", "Город", "Оценка", "Слова клиента"]
+    data3 = []
+    for x in sorted(_case_items(run, run["cases"]), key=lambda x: (x["severity"], x["at"] or ""), reverse=True)[:5000]:
+        pl = x.get("place") or {}
+        data3.append([x["at"][:10] if x["at"] else None, "; ".join(t["label"] for t in x["types"]),
+                      {3: "очень серьёзно", 2: "серьёзно"}.get(x["severity"], "процесс"),
+                      pl.get("name"), pl.get("city"), x["rating"], x["quote"]])
+    head4 = ["Сотрудник (как пишут клиенты)", "Что видно", "Отзывов", "Разных клиентов", "С", "По", "Отделение", "Город"]
+    data4 = []
+    for x in sorted(run["persons"], key=lambda x: -(x["score"] or 0)):
+        pl = run["points"].get(x["point"]) or {}
+        data4.append([x["name"], "в жалобах разных клиентов" if x["kind"] == "complaints" else "хвалят новые аккаунты",
+                      x["n"], x["authors"], _iso(x["first_at"])[:10] if x["first_at"] else None,
+                      _iso(x["last_at"])[:10] if x["last_at"] else None, pl.get("name"), pl.get("city")])
+    head = [h if h != "Почему в поле зрения" else "Что настораживает" for h in head]
+    x = _xlsx("Аудит сети ВСП · отделения в фокусе",
+              [("Отделения", head, data, {"Что настораживает", "Адрес"}), ("Случаи", head3, data3, {"Слова клиента"}),
+               ("Сотрудники", head4, data4, set()), ("Волны пятёрок", head2, data2, set())])
+    return _xlsx_response(x, "ВСП_отделения_в_фокусе.xlsx")
 
 
 @router.get("/export/reviews.xlsx")

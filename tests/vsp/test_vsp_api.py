@@ -28,6 +28,10 @@ def client(db_url, monkeypatch):
     _campaign(st, "3", datetime(2026, 3, 2, 10, tzinfo=UTC))
     st.save_reviews([_rev("g1", "nm", 2, datetime(2026, 4, 1, tzinfo=UTC), "x",
                           text="Менеджер Анна нагрубила и навязала страховку")])
+    st.save_reviews([_rev("g6", f"bad{i}", 1, datetime(2026, 2, 3 + 9 * i, 12, tzinfo=UTC), f"badauth{i}", text=t)
+                     for i, t in enumerate(["Менеджер Ольга навязала страховку к кредиту",
+                                            "Менеджер Ольга навязала подписку, без неё не одобрят",
+                                            "Оформили кредитную карту без моего согласия, менеджер Ольга молчала"])])
     run(st)
     monkeypatch.setenv("VSP_DB_URL", db_url)
     monkeypatch.setenv("ADMIN_USERS", "owner")
@@ -55,7 +59,7 @@ def test_access_only_owner_or_list(client, monkeypatch):
 def test_overview_signals_profile_reviews(client):
     ov = client.get("/api/vsp/overview").json()
     assert ov["kpi"]["points"] == 11 and ov["kpi"]["in_focus"] >= 1
-    assert ov["candidates"][0]["point"] == f"b{client.ids['3']}" and ov["tiles"] and ov["calendar"]
+    assert f"b{client.ids['3']}" in {c["point"] for c in ov["candidates"]} and ov["tiles"] and ov["calendar"]
     sig = client.get("/api/vsp/signals", params={"period": "all"}).json()
     assert sig["total"] == 1 and sig["items"][0]["place"]["city"]
     card = client.get(f"/api/vsp/signals/{sig['items'][0]['id']}").json()
@@ -73,6 +77,14 @@ def test_overview_signals_profile_reviews(client):
     ep = client.get("/api/vsp/reviews", params={"flag": "episode"}).json()
     assert ep["total"] >= 50 and all(x["in_episode"] for x in ep["items"])
     assert client.get("/api/vsp/links").json()["same_text"] is not None
+    assert ov["kpi2"]["focus"] >= 1 and ov["kpi2"]["severe_12m"] >= 1 and ov["top_cases"]
+    cs = client.get("/api/vsp/cases", params={"period": "all"}).json()
+    assert cs["total"] >= 3 and cs["items"][0]["severity"] == 3 and cs["items"][0]["text"]
+    assert {t["key"] for t in cs["types"]} >= {"unauthorized", "mis_selling", "favoritism"}
+    pp = client.get("/api/vsp/people").json()
+    olga = next(x for x in pp["items"] if "Ольга" in x["name"])
+    assert olga["kind"] == "complaints" and olga["authors"] == 3
+    assert len(client.get(f"/api/vsp/people/{olga['id']}").json()["reviews"]) == 3
     comp = client.get("/api/vsp/completeness").json()
     assert comp["cards"]["2gis"]["cards"] == 11
 

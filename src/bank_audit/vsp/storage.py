@@ -211,6 +211,33 @@ branch_stats = Table(
     Column("detail_json", Text),
 )
 
+cases = Table(
+    "vsp_case", meta,                                     # случай: отзыв, где клиент описывает возможное нарушение
+    Column("run_id", Integer, primary_key=True),
+    Column("review_id", String(160), primary_key=True),
+    Column("type", String(30), primary_key=True),         # signals/risks.TYPES
+    Column("severity", Integer),
+    Column("point", String(160), index=True),
+    Column("branch_id", Integer, index=True),
+    Column("gosb", String(8)), Column("subject", String(4)),
+    Column("source", String(20)), Column("rating", Integer),
+    Column("at", DateTime(timezone=True)),
+    Column("quote", Text),                                # фраза клиента вокруг совпадения
+)
+
+persons = Table(
+    "vsp_person", meta,                                   # сотрудник, названный в отзывах одного отделения
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("run_id", Integer, index=True),
+    Column("point", String(160), index=True),
+    Column("kind", String(20)),                           # complaints | praise_wave
+    Column("name", Text),                                 # как написали клиенты (чаще всего)
+    Column("n", Integer), Column("authors", Integer),
+    Column("first_at", DateTime(timezone=True)), Column("last_at", DateTime(timezone=True)),
+    Column("score", Float),
+    Column("detail_json", Text),
+)
+
 network = Table(
     "vsp_network", meta,                                  # находки уровня сети: календарь, ответы, нормы
     Column("run_id", Integer, primary_key=True),

@@ -15,12 +15,14 @@ from sqlalchemy import delete, func, insert, select, update
 from ..models import utcnow
 from ..regions import subject_name, tile_grid
 from ..registry.enrich import centroids
-from ..storage import (Store, author_groups, authors, branch_stats, episodes, network, signal_runs)
+from ..storage import (Store, author_groups, authors, branch_stats, cases, episodes, network, persons, signal_runs)
 from . import VERSION
 from .authors import analyze as analyze_authors
 from .campaign import (episode_features, find_bursts, score, series_flags, strength, week_start)
 from .data import Rec, load
 from .network import calendar, events, norms, replies
+from .people import analyze as analyze_people
+from .risks import BY_KEY as RISK, match as risk_match
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +41,13 @@ def _write(store: Store, table, rows: list[dict]) -> None:
     for k in range(0, len(rows), CHUNK):
         with store.engine.begin() as c:
             c.execute(insert(table), rows[k:k + CHUNK])
+
+
+def _pl(n: int, one: str, few: str, many: str) -> str:
+    n = abs(n) % 100
+    if 11 <= n <= 14:
+        return many
+    return one if n % 10 == 1 else few if 2 <= n % 10 <= 4 else many
 
 
 def _spearman(xs: list[float], ys: list[float]) -> float | None:
@@ -142,6 +151,22 @@ def compute(store: Store, *, now=None) -> dict:
     st["authors"] = au["kinds"]
     st["rings"] = len(au["rings"])
     st["same_text"] = len(au["same_text"])
+    # случаи: отзывы, где клиент описывает возможное нарушение (signals/risks.py)
+    case_rows: list[dict] = []
+    risk_by_rid: dict[str, list[str]] = defaultdict(list)
+    for r in recs:
+        t = r.extra.get("raw_text")
+        if not t:
+            continue
+        for typ, q in risk_match(t):
+            risk_by_rid[r.rid].append(typ)
+            case_rows.append({"review_id": r.rid, "type": typ, "severity": RISK[typ].severity, "point": r.point,
+                              "branch_id": r.branch_id, "gosb": r.gosb, "subject": r.subject, "source": r.source,
+                              "rating": r.rating, "at": r.at, "quote": q[:700]})
+    ppl = analyze_people(recs, risk_by_rid)
+    st["cases"] = len(case_rows)
+    st["cases_by_type"] = dict(Counter(c["type"] for c in case_rows))
+    st["persons"] = dict(Counter(x["kind"] for x in ppl))
     # витрина ВСП
     year_ago = now - timedelta(days=365)
     two_years = now - timedelta(days=730)
@@ -163,6 +188,25 @@ def compute(store: Store, *, now=None) -> dict:
     cards_by_point: dict[str, list] = defaultdict(list)
     for (src, sbid), c in ref["cards"].items():
         cards_by_point[f"b{c.branch_id}" if c.branch_id else f"{src}:{sbid}"].append(c)
+    two_y = now - timedelta(days=730)
+    cases_by_point: dict[str, list[dict]] = defaultdict(list)
+    for c in case_rows:
+        if c["at"] >= two_y:
+            cases_by_point[c["point"]].append(c)
+    people_by_point: dict[str, list[dict]] = defaultdict(list)
+    for x in ppl:
+        people_by_point[x["point"]].append(x)
+    # соседи по ГОСБ: взвешенные случаи на отзыв за 2 года — «во сколько раз чаще соседей»
+    vol24: Counter = Counter(r.point for r in recs if r.at >= two_y)
+    w_pt: Counter = Counter()
+    for p_, cs in cases_by_point.items():
+        w_pt[p_] = sum(c["severity"] for c in {c["review_id"]: c for c in cs}.values())
+    grp_of = {r.point: (r.gosb or r.subject or "net") for r in recs}
+    g_w: Counter = Counter()
+    g_n: Counter = Counter()
+    for p_, n in vol24.items():
+        g_w[grp_of[p_]] += w_pt[p_]
+        g_n[grp_of[p_]] += n
     rows = []
     for p, rs in all_by_point.items():
         y = [r for r in rs if r.at >= year_ago]
@@ -174,22 +218,51 @@ def compute(store: Store, *, now=None) -> dict:
         ep12 = max((e["score"] for e in eps if e["end"] >= year_ago), default=0.0)
         ep24 = max((e["score"] for e in eps if two_years <= e["end"] < year_ago), default=0.0)
         praisers = len(au["praisers_by_point"].get(p, []))
-        reasons = []
         sc = max(ep12, 0.5 * ep24)
+        campaign_score = round(min(100.0, sc), 1)
+        # балл отбора: возможные нарушения важнее оценок
+        cs = cases_by_point.get(p, [])
+        per_review: dict[str, int] = {}
+        for c in cs:
+            per_review[c["review_id"]] = max(per_review.get(c["review_id"], 0), c["severity"])
+        sev3 = sum(1 for v in per_review.values() if v == 3)
+        sev2 = sum(1 for v in per_review.values() if v == 2)
+        sev1 = sum(1 for v in per_review.values() if v == 1)
+        g = grp_of.get(p, "net")
+        rate = (g_w[g] - w_pt[p]) / max(1, g_n[g] - vol24[p])
+        ratio = (w_pt[p] / (rate * vol24[p])) if rate > 0 and vol24[p] else None
+        case_pts = min(45, 15 * min(sev3, 3)) + min(20, 5 * min(sev2, 4)) + min(5, 2 * sev1)
+        if ratio is not None and ratio < 1 and (sev3 + sev2):
+            case_pts *= 0.6
+        reasons = []
+        types = Counter(c["type"] for c in cs)
+        if sev3 or sev2:
+            top = ", ".join(RISK[t].label.lower() for t, _ in types.most_common(2))
+            n_ = sev3 + sev2
+            reasons.append(f"{n_} {_pl(n_, 'жалоба', 'жалобы', 'жалоб')} на возможные нарушения за 2 года: {top}")
+            if ratio and ratio >= 2 and n_ >= 2:
+                reasons.append(f"таких жалоб в {ratio:.0f} раз{'а' if ratio < 5 else ''} больше, чем у соседей по ГОСБ")
+        pers = people_by_point.get(p, [])
+        bad_p = [x for x in pers if x["kind"] == "complaints"]
+        wave_p = [x for x in pers if x["kind"] == "praise_wave"]
+        person_pts = min(30, 20 + 5 * (max(x["authors"] for x in bad_p) - 2)) if bad_p else 0
+        for x in bad_p[:2]:
+            reasons.append(f"сотрудник «{x['name']}» — в жалобах {x['authors']} разных клиентов")
+        praise_pts = 0
+        if wave_p:
+            x = wave_p[0]
+            praise_pts = 10 + (10 if types.get("favoritism") else 0)
+            reasons.append(f"новые аккаунты хвалят «{x['name']}»: {x['n']} отзывов за "
+                           f"{max(1, (x['last'] - x['first']).days)} дн.")
+        if types.get("favoritism"):
+            reasons.append("жалобы «обслуживают по знакомству»")
+        camp_pts = 8 if ep12 >= FOCUS else 0
         if ep12 >= FOCUS:
-            reasons.append("кампания отзывов за год")
-        elif ep24 >= FOCUS:
-            reasons.append("кампания отзывов в прошлом году")
-        if praisers >= 2:
-            sc += min(15, 5 * praisers)
-            reasons.append(f"хвалебщики сети: {praisers}")
-        if ring_pts[p]:
-            sc += 15
-            reasons.append("кольцо авторов")
-        if text_pts[p]:
-            sc += min(10, 5 * text_pts[p])
-            reasons.append("один текст в разных ВСП")
-        sc = round(min(100.0, sc), 1)
+            reasons.append("массовая волна пятёрок от новых аккаунтов")
+        link_pts = 8 if (praisers >= 2 or ring_pts[p] or text_pts[p]) else 0
+        if link_pts:
+            reasons.append("одни и те же люди хвалят несколько отделений")
+        sc = round(min(100.0, case_pts + person_pts + praise_pts + camp_pts + link_pts), 1)
         b = ref["branches"].get(rs[0].branch_id) if rs[0].branch_id else None
         cards = cards_by_point.get(p, [])
         by_src = Counter(r.source for r in rs)
@@ -222,7 +295,10 @@ def compute(store: Store, *, now=None) -> dict:
             "episodes": [{"start": e["start"], "end": e["end"], "n": e["n"], "ratio": e["ratio"],
                           "score": e["score"], "strength": e["strength"]} for e in eps[:10]],
             "praisers": praisers, "rings": ring_pts[p], "same_text": text_pts[p],
-            "reasons": reasons,
+            "reasons": reasons, "campaign_score": campaign_score,
+            "cases_24m": dict(types), "cases_ratio": round(ratio, 2) if ratio is not None else None,
+            "severe_24m": sev3, "serious_24m": sev2,
+            "people": [{"name": x["name"], "kind": x["kind"], "n": x["n"], "authors": x["authors"]} for x in pers[:6]],
         }
         rows.append({"point": p, "branch_id": rs[0].branch_id, "score": sc,
                      "data_state": "few" if len(y) < FEW_12M else "ok", "detail": detail})
@@ -253,7 +329,8 @@ def compute(store: Store, *, now=None) -> dict:
         out = {}
         for k, c in bucket.items():
             e = c["points"] * net_focus
-            z = (c["focus"] - e) / ((e * (1 - net_focus)) ** 0.5) if e > 0 else 0.0
+            var = e * (1 - net_focus)
+            z = (c["focus"] - e) / var ** 0.5 if var > 0 else 0.0
             out[k] = {**dict(c), "share": round(c["focus"] / c["points"], 3) if c["points"] else 0.0,
                       "above": z >= 2.58, "few": c["few"] >= 0.5 * c["points"]}
         return out
@@ -266,6 +343,7 @@ def compute(store: Store, *, now=None) -> dict:
         "summary": st,
     }
     return {"stats": st, "episodes": eps_b + eps_g, "authors": au, "branch_rows": rows, "network": net,
+            "cases": case_rows, "people": ppl,
             "elapsed_s": round(time.monotonic() - t0, 1)}
 
 
@@ -287,6 +365,12 @@ def run(store: Store) -> dict:
                                           "score": r["score"], "data_state": r["data_state"],
                                           "detail_json": _j(r["detail"])} for r in out["branch_rows"]])
             _write(store, network, [{"run_id": rid, "key": k, "value_json": _j(v)} for k, v in out["network"].items()])
+            _write(store, cases, [{"run_id": rid, **c} for c in out["cases"]])
+            _write(store, persons, [{"run_id": rid, "point": x["point"], "kind": x["kind"], "name": x["name"][:200],
+                                     "n": x["n"], "authors": x["authors"], "first_at": x["first"], "last_at": x["last"],
+                                     "score": x["score"], "detail_json": _j({k: v for k, v in x.items() if k not in (
+                                         "point", "kind", "name", "n", "authors", "first", "last", "score")})}
+                                    for x in out["people"]])
         stats = {**out["stats"], "elapsed_s": out.get("elapsed_s")}
         with store.engine.begin() as c:
             c.execute(update(signal_runs).where(signal_runs.c.run_id == rid).values(
@@ -308,7 +392,7 @@ def _prune(store: Store) -> None:
     if not old:
         return
     with store.engine.begin() as c:
-        for t in (episodes, authors, author_groups, branch_stats, network):
+        for t in (episodes, authors, author_groups, branch_stats, network, cases, persons):
             c.execute(delete(t).where(t.c.run_id.in_(old)))
         c.execute(delete(signal_runs).where(signal_runs.c.run_id.in_(old)))
 

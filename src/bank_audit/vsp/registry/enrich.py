@@ -106,11 +106,19 @@ def enrich_branches(store: Store) -> dict:
 
 
 def centroids(store: Store) -> dict[str, tuple[float, float]]:
-    """Средние координаты ВСП субъекта — для плиточной карты (regions.tile_grid)."""
+    """Средние координаты ВСП субъекта — для плиточной карты (regions.tile_grid). Координаты —
+    от карточек карт, а где их нет (новые регионы, Чукотка) — от офисов сайта банка."""
+    from ..storage import branch_profiles as bp
     acc: dict[str, list] = defaultdict(list)
     with store.engine.connect() as c:
-        for code, lat, lon in c.execute(select(branches.c.subject, branches.c.lat, branches.c.lon).where(
-                branches.c.subject.isnot(None), branches.c.lat.isnot(None), branches.c.status != "closed")):
-            acc[code].append((lat, lon))
+        site = {}
+        for bid, lat, lon in c.execute(select(bp.c.branch_id, bp.c.lat, bp.c.lon).where(
+                bp.c.branch_id.isnot(None), bp.c.lat.isnot(None))):
+            site.setdefault(bid, (lat, lon))
+        for bid, code, lat, lon in c.execute(select(branches.c.branch_id, branches.c.subject, branches.c.lat,
+                                                    branches.c.lon).where(branches.c.subject.isnot(None),
+                                                                          branches.c.status != "closed")):
+            pt = (lat, lon) if lat is not None else site.get(bid)
+            if pt:
+                acc[code].append(pt)
     return {k: (sum(p[0] for p in v) / len(v), sum(p[1] for p in v) / len(v)) for k, v in acc.items()}
-
