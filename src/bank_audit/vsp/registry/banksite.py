@@ -141,7 +141,8 @@ class BankSiteBrowser:
     async def __aenter__(self) -> "BankSiteBrowser":
         from playwright.async_api import async_playwright
         self._pw = await async_playwright().start()
-        self._browser = await self._pw.chromium.launch()
+        # в контейнере без привилегий песочница Chromium недоступна — как в основном браузерном модуле
+        self._browser = await self._pw.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
         ctx = await self._browser.new_context(locale="ru-RU", user_agent=self.user_agent)
         self._page = await ctx.new_page()
         await self._open()
