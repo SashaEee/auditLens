@@ -4432,6 +4432,33 @@ html.dark .vsp{--shadow-3:0 1px 0 oklch(0% 0 0 / .35),0 16px 48px oklch(0% 0 0 /
 @media (max-width:900px){.vsp .vst-layout{grid-template-columns:1fr}.vsp .vst-layout>aside{position:static;max-height:none}}
 @media (max-width:640px){.vsp .vcmp-r{grid-template-columns:1fr auto}.vsp .vcmp-r .note,.vsp .vcmp-r .vcmp-k{grid-column:1/-1}
   .vsp .vrow.v2{grid-template-columns:minmax(0,1fr) 20px}.vsp .vrow.v2>.btn{grid-column:1;justify-self:start}}
+
+/* — вкладка ВСП: ссылки на оригинал, проверка истории, паспорт отделения, ход сбора — */
+.vsp .vlink{font:inherit;font-size:13px;color:var(--ink-2);text-decoration:underline;text-decoration-color:var(--hair-2);text-underline-offset:3px;padding:0;background:none;cursor:pointer}
+.vsp .vlink:hover{color:var(--ink);text-decoration-color:currentColor}
+.vsp .vlink.strong{font-weight:600;color:var(--ink);font-size:inherit}
+.vsp .vstory-f{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;margin-top:2px}
+.vsp .vreact-it{display:flex;gap:12px;justify-content:space-between;align-items:baseline;text-align:left}
+.vsp mark.vq{background:color-mix(in oklch,var(--accent) 22%,transparent);color:inherit;border-radius:3px;padding:0 2px}
+.vsp .vpanel>div.vpanel-wide{width:min(920px,100%)}
+.vsp .vev-review{background:var(--paper-2);border-radius:var(--r-lg);padding:14px 16px;display:grid;gap:8px}
+.vsp .vev-review .rm{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;font-size:13px;color:var(--ink-3)}
+.vsp .vchecks{list-style:none;padding:0;margin:0;display:grid;gap:6px}
+.vsp .vchecks li{display:flex;gap:8px;align-items:baseline;font-size:14px}
+.vsp .vchecks li>span{width:18px;flex:none;text-align:center;font-weight:700;color:var(--ink-3)}
+.vsp .vchecks li.ok>span{color:oklch(55% .13 150)}
+.vsp .vchecks li.bad>span{color:var(--accent-ink)}
+.vsp .vdl{display:grid;grid-template-columns:minmax(150px,220px) minmax(0,1fr);gap:6px 14px;margin:0;font-size:14px}
+.vsp .vdl dt{color:var(--ink-3)}
+.vsp .vdl dd{margin:0}
+.vsp .vpass{background:var(--surface);border-radius:var(--r-lg);box-shadow:inset 0 0 0 1px var(--hair);padding:14px 16px}
+.vsp .vprog{background:var(--surface);border-radius:var(--r-lg);box-shadow:inset 0 0 0 1px var(--hair);padding:8px 14px;margin:0 0 12px}
+.vsp .vprog-h{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;width:100%;text-align:left;font-size:13.5px;color:var(--ink-2)}
+.vsp .vprog-h b{color:var(--ink)}
+.vsp .vprog-b{display:inline-block;width:110px;height:6px;border-radius:4px;background:var(--paper-2);box-shadow:inset 0 0 0 1px var(--hair);overflow:hidden;vertical-align:middle}
+.vsp .vprog-b i{display:block;height:100%;background:var(--accent)}
+.vsp .vprog-d{display:grid;gap:6px;font-size:13.5px;padding:8px 0 4px;max-width:110ch}
+@media (max-width:640px){.vsp .vdl{grid-template-columns:1fr}.vsp .vdl dt{margin-top:6px}}
 </style>
 </head>
 <body>

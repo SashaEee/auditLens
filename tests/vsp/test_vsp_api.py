@@ -153,3 +153,23 @@ def test_stories_table_staff_trends_peers(client):
     assert len(d["compare"]) == 3 and d["actions"] and d["stories"][0]["labels"]
     r = client.get("/api/vsp/export/visit.docx", params={"points": f"{b6},b{client.ids['1']}"})
     assert r.status_code == 200 and r.content[:2] == b"PK"
+
+
+def test_evidence_passport_links_meta(client):
+    b6 = f"b{client.ids['6']}"
+    st = client.get("/api/vsp/stories", params={"period": "", "point": b6}).json()
+    rid = st["items"][0]["rid"]
+    assert "src" in st["items"][0]                                  # площадка у каждой истории
+    ev = client.get(f"/api/vsp/evidence/{rid}").json()
+    assert ev["review"]["text"] and ev["quote"] and ev["point"] == b6 and ev["checks"]
+    assert ev["checks"][0]["ok"] is True                           # цитата из правил — дословно в тексте
+    assert client.get("/api/vsp/evidence/нет-такого").status_code == 404
+    d = client.get(f"/api/vsp/dossier/{b6}").json()
+    assert d["passport"]["cards"] and d["passport"]["cards"][0]["source"] == "2gis"
+    m = client.get("/api/vsp/meta").json()
+    assert m["tiles"] and m["run"]["id"] and m["progress"]["reviews"]["2gis"] > 0 and m["progress"]["cards"]["2gis"] == 11
+    t1 = client.get("/api/vsp/table", params={"period": "", "limit": 1}).json()
+    t2 = client.get("/api/vsp/table", params={"period": "", "limit": 1, "offset": 1}).json()
+    assert t1["total"] >= 2 and t1["items"][0]["point"] != t2["items"][0]["point"]
+    r = client.get("/api/vsp/export/justification.xlsx", params={"gosb": "x", "action": "посредник"})
+    assert r.status_code == 200

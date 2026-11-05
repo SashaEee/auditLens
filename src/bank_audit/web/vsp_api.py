@@ -803,16 +803,22 @@ def _stories(run) -> list[dict]:
         x["_at"] = _aware(x.get("at")) or datetime(2000, 1, 1, tzinfo=UTC)
         x["actions"] = [a for a in x.get("actions") or [] if a in ACTIONS] or ["другое"]
         x["labels"] = [ACTIONS[a]["label"] for a in x["actions"]]
+        x.setdefault("quote_ok", True)
+        x["_named"] = _named(x)                    # один раз на прогон: регулярка дорогая
     out.sort(key=lambda x: x["_at"], reverse=True)
     run["_stories"] = out
     return out
 
 
 def _named(x: dict) -> bool:
+    """Назван ли сотрудник. У карточек модели — только её поле (оно проверено по тексту отзыва);
+    у историй «по словам» — имя или ФИО рядом с должностью (без «Сотрудник Сбера», «Слава богу»)."""
     if (x.get("employee") or "").strip():
         return True
-    from ..vsp.names import has_name
-    return bool(has_name(x.get("quote") or ""))
+    if x.get("source") == "модель":
+        return False
+    from ..vsp.signals.people import people_in
+    return bool(people_in(x.get("quote") or ""))
 
 
 def _sf(run, *, subject=None, gosb=None, point=None, action=None, severity: int = 0, period=None,
@@ -833,12 +839,33 @@ def _sf(run, *, subject=None, gosb=None, point=None, action=None, severity: int 
             continue
         if fmt and not _fmt_ok(pts.get(x["point"]) or {}, fmt):
             continue
-        if named and not _named(x):
+        if named and not x["_named"]:
             continue
         if ql and ql not in " ".join(str(x.get(k) or "") for k in ("quote", "episode", "employee", "scheme")).lower():
             continue
         out.append(x)
     return out
+
+
+def _safe_url(u):
+    return u if isinstance(u, str) and u.startswith(("https://", "http://")) else None
+
+
+def _attach_src(items: list[dict], key: str = "rid") -> list[dict]:
+    """Площадка и ссылка на страницу отзывов отделения у каждого элемента (по id отзыва)."""
+    rids = list({x[key] for x in items if x.get(key)})
+    if not rids:
+        return items
+    found = {}
+    with engine().connect() as c:
+        for i in range(0, len(rids), 500):
+            for rid, src, url in c.execute(select(reviews.c.review_id, reviews.c.source, reviews.c.source_url).where(
+                    reviews.c.review_id.in_(rids[i:i + 500]))):
+                found[rid] = (src, _safe_url(url))
+    for x in items:
+        if x.get(key) in found:
+            x["src"], x["url"] = found[x[key]]
+    return items
 
 
 def _story_out(x: dict, pts: dict) -> dict:
@@ -942,12 +969,7 @@ def _gosb_table(run, subject=None) -> list[dict]:
     return out
 
 
-@router.get("/home")
-def home(subject: Optional[str] = None, gosb: Optional[str] = None, action: Optional[str] = None,
-         vulnerable: bool = False, named: bool = False, fresh: bool = False, fmt: Optional[str] = None,
-         user: CurrentUser = Depends(get_current_user)):
-    _need(user)
-    run = _run()
+def _tiles(run) -> list[dict]:
     net = run["network"]
     rmap = net.get("risk_map") or {"subjects": {}, "network_share": 0}
     tiles = []
@@ -957,32 +979,101 @@ def home(subject: Optional[str] = None, gosb: Optional[str] = None, action: Opti
                       "name": subject_name(code), "n": s_.get("n", 0), "hit": s_.get("hit", 0),
                       "listed": s_.get("listed", 0), "share": s_.get("share"), "above": s_.get("above", False),
                       "few": s_.get("few", True)})
+    return tiles
+
+
+_PROG: dict = {"at": 0.0, "v": None}
+
+
+def _progress() -> dict:
+    """Ход сбора и чтения моделью — для полосы «Идёт сбор и чтение» (кэш 2 минуты)."""
+    now = time.monotonic()
+    if _PROG["v"] is not None and now - _PROG["at"] < 120:
+        return _PROG["v"]
+    from ..vsp.storage import kv
+    v: dict = {}
+    with engine().connect() as c:
+        v["reviews"] = {s: n for s, n in c.execute(select(reviews.c.source, func.count()).group_by(reviews.c.source))}
+        v["cards"] = {s: n for s, n in c.execute(select(source_branches.c.source, func.count())
+                                                  .group_by(source_branches.c.source))}
+        v["with_text"] = c.execute(select(func.count()).select_from(reviews).where(
+            func.length(reviews.c.review_text) >= 60)).scalar() or 0
+        try:
+            from ..vsp.signals.llm_read import PROMPT_VERSION, SCREEN_VERSION, review_llm
+            byv = {s: n for s, n in c.execute(select(review_llm.c.prompt_version, func.count())
+                                              .group_by(review_llm.c.prompt_version))}
+            v["screened"] = byv.get(SCREEN_VERSION, 0)
+            v["carded"] = byv.get(PROMPT_VERSION, 0)
+            v["relevant"] = c.execute(select(func.count()).select_from(review_llm).where(
+                review_llm.c.prompt_version == SCREEN_VERSION, review_llm.c.relevant == 1)).scalar() or 0
+        except Exception:  # noqa: BLE001 — модель ещё не читала
+            c.rollback()
+            v["screened"] = v["carded"] = v["relevant"] = 0
+        try:
+            raw = c.execute(select(kv.c.value).where(kv.c.key == "discover:yandex")).scalar()
+            y = json.loads(raw or "{}") or {}
+            v["yandex_search"] = {"done": len(y.get("done") or []), "points": y.get("points"),
+                                  "finished": bool(y.get("finished"))}
+        except Exception:  # noqa: BLE001
+            c.rollback()
+            v["yandex_search"] = None
+    _PROG.update(at=now, v=v)
+    return v
+
+
+@router.get("/meta")
+def meta_(user: CurrentUser = Depends(get_current_user)):
+    """Лёгкое: плитки карты (регионы для фильтра), дата расчёта и ход сбора/чтения."""
+    _need(user)
+    run = _run()
+    try:
+        prog = _progress()
+    except Exception:  # noqa: BLE001 — полоса прогресса не должна ронять вкладку
+        log.exception("vsp: прогресс не посчитан")
+        prog = None
+    return {"run": {"id": run["id"], "finished_at": _iso(run["finished_at"])}, "tiles": _tiles(run),
+            "source": run["network"].get("story_source"), "progress": prog}
+
+
+@router.get("/home")
+def home(subject: Optional[str] = None, gosb: Optional[str] = None, action: Optional[str] = None,
+         vulnerable: bool = False, named: bool = False, fresh: bool = False, fmt: Optional[str] = None,
+         user: CurrentUser = Depends(get_current_user)):
+    _need(user)
+    run = _run()
+    net = run["network"]
+    rmap = net.get("risk_map") or {"subjects": {}, "network_share": 0}
+    tiles = _tiles(run)
     filtered = bool(action or vulnerable or named or fresh or fmt)
     only = None
     if filtered:
+        # тот же набор, что считают плашки сводки: тяжёлые истории за год (или за 3 месяца)
         only = {x["point"] for x in _sf(run, subject=subject, gosb=gosb, action=action, vulnerable=vulnerable,
-                                         named=named, fmt=fmt, period="90" if fresh else "730")}
+                                         named=named, fmt=fmt, severity=2, period="90" if fresh else "365")}
     full = _listed(run)
     lst = _listed(run, subject, gosb, only)
     scope = _listed(run, subject)
     gosbs = Counter(x["gosb"] for x in scope if x["gosb"])
-    react = [{**x, "place": _place(run["points"].get(x["point"]))} for x in net.get("risk_react") or []
-             if (not subject or (run["points"].get(x["point"]) or {}).get("subject") == subject)]
+    react = []
+    for x in net.get("risk_react") or []:
+        pl_ = run["points"].get(x["point"]) or {}
+        if (not subject or pl_.get("subject") == subject) and (not gosb or pl_.get("gosb") == gosb):
+            react.append({**x, "place": _place(pl_)})
     pts = run["points"].values()
     with_data = sum(1 for p in pts if (p.get("n_12m") or 0) > 0)
     heavy_year = _sf(run, subject=subject, gosb=gosb, severity=2, period="365")
     heavy_prev = [x for x in _sf(run, subject=subject, gosb=gosb, severity=2, period="730")
                   if x["_at"] < datetime.now(UTC) - timedelta(days=365)]
     return {"run": {"id": run["id"], "finished_at": _iso(run["finished_at"])},
-            "source": net.get("story_source"), "react": react, "tiles": tiles,
+            "source": net.get("story_source"), "react": _attach_src(react), "tiles": tiles,
             "network_share": rmap.get("network_share"), "list": lst, "total": len(full), "in_scope": len(scope),
             "filtered": filtered,
             "gosbs": [{"gosb": g, "n": n} for g, n in gosbs.most_common()],
-            "gosb_table": _gosb_table(run, subject) if not gosb else [],
+            "gosb_table": _gosb_table(run, subject),
             "summary": {"heavy_year": len(heavy_year), "heavy_prev": len(heavy_prev),
                         "points_year": len({x["point"] for x in heavy_year}),
                         "vulnerable_year": sum(1 for x in heavy_year if x.get("vulnerable")),
-                        "named_year": sum(1 for x in heavy_year if _named(x)),
+                        "named_year": sum(1 for x in heavy_year if x["_named"]),
                         "actions": _action_facets(heavy_year)[:10]},
             "with_data": with_data, "points": len(run["points"])}
 
@@ -1024,10 +1115,10 @@ def dossier(point: str, user: CurrentUser = Depends(get_current_user)):
                 nearby.append(_place(q))
     bars = _month_bars(point)
     full = _sf(run, point=point)
-    stories = [_story_out(x, {}) for x in full[:300]] or stories
+    stories = _attach_src([_story_out(x, {}) for x in full[:300]] or stories)
     vol = a.get("vol_2y") or 0
     n12 = p.get("n_12m") or 0
-    neg12 = sum(b["neg"] for b in bars[-12:])
+    neg12 = p.get("neg_12m") if p.get("neg_12m") is not None else sum(b["neg"] for b in bars[-12:])
     heavy2 = sum(1 for x in full if (x.get("severity") or 0) >= 2 and x["_at"] >= datetime.now(UTC) - timedelta(days=730))
     peer = (run["network"].get("peers") or {}).get(p.get("gosb")) or {}
     compare = [
@@ -1038,6 +1129,7 @@ def dossier(point: str, user: CurrentUser = Depends(get_current_user)):
          "me": round(100 * heavy2 / vol, 2) if vol >= 10 else None, "peer": peer.get("heavy_per100"), "fmt": "x"},
     ]
     return {**_place(p), "vol_2y": a.get("vol_2y"), "open_date": p.get("open_date"),
+            "passport": _passport(p), "lat": p.get("lat"), "lon": p.get("lon"),
             "risk": a, "stories": stories, "bars": bars, "nearby": nearby[:5],
             "compare": compare, "peer_points": peer.get("points"), "actions": _action_facets(full),
             "source": (run["network"].get("story_source")),
@@ -1067,7 +1159,7 @@ def stories_list(subject: Optional[str] = None, gosb: Optional[str] = None, poin
     return {"total": len(xs), "points": len({x["point"] for x in xs}),
             "clients": len({x.get("author") or x["rid"] for x in xs}),
             "heavy": sum(1 for x in xs if (x.get("severity") or 0) >= 2),
-            "items": [_story_out(x, pts) for x in xs[offset:offset + min(max(limit, 1), 200)]],
+            "items": _attach_src([_story_out(x, pts) for x in xs[offset:offset + min(max(limit, 1), 200)]]),
             "actions": _action_facets(base), "months": _months(xs),
             "source": run["network"].get("story_source")}
 
@@ -1084,15 +1176,21 @@ def export_stories(subject: Optional[str] = None, gosb: Optional[str] = None, po
     head = ["Дата", "Город", "Адрес", "ВСП", "ГОСБ", "Регион", "Что произошло", "Тяжесть", "Сотрудник",
             "Пожилой или уязвимый клиент", "Сумма, ₽", "Слова клиента", "Пересказ ИИ", "Оценка", "Отзыв"]
     data = []
-    for x in xs[:20000]:
+    cap = 20000
+    for x in xs[:cap]:
         pl_ = pts.get(x["point"]) or {}
         data.append([x.get("date"), pl_.get("city"), pl_.get("address"), pl_.get("name"), x.get("gosb"),
                      subject_name(x["subject"]) if x.get("subject") else "", ", ".join(x["labels"]),
                      SEVERITY.get(x.get("severity") or 0, ""), x.get("employee") or "",
-                     "да" if x.get("vulnerable") else "", x.get("money") or "", x.get("quote"),
-                     x.get("episode") or "", x.get("rating"), x["rid"]])
-    xb = _xlsx("Аудит сети ВСП · истории клиентов",
-               [("Истории клиентов", head, data, {"Слова клиента", "Пересказ ИИ", "Адрес", "Что произошло"})])
+                     "да" if x.get("vulnerable") else "", x.get("money") or "",
+                     x.get("quote") if x.get("quote_ok", True) else "",
+                     "; ".join(t for t in ((x.get("episode") or ""), ("" if x.get("quote_ok", True) else
+                                                                      f"не дословно: {x.get('quote')}")) if t),
+                     x.get("rating"), x["rid"]])
+    title = "Аудит сети ВСП · истории клиентов"
+    if len(xs) > cap:
+        title += f" · первые {cap:,} из {len(xs):,}".replace(",", " ")
+    xb = _xlsx(title, [("Истории клиентов", head, data, {"Слова клиента", "Пересказ ИИ", "Адрес", "Что произошло"})])
     return _xlsx_response(xb, "ВСП_истории.xlsx")
 
 
@@ -1104,11 +1202,12 @@ TABLE_SORT = {"heavy", "per100", "clients", "last", "signals", "vulnerable", "na
 @router.get("/table")
 def table(subject: Optional[str] = None, gosb: Optional[str] = None, action: Optional[str] = None,
           period: Optional[str] = "730", vulnerable: bool = False, named: bool = False, fmt: Optional[str] = None,
-          sort: str = "heavy", limit: int = 300, user: CurrentUser = Depends(get_current_user)):
+          sort: str = "heavy", limit: int = 300, offset: int = 0, user: CurrentUser = Depends(get_current_user)):
     _need(user)
     run = _run()
-    xs = _sf(run, subject=subject, gosb=gosb, action=action, period=period, vulnerable=vulnerable, named=named,
-             fmt=fmt)
+    kw = dict(subject=subject, gosb=gosb, action=action, vulnerable=vulnerable, named=named, fmt=fmt)
+    xs = _sf(run, period=period, **kw)
+    heavy2y = Counter(x["point"] for x in _sf(run, period="730", severity=2, **kw))
     by: dict[str, list[dict]] = defaultdict(list)
     for x in xs:
         by[x["point"]].append(x)
@@ -1123,9 +1222,9 @@ def table(subject: Optional[str] = None, gosb: Optional[str] = None, action: Opt
         acts = Counter(k for x in ss for k in x["actions"])
         rows.append({**_place(P), "stories": len(ss), "heavy": len(heavy), "very": sum(1 for x in ss if (x.get("severity") or 0) >= 3),
                      "clients": len({x.get("author") or x["rid"] for x in heavy}),
-                     "per100": round(100 * len(heavy) / vol, 2) if vol >= 10 else None, "vol_2y": vol or None,
+                     "per100": round(100 * heavy2y[pt] / vol, 2) if vol >= 10 else None, "vol_2y": vol or None,
                      "last": ss[0]["date"], "last_at": ss[0]["at"],
-                     "vulnerable": sum(1 for x in ss if x.get("vulnerable")), "named": sum(1 for x in ss if _named(x)),
+                     "vulnerable": sum(1 for x in ss if x.get("vulnerable")), "named": sum(1 for x in ss if x["_named"]),
                      "actions": [ACTIONS[k]["short"] for k, _ in acts.most_common(3)],
                      "listed": bool(a.get("include")), "signals": len(a.get("signals") or []),
                      "confidence": (a.get("confidence") or {}).get("level")})
@@ -1134,7 +1233,8 @@ def table(subject: Optional[str] = None, gosb: Optional[str] = None, action: Opt
         rows.sort(key=lambda r: r["last_at"] or "", reverse=True)
     else:
         rows.sort(key=lambda r: (-(r.get(key) or 0), -r["heavy"], -r["stories"]))
-    return {"total": len(rows), "items": rows[:min(max(limit, 1), 1000)], "sort": key}
+    off = max(offset, 0)
+    return {"total": len(rows), "items": rows[off:off + min(max(limit, 1), 1000)], "offset": off, "sort": key}
 
 
 # ── «Люди»: сотрудники, которых называют разные клиенты; похвала от новых аккаунтов; посредники ─
@@ -1172,21 +1272,27 @@ def staff(subject: Optional[str] = None, gosb: Optional[str] = None, user: Curre
                "types": [RISK[k].label if k in RISK else k for k in (x["detail"].get("types") or {})],
                "heavy_here": heavy_by_pt.get(x["point"], 0), "place": _place(pts.get(x["point"]))}
         (comp if x["kind"] == "complaints" else praise).append(row)
-    # одно и то же имя из карточек модели и из слов — одна строка: берём строку модели,
-    # а у строки «по словам» забираем id (кнопка «Отзывы»)
-    def _k(pt, name):
-        return pt, (name or "").lower().replace("ё", "е")[:5]
-    by_model = {_k(r["place"].get("point"), r["name"]): r for r in model_rows}
+    # одно и то же имя из карточек модели и из слов — одна строка (ключ — основы слов имени, как в
+    # vsp_person). Клиентов — больше из двух: модель могла отметить не все отзывы с этим именем.
+    from ..vsp.signals.people import stem
+    def _stems(name):
+        return {stem(w) for w in (name or "").split()[:3] if w}
     keep = []
     for r in comp:
-        m = by_model.get(_k(r["place"].get("point"), r["name"]))
+        pk = set(((next((p_ for p_ in run["persons"] if p_["id"] == r["id"]), {}).get("detail") or {}).get("key")
+                  or "").split("|")) - {""} or _stems(r["name"])
+        m = next((mr for mr in model_rows if mr["place"].get("point") == r["place"].get("point")
+                  and _stems(mr["name"]) & pk), None)
         if m is not None:
             m.setdefault("id", r["id"])
             m.setdefault("full_name", r.get("full_name"))
+            m["authors"] = max(m.get("authors") or 0, r["authors"])
+            m["clients"] = max(m["clients"], r["authors"])
         elif (r["name"] or "").strip():
             keep.append(r)
+    model_rows.sort(key=lambda r: (-r["clients"], -r["heavy"]))
     comp = sorted(keep, key=lambda r: (-r["authors"], -r["n"]))
-    praise = [r for r in praise if (r["name"] or "").strip()]
+    praise = [r for r in praise if (r["name"] or "").strip() and r["heavy_here"] > 0]
     praise.sort(key=lambda r: (-(r["heavy_here"] > 0), -(r["oneoff"] or 0), -r["n"]))
     # 3) посредники и обслуживание по знакомству
     mid: dict[str, list[dict]] = defaultdict(list)
@@ -1198,7 +1304,8 @@ def staff(subject: Optional[str] = None, gosb: Optional[str] = None, user: Curre
                                                             if l in ("посредники и «свой» менеджер",
                                                                      "обслуживают по знакомству, в обход очереди")})}
                      for pt, ss in mid.items()), key=lambda r: -r["stories"])
-    return {"named": model_rows[:200], "complaints": comp[:200], "praise": praise[:200], "middlemen": middle[:100],
+    return {"named": _attach_src(model_rows[:200]), "complaints": comp[:200], "praise": praise[:200],
+            "middlemen": _attach_src(middle[:100]),
             "source": run["network"].get("story_source")}
 
 
@@ -1249,16 +1356,114 @@ def trends(subject: Optional[str] = None, gosb: Optional[str] = None, action: Op
         r["subject_name"] = subject_name(gsub.get(r["key"])) if gsub.get(r["key"]) else None
         r["n_12m"] = n12.get(r["key"], 0)
     first: dict[str, datetime] = {}
-    for x in xs:
+    for x in _sf(run, subject=subject, gosb=gosb, action=action, severity=2):      # за всё время
         first[x["point"]] = min(first.get(x["point"], x["_at"]), x["_at"])
+    cnt = Counter(x["point"] for x in xs)
     fresh_cut = now - timedelta(days=90)
-    new_pts = [{"place": _place(run["points"].get(pt)), "first": d.strftime("%d.%m.%Y"),
-                "n": sum(1 for x in xs if x["point"] == pt)} for pt, d in first.items() if d >= fresh_cut]
+    new_pts = [{"place": _place(run["points"].get(pt)), "first": d.strftime("%d.%m.%Y"), "n": cnt[pt]}
+               for pt, d in first.items() if d >= fresh_cut]
     new_pts.sort(key=lambda r: -r["n"])
     return {"months": months, "top": [{"key": k, "label": ACTIONS[k]["label"], "short": ACTIONS[k]["short"]} for k in top],
             "actions": acts[:15], "gosbs": gs[:20], "new_points": new_pts[:20], "total": len(xs),
             "half_now": sum(1 for x in xs if x["_at"] >= h1), "half_before": sum(1 for x in xs if h0 <= x["_at"] < h1),
             "source": run["network"].get("story_source")}
+
+
+FORMAT_LABEL = {"mass": "массовое обслуживание", "sber_first": "СберПервый", "private": "Private Banking",
+                "legal": "юрлица", "business": "бизнес", "corporate": "корпоративные клиенты",
+                "islamic": "исламский банкинг", "zone24": "зона 24/7", "mobile": "передвижной офис"}
+
+
+def _passport(p: dict) -> dict:
+    """Что за отделение: карточки на площадках (ссылки), реестр, сайт банка (часы, форматы)."""
+    out = {"cards": [], "hours": None, "formats": [], "parent_name": None, "registry_status": None}
+    bid = p.get("branch_id")
+    with engine().connect() as c:
+        if bid:
+            cond = source_branches.c.branch_id == bid
+        else:
+            src, _, sbid = p["point"].partition(":")
+            cond = and_(source_branches.c.source == src, source_branches.c.source_branch_id == sbid)
+        for r in c.execute(select(source_branches.c.source, source_branches.c.url, source_branches.c.declared_reviews,
+                                  source_branches.c.declared_rating, source_branches.c.name).where(cond)):
+            out["cards"].append({"source": r.source, "url": _safe_url(r.url), "reviews": r.declared_reviews,
+                                 "rating": r.declared_rating, "name": r.name})
+        if bid:
+            b = c.execute(select(branches.c.parent_name, branches.c.status).where(branches.c.branch_id == bid)).first()
+            if b:
+                out["parent_name"], out["registry_status"] = b.parent_name, b.status
+            try:
+                from ..vsp.storage import branch_profiles
+                pr = c.execute(select(branch_profiles.c.hours, branch_profiles.c.formats).where(
+                    branch_profiles.c.branch_id == bid, branch_profiles.c.status == "active")).first()
+                if pr:
+                    h = json.loads(pr.hours or "{}") or {}
+                    out["hours"] = h.get("text") if isinstance(h, dict) else None
+                    out["formats"] = [FORMAT_LABEL.get(f, f) for f in (json.loads(pr.formats or "[]") or [])]
+            except Exception:  # noqa: BLE001 — паспорта с сайта банка может не быть
+                pass
+    if not out["formats"]:
+        out["formats"] = [FORMAT_LABEL.get(k, k) for k in (p.get("formats") or {})]
+    return out
+
+
+# ── проверка истории: полный отзыв, что увидела модель, проверки кодом ─────────
+
+@router.get("/evidence/{rid:path}")
+def evidence(rid: str, user: CurrentUser = Depends(get_current_user)):
+    _need(user)
+    run = _run()
+    from ..vsp.signals.llm_read import PROMPT_VERSION, SCREEN_VERSION, quote_ok, review_llm
+    from ..vsp.signals.risk import ACTIONS
+    with engine().connect() as c:
+        r = c.execute(select(reviews).where(reviews.c.review_id == rid)).mappings().first()
+        if not r:
+            raise HTTPException(404, "отзыв не найден")
+        cards_ = {}
+        try:
+            for x in c.execute(select(review_llm).where(review_llm.c.review_id == rid)).mappings():
+                cards_[x["prompt_version"]] = x
+        except Exception:  # noqa: BLE001 — модель ещё не читала
+            pass
+    row = _review_row(r, run)
+    row["url"] = _safe_url(row.get("url"))
+    story = next((x for x in _stories(run) if x["rid"] == rid), None)
+    text = row.get("text") or ""
+    card = cards_.get(PROMPT_VERSION)
+    data = {}
+    if card is not None:
+        try:
+            data = json.loads(card["data_json"] or "{}") or {}
+        except ValueError:
+            data = {}
+    quote = (story or {}).get("quote") or data.get("quote") or ""
+    emp = (story or {}).get("employee") or (data.get("employee_name") or "").strip()
+    low = text.lower().replace("ё", "е")
+    checks = []
+    if quote:
+        checks.append({"ok": quote_ok(quote, text), "label": "Слова клиента дословно есть в отзыве" if quote_ok(quote, text)
+                       else "Цитаты дословно нет в отзыве — это пересказ, сверьте с текстом"})
+    if emp and emp.lower() not in ("null", "none", "нет", "-"):
+        ok = all(w.lower().replace("ё", "е")[:4] in low for w in emp.split()[:2])
+        checks.append({"ok": ok, "label": f"Имя «{emp}» есть в тексте" if ok else f"Имени «{emp}» в тексте нет — не учитываем"})
+    if story and story.get("source") == "модель":
+        checks.append({"ok": True, "label": "Отбор и карточка — модель; цитату и имя проверяет код"})
+    elif story:
+        checks.append({"ok": None, "label": "Найдено по словам, модель этот отзыв ещё не разбирала"})
+    model = None
+    if data:
+        model = {"what": data.get("episode") or (card or {}).get("summary"), "scheme": data.get("scheme_free"),
+                 "actions": [ACTIONS[a]["label"] for a in (data.get("actions") or []) if a in ACTIONS],
+                 "products": data.get("products") or [], "severity": SEVERITY.get(int(data.get("severity") or 0), ""),
+                 "fault": data.get("fault"), "employee": emp or None, "money": data.get("money_rub"),
+                 "vulnerable": bool(data.get("vulnerability")), "relevant": bool(data.get("relevant")),
+                 "other_vsp": data.get("other_vsp") or None, "model": (card or {}).get("model")}
+    screen = cards_.get(SCREEN_VERSION)
+    pt = row.get("point")
+    return {"review": row, "quote": quote, "employee": emp or None,
+            "story": _story_out(story, {}) if story else None, "model": model,
+            "screen": {"relevant": bool(screen["relevant"]), "why": screen["summary"]} if screen is not None else None,
+            "checks": checks, "place": _place(run["points"].get(pt)), "point": pt}
 
 
 def _scheme_rows(run) -> tuple[list[dict], str]:
@@ -1318,7 +1523,7 @@ def scheme_card(sid: str, user: CurrentUser = Depends(get_current_user)):
     by_subject = Counter((pts.get(e["point"]) or {}).get("subject") for e in examples)
     gosbs = {(pts.get(e["point"]) or {}).get("gosb") for e in examples} - {None}
     return {**{k: v for k, v in x.items() if k not in ("rids",)}, "kind": kind,
-            "examples": [{**e, "place": _place(pts.get(e["point"]))} for e in examples[:30]],
+            "examples": _attach_src([{**e, "place": _place(pts.get(e["point"]))} for e in examples[:30]]),
             "by_subject": {k: v for k, v in by_subject.items() if k}, "network_wide": len(gosbs) >= 3,
             "gosbs": len(gosbs)}
 
@@ -1370,12 +1575,17 @@ def feedback(body: FeedbackIn, user: CurrentUser = Depends(get_current_user)):
 
 
 @router.get("/export/justification.xlsx")
-def export_justification(points: Optional[str] = None, subject: Optional[str] = None,
-                         user: CurrentUser = Depends(get_current_user)):
+def export_justification(points: Optional[str] = None, subject: Optional[str] = None, gosb: Optional[str] = None,
+                         action: Optional[str] = None, vulnerable: bool = False, named: bool = False,
+                         fresh: bool = False, fmt: Optional[str] = None, user: CurrentUser = Depends(get_current_user)):
     _need(user)
     run = _run()
     want = set((points or "").split(",")) - {""}
-    rows = [x for x in _listed(run, subject) if not want or x["point"] in want]
+    only = None
+    if action or vulnerable or named or fresh or fmt:          # как на главном экране
+        only = {x["point"] for x in _sf(run, subject=subject, gosb=gosb, action=action, vulnerable=vulnerable,
+                                         named=named, fmt=fmt, severity=2, period="90" if fresh else "365")}
+    rows = [x for x in _listed(run, subject, gosb, only) if not want or x["point"] in want]
     if want:
         rows += [{**_place(run["points"][p]), "why": [], "quote": None, "confidence": None, "benign": None,
                   "action": None} for p in want if p in run["points"] and p not in {x["point"] for x in rows}]

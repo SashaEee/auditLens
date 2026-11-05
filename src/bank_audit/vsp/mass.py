@@ -284,6 +284,9 @@ async def discover_yandex_points(store: Store, settings: Settings, *, force: boo
             return {"skipped": "свежий обход"}
         log.info("yandex поиск: точек %d против %s в прошлом круге — новый круг", len(pts), prev.get("points"))
         st = _round_state(store, "discover:yandex", settings.schedule.discover_every_d, now, True)
+        st["done"] = list(prev.get("done") or [])        # уже опрошенные точки не повторяем
+        st["found"] = prev.get("found") or 0
+        store.kv_set("discover:yandex", st)
     grid = _Grid()
     with store.engine.connect() as c:
         for lat, lon in c.execute(select(source_branches.c.lat, source_branches.c.lon).where(

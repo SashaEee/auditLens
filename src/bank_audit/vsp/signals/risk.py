@@ -165,10 +165,15 @@ def stories_from(recs, llm: dict[str, dict], rule_cases: list[dict]) -> tuple[li
             if fault not in STAFF:                       # политика банка, третьи лица — не про отделение
                 continue
             acts = [a for a in (d.get("actions") or []) if a in ACTIONS] or ["другое"]
+            emp = (d.get("employee_name") or "").strip()
+            low = (r.text or "").lower().replace("ё", "е")
+            if emp.lower() in ("null", "none", "нет", "-") or not all(
+                    w.lower().replace("ё", "е")[:4] in low for w in emp.split()[:2]):
+                emp = ""                                     # имя должно быть в самом отзыве
             out.append(_story(r, severity=int(d.get("severity") or 0), fault=fault, actions=acts,
                               quote=d.get("quote") or "", quote_ok=bool(d.get("quote_ok")),
                               episode=d.get("episode") or "", scheme=d.get("scheme_free") or "",
-                              vulnerable=bool(d.get("vulnerability")), employee=d.get("employee_name") or "",
+                              vulnerable=bool(d.get("vulnerability")), employee=emp,
                               money=d.get("money_rub"), products=d.get("products") or [], source="модель",
                               intermediary="посредник" in acts))
         return out, "модель"
@@ -408,8 +413,9 @@ def react_list(stories: list[dict], *, now: datetime, days: int = 14) -> list[di
     cut = now - timedelta(days=days)
     xs = [s for s in stories if s["severity"] >= 3 and s["at"] >= cut and s.get("quote_ok", True)]
     xs.sort(key=lambda s: s["at"], reverse=True)
-    return [{"rid": s["rid"], "point": s["point"], "quote": s["quote"], "date": _date(s["at"]),
-             "action": ACTIONS.get(s["actions"][0], ACTIONS["другое"])["label"]} for s in xs[:10]]
+    return [{"rid": s["rid"], "point": s["point"], "gosb": s.get("gosb"), "subject": s.get("subject"),
+             "quote": s["quote"], "date": _date(s["at"]),
+             "action": ACTIONS.get(s["actions"][0], ACTIONS["другое"])["label"]} for s in xs[:300]]
 
 
 def peer_norms(rows: list[dict], recs, stories: list[dict], *, now: datetime) -> dict[str, dict]:
@@ -433,12 +439,14 @@ def peer_norms(rows: list[dict], recs, stories: list[dict], *, now: datetime) ->
     by: dict[str, list] = defaultdict(list)
     for row in rows:
         p, g = row["point"], row["detail"].get("gosb")
-        if g and n24[p] >= MIN_DATA_2Y:
-            by[g].append((n12[p], neg12[p] / n12[p] if n12[p] else 0.0, 100 * heavy[p] / n24[p]))
+        if g and n24[p] >= MIN_DATA_2Y and row["detail"].get("status") in (None, "active"):
+            # доля жалоб — только где за год 10+ оценок, иначе доля из 1–2 отзывов шумит
+            by[g].append((n12[p], neg12[p] / n12[p] if n12[p] >= MIN_DATA_2Y else None, 100 * heavy[p] / n24[p]))
     out = {}
     for g, xs in by.items():
+        negs = [x[1] for x in xs if x[1] is not None]
         out[g] = {"points": len(xs), "n_12m": statistics.median(x[0] for x in xs),
-                  "neg_share": round(statistics.median(x[1] for x in xs), 3),
+                  "neg_share": round(statistics.median(negs), 3) if negs else None,
                   "heavy_per100": round(statistics.median(x[2] for x in xs), 2)}
     return out
 

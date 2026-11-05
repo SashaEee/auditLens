@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 ee86fa86262299a863f2091d8986c4d9cfdd055963114d8830bc3b73a0fa0af9): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 c6655fb83e25800733d8bc9a9d39c738d42ceacce6b07698a2ca1b85fbce4fba): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -20647,10 +20647,11 @@ function VMap({
   }, legend));
 }
 
-// ── общие мелочи: типы историй, локальные настройки, план проверки ───────────
-const V_ACTS = [["оформление_без_согласия", "без согласия"], ["подмена_продукта", "подмена продукта"], ["ложь_об_обязательности", "«без этого не дадим»"], ["обусловливание", "услуга как условие"], ["наказание_за_отказ", "наказание за отказ"], ["ложь_об_условиях", "другие условия"], ["доступ_к_телефону_или_аккаунту", "телефон клиента"], ["биометрия", "биометрия"], ["касса_недостача_или_чужой_платеж", "касса"], ["оглашение_или_утечка_данных", "утечка данных"], ["отказ_в_жалобе_или_давление", "жалобу не приняли"], ["блат_очередь", "по знакомству"], ["посредник", "посредник"], ["накрутка_продаж", "для плана"], ["операционная_ошибка", "ошибка операции"], ["навязывание_без_оформления", "навязывание"]];
+// ── общие мелочи: типы историй, загрузка, настройки, план проверки ───────────
+const V_ACTS = [["оформление_без_согласия", "без согласия"], ["подмена_продукта", "подмена продукта"], ["ложь_об_обязательности", "«без этого не дадим»"], ["обусловливание", "услуга как условие"], ["наказание_за_отказ", "наказание за отказ"], ["ложь_об_условиях", "другие условия"], ["доступ_к_телефону_или_аккаунту", "телефон клиента"], ["биометрия", "биометрия"], ["касса_недостача_или_чужой_платеж", "касса"], ["оглашение_или_утечка_данных", "утечка данных"], ["отказ_в_жалобе_или_давление", "жалобу не приняли"], ["блат_очередь", "по знакомству"], ["посредник", "посредник"], ["накрутка_продаж", "для плана"], ["операционная_ошибка", "ошибка операции"], ["навязывание_без_оформления", "навязывание"], ["другое", "другая история"]];
 const vX = x => x == null ? "—" : String(x).replace(".", ",");
-const vSrc = s => s === "2gis" ? "2ГИС" : s === "yandex" ? "Яндекс Карты" : s || "";
+const vSrc = s => s === "2gis" ? "2ГИС" : s === "yandex" ? "Яндекс Карты" : s || "площадка";
+const vTimes = r => Number.isInteger(r) ? vPl(r, "раз", "раза", "раз") : "раза";
 function vLS(k, d) {
   try {
     const v = localStorage.getItem(k);
@@ -20671,6 +20672,50 @@ function vEnter(fn) {
       fn();
     }
   };
+}
+// загрузка с защитой от опоздавших ответов: показываем только ответ на последний запрос
+function useVFetch(url) {
+  const [d, setD] = useState(null);
+  useEffect(() => {
+    if (!url) {
+      setD(null);
+      return;
+    }
+    let alive = true;
+    setD(null);
+    apiFetch(url).then(x => {
+      if (alive) setD(x);
+    }).catch(e => {
+      if (alive) setD({
+        err: String(e)
+      });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [url]);
+  return d;
+}
+const VEv = createContext({
+  open: () => {}
+}); // открыть «Проверку истории» из любого места
+
+// ссылка на оригинал: у площадок нет ссылки на отдельный отзыв — открываем отзывы отделения
+function VSrcLink({
+  src,
+  url,
+  date,
+  label
+}) {
+  if (!url) return null;
+  return /*#__PURE__*/React.createElement("a", {
+    className: "vlink",
+    href: url,
+    target: "_blank",
+    rel: "noopener noreferrer",
+    title: `Страница отзывов отделения на ${vSrc(src)}${date ? ` — отзыв от ${date}` : ""}`,
+    onClick: e => e.stopPropagation()
+  }, label || `Оригинал на ${vSrc(src)}`, " \u2197");
 }
 
 // план проверки — отделения, отложенные для выезда; хранится в этом браузере
@@ -20712,12 +20757,12 @@ function VPlanBtn({
     onKeyDown: e => e.stopPropagation()
   }, on ? "В плане ✓" : "В план");
 }
-function VPlanPanel({
-  plan,
+function VPanel({
+  label,
   onClose,
-  openPoint
+  children,
+  wide
 }) {
-  const pts = plan.plan.map(x => x.point).join(",");
   useEffect(() => {
     const k = e => {
       if (e.key === "Escape") onClose();
@@ -20729,10 +20774,22 @@ function VPlanPanel({
     className: "vpanel",
     role: "dialog",
     "aria-modal": "true",
-    "aria-label": "\u041F\u043B\u0430\u043D \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438",
+    "aria-label": label,
     onClick: onClose
   }, /*#__PURE__*/React.createElement("div", {
+    className: wide ? "vpanel-wide" : "",
     onClick: e => e.stopPropagation()
+  }, children));
+}
+function VPlanPanel({
+  plan,
+  onClose,
+  openPoint
+}) {
+  const pts = plan.plan.map(x => x.point).join(",");
+  return /*#__PURE__*/React.createElement(VPanel, {
+    label: "\u041F\u043B\u0430\u043D \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438",
+    onClose: onClose
   }, /*#__PURE__*/React.createElement("div", {
     className: "row"
   }, /*#__PURE__*/React.createElement("h2", {
@@ -20791,7 +20848,143 @@ function VPlanPanel({
     onClick: plan.clear
   }, "\u041E\u0447\u0438\u0441\u0442\u0438\u0442\u044C"))) : /*#__PURE__*/React.createElement("div", {
     className: "vempty"
-  }, "\u041F\u043E\u043A\u0430 \u043F\u0443\u0441\u0442\u043E. \u0414\u043E\u0431\u0430\u0432\u043B\u044F\u0439\u0442\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u043A\u043D\u043E\u043F\u043A\u043E\u0439 \xAB\u0412 \u043F\u043B\u0430\u043D\xBB \u2014 \u0432 \u0441\u043F\u0438\u0441\u043A\u0435, \u0432 \u0442\u0430\u0431\u043B\u0438\u0446\u0435 \u0438\u043B\u0438 \u0432 \u0434\u043E\u0441\u044C\u0435.")));
+  }, "\u041F\u043E\u043A\u0430 \u043F\u0443\u0441\u0442\u043E. \u0414\u043E\u0431\u0430\u0432\u043B\u044F\u0439\u0442\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u043A\u043D\u043E\u043F\u043A\u043E\u0439 \xAB\u0412 \u043F\u043B\u0430\u043D\xBB \u2014 \u0432 \u0441\u043F\u0438\u0441\u043A\u0435, \u0432 \u0442\u0430\u0431\u043B\u0438\u0446\u0435 \u0438\u043B\u0438 \u0432 \u0434\u043E\u0441\u044C\u0435."));
+}
+
+// ── «Проверка истории»: полный отзыв, что увидела модель, проверки кодом ─────
+function VHighlight({
+  text,
+  quote
+}) {
+  if (!quote) return /*#__PURE__*/React.createElement(React.Fragment, null, text);
+  const n = s => s.toLowerCase().replace(/ё/g, "е");
+  const q = quote.trim().replace(/^[«"“„]+|[»"”.…]+$/g, "").slice(0, 120);
+  const i = q.length >= 8 ? n(text).indexOf(n(q)) : -1;
+  if (i < 0) return /*#__PURE__*/React.createElement(React.Fragment, null, text);
+  let j = i + q.length;
+  const full = n(quote.trim().replace(/^[«"“„]+|[»"”.…]+$/g, ""));
+  if (full.length > q.length && n(text).slice(i, i + full.length) === full) j = i + full.length;
+  return /*#__PURE__*/React.createElement(React.Fragment, null, text.slice(0, i), /*#__PURE__*/React.createElement("mark", {
+    className: "vq"
+  }, text.slice(i, j)), text.slice(j));
+}
+function VEvidencePanel({
+  rid,
+  onClose,
+  openPoint
+}) {
+  const d = useVFetch(`/api/vsp/evidence/${encodeURIComponent(rid)}`);
+  const [copied, setCopied] = useState(false);
+  const r = d && !d.err ? d.review : null;
+  const m = d && d.model;
+  const copy = () => {
+    try {
+      navigator.clipboard.writeText((r && r.text || "").slice(0, 60));
+      setCopied(true);
+    } catch (e) {}
+  };
+  return /*#__PURE__*/React.createElement(VPanel, {
+    label: "\u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0430 \u0438\u0441\u0442\u043E\u0440\u0438\u0438",
+    onClose: onClose,
+    wide: true
+  }, !d ? /*#__PURE__*/React.createElement(Skel, {
+    h: 320
+  }) : d.err ? /*#__PURE__*/React.createElement(ErrState, {
+    msg: "\u041E\u0442\u0437\u044B\u0432 \u043D\u0435 \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u043B\u0441\u044F"
+  }) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      alignItems: "flex-start"
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "eyebrow"
+  }, "\u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0430 \u0438\u0441\u0442\u043E\u0440\u0438\u0438"), /*#__PURE__*/React.createElement("h2", {
+    className: "vh2",
+    style: {
+      margin: "2px 0"
+    }
+  }, vPlace(d.place)), /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, vCode(d.place), d.place && d.place.gosb ? ` · ГОСБ ${d.place.gosb}` : "", d.place && d.place.subject_name ? ` · ${d.place.subject_name}` : "")), /*#__PURE__*/React.createElement("span", {
+    className: "sp"
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "vx",
+    "aria-label": "\u0417\u0430\u043A\u0440\u044B\u0442\u044C",
+    onClick: onClose
+  }, "\u2715")), /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      gap: 8,
+      flexWrap: "wrap",
+      margin: "10px 0 4px"
+    }
+  }, d.point && /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost vsm",
+    onClick: () => {
+      onClose();
+      openPoint(d.point);
+    }
+  }, "\u0414\u043E\u0441\u044C\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u2192"), r.url && /*#__PURE__*/React.createElement("a", {
+    className: "btn btn-ghost vsm",
+    href: r.url,
+    target: "_blank",
+    rel: "noopener noreferrer"
+  }, "\u041E\u0440\u0438\u0433\u0438\u043D\u0430\u043B \u043D\u0430 ", vSrc(r.source), " \u2197"), r.url && /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost vsm",
+    onClick: copy
+  }, copied ? "Скопировано" : "Скопировать начало — для поиска на странице")), r.url && /*#__PURE__*/React.createElement("p", {
+    className: "note",
+    style: {
+      margin: "2px 0 12px"
+    }
+  }, "\u0423 \u043F\u043B\u043E\u0449\u0430\u0434\u043E\u043A \u043D\u0435\u0442 \u0441\u0441\u044B\u043B\u043A\u0438 \u043D\u0430 \u043E\u0442\u0434\u0435\u043B\u044C\u043D\u044B\u0439 \u043E\u0442\u0437\u044B\u0432: \u043E\u0442\u043A\u0440\u043E\u0435\u0442\u0441\u044F \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F. \u0418\u0449\u0438\u0442\u0435 \u043E\u0442\u0437\u044B\u0432 \u043E\u0442 ", vD(r.date), " \u2014 \u043F\u043E \u043D\u0430\u0447\u0430\u043B\u0443 \u0442\u0435\u043A\u0441\u0442\u0430."), /*#__PURE__*/React.createElement("section", {
+    className: "vev-review"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rm"
+  }, /*#__PURE__*/React.createElement("span", null, vD(r.date)), /*#__PURE__*/React.createElement("span", null, vSrc(r.source)), r.rating != null && /*#__PURE__*/React.createElement("span", null, "\u043E\u0446\u0435\u043D\u043A\u0430 ", r.rating), r.author_total === 1 && /*#__PURE__*/React.createElement("span", {
+    className: "flag"
+  }, "\u0430\u043A\u043A\u0430\u0443\u043D\u0442 \u0431\u0435\u0437 \u0434\u0440\u0443\u0433\u0438\u0445 \u043E\u0442\u0437\u044B\u0432\u043E\u0432"), r.author_total > 1 && /*#__PURE__*/React.createElement("span", {
+    className: "note"
+  }, "\u0443 \u0430\u0432\u0442\u043E\u0440\u0430 ", r.author_total, " ", vPl(r.author_total, "отзыв", "отзыва", "отзывов")), r.gone && /*#__PURE__*/React.createElement("span", {
+    className: "flag"
+  }, "\u0443\u0434\u0430\u043B\u0451\u043D \u0441 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0438"), r.reply && /*#__PURE__*/React.createElement("span", {
+    className: "flag"
+  }, "\u0431\u0430\u043D\u043A \u043E\u0442\u0432\u0435\u0442\u0438\u043B")), /*#__PURE__*/React.createElement("div", {
+    className: "vtext"
+  }, /*#__PURE__*/React.createElement(VHighlight, {
+    text: r.text || "",
+    quote: d.quote
+  })), d.quote && /*#__PURE__*/React.createElement("p", {
+    className: "note",
+    style: {
+      margin: "6px 0 0"
+    }
+  }, /*#__PURE__*/React.createElement("mark", {
+    className: "vq"
+  }, "\u0412\u044B\u0434\u0435\u043B\u0435\u043D\u043E"), " \u2014 \u0441\u043B\u043E\u0432\u0430 \u043A\u043B\u0438\u0435\u043D\u0442\u0430, \u043D\u0430 \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u043E\u043F\u0438\u0440\u0430\u0435\u0442\u0441\u044F \u0438\u0441\u0442\u043E\u0440\u0438\u044F.")), /*#__PURE__*/React.createElement("section", {
+    className: "sec"
+  }, /*#__PURE__*/React.createElement("h3", null, "\u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0438"), /*#__PURE__*/React.createElement("ul", {
+    className: "vchecks"
+  }, d.checks.map((c, i) => /*#__PURE__*/React.createElement("li", {
+    key: i,
+    className: c.ok === true ? "ok" : c.ok === false ? "bad" : ""
+  }, /*#__PURE__*/React.createElement("span", {
+    "aria-hidden": "true"
+  }, c.ok === true ? "✓" : c.ok === false ? "✕" : "•"), c.label)))), m ? /*#__PURE__*/React.createElement("section", {
+    className: "sec"
+  }, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0442\u043E \u0443\u0432\u0438\u0434\u0435\u043B\u0430 \u043C\u043E\u0434\u0435\u043B\u044C"), /*#__PURE__*/React.createElement("dl", {
+    className: "vdl"
+  }, m.what && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0427\u0442\u043E \u043F\u0440\u043E\u0438\u0437\u043E\u0448\u043B\u043E"), /*#__PURE__*/React.createElement("dd", null, m.what)), m.actions.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u0430"), /*#__PURE__*/React.createElement("dd", null, m.actions.join(", "))), m.products.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u041F\u0440\u043E\u0434\u0443\u043A\u0442"), /*#__PURE__*/React.createElement("dd", null, m.products.join(", "))), m.severity && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0422\u044F\u0436\u0435\u0441\u0442\u044C"), /*#__PURE__*/React.createElement("dd", null, m.severity)), m.fault && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0427\u044C\u044F \u0432\u0438\u043D\u0430, \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u0430"), /*#__PURE__*/React.createElement("dd", null, m.fault)), m.employee && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0421\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A"), /*#__PURE__*/React.createElement("dd", null, m.employee)), m.money ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0421\u0443\u043C\u043C\u0430"), /*#__PURE__*/React.createElement("dd", null, vN(m.money), " \u20BD")) : null, m.vulnerable && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u041A\u043B\u0438\u0435\u043D\u0442"), /*#__PURE__*/React.createElement("dd", null, "\u043F\u043E\u0436\u0438\u043B\u043E\u0439 \u0438\u043B\u0438 \u0443\u044F\u0437\u0432\u0438\u043C\u044B\u0439")), m.scheme && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0421\u0445\u0435\u043C\u0430 \u0441\u0432\u043E\u0438\u043C\u0438 \u0441\u043B\u043E\u0432\u0430\u043C\u0438"), /*#__PURE__*/React.createElement("dd", null, m.scheme)), m.other_vsp && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0414\u0440\u0443\u0433\u043E\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0435"), /*#__PURE__*/React.createElement("dd", null, m.other_vsp, " \u2014 \u0438\u0441\u0442\u043E\u0440\u0438\u044F \u043D\u0435 \u0437\u0430\u0441\u0447\u0438\u0442\u0430\u043D\u0430 \u044D\u0442\u043E\u043C\u0443 \u0412\u0421\u041F"))), /*#__PURE__*/React.createElement("p", {
+    className: "note"
+  }, "\u042D\u0442\u043E \u043F\u0435\u0440\u0435\u0441\u043A\u0430\u0437 \u043C\u043E\u0434\u0435\u043B\u0438 \u2014 \u0440\u0435\u0448\u0435\u043D\u0438\u0435 \u043F\u0440\u0438\u043D\u0438\u043C\u0430\u0439\u0442\u0435 \u043F\u043E \u0442\u0435\u043A\u0441\u0442\u0443 \u043E\u0442\u0437\u044B\u0432\u0430 \u0432\u044B\u0448\u0435.")) : d.screen ? /*#__PURE__*/React.createElement("section", {
+    className: "sec"
+  }, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0442\u043E \u0443\u0432\u0438\u0434\u0435\u043B\u0430 \u043C\u043E\u0434\u0435\u043B\u044C"), /*#__PURE__*/React.createElement("p", null, d.screen.relevant ? "На отборе: похоже на историю о нарушении" : "На отборе: не про нарушение в отделении", d.screen.why ? ` — ${d.screen.why}` : ""), /*#__PURE__*/React.createElement("p", {
+    className: "note"
+  }, "\u041F\u043E\u0434\u0440\u043E\u0431\u043D\u0443\u044E \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443 \u043C\u043E\u0434\u0435\u043B\u044C \u0435\u0449\u0451 \u043D\u0435 \u043D\u0430\u043F\u0438\u0441\u0430\u043B\u0430.")) : /*#__PURE__*/React.createElement("section", {
+    className: "sec"
+  }, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0442\u043E \u0443\u0432\u0438\u0434\u0435\u043B\u0430 \u043C\u043E\u0434\u0435\u043B\u044C"), /*#__PURE__*/React.createElement("p", {
+    className: "note"
+  }, "\u041C\u043E\u0434\u0435\u043B\u044C \u044D\u0442\u043E\u0442 \u043E\u0442\u0437\u044B\u0432 \u0435\u0449\u0451 \u043D\u0435 \u0447\u0438\u0442\u0430\u043B\u0430. \u0418\u0441\u0442\u043E\u0440\u0438\u044F \u043D\u0430\u0439\u0434\u0435\u043D\u0430 \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C."))));
 }
 
 // ── фильтры, общие для вкладок ───────────────────────────────────────────────
@@ -20802,7 +20995,9 @@ const V_F0 = {
   vulnerable: false,
   named: false,
   fresh: false,
-  fmt: ""
+  fmt: "",
+  severity: 0,
+  period: "730"
 };
 function VFilters({
   f,
@@ -20811,7 +21006,7 @@ function VFilters({
   show
 }) {
   const regions = useMemo(() => (tiles || []).filter(t => t.n > 0).slice().sort((a, b) => a.name.localeCompare(b.name, "ru")), [tiles]);
-  const any = f.subject || f.gosb || show.action && f.action || show.fmt && f.fmt || show.toggles && (f.vulnerable || f.named || f.fresh);
+  const any = f.subject || f.gosb || show.action && f.action || show.fmt && f.fmt || show.toggles && (f.vulnerable || f.named || f.fresh) || show.story && (f.severity || f.period !== "730");
   return /*#__PURE__*/React.createElement("div", {
     className: "vfil",
     role: "group",
@@ -20900,6 +21095,7 @@ function VRow({
   plan,
   onOpen
 }) {
+  const ev = useContext(VEv);
   const ppl = (x.people || []).filter(p => p.clients > 1).slice(0, 2);
   return /*#__PURE__*/React.createElement("div", {
     className: "vrow v2",
@@ -20913,7 +21109,7 @@ function VRow({
     on: x.red
   }), /*#__PURE__*/React.createElement("b", null, vPlace(x)), /*#__PURE__*/React.createElement("span", {
     className: "note"
-  }, vCode(x), x.gosb ? ` · ГОСБ ${x.gosb}` : ""), x.formats && (x.formats.sber_first || x.formats.private) && /*#__PURE__*/React.createElement("span", {
+  }, vCode(x), x.gosb ? ` · ГОСБ ${x.gosb}` : "", x.subject_name ? ` · ${x.subject_name}` : ""), x.formats && (x.formats.sber_first || x.formats.private) && /*#__PURE__*/React.createElement("span", {
     className: "chip"
   }, x.formats.private ? "Private Banking" : "СберПервый")), x.why.slice(0, 2).map((w, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
@@ -20922,7 +21118,14 @@ function VRow({
     className: "vrow-q"
   }, "\xAB", x.quote.text, "\xBB ", /*#__PURE__*/React.createElement("span", {
     className: "note"
-  }, "\xB7 ", x.quote.date)), /*#__PURE__*/React.createElement("div", {
+  }, "\xB7 ", x.quote.date), " ", /*#__PURE__*/React.createElement("button", {
+    className: "vlink",
+    onClick: e => {
+      e.stopPropagation();
+      ev.open(x.quote.rid);
+    },
+    onKeyDown: e => e.stopPropagation()
+  }, "\u043F\u043E\u043B\u043D\u044B\u0439 \u043E\u0442\u0437\u044B\u0432 \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0430")), /*#__PURE__*/React.createElement("div", {
     className: "note"
   }, "\u0423\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0441\u0442\u044C ", x.confidence.level, " \u2014 ", x.confidence.reason, ppl.length ? ` · называют: ${ppl.map(p => `${p.name} (${p.clients} ${vPl(p.clients, "клиент", "клиента", "клиентов")})`).join(", ")}` : "", x.benign && x.benign.text ? ` · может быть безобидно: ${x.benign.text}` : "")), plan ? /*#__PURE__*/React.createElement(VPlanBtn, {
     x: x,
@@ -20937,9 +21140,9 @@ function VReact({
   items,
   onOpen
 }) {
+  const ev = useContext(VEv);
   const [open, setOpen] = useState(false);
   if (!items || !items.length) return null;
-  const first = items[0];
   return /*#__PURE__*/React.createElement("section", {
     className: "vreact"
   }, /*#__PURE__*/React.createElement("div", {
@@ -20951,15 +21154,18 @@ function VReact({
   }), items.length > 1 && /*#__PURE__*/React.createElement("button", {
     className: "vmore",
     onClick: () => setOpen(!open)
-  }, open ? "Свернуть" : "Все")), (open ? items : [first]).map(x => /*#__PURE__*/React.createElement("button", {
+  }, open ? "Свернуть" : "Все")), (open ? items : items.slice(0, 1)).map(x => /*#__PURE__*/React.createElement("div", {
     key: x.rid,
-    className: "vreact-it",
+    className: "vreact-it"
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("button", {
+    className: "vlink strong",
     onClick: () => onOpen(x.point)
-  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, vPlace(x.place)), " \u2014 \xAB", x.quote, "\xBB ", /*#__PURE__*/React.createElement("span", {
+  }, vPlace(x.place)), " \u2014 \xAB", x.quote, "\xBB ", /*#__PURE__*/React.createElement("span", {
     className: "note"
-  }, "\xB7 ", x.date, " \xB7 ", x.action)), /*#__PURE__*/React.createElement("span", {
-    className: "vrow-go"
-  }, "\u2192"))));
+  }, "\xB7 ", x.date, " \xB7 ", x.action)), /*#__PURE__*/React.createElement("button", {
+    className: "vlink",
+    onClick: () => ev.open(x.rid)
+  }, "\u043F\u043E\u043B\u043D\u044B\u0439 \u043E\u0442\u0437\u044B\u0432 \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0430"))));
 }
 
 // ── сводка «за год» с типами историй — кликается как фильтр ─────────────────
@@ -20985,7 +21191,7 @@ function VSummary({
     key: a.key,
     className: "chip" + (f.action === a.key ? " on" : ""),
     "aria-pressed": f.action === a.key,
-    title: a.label,
+    title: `${a.label}: тяжёлых историй за год — ${a.n}`,
     onClick: () => setF({
       action: f.action === a.key ? "" : a.key
     })
@@ -21009,7 +21215,7 @@ function VSummary({
     style: {
       margin: 0
     }
-  }, "\u041D\u0430\u0436\u043C\u0438\u0442\u0435 \u043D\u0430 \u0442\u0438\u043F \u2014 \u0441\u043F\u0438\u0441\u043E\u043A, \u0442\u0430\u0431\u043B\u0438\u0446\u0430 \u0438 \u043A\u0430\u0440\u0442\u0430 \u043D\u0438\u0436\u0435 \u043F\u043E\u043A\u0430\u0436\u0443\u0442 \u0442\u043E\u043B\u044C\u043A\u043E \u0442\u0430\u043A\u0438\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F."));
+  }, "\u041D\u0430\u0436\u043C\u0438\u0442\u0435 \u043D\u0430 \u0442\u0438\u043F \u2014 \u0441\u043F\u0438\u0441\u043E\u043A \u043D\u0438\u0436\u0435 \u043E\u0441\u0442\u0430\u0432\u0438\u0442 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F, \u0433\u0434\u0435 \u0437\u0430 \u0433\u043E\u0434 \u0431\u044B\u043B\u0438 \u0442\u0430\u043A\u0438\u0435 \u0442\u044F\u0436\u0451\u043B\u044B\u0435 \u0438\u0441\u0442\u043E\u0440\u0438\u0438. \u041A\u0430\u0440\u0442\u0430 \u0438 \u0442\u0430\u0431\u043B\u0438\u0446\u0430 \u0413\u041E\u0421\u0411 \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u044E\u0442 \u0432\u0441\u044E \u043A\u0430\u0440\u0442\u0438\u043D\u0443."));
 }
 function VGosbTable({
   rows,
@@ -21025,7 +21231,8 @@ function VGosbTable({
   }, "\u0413\u041E\u0421\u0411"), /*#__PURE__*/React.createElement("div", {
     className: "vempty"
   }, "\u041D\u0435\u0442 \u0434\u0430\u043D\u043D\u044B\u0445 \u043F\u043E \u0413\u041E\u0421\u0411"));
-  const shown = all ? rows : rows.slice(0, 8);
+  const top = rows.slice(0, 8);
+  const shown = all ? rows : f.gosb && !top.some(r => r.gosb === f.gosb) ? [...top, ...rows.filter(r => r.gosb === f.gosb)] : top;
   const pick = g => setF({
     gosb: f.gosb === g ? "" : g
   });
@@ -21069,7 +21276,7 @@ function VGosbTable({
     onClick: () => setAll(!all)
   }, all ? "Свернуть" : `Все ГОСБ (${rows.length})`), /*#__PURE__*/React.createElement("p", {
     className: "note"
-  }, "\u041D\u0430\u0436\u043C\u0438\u0442\u0435 \u043D\u0430 \u0441\u0442\u0440\u043E\u043A\u0443 \u2014 \u0441\u043F\u0438\u0441\u043E\u043A \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439 \u043F\u043E\u043A\u0430\u0436\u0435\u0442 \u0442\u043E\u043B\u044C\u043A\u043E \u044D\u0442\u043E\u0442 \u0413\u041E\u0421\u0411. \xAB\u041D\u0430 100 \u043E\u0442\u0437\u044B\u0432\u043E\u0432\xBB \u2014 \u0435\u0441\u043B\u0438 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u0437\u0430 \u0433\u043E\u0434 50 \u0438 \u0431\u043E\u043B\u044C\u0448\u0435."));
+  }, "\u041D\u0430\u0436\u043C\u0438\u0442\u0435 \u043D\u0430 \u0441\u0442\u0440\u043E\u043A\u0443 \u2014 \u0441\u043F\u0438\u0441\u043E\u043A \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439 \u043F\u043E\u043A\u0430\u0436\u0435\u0442 \u0442\u043E\u043B\u044C\u043A\u043E \u044D\u0442\u043E\u0442 \u0413\u041E\u0421\u0411, \u0432\u0442\u043E\u0440\u043E\u0439 \u043A\u043B\u0438\u043A \u0441\u043D\u0438\u043C\u0435\u0442 \u0432\u044B\u0431\u043E\u0440. \xAB\u041D\u0430 100 \u043E\u0442\u0437\u044B\u0432\u043E\u0432\xBB \u2014 \u0442\u044F\u0436\u0451\u043B\u044B\u0435 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u0437\u0430 \u0433\u043E\u0434 \u043D\u0430 100 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u0437\u0430 \u0433\u043E\u0434, \u0435\u0441\u043B\u0438 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 50 \u0438 \u0431\u043E\u043B\u044C\u0448\u0435."));
 }
 
 // ── таблица: все отделения с историями, сортировка по столбцам ───────────────
@@ -21078,9 +21285,10 @@ function VTable({
   openPoint,
   plan
 }) {
-  const [sort, setSort] = useState("heavy");
-  const [d, setD] = useState(null);
+  const [sort, setSort] = useState(() => vLS("vsp_tsort", "heavy"));
   const [lim, setLim] = useState(50);
+  const [items, setItems] = useState([]);
+  const [busy, setBusy] = useState(false);
   const qs = vQS({
     subject: f.subject,
     gosb: f.gosb,
@@ -21091,20 +21299,35 @@ function VTable({
     period: f.fresh ? "90" : "730",
     sort
   });
+  const d = useVFetch("/api/vsp/table?" + qs + "&limit=300");
+  const gen = useRef(0);
   useEffect(() => {
-    setD(null);
+    gen.current++;
     setLim(50);
-    apiFetch("/api/vsp/table?" + qs).then(setD).catch(() => setD({
-      err: 1
-    }));
-  }, [qs]);
+    setItems(d && !d.err ? d.items : []);
+  }, [d]);
+  const setS = k => {
+    setSort(k);
+    vLSset("vsp_tsort", k);
+  };
+  const more = () => {
+    const n = lim + 50;
+    setLim(n);
+    if (n > items.length && items.length < d.total && !busy) {
+      const g = gen.current;
+      setBusy(true);
+      apiFetch(`/api/vsp/table?${qs}&limit=300&offset=${items.length}`).then(x => {
+        if (g === gen.current) setItems(a => [...a, ...x.items]);
+      }).catch(() => {}).finally(() => setBusy(false));
+    }
+  };
   if (!d) return /*#__PURE__*/React.createElement(Skel, {
     h: 300
   });
   if (d.err) return /*#__PURE__*/React.createElement(ErrState, {
     msg: "\u0422\u0430\u0431\u043B\u0438\u0446\u0430 \u043D\u0435 \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u043B\u0430\u0441\u044C"
   });
-  if (!d.items.length) return /*#__PURE__*/React.createElement("div", {
+  if (!d.total) return /*#__PURE__*/React.createElement("div", {
     className: "vempty"
   }, "\u0418\u0441\u0442\u043E\u0440\u0438\u0439 \u0441 \u0442\u0430\u043A\u0438\u043C\u0438 \u0443\u0441\u043B\u043E\u0432\u0438\u044F\u043C\u0438 \u043D\u0435\u0442.");
   const th = (k, l, t) => /*#__PURE__*/React.createElement("th", {
@@ -21113,7 +21336,7 @@ function VTable({
     title: t
   }, /*#__PURE__*/React.createElement("button", {
     className: "vth" + (sort === k ? " on" : ""),
-    onClick: () => setSort(k)
+    onClick: () => setS(k)
   }, l, sort === k ? " ↓" : ""));
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("p", {
     className: "note"
@@ -21121,7 +21344,7 @@ function VTable({
     className: "tbl-wrap"
   }, /*#__PURE__*/React.createElement("table", {
     className: "vtbl"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u041E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0435"), th("heavy", "Тяжёлых", "Тяжёлых историй"), th("clients", "Клиентов", "Разных клиентов с тяжёлыми историями"), th("per100", "На 100 отзывов", "Тяжёлых историй на 100 отзывов за 2 года"), th("last", "Последняя", "Дата последней истории"), th("vulnerable", "Пожилые", "Истории пожилых и уязвимых клиентов"), th("named", "Есть имя", "Истории, где назван сотрудник"), th("signals", "Признаков", "Сколько независимых признаков сошлось"), /*#__PURE__*/React.createElement("th", null, "\u0427\u0442\u043E \u0447\u0430\u0449\u0435"), /*#__PURE__*/React.createElement("th", null))), /*#__PURE__*/React.createElement("tbody", null, d.items.slice(0, lim).map(r => /*#__PURE__*/React.createElement("tr", {
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u041E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0435"), th("heavy", "Тяжёлых", "Тяжёлых историй за период"), th("clients", "Клиентов", "Разных клиентов с тяжёлыми историями"), th("per100", "На 100 отзывов", "Тяжёлых историй за 2 года на 100 отзывов за 2 года"), th("last", "Последняя", "Дата последней истории"), th("vulnerable", "Пожилые", "Истории пожилых и уязвимых клиентов"), th("named", "Есть имя", "Истории, где назван сотрудник"), th("signals", "Признаков", "Сколько независимых признаков сошлось"), /*#__PURE__*/React.createElement("th", null, "\u0427\u0442\u043E \u0447\u0430\u0449\u0435"), /*#__PURE__*/React.createElement("th", null))), /*#__PURE__*/React.createElement("tbody", null, items.slice(0, lim).map(r => /*#__PURE__*/React.createElement("tr", {
     key: r.point,
     className: "click",
     tabIndex: 0,
@@ -21151,17 +21374,18 @@ function VTable({
     x: r,
     plan: plan,
     small: true
-  }))))))), d.items.length > lim && /*#__PURE__*/React.createElement("div", {
+  }))))))), Math.min(lim, items.length) < d.total && /*#__PURE__*/React.createElement("div", {
     style: {
       textAlign: "center",
       margin: "10px 0"
     }
   }, /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost",
-    onClick: () => setLim(lim + 50)
-  }, "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0435\u0449\u0451")), /*#__PURE__*/React.createElement("p", {
+    disabled: busy,
+    onClick: more
+  }, busy ? "Загружаю…" : `Показать ещё (показано ${vN(Math.min(lim, items.length))} из ${vN(d.total)})`)), /*#__PURE__*/React.createElement("p", {
     className: "note"
-  }, "\xAB\u041D\u0430 100 \u043E\u0442\u0437\u044B\u0432\u043E\u0432\xBB \u0441\u0447\u0438\u0442\u0430\u0435\u043C, \u0435\u0441\u043B\u0438 \u0443 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u0437\u0430 2 \u0433\u043E\u0434\u0430 10 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u0438 \u0431\u043E\u043B\u044C\u0448\u0435."));
+  }, "\xAB\u041D\u0430 100 \u043E\u0442\u0437\u044B\u0432\u043E\u0432\xBB \u2014 \u0442\u044F\u0436\u0451\u043B\u044B\u0435 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u0437\u0430 2 \u0433\u043E\u0434\u0430 \u043D\u0430 100 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u0437\u0430 2 \u0433\u043E\u0434\u0430; \u0441\u0447\u0438\u0442\u0430\u0435\u043C, \u0435\u0441\u043B\u0438 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 10 \u0438 \u0431\u043E\u043B\u044C\u0448\u0435."));
 }
 
 // ── «Отделения»: реакция, сводка, карта + ГОСБ, список или таблица ──────────
@@ -21171,7 +21395,6 @@ function VspHome3({
   openPoint,
   plan
 }) {
-  const [d, setD] = useState(null);
   const [view, setViewS] = useState(() => vLS("vsp_view", "list"));
   const [lim, setLim] = useState(30);
   const setView = v => {
@@ -21187,13 +21410,8 @@ function VspHome3({
     fresh: f.fresh,
     fmt: f.fmt
   });
-  useEffect(() => {
-    setD(null);
-    setLim(30);
-    apiFetch("/api/vsp/home?" + qs).then(setD).catch(e => setD({
-      err: String(e)
-    }));
-  }, [qs]);
+  const d = useVFetch("/api/vsp/home?" + qs);
+  useEffect(() => setLim(30), [qs]);
   if (!d) return /*#__PURE__*/React.createElement(Skel, {
     h: 500
   });
@@ -21203,6 +21421,15 @@ function VspHome3({
   const subj = f.subject ? (d.tiles.find(t => t.code === f.subject) || {}).name : null;
   const scope = [subj, f.gosb ? `ГОСБ ${f.gosb}` : null].filter(Boolean).join(" · ");
   const val = t => t.few && !t.n ? null : t.share == null ? null : Math.min(1, 0.08 + t.share * 4.5);
+  const just = "/api/vsp/export/justification.xlsx?" + vQS({
+    subject: f.subject,
+    gosb: f.gosb,
+    action: f.action,
+    vulnerable: f.vulnerable,
+    named: f.named,
+    fresh: f.fresh,
+    fmt: f.fmt
+  });
   return /*#__PURE__*/React.createElement("div", {
     className: "view",
     style: {
@@ -21214,7 +21441,7 @@ function VspHome3({
     style: {
       fontSize: 13.5
     }
-  }, "\u041F\u0440\u0435\u0434\u0432\u0430\u0440\u0438\u0442\u0435\u043B\u044C\u043D\u043E: \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u043F\u043E\u043A\u0430 \u043D\u0430\u0439\u0434\u0435\u043D\u044B \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C. \u041C\u043E\u0434\u0435\u043B\u044C \u0447\u0438\u0442\u0430\u0435\u0442 \u0432\u0441\u0435 \u043E\u0442\u0437\u044B\u0432\u044B \u2014 \u043A \u0443\u0442\u0440\u0443 \u0441\u043F\u0438\u0441\u043E\u043A \u0441\u0442\u0430\u043D\u0435\u0442 \u0442\u043E\u0447\u043D\u0435\u0435."), /*#__PURE__*/React.createElement(VReact, {
+  }, "\u041F\u0440\u0435\u0434\u0432\u0430\u0440\u0438\u0442\u0435\u043B\u044C\u043D\u043E: \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u043F\u043E\u043A\u0430 \u043D\u0430\u0439\u0434\u0435\u043D\u044B \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C. \u041C\u043E\u0434\u0435\u043B\u044C \u0447\u0438\u0442\u0430\u0435\u0442 \u0432\u0441\u0435 \u043E\u0442\u0437\u044B\u0432\u044B \u2014 \u0441\u043F\u0438\u0441\u043E\u043A \u0441\u0442\u0430\u043D\u0435\u0442 \u0442\u043E\u0447\u043D\u0435\u0435 \u043F\u043E \u0445\u043E\u0434\u0443 \u0447\u0442\u0435\u043D\u0438\u044F."), /*#__PURE__*/React.createElement(VReact, {
     items: d.react,
     onOpen: openPoint
   }), /*#__PURE__*/React.createElement(VSummary, {
@@ -21278,7 +21505,7 @@ function VspHome3({
       }
     }), "\u043C\u0430\u043B\u043E \u0434\u0430\u043D\u043D\u044B\u0445"), /*#__PURE__*/React.createElement("span", {
       className: "note"
-    }, "\u041A\u0430\u0440\u0442\u0430 \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0435\u0442, \u0433\u0434\u0435 \u0438\u0441\u043A\u0430\u0442\u044C, \u0430 \u043D\u0435 \u0433\u0434\u0435 \u0445\u0443\u0436\u0435. \u041D\u0430\u0436\u043C\u0438\u0442\u0435 \u043D\u0430 \u0440\u0435\u0433\u0438\u043E\u043D \u2014 \u0432\u0441\u0451 \u043D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435 \u043E\u0442\u0444\u0438\u043B\u044C\u0442\u0440\u0443\u0435\u0442\u0441\u044F."))
+    }, "\u041A\u0430\u0440\u0442\u0430 \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0435\u0442, \u0433\u0434\u0435 \u0438\u0441\u043A\u0430\u0442\u044C, \u0430 \u043D\u0435 \u0433\u0434\u0435 \u0445\u0443\u0436\u0435. \u041D\u0430\u0436\u043C\u0438\u0442\u0435 \u043D\u0430 \u0440\u0435\u0433\u0438\u043E\u043D \u2014 \u0432\u043A\u043B\u0430\u0434\u043A\u0438 \u043E\u0442\u0444\u0438\u043B\u044C\u0442\u0440\u0443\u044E\u0442\u0441\u044F \u043F\u043E \u043D\u0435\u043C\u0443."))
   })), /*#__PURE__*/React.createElement(VGosbTable, {
     rows: d.gosb_table,
     f: f,
@@ -21315,13 +21542,12 @@ function VspHome3({
     onClick: () => setView("table")
   }, "\u0412\u0441\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F")), /*#__PURE__*/React.createElement("a", {
     className: "btn btn-ghost",
-    href: "/api/vsp/export/justification.xlsx?" + vQS({
-      subject: f.subject
-    }),
-    download: true
+    href: just,
+    download: true,
+    title: "\u041E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u0438\u0437 \u0441\u043F\u0438\u0441\u043A\u0430 \u0441 \u0443\u0447\u0451\u0442\u043E\u043C \u0432\u044B\u0431\u0440\u0430\u043D\u043D\u044B\u0445 \u0444\u0438\u043B\u044C\u0442\u0440\u043E\u0432"
   }, "\u0421\u043A\u0430\u0447\u0430\u0442\u044C \u043E\u0431\u043E\u0441\u043D\u043E\u0432\u0430\u043D\u0438\u0435")), d.filtered && view === "list" && /*#__PURE__*/React.createElement("p", {
     className: "note"
-  }, "\u0424\u0438\u043B\u044C\u0442\u0440: \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u0438\u0437 \u0441\u043F\u0438\u0441\u043A\u0430, \u0433\u0434\u0435 \u0435\u0441\u0442\u044C \u0442\u0430\u043A\u0438\u0435 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u0437\u0430 ", f.fresh ? "3 месяца" : "2 года", "."), view === "list" ? /*#__PURE__*/React.createElement(React.Fragment, null, d.list.length ? /*#__PURE__*/React.createElement("div", {
+  }, "\u0424\u0438\u043B\u044C\u0442\u0440: \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u0438\u0437 \u0441\u043F\u0438\u0441\u043A\u0430, \u0433\u0434\u0435 \u0437\u0430 ", f.fresh ? "3 месяца" : "год", " \u0435\u0441\u0442\u044C \u0442\u0430\u043A\u0438\u0435 \u0442\u044F\u0436\u0451\u043B\u044B\u0435 \u0438\u0441\u0442\u043E\u0440\u0438\u0438."), view === "list" ? /*#__PURE__*/React.createElement(React.Fragment, null, d.list.length ? /*#__PURE__*/React.createElement("div", {
     className: "vlist"
   }, d.list.slice(0, lim).map(x => /*#__PURE__*/React.createElement(VRow, {
     key: x.point,
@@ -21357,6 +21583,8 @@ function VStory({
   openPoint,
   noPlace
 }) {
+  const ev = useContext(VEv);
+  const verbatim = s.quote_ok !== false;
   return /*#__PURE__*/React.createElement("div", {
     className: "rev vstory"
   }, /*#__PURE__*/React.createElement("div", {
@@ -21373,18 +21601,28 @@ function VStory({
     className: "flag"
   }, vN(s.money), " \u20BD") : null, s.rating != null && /*#__PURE__*/React.createElement("span", {
     className: "note"
-  }, "\u043E\u0446\u0435\u043D\u043A\u0430 ", s.rating)), /*#__PURE__*/React.createElement("div", null, "\xAB", q ? /*#__PURE__*/React.createElement(VMark, {
+  }, "\u043E\u0446\u0435\u043D\u043A\u0430 ", s.rating), s.src && /*#__PURE__*/React.createElement("span", {
+    className: "note"
+  }, vSrc(s.src))), verbatim ? /*#__PURE__*/React.createElement("div", null, "\xAB", q ? /*#__PURE__*/React.createElement(VMark, {
     text: s.quote || "",
     q: q
-  }) : s.quote, "\xBB"), s.episode && /*#__PURE__*/React.createElement("div", {
+  }) : s.quote, "\xBB") : /*#__PURE__*/React.createElement("div", {
     className: "note"
-  }, "\u041F\u0435\u0440\u0435\u0441\u043A\u0430\u0437 \u0418\u0418, \u0441\u0432\u0435\u0440\u044C\u0442\u0435 \u0441 \u0446\u0438\u0442\u0430\u0442\u043E\u0439: ", s.episode), !noPlace && s.place && /*#__PURE__*/React.createElement("button", {
-    className: "vmore",
-    style: {
-      justifySelf: "start"
-    },
+  }, "\u041D\u0435 \u0434\u043E\u0441\u043B\u043E\u0432\u043D\u043E, \u043F\u0435\u0440\u0435\u0441\u043A\u0430\u0437: ", s.quote), s.episode && /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, "\u041F\u0435\u0440\u0435\u0441\u043A\u0430\u0437 \u0418\u0418, \u0441\u0432\u0435\u0440\u044C\u0442\u0435 \u0441 \u043E\u0442\u0437\u044B\u0432\u043E\u043C: ", s.episode), /*#__PURE__*/React.createElement("div", {
+    className: "vstory-f"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "vlink",
+    onClick: () => ev.open(s.rid)
+  }, "\u041F\u043E\u043B\u043D\u044B\u0439 \u043E\u0442\u0437\u044B\u0432 \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0430"), /*#__PURE__*/React.createElement(VSrcLink, {
+    src: s.src,
+    url: s.url,
+    date: s.date
+  }), !noPlace && s.place && /*#__PURE__*/React.createElement("button", {
+    className: "vlink",
     onClick: () => openPoint(s.point)
-  }, vPlace(s.place), s.place.gosb ? ` · ГОСБ ${s.place.gosb}` : "", " \u2192"));
+  }, vPlace(s.place), s.place.gosb ? ` · ГОСБ ${s.place.gosb}` : "", " \u2192")));
 }
 function VMonths({
   months,
@@ -21433,20 +21671,20 @@ function VspStories({
   setF,
   openPoint
 }) {
-  const [q, setQ] = useState("");
-  const [qd, setQd] = useState("");
-  const [sev, setSev] = useState(0);
-  const [period, setPeriod] = useState("730");
+  const [q, setQ] = useState(() => vLS("vsp_sq", ""));
+  const [qd, setQd] = useState(q.trim());
   const [sort, setSort] = useState("new");
   const [money, setMoney] = useState(false);
-  const [d, setD] = useState(null);
   const [items, setItems] = useState([]);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    const t = setTimeout(() => setQd(q.trim()), 350);
+    const t = setTimeout(() => {
+      setQd(q.trim());
+      vLSset("vsp_sq", q);
+    }, 350);
     return () => clearTimeout(t);
   }, [q]);
-  const per = f.fresh ? "90" : period;
+  const per = f.fresh ? "90" : f.period;
   const qs = vQS({
     subject: f.subject,
     gosb: f.gosb,
@@ -21454,24 +21692,25 @@ function VspStories({
     vulnerable: f.vulnerable,
     named: f.named,
     fmt: f.fmt,
-    severity: sev,
+    severity: f.severity,
     period: per,
     sort,
     money,
     q: qd
   });
+  const d = useVFetch("/api/vsp/stories?" + qs + "&limit=40");
+  const gen = useRef(0);
   useEffect(() => {
-    setD(null);
-    apiFetch("/api/vsp/stories?" + qs + "&limit=40").then(x => {
-      setD(x);
-      setItems(x.items);
-    }).catch(() => setD({
-      err: 1
-    }));
-  }, [qs]);
+    gen.current++;
+    setItems(d && !d.err ? d.items : []);
+  }, [d]);
   const more = () => {
+    if (busy) return;
+    const g = gen.current;
     setBusy(true);
-    apiFetch(`/api/vsp/stories?${qs}&limit=40&offset=${items.length}`).then(x => setItems(a => [...a, ...x.items])).catch(() => {}).finally(() => setBusy(false));
+    apiFetch(`/api/vsp/stories?${qs}&limit=40&offset=${items.length}`).then(x => {
+      if (g === gen.current) setItems(a => [...a, ...x.items]);
+    }).catch(() => {}).finally(() => setBusy(false));
   };
   return /*#__PURE__*/React.createElement("div", {
     className: "view vst-layout"
@@ -21513,8 +21752,10 @@ function VspStories({
     "aria-label": "\u041F\u043E\u0438\u0441\u043A \u043F\u043E \u0438\u0441\u0442\u043E\u0440\u0438\u044F\u043C"
   })), /*#__PURE__*/React.createElement("select", {
     className: "vsel",
-    value: sev,
-    onChange: e => setSev(+e.target.value),
+    value: f.severity,
+    onChange: e => setF({
+      severity: +e.target.value
+    }),
     "aria-label": "\u0422\u044F\u0436\u0435\u0441\u0442\u044C"
   }, /*#__PURE__*/React.createElement("option", {
     value: 0
@@ -21526,7 +21767,9 @@ function VspStories({
     className: "vsel",
     value: per,
     disabled: f.fresh,
-    onChange: e => setPeriod(e.target.value),
+    onChange: e => setF({
+      period: e.target.value
+    }),
     "aria-label": "\u041F\u0435\u0440\u0438\u043E\u0434"
   }, /*#__PURE__*/React.createElement("option", {
     value: "90"
@@ -21574,7 +21817,7 @@ function VspStories({
     }
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, vN(d.total), " ", vPl(d.total, "история", "истории", "историй")), " ", /*#__PURE__*/React.createElement("span", {
     className: "note"
-  }, "\xB7 ", vN(d.points), " ", vPl(d.points, "отделение", "отделения", "отделений"), " \xB7 ", vN(d.clients), " \u0440\u0430\u0437\u043D\u044B\u0445 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432 \xB7 \u0442\u044F\u0436\u0451\u043B\u044B\u0445 ", vN(d.heavy))), /*#__PURE__*/React.createElement(VMonths, {
+  }, "\xB7 ", vN(d.points), " ", vPl(d.points, "отделение", "отделения", "отделений"), " \xB7 ", vN(d.clients), " ", vPl(d.clients, "клиент", "разных клиента", "разных клиентов"), " \xB7 \u0442\u044F\u0436\u0451\u043B\u044B\u0445 ", vN(d.heavy))), /*#__PURE__*/React.createElement(VMonths, {
     months: d.months,
     label: "\u0418\u0441\u0442\u043E\u0440\u0438\u0438 \u043F\u043E \u043C\u0435\u0441\u044F\u0446\u0430\u043C \u0437\u0430 2 \u0433\u043E\u0434\u0430"
   })), items.length ? /*#__PURE__*/React.createElement("div", {
@@ -21600,30 +21843,16 @@ function VspStories({
   }, busy ? "Загружаю…" : `Показать ещё (осталось ${vN(d.total - items.length)})`)))));
 }
 
-// ── «Люди»: сотрудники у разных клиентов, похвала от новых аккаунтов, посредники ──
+// ── «Люди»: сотрудники у разных клиентов, похвала рядом с жалобами, посредники ──
 function VPersonPanel({
   id,
   onClose
 }) {
-  const [d, setD] = useState(null);
-  useEffect(() => {
-    apiFetch(`/api/vsp/people/${id}`).then(setD).catch(() => setD({
-      err: 1
-    }));
-    const k = e => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", k);
-    return () => window.removeEventListener("keydown", k);
-  }, [id]);
-  return /*#__PURE__*/React.createElement("div", {
-    className: "vpanel",
-    role: "dialog",
-    "aria-modal": "true",
-    "aria-label": "\u041E\u0442\u0437\u044B\u0432\u044B \u0441 \u0438\u043C\u0435\u043D\u0435\u043C",
-    onClick: onClose
-  }, /*#__PURE__*/React.createElement("div", {
-    onClick: e => e.stopPropagation()
+  const d = useVFetch(`/api/vsp/people/${id}`);
+  return /*#__PURE__*/React.createElement(VPanel, {
+    label: "\u041E\u0442\u0437\u044B\u0432\u044B \u0441 \u0438\u043C\u0435\u043D\u0435\u043C",
+    onClose: onClose,
+    wide: true
   }, !d ? /*#__PURE__*/React.createElement(Skel, {
     h: 300
   }) : d.err ? /*#__PURE__*/React.createElement(ErrState, {
@@ -21637,7 +21866,7 @@ function VPersonPanel({
     }
   }, d.name), /*#__PURE__*/React.createElement("div", {
     className: "note"
-  }, vPlace(d.place), " \xB7 ", vN(d.n), " ", vPl(d.n, "отзыв", "отзыва", "отзывов"), " \xB7 ", vN(d.authors), " \u0440\u0430\u0437\u043D\u044B\u0445 \u0430\u0432\u0442\u043E\u0440\u043E\u0432")), /*#__PURE__*/React.createElement("span", {
+  }, vPlace(d.place), " \xB7 ", vN(d.n), " ", vPl(d.n, "отзыв", "отзыва", "отзывов"), " \xB7 ", vN(d.authors), " ", vPl(d.authors, "автор", "разных автора", "разных авторов"))), /*#__PURE__*/React.createElement("span", {
     className: "sp"
   }), /*#__PURE__*/React.createElement("button", {
     className: "vx",
@@ -21658,29 +21887,28 @@ function VPersonPanel({
     className: "flag"
   }, "\u0430\u043A\u043A\u0430\u0443\u043D\u0442 \u0431\u0435\u0437 \u0434\u0440\u0443\u0433\u0438\u0445 \u043E\u0442\u0437\u044B\u0432\u043E\u0432"), r.gone && /*#__PURE__*/React.createElement("span", {
     className: "flag"
-  }, "\u0443\u0434\u0430\u043B\u0451\u043D \u0441 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0438")), /*#__PURE__*/React.createElement("div", {
+  }, "\u0443\u0434\u0430\u043B\u0451\u043D \u0441 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0438"), /*#__PURE__*/React.createElement(VSrcLink, {
+    src: r.source,
+    url: r.url,
+    date: vD(r.date)
+  })), /*#__PURE__*/React.createElement("div", {
     className: "vtext"
   }, /*#__PURE__*/React.createElement(VMark, {
     text: r.text || "",
     q: (d.name || "").split(" ")[0]
-  }))))))));
+  })))))));
 }
 function VspStaff({
   f,
   openPoint
 }) {
-  const [d, setD] = useState(null);
+  const ev = useContext(VEv);
   const [open, setOpen] = useState({});
   const [pv, setPv] = useState(null);
-  useEffect(() => {
-    setD(null);
-    apiFetch("/api/vsp/staff?" + vQS({
-      subject: f.subject,
-      gosb: f.gosb
-    })).then(setD).catch(() => setD({
-      err: 1
-    }));
-  }, [f.subject, f.gosb]);
+  const d = useVFetch("/api/vsp/staff?" + vQS({
+    subject: f.subject,
+    gosb: f.gosb
+  }));
   if (!d) return /*#__PURE__*/React.createElement(Skel, {
     h: 400
   });
@@ -21696,7 +21924,7 @@ function VspStaff({
     _k: "w",
     _n: x.authors
   }))].sort((a, b) => b._n - a._n);
-  const single = d.named.filter(x => x.clients < 2);
+  const single = d.named.filter(x => x.clients < 2 && x.heavy > 0);
   const sec = (key, title, lede, rows, render) => {
     const all = open[key];
     return /*#__PURE__*/React.createElement("section", {
@@ -21729,6 +21957,7 @@ function VspStaff({
     }, all ? "Свернуть" : `Все (${rows.length})`));
   };
   const where = p => `${vPlace(p)}${p && p.gosb ? ` · ГОСБ ${p.gosb}` : ""}`;
+  const stop = e => e.stopPropagation();
   const row = (k, r, body, pid) => /*#__PURE__*/React.createElement("div", {
     key: k,
     className: "vrow v2",
@@ -21736,14 +21965,27 @@ function VspStaff({
     tabIndex: 0,
     onClick: () => openPoint(r.place.point),
     onKeyDown: vEnter(() => openPoint(r.place.point))
-  }, /*#__PURE__*/React.createElement("div", null, body), pid ? /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("div", null, body, r.rid && /*#__PURE__*/React.createElement("div", {
+    className: "vstory-f"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "vlink",
+    onClick: e => {
+      stop(e);
+      ev.open(r.rid);
+    },
+    onKeyDown: stop
+  }, "\u043F\u043E\u043B\u043D\u044B\u0439 \u043E\u0442\u0437\u044B\u0432 \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0430"), /*#__PURE__*/React.createElement(VSrcLink, {
+    src: r.src,
+    url: r.url,
+    date: r.last
+  }))), pid ? /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost vsm",
     onClick: e => {
-      e.stopPropagation();
+      stop(e);
       setPv(pid);
     },
-    onKeyDown: e => e.stopPropagation()
-  }, "\u041E\u0442\u0437\u044B\u0432\u044B") : /*#__PURE__*/React.createElement("span", null), /*#__PURE__*/React.createElement("span", {
+    onKeyDown: stop
+  }, "\u0412\u0441\u0435 \u043E\u0442\u0437\u044B\u0432\u044B \u0441 \u0438\u043C\u0435\u043D\u0435\u043C") : /*#__PURE__*/React.createElement("span", null), /*#__PURE__*/React.createElement("span", {
     className: "vrow-go",
     "aria-hidden": "true"
   }, "\u2192"));
@@ -21766,13 +22008,13 @@ function VspStaff({
     className: "note"
   }, where(r.place))), /*#__PURE__*/React.createElement("div", {
     className: "vrow-why"
-  }, "\u041D\u0430\u0437\u044B\u0432\u0430\u044E\u0442 ", r._n, " ", vPl(r._n, "разный клиент", "разных клиента", "разных клиентов"), r._k === "m" ? ` · тяжёлых историй ${r.heavy}` : ` · отзывов ${r.n}`, (r.actions || r.types || []).length ? ` · ${(r.actions || r.types).join(", ")}` : ""), r.quote && /*#__PURE__*/React.createElement("div", {
+  }, "\u041D\u0430\u0437\u044B\u0432\u0430\u044E\u0442 ", r._n, " ", vPl(r._n, "разный клиент", "разных клиента", "разных клиентов"), r._k === "m" ? ` · тяжёлых историй ${r.heavy}` : ` · ${r.n} ${vPl(r.n, "отзыв", "отзыва", "отзывов")}`, (r.actions || r.types || []).length ? ` · ${(r.actions || r.types).join(", ")}` : ""), r.quote && /*#__PURE__*/React.createElement("div", {
     className: "vrow-q"
   }, "\xAB", r.quote, "\xBB ", /*#__PURE__*/React.createElement("span", {
     className: "note"
   }, "\xB7 ", r.last)), r._k === "w" && /*#__PURE__*/React.createElement("div", {
     className: "note"
-  }, vD(r.first), " \u2014 ", vD(r.last))), r.id)), single.length > 0 && sec("single", "Назван в одной тяжёлой истории", "Сотрудник назван одним клиентом. Само по себе — повод запросить операции, а не вывод.", single, r => row("s" + r.place.point + r.name, r, /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, vD(r.first), " \u2014 ", vD(r.last))), r.id)), single.length > 0 && sec("single", "Назван одним клиентом в тяжёлой истории", "Сотрудника назвал один клиент. Само по себе это повод запросить операции, а не вывод.", single, r => row("s" + r.place.point + r.name, r, /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "vrow-h"
   }, /*#__PURE__*/React.createElement("b", null, r.name), /*#__PURE__*/React.createElement("span", {
     className: "note"
@@ -21782,17 +22024,17 @@ function VspStaff({
     className: "vrow-q"
   }, "\xAB", r.quote, "\xBB ", /*#__PURE__*/React.createElement("span", {
     className: "note"
-  }, "\xB7 ", r.last))))), sec("praise", "Хвалят по имени — в основном аккаунты без других отзывов", "Сама похвала не нарушение. Интересно, когда в том же отделении есть тяжёлые истории: похвала может прятать жалобы или «закрывать» их.", d.praise, r => row("p" + r.id, r, /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, "\xB7 ", r.last))), r.id)), sec("praise", "Хвалят по имени там, где у отделения есть тяжёлые истории", "Сама похвала не нарушение. Но волна похвал одному сотруднику от аккаунтов без других отзывов рядом с жалобами может прятать или «закрывать» жалобы.", d.praise, r => row("p" + r.id, r, /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "vrow-h"
   }, /*#__PURE__*/React.createElement(VDot, {
-    on: r.heavy_here > 0
+    on: true
   }), /*#__PURE__*/React.createElement("b", null, r.full_name || r.name), /*#__PURE__*/React.createElement("span", {
     className: "note"
   }, where(r.place))), /*#__PURE__*/React.createElement("div", {
     className: "vrow-why"
-  }, vN(r.n), " ", vPl(r.n, "отзыв", "отзыва", "отзывов"), " \u0441 \u0438\u043C\u0435\u043D\u0435\u043C \xB7 ", vN(r.oneoff), " \u0438\u0437 \u043D\u0438\u0445 \u2014 \u043E\u0442 \u0430\u043A\u043A\u0430\u0443\u043D\u0442\u043E\u0432 \u0431\u0435\u0437 \u0434\u0440\u0443\u0433\u0438\u0445 \u043E\u0442\u0437\u044B\u0432\u043E\u0432", r.heavy_here > 0 ? /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 ", /*#__PURE__*/React.createElement("span", {
+  }, vN(r.n), " ", vPl(r.n, "отзыв", "отзыва", "отзывов"), " \u0441 \u0438\u043C\u0435\u043D\u0435\u043C \xB7 ", vN(r.oneoff), " \u0438\u0437 \u043D\u0438\u0445 \u2014 \u043E\u0442 \u0430\u043A\u043A\u0430\u0443\u043D\u0442\u043E\u0432 \u0431\u0435\u0437 \u0434\u0440\u0443\u0433\u0438\u0445 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \xB7", " ", /*#__PURE__*/React.createElement("span", {
     className: "flag risk"
-  }, "\u0432 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0438 ", r.heavy_here, " ", vPl(r.heavy_here, "тяжёлая история", "тяжёлые истории", "тяжёлых историй"))) : null), /*#__PURE__*/React.createElement("div", {
+  }, "\u0432 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0438 ", r.heavy_here, " ", vPl(r.heavy_here, "тяжёлая история", "тяжёлые истории", "тяжёлых историй"))), /*#__PURE__*/React.createElement("div", {
     className: "note"
   }, vD(r.first), " \u2014 ", vD(r.last))), r.id)), sec("mid", "Посредники и обслуживание по знакомству", "Клиенты пишут о «своём» менеджере, посредниках, обслуживании без очереди за знакомство.", d.middlemen, r => row("mm" + r.place.point, r, /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "vrow-h"
@@ -21816,17 +22058,11 @@ function VspTrends({
   openPoint,
   goTab
 }) {
-  const [d, setD] = useState(null);
-  useEffect(() => {
-    setD(null);
-    apiFetch("/api/vsp/trends?" + vQS({
-      subject: f.subject,
-      gosb: f.gosb,
-      action: f.action
-    })).then(setD).catch(() => setD({
-      err: 1
-    }));
-  }, [f.subject, f.gosb, f.action]);
+  const d = useVFetch("/api/vsp/trends?" + vQS({
+    subject: f.subject,
+    gosb: f.gosb,
+    action: f.action
+  }));
   if (!d) return /*#__PURE__*/React.createElement(Skel, {
     h: 500
   });
@@ -21840,6 +22076,20 @@ function VspTrends({
   const label = k => (d.top.find(t => t.key === k) || {
     short: "другое"
   }).short;
+  const toStories = k => {
+    setF({
+      action: k,
+      severity: 2,
+      period: "180"
+    });
+    goTab("stories");
+  };
+  const toGosb = g => {
+    setF({
+      gosb: g
+    });
+    goTab("branches");
+  };
   return /*#__PURE__*/React.createElement("div", {
     className: "view",
     style: {
@@ -21914,18 +22164,8 @@ function VspTrends({
     key: r.key,
     className: "click",
     tabIndex: 0,
-    onClick: () => {
-      setF({
-        action: r.key
-      });
-      goTab("stories");
-    },
-    onKeyDown: vEnter(() => {
-      setF({
-        action: r.key
-      });
-      goTab("stories");
-    })
+    onClick: () => toStories(r.key),
+    onKeyDown: vEnter(() => toStories(r.key))
   }, /*#__PURE__*/React.createElement("td", null, r.label), /*#__PURE__*/React.createElement("td", {
     className: "num"
   }, vN(r.before)), /*#__PURE__*/React.createElement("td", {
@@ -21936,7 +22176,7 @@ function VspTrends({
     className: "vempty"
   }, "\u041C\u0430\u043B\u043E \u0438\u0441\u0442\u043E\u0440\u0438\u0439 \u0434\u043B\u044F \u0441\u0440\u0430\u0432\u043D\u0435\u043D\u0438\u044F"), /*#__PURE__*/React.createElement("p", {
     className: "note"
-  }, "\u041D\u0430\u0436\u043C\u0438\u0442\u0435 \u043D\u0430 \u0441\u0442\u0440\u043E\u043A\u0443 \u2014 \u043E\u0442\u043A\u0440\u043E\u044E\u0442\u0441\u044F \u044D\u0442\u0438 \u0438\u0441\u0442\u043E\u0440\u0438\u0438.")), /*#__PURE__*/React.createElement("section", {
+  }, "\u041D\u0430\u0436\u043C\u0438\u0442\u0435 \u043D\u0430 \u0441\u0442\u0440\u043E\u043A\u0443 \u2014 \u043E\u0442\u043A\u0440\u043E\u044E\u0442\u0441\u044F \u0442\u044F\u0436\u0451\u043B\u044B\u0435 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u044D\u0442\u043E\u0433\u043E \u0442\u0438\u043F\u0430 \u0437\u0430 \u043F\u043E\u043B\u0433\u043E\u0434\u0430.")), /*#__PURE__*/React.createElement("section", {
     className: "card"
   }, /*#__PURE__*/React.createElement("div", {
     className: "eyebrow"
@@ -21958,18 +22198,8 @@ function VspTrends({
     key: r.key,
     className: "click",
     tabIndex: 0,
-    onClick: () => {
-      setF({
-        gosb: r.key
-      });
-      goTab("branches");
-    },
-    onKeyDown: vEnter(() => {
-      setF({
-        gosb: r.key
-      });
-      goTab("branches");
-    })
+    onClick: () => toGosb(r.key),
+    onKeyDown: vEnter(() => toGosb(r.key))
   }, /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("b", null, r.key), r.subject_name ? /*#__PURE__*/React.createElement("div", {
     className: "note"
   }, r.subject_name) : null), /*#__PURE__*/React.createElement("td", {
@@ -21990,13 +22220,13 @@ function VspTrends({
     className: "eyebrow"
   }, "\u041D\u043E\u0432\u044B\u0435 \u043E\u0447\u0430\u0433\u0438"), /*#__PURE__*/React.createElement("h2", {
     className: "vh2"
-  }, "\u041E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F, \u0433\u0434\u0435 \u043F\u0435\u0440\u0432\u0430\u044F \u0442\u044F\u0436\u0451\u043B\u0430\u044F \u0438\u0441\u0442\u043E\u0440\u0438\u044F \u2014 \u0437\u0430 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0435 3 \u043C\u0435\u0441\u044F\u0446\u0430"), d.new_points.length ? /*#__PURE__*/React.createElement("div", {
+  }, "\u041E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F, \u0433\u0434\u0435 \u043F\u0435\u0440\u0432\u0430\u044F \u0442\u044F\u0436\u0451\u043B\u0430\u044F \u0438\u0441\u0442\u043E\u0440\u0438\u044F \u043F\u043E\u044F\u0432\u0438\u043B\u0430\u0441\u044C \u0437\u0430 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0435 3 \u043C\u0435\u0441\u044F\u0446\u0430"), d.new_points.length ? /*#__PURE__*/React.createElement("div", {
     className: "chips"
   }, d.new_points.map(r => /*#__PURE__*/React.createElement("button", {
     key: r.place.point,
     className: "chip",
     onClick: () => openPoint(r.place.point)
-  }, vPlace(r.place), " \xB7 ", r.n, " \xB7 \u0441 ", r.first))) : /*#__PURE__*/React.createElement("div", {
+  }, vPlace(r.place), " \xB7 ", r.n, " ", vPl(r.n, "тяжёлая история", "тяжёлые истории", "тяжёлых историй"), " \u0441 ", r.first))) : /*#__PURE__*/React.createElement("div", {
     className: "vempty"
   }, "\u041D\u043E\u0432\u044B\u0445 \u043E\u0447\u0430\u0433\u043E\u0432 \u043D\u0435\u0442")));
 }
@@ -22030,6 +22260,19 @@ function VCompare({
 }) {
   if (!rows || !rows.some(r => r.me != null && r.peer != null)) return null;
   const fmt = (r, v) => v == null ? "—" : r.fmt === "p" ? vP(v) : r.fmt === "x" ? vX(v) : vN(Math.round(v));
+  const say = (r, k) => {
+    if (r.peer === 0 && r.me > 0) return "у большинства соседей — ни одной";
+    if (k == null) return "";
+    if (k >= 1.3) {
+      const x = Math.round(k * 10) / 10;
+      return `выше в ${vX(x)} ${vTimes(x)}`;
+    }
+    if (k <= 0.77 && k > 0) {
+      const x = Math.round(10 / k) / 10;
+      return `ниже в ${vX(x)} ${vTimes(x)}`;
+    }
+    return k === 0 ? "нет" : "на уровне";
+  };
   return /*#__PURE__*/React.createElement("section", {
     className: "sec"
   }, /*#__PURE__*/React.createElement("h3", null, "\u0420\u044F\u0434\u043E\u043C \u0441 \u043F\u043E\u0445\u043E\u0436\u0438\u043C\u0438 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F\u043C\u0438 \u0413\u041E\u0421\u0411"), /*#__PURE__*/React.createElement("p", {
@@ -22048,7 +22291,7 @@ function VCompare({
       className: "note num"
     }, "\u043C\u0435\u0434\u0438\u0430\u043D\u0430 ", fmt(r, r.peer)), /*#__PURE__*/React.createElement("span", {
       className: "vcmp-k" + (hi ? " hi" : "")
-    }, r.peer === 0 && r.me > 0 ? "у большинства соседей — ни одной" : k == null ? "" : k >= 1.3 ? `выше в ${vX(Math.round(k * 10) / 10)} раза` : k <= 0.77 && k > 0 ? `ниже в ${vX(Math.round(10 / k) / 10)} раза` : k === 0 ? "нет" : "на уровне"));
+    }, say(r, k)));
   })));
 }
 const V_RFLAGS = [["", "Все"], ["neg", "Жалобы 1–2★"], ["case", "Возможное нарушение"], ["names", "Назван сотрудник"], ["oneoff", "Аккаунты без других отзывов"], ["five", "Пятёрки"], ["reply", "Банк ответил"]];
@@ -22058,8 +22301,8 @@ function VReviews({
   const [flag, setFlag] = useState("");
   const [q, setQ] = useState("");
   const [qd, setQd] = useState("");
-  const [d, setD] = useState(null);
   const [items, setItems] = useState([]);
+  const [busy, setBusy] = useState(false);
   useEffect(() => {
     const t = setTimeout(() => setQd(q.trim()), 350);
     return () => clearTimeout(t);
@@ -22069,16 +22312,20 @@ function VReviews({
     flag,
     q: qd
   });
+  const d = useVFetch(`/api/vsp/reviews?${qs}&limit=20`);
+  const gen = useRef(0);
   useEffect(() => {
-    setD(null);
-    apiFetch(`/api/vsp/reviews?${qs}&limit=20`).then(x => {
-      setD(x);
-      setItems(x.items);
-    }).catch(() => setD({
-      err: 1
-    }));
-  }, [qs]);
-  const more = () => apiFetch(`/api/vsp/reviews?${qs}&limit=20&offset=${items.length}`).then(x => setItems(a => [...a, ...x.items])).catch(() => {});
+    gen.current++;
+    setItems(d && !d.err ? d.items : []);
+  }, [d]);
+  const more = () => {
+    if (busy) return;
+    const g = gen.current;
+    setBusy(true);
+    apiFetch(`/api/vsp/reviews?${qs}&limit=20&offset=${items.length}`).then(x => {
+      if (g === gen.current) setItems(a => [...a, ...x.items]);
+    }).catch(() => {}).finally(() => setBusy(false));
+  };
   return /*#__PURE__*/React.createElement("section", {
     className: "sec"
   }, /*#__PURE__*/React.createElement("h3", null, "\u0412\u0441\u0435 \u043E\u0442\u0437\u044B\u0432\u044B \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F", d && !d.err ? ` · ${vN(d.total)}` : ""), /*#__PURE__*/React.createElement("div", {
@@ -22123,12 +22370,11 @@ function VReviews({
     className: "flag"
   }, "\u0431\u0430\u043D\u043A \u043E\u0442\u0432\u0435\u0442\u0438\u043B"), r.gone && /*#__PURE__*/React.createElement("span", {
     className: "flag"
-  }, "\u0443\u0434\u0430\u043B\u0451\u043D \u0441 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0438"), r.url && /*#__PURE__*/React.createElement("a", {
-    className: "vmore",
-    href: r.url,
-    target: "_blank",
-    rel: "noopener noreferrer"
-  }, "\u043D\u0430 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0435 \u2197")), /*#__PURE__*/React.createElement("div", {
+  }, "\u0443\u0434\u0430\u043B\u0451\u043D \u0441 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0438"), /*#__PURE__*/React.createElement(VSrcLink, {
+    src: r.source,
+    url: r.url,
+    date: vD(r.date)
+  })), /*#__PURE__*/React.createElement("div", {
     className: "vtext"
   }, qd ? /*#__PURE__*/React.createElement(VMark, {
     text: r.text || "",
@@ -22140,25 +22386,53 @@ function VReviews({
     style: {
       marginTop: 8
     },
+    disabled: busy,
     onClick: more
-  }, "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0435\u0449\u0451 (\u043E\u0441\u0442\u0430\u043B\u043E\u0441\u044C ", vN(d.total - items.length), ")"));
+  }, busy ? "Загружаю…" : `Показать ещё (осталось ${vN(d.total - items.length)})`));
+}
+function VPassport({
+  d
+}) {
+  const ps = d.passport || {};
+  const map = d.lat && d.lon ? `https://yandex.ru/maps/?pt=${d.lon},${d.lat}&z=17&l=map` : null;
+  return /*#__PURE__*/React.createElement("section", {
+    className: "vpass",
+    "aria-label": "\u0427\u0442\u043E \u0437\u0430 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0435"
+  }, /*#__PURE__*/React.createElement("dl", {
+    className: "vdl"
+  }, /*#__PURE__*/React.createElement("dt", null, "\u0410\u0434\u0440\u0435\u0441"), /*#__PURE__*/React.createElement("dd", null, [d.city, vAddr(d.address)].filter(Boolean).join(", ") || "—"), /*#__PURE__*/React.createElement("dt", null, "\u041E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0435"), /*#__PURE__*/React.createElement("dd", null, vCode(d) || "—", d.status && d.status !== "active" ? ` · ${d.status === "closed" ? "закрыто" : d.status}` : "", d.open_date ? ` · открыто ${vD(d.open_date)}` : ""), /*#__PURE__*/React.createElement("dt", null, "\u0413\u041E\u0421\u0411 \u0438 \u0440\u0435\u0433\u0438\u043E\u043D"), /*#__PURE__*/React.createElement("dd", null, d.gosb ? `ГОСБ ${d.gosb}` : "—", ps.parent_name ? ` · ${ps.parent_name}` : "", d.subject_name ? ` · ${d.subject_name}` : ""), (ps.formats || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0424\u043E\u0440\u043C\u0430\u0442\u044B"), /*#__PURE__*/React.createElement("dd", null, ps.formats.join(", "))), ps.hours && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0427\u0430\u0441\u044B \u0440\u0430\u0431\u043E\u0442\u044B"), /*#__PURE__*/React.createElement("dd", null, ps.hours))), /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      gap: 8,
+      flexWrap: "wrap",
+      marginTop: 8
+    }
+  }, (ps.cards || []).map((c, i) => c.url ? /*#__PURE__*/React.createElement("a", {
+    key: i,
+    className: "btn btn-ghost vsm",
+    href: c.url,
+    target: "_blank",
+    rel: "noopener noreferrer"
+  }, "\u041A\u0430\u0440\u0442\u043E\u0447\u043A\u0430 \u043D\u0430 ", vSrc(c.source), c.reviews != null ? ` · ${vN(c.reviews)} ${vPl(c.reviews, "отзыв", "отзыва", "отзывов")}` : "", " \u2197") : null), map && /*#__PURE__*/React.createElement("a", {
+    className: "btn btn-ghost vsm",
+    href: map,
+    target: "_blank",
+    rel: "noopener noreferrer"
+  }, "\u041D\u0430 \u043A\u0430\u0440\u0442\u0435 \u2197")));
 }
 function VspDossier({
   point,
   onBack,
   openPoint,
-  plan
+  plan,
+  goFilter
 }) {
-  const [d, setD] = useState(null);
   const [fb, setFb] = useState(null);
   const [act, setAct] = useState("");
   const [heavyOnly, setHeavyOnly] = useState(false);
   const [lim, setLim] = useState(8);
+  const d = useVFetch(`/api/vsp/dossier/${encodeURIComponent(point)}`);
   useEffect(() => {
-    setD(null);
-    apiFetch(`/api/vsp/dossier/${encodeURIComponent(point)}`).then(setD).catch(() => setD({
-      err: 1
-    }));
     try {
       window.scrollTo({
         top: 0
@@ -22187,18 +22461,31 @@ function VspDossier({
   const shown = stories.filter(s => (!act || (s.actions || []).includes(act)) && (!heavyOnly || s.severity >= 2));
   return /*#__PURE__*/React.createElement("article", {
     className: "view vdos"
+  }, /*#__PURE__*/React.createElement("nav", {
+    className: "vcrumb",
+    "aria-label": "\u0413\u0434\u0435 \u0432\u044B"
   }, /*#__PURE__*/React.createElement("button", {
     className: "vmore",
     onClick: onBack
-  }, "\u2190 \u041D\u0430\u0437\u0430\u0434"), /*#__PURE__*/React.createElement("header", {
+  }, "\u2190 \u041D\u0430\u0437\u0430\u0434"), d.subject_name && /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 ", /*#__PURE__*/React.createElement("button", {
+    className: "vmore",
+    onClick: () => goFilter({
+      subject: d.subject,
+      gosb: ""
+    })
+  }, d.subject_name)), d.gosb && /*#__PURE__*/React.createElement(React.Fragment, null, " \u25B8 ", /*#__PURE__*/React.createElement("button", {
+    className: "vmore",
+    onClick: () => goFilter({
+      subject: d.subject || "",
+      gosb: d.gosb
+    })
+  }, "\u0413\u041E\u0421\u0411 ", d.gosb))), /*#__PURE__*/React.createElement("header", {
     className: "vdos-h"
   }, /*#__PURE__*/React.createElement("h1", {
     className: "vh1"
   }, vPlace(d)), /*#__PURE__*/React.createElement("div", {
     className: "note"
-  }, vCode(d), d.gosb ? ` · ГОСБ ${d.gosb}` : "", d.subject_name ? ` · ${d.subject_name}` : "", d.formats && d.formats.sber_first ? " · есть СберПервый" : "", d.formats && d.formats.private ? " · есть Private Banking" : ""), /*#__PURE__*/React.createElement("div", {
-    className: "note"
-  }, d.vol_2y != null ? `${vN(d.vol_2y)} отзывов за 2 года` : "", stories.length ? ` · историй ${stories.length}, тяжёлых ${heavy.length}` : ""), /*#__PURE__*/React.createElement("div", {
+  }, d.vol_2y != null ? `${vN(d.vol_2y)} ${vPl(d.vol_2y, "отзыв", "отзыва", "отзывов")} за 2 года` : "", stories.length ? ` · историй ${stories.length}, тяжёлых ${heavy.length}` : ""), /*#__PURE__*/React.createElement("div", {
     className: "row",
     style: {
       marginTop: 10,
@@ -22223,20 +22510,22 @@ function VspDossier({
       period: "all"
     }),
     download: true
-  }, "\u0418\u0441\u0442\u043E\u0440\u0438\u0438 (Excel)"))), d.source === "слова" && /*#__PURE__*/React.createElement("div", {
+  }, "\u0418\u0441\u0442\u043E\u0440\u0438\u0438 (Excel)"))), /*#__PURE__*/React.createElement(VPassport, {
+    d: d
+  }), d.source === "слова" && /*#__PURE__*/React.createElement("div", {
     className: "box",
     style: {
       fontSize: 13.5
     }
   }, "\u041F\u0440\u0435\u0434\u0432\u0430\u0440\u0438\u0442\u0435\u043B\u044C\u043D\u043E: \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u043D\u0430\u0439\u0434\u0435\u043D\u044B \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C, \u043C\u043E\u0434\u0435\u043B\u044C \u0435\u0449\u0451 \u0447\u0438\u0442\u0430\u0435\u0442 \u043E\u0442\u0437\u044B\u0432\u044B."), /*#__PURE__*/React.createElement("section", {
     className: "sec"
-  }, /*#__PURE__*/React.createElement("h3", null, "\u041F\u043E\u0447\u0435\u043C\u0443 \u0432 \u0441\u043F\u0438\u0441\u043A\u0435"), a.why && a.why.length && a.include ? /*#__PURE__*/React.createElement("ul", {
+  }, /*#__PURE__*/React.createElement("h3", null, a.include ? "Почему в списке" : "Почему не в списке «где проверить»"), a.include && a.why && a.why.length ? /*#__PURE__*/React.createElement("ul", {
     className: "facts"
   }, a.why.map((w, i) => /*#__PURE__*/React.createElement("li", {
     key: i
   }, /*#__PURE__*/React.createElement("span", null, w)))) : /*#__PURE__*/React.createElement("p", {
     className: "note"
-  }, "\u041E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0435 \u043D\u0435 \u0432 \u0441\u043F\u0438\u0441\u043A\u0435 \xAB\u0433\u0434\u0435 \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C\xBB: \u043D\u0435\u0437\u0430\u0432\u0438\u0441\u0438\u043C\u044B\u0435 \u043F\u0440\u0438\u0437\u043D\u0430\u043A\u0438 \u043D\u0435 \u0441\u043E\u0448\u043B\u0438\u0441\u044C.", a.why && a.why.length ? " Что видно: " + a.why.join("; ") : ""), a.confidence && a.include && /*#__PURE__*/React.createElement("p", {
+  }, "\u041D\u0435\u0437\u0430\u0432\u0438\u0441\u0438\u043C\u044B\u0435 \u043F\u0440\u0438\u0437\u043D\u0430\u043A\u0438 \u043D\u0435 \u0441\u043E\u0448\u043B\u0438\u0441\u044C.", a.why && a.why.length ? " Что видно: " + a.why.join("; ") : ""), a.confidence && a.include && /*#__PURE__*/React.createElement("p", {
     className: "note",
     style: {
       marginTop: 6
@@ -22277,7 +22566,7 @@ function VspDossier({
     className: "facts"
   }, a.people.map((x, i) => /*#__PURE__*/React.createElement("li", {
     key: i
-  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, x.name), " \u2014 ", x.clients > 1 ? `называют ${x.clients} ${vPl(x.clients, "разный клиент", "разных клиента", "разных клиентов")}` : "назван в одной истории")))) : /*#__PURE__*/React.createElement("p", {
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, x.name), " \u2014 ", x.clients > 1 ? `называют ${x.clients} ${vPl(x.clients, "разный клиент", "разных клиента", "разных клиентов")}` : "назван одним клиентом")))) : /*#__PURE__*/React.createElement("p", {
     className: "note"
   }, "\u0418\u043C\u0435\u043D\u0430 \u0432 \u0442\u044F\u0436\u0451\u043B\u044B\u0445 \u0438\u0441\u0442\u043E\u0440\u0438\u044F\u0445 \u043D\u0435 \u043D\u0430\u0437\u0432\u0430\u043D\u044B."), /*#__PURE__*/React.createElement("p", {
     className: "note"
@@ -22294,7 +22583,9 @@ function VspDossier({
   }), /*#__PURE__*/React.createElement(VBars, {
     bars: d.bars,
     stories: stories
-  })), (d.actions || []).length > 1 && /*#__PURE__*/React.createElement("div", {
+  })), /*#__PURE__*/React.createElement("p", {
+    className: "note"
+  }, "\u0423 \u043A\u0430\u0436\u0434\u043E\u0439 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u2014 \xAB\u041F\u043E\u043B\u043D\u044B\u0439 \u043E\u0442\u0437\u044B\u0432 \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0430\xBB: \u0442\u0435\u043A\u0441\u0442 \u043A\u043B\u0438\u0435\u043D\u0442\u0430 \u0441 \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u043D\u043E\u0439 \u0446\u0438\u0442\u0430\u0442\u043E\u0439, \u0447\u0442\u043E \u0443\u0432\u0438\u0434\u0435\u043B\u0430 \u043C\u043E\u0434\u0435\u043B\u044C \u0438 \u0447\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u043B \u043A\u043E\u0434."), (d.actions || []).length > 1 && /*#__PURE__*/React.createElement("div", {
     className: "chips",
     style: {
       marginTop: 10
@@ -22384,20 +22675,15 @@ function VspSchemeCard({
   tiles,
   goStories
 }) {
-  const [d, setD] = useState(null);
+  const ev = useContext(VEv);
   const [fb, setFb] = useState(null);
-  const [m, setM] = useState(null);
+  const d = useVFetch(`/api/vsp/schemes/${encodeURIComponent(id)}`);
+  const m = useVFetch(d && d.kind === "действия" ? "/api/vsp/stories?" + vQS({
+    action: id,
+    period: "all",
+    limit: 1
+  }) : null);
   useEffect(() => {
-    apiFetch(`/api/vsp/schemes/${encodeURIComponent(id)}`).then(x => {
-      setD(x);
-      if (x.kind === "действия") apiFetch("/api/vsp/stories?" + vQS({
-        action: id,
-        period: "all",
-        limit: 1
-      })).then(setM).catch(() => {});
-    }).catch(() => setD({
-      err: 1
-    }));
     try {
       window.scrollTo({
         top: 0
@@ -22473,21 +22759,33 @@ function VspSchemeCard({
     onClick: () => openPoint(e.point)
   }, vPlace(e.place))))), /*#__PURE__*/React.createElement("section", {
     className: "sec"
-  }, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0442\u043E \u043F\u0438\u0448\u0443\u0442 \u043A\u043B\u0438\u0435\u043D\u0442\u044B"), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0442\u043E \u043F\u0438\u0448\u0443\u0442 \u043A\u043B\u0438\u0435\u043D\u0442\u044B"), /*#__PURE__*/React.createElement("p", {
+    className: "note"
+  }, "\u041A\u0430\u0436\u0434\u0443\u044E \u0438\u0441\u0442\u043E\u0440\u0438\u044E \u043C\u043E\u0436\u043D\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C: \u043F\u043E\u043B\u043D\u044B\u0439 \u0442\u0435\u043A\u0441\u0442 \u043E\u0442\u0437\u044B\u0432\u0430, \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u043D\u0430\u044F \u0446\u0438\u0442\u0430\u0442\u0430, \u0441\u0441\u044B\u043B\u043A\u0430 \u043D\u0430 \u043E\u0440\u0438\u0433\u0438\u043D\u0430\u043B."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
       gap: 8
     }
-  }, d.examples.map(e => /*#__PURE__*/React.createElement("button", {
+  }, d.examples.map(e => /*#__PURE__*/React.createElement("div", {
     key: e.rid,
-    className: "rev",
-    style: {
-      textAlign: "left"
-    },
-    onClick: () => openPoint(e.point)
+    className: "rev vstory"
   }, /*#__PURE__*/React.createElement("div", {
     className: "rm"
-  }, /*#__PURE__*/React.createElement("b", null, vPlace(e.place)), /*#__PURE__*/React.createElement("span", null, e.date)), /*#__PURE__*/React.createElement("div", null, "\xAB", e.quote, "\xBB"))))), (d.check || []).length > 0 && /*#__PURE__*/React.createElement("section", {
+  }, /*#__PURE__*/React.createElement("b", null, vPlace(e.place)), /*#__PURE__*/React.createElement("span", null, e.date), e.src && /*#__PURE__*/React.createElement("span", {
+    className: "note"
+  }, vSrc(e.src))), /*#__PURE__*/React.createElement("div", null, "\xAB", e.quote, "\xBB"), /*#__PURE__*/React.createElement("div", {
+    className: "vstory-f"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "vlink",
+    onClick: () => ev.open(e.rid)
+  }, "\u041F\u043E\u043B\u043D\u044B\u0439 \u043E\u0442\u0437\u044B\u0432 \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0430"), /*#__PURE__*/React.createElement(VSrcLink, {
+    src: e.src,
+    url: e.url,
+    date: e.date
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "vlink",
+    onClick: () => openPoint(e.point)
+  }, "\u0414\u043E\u0441\u044C\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u2192")))))), (d.check || []).length > 0 && /*#__PURE__*/React.createElement("section", {
     className: "sec"
   }, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C \u043F\u043E \u0442\u0435\u043C\u0435"), /*#__PURE__*/React.createElement("div", {
     className: "check"
@@ -22576,7 +22874,7 @@ function VspMethod2() {
     className: "sec"
   }, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0442\u043E \u0433\u0434\u0435"), /*#__PURE__*/React.createElement("ul", {
     className: "facts"
-  }, /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u041E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F"), " \u2014 \u0447\u0442\u043E \u0442\u0440\u0435\u0431\u0443\u0435\u0442 \u0440\u0435\u0430\u043A\u0446\u0438\u0438, \u0441\u0432\u043E\u0434\u043A\u0430 \u0437\u0430 \u0433\u043E\u0434, \u043A\u0430\u0440\u0442\u0430 \u0438 \u0413\u041E\u0421\u0411, \u0441\u043F\u0438\u0441\u043E\u043A \xAB\u0433\u0434\u0435 \u0441\u0442\u043E\u0438\u0442 \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C\xBB \u0438 \u0442\u0430\u0431\u043B\u0438\u0446\u0430 \u0432\u0441\u0435\u0445 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439 \u0441 \u0438\u0441\u0442\u043E\u0440\u0438\u044F\u043C\u0438.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0418\u0441\u0442\u043E\u0440\u0438\u0438"), " \u2014 \u0432\u0441\u0435 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432 \u0441 \u0444\u0438\u043B\u044C\u0442\u0440\u0430\u043C\u0438 \u0438 \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u043E\u0439 \u0432 Excel.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u041B\u044E\u0434\u0438"), " \u2014 \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u0438, \u043A\u043E\u0442\u043E\u0440\u044B\u0445 \u043D\u0430\u0437\u044B\u0432\u0430\u044E\u0442 \u0440\u0430\u0437\u043D\u044B\u0435 \u043A\u043B\u0438\u0435\u043D\u0442\u044B; \u043F\u043E\u0445\u0432\u0430\u043B\u0430 \u043F\u043E \u0438\u043C\u0435\u043D\u0438 \u043E\u0442 \u0430\u043A\u043A\u0430\u0443\u043D\u0442\u043E\u0432 \u0431\u0435\u0437 \u0434\u0440\u0443\u0433\u0438\u0445 \u043E\u0442\u0437\u044B\u0432\u043E\u0432; \u043F\u043E\u0441\u0440\u0435\u0434\u043D\u0438\u043A\u0438.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0421\u0445\u0435\u043C\u044B"), " \u2014 \u0438\u0441\u0442\u043E\u0440\u0438\u0438, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u044E\u0442\u0441\u044F \u0443 \u0440\u0430\u0437\u043D\u044B\u0445 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432 \u0438 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0414\u0438\u043D\u0430\u043C\u0438\u043A\u0430"), " \u2014 \u0447\u0442\u043E \u0440\u0430\u0441\u0442\u0451\u0442: \u0442\u0438\u043F\u044B \u0438\u0441\u0442\u043E\u0440\u0438\u0439, \u0413\u041E\u0421\u0411, \u043D\u043E\u0432\u044B\u0435 \u043E\u0447\u0430\u0433\u0438.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u041F\u043B\u0430\u043D \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438"), " \u2014 \u043E\u0442\u043B\u043E\u0436\u0435\u043D\u043D\u044B\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F: \u043B\u0438\u0441\u0442\u044B \u0432\u044B\u0435\u0437\u0434\u0430 \u043E\u0434\u043D\u0438\u043C \u0444\u0430\u0439\u043B\u043E\u043C \u0438 \u043E\u0431\u043E\u0441\u043D\u043E\u0432\u0430\u043D\u0438\u0435.")))), /*#__PURE__*/React.createElement("section", {
+  }, /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u041E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F"), " \u2014 \u0447\u0442\u043E \u0442\u0440\u0435\u0431\u0443\u0435\u0442 \u0440\u0435\u0430\u043A\u0446\u0438\u0438, \u0441\u0432\u043E\u0434\u043A\u0430 \u0437\u0430 \u0433\u043E\u0434, \u043A\u0430\u0440\u0442\u0430 \u0438 \u0413\u041E\u0421\u0411, \u0441\u043F\u0438\u0441\u043E\u043A \xAB\u0433\u0434\u0435 \u0441\u0442\u043E\u0438\u0442 \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C\xBB \u0438 \u0442\u0430\u0431\u043B\u0438\u0446\u0430 \u0432\u0441\u0435\u0445 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439 \u0441 \u0438\u0441\u0442\u043E\u0440\u0438\u044F\u043C\u0438.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0418\u0441\u0442\u043E\u0440\u0438\u0438"), " \u2014 \u0432\u0441\u0435 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432 \u0441 \u0444\u0438\u043B\u044C\u0442\u0440\u0430\u043C\u0438 \u0438 \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u043E\u0439 \u0432 Excel.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u041B\u044E\u0434\u0438"), " \u2014 \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u0438, \u043A\u043E\u0442\u043E\u0440\u044B\u0445 \u043D\u0430\u0437\u044B\u0432\u0430\u044E\u0442 \u0440\u0430\u0437\u043D\u044B\u0435 \u043A\u043B\u0438\u0435\u043D\u0442\u044B; \u043F\u043E\u0445\u0432\u0430\u043B\u0430 \u043F\u043E \u0438\u043C\u0435\u043D\u0438 \u0440\u044F\u0434\u043E\u043C \u0441 \u0436\u0430\u043B\u043E\u0431\u0430\u043C\u0438; \u043F\u043E\u0441\u0440\u0435\u0434\u043D\u0438\u043A\u0438.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0421\u0445\u0435\u043C\u044B"), " \u2014 \u0438\u0441\u0442\u043E\u0440\u0438\u0438, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u044E\u0442\u0441\u044F \u0443 \u0440\u0430\u0437\u043D\u044B\u0445 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432 \u0438 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0414\u0438\u043D\u0430\u043C\u0438\u043A\u0430"), " \u2014 \u0447\u0442\u043E \u0440\u0430\u0441\u0442\u0451\u0442: \u0442\u0438\u043F\u044B \u0438\u0441\u0442\u043E\u0440\u0438\u0439, \u0413\u041E\u0421\u0411, \u043D\u043E\u0432\u044B\u0435 \u043E\u0447\u0430\u0433\u0438.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0414\u043E\u0441\u044C\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F"), " \u2014 \u0447\u0442\u043E \u0437\u0430 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0435 (\u0430\u0434\u0440\u0435\u0441, \u043A\u043E\u0434, \u0413\u041E\u0421\u0411, \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0438 \u043D\u0430 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0430\u0445), \u043F\u043E\u0447\u0435\u043C\u0443 \u0432 \u0441\u043F\u0438\u0441\u043A\u0435, \u0441\u0440\u0430\u0432\u043D\u0435\u043D\u0438\u0435 \u0441 \u0413\u041E\u0421\u0411, \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u0438 \u0432\u0441\u0435 \u043E\u0442\u0437\u044B\u0432\u044B. \u0421\u0441\u044B\u043B\u043A\u0443 \u043D\u0430 \u0434\u043E\u0441\u044C\u0435 \u043C\u043E\u0436\u043D\u043E \u0441\u043A\u043E\u043F\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u0438\u0437 \u0430\u0434\u0440\u0435\u0441\u043D\u043E\u0439 \u0441\u0442\u0440\u043E\u043A\u0438.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u041F\u043E\u043B\u043D\u044B\u0439 \u043E\u0442\u0437\u044B\u0432 \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0430"), " \u2014 \u0443 \u043A\u0430\u0436\u0434\u043E\u0439 \u0438\u0441\u0442\u043E\u0440\u0438\u0438: \u0442\u0435\u043A\u0441\u0442 \u043A\u043B\u0438\u0435\u043D\u0442\u0430 \u0441 \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u043D\u043E\u0439 \u0446\u0438\u0442\u0430\u0442\u043E\u0439, \u0447\u0442\u043E \u0443\u0432\u0438\u0434\u0435\u043B\u0430 \u043C\u043E\u0434\u0435\u043B\u044C, \u0447\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u043B \u043A\u043E\u0434, \u0441\u0441\u044B\u043B\u043A\u0430 \u043D\u0430 \u043E\u0440\u0438\u0433\u0438\u043D\u0430\u043B.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u041F\u043B\u0430\u043D \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438"), " \u2014 \u043E\u0442\u043B\u043E\u0436\u0435\u043D\u043D\u044B\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F: \u043B\u0438\u0441\u0442\u044B \u0432\u044B\u0435\u0437\u0434\u0430 \u043E\u0434\u043D\u0438\u043C \u0444\u0430\u0439\u043B\u043E\u043C \u0438 \u043E\u0431\u043E\u0441\u043D\u043E\u0432\u0430\u043D\u0438\u0435.")))), /*#__PURE__*/React.createElement("section", {
     className: "sec"
   }, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0442\u043E \u0438\u0449\u0435\u043C"), /*#__PURE__*/React.createElement("p", {
     style: {
@@ -22584,9 +22882,9 @@ function VspMethod2() {
     }
   }, "\u0418\u0441\u0442\u043E\u0440\u0438\u0438 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432 \u043E \u0442\u043E\u043C, \u0447\u0442\u043E \u0441\u0434\u0435\u043B\u0430\u043B\u0438 \u043B\u044E\u0434\u0438 \u0432 \u043A\u043E\u043D\u043A\u0440\u0435\u0442\u043D\u043E\u043C \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0438: \u043E\u0444\u043E\u0440\u043C\u0438\u043B\u0438 \u0431\u0435\u0437 \u0441\u043E\u0433\u043B\u0430\u0441\u0438\u044F, \u0432\u044B\u0434\u0430\u043B\u0438 \u043E\u0434\u0438\u043D \u043F\u0440\u043E\u0434\u0443\u043A\u0442 \u043F\u043E\u0434 \u0432\u0438\u0434\u043E\u043C \u0434\u0440\u0443\u0433\u043E\u0433\u043E, \u0441\u043A\u0430\u0437\u0430\u043B\u0438, \u0447\u0442\u043E \u0431\u0435\u0437 \u0434\u043E\u043F\u0443\u0441\u043B\u0443\u0433\u0438 \u043D\u0435 \u0434\u0430\u0434\u0443\u0442, \u0440\u0430\u0431\u043E\u0442\u0430\u043B\u0438 \u0432 \u0442\u0435\u043B\u0435\u0444\u043E\u043D\u0435 \u043A\u043B\u0438\u0435\u043D\u0442\u0430, \u043D\u0435\u0434\u043E\u0434\u0430\u043B\u0438 \u043D\u0430\u043B\u0438\u0447\u043D\u044B\u0435, \u0434\u0430\u043D\u043D\u044B\u0435 \u0443\u0448\u043B\u0438 \u043C\u043E\u0448\u0435\u043D\u043D\u0438\u043A\u0430\u043C, \u043E\u0431\u0441\u043B\u0443\u0436\u0438\u0432\u0430\u044E\u0442 \u043F\u043E \u0437\u043D\u0430\u043A\u043E\u043C\u0441\u0442\u0432\u0443. \u0416\u0430\u043B\u043E\u0431\u044B \u043D\u0430 \u0431\u0430\u043D\u043A \u0432 \u0446\u0435\u043B\u043E\u043C, \u0442\u0430\u0440\u0438\u0444\u044B, \u043E\u0447\u0435\u0440\u0435\u0434\u0438 \u0438 \u043F\u0440\u0438\u043B\u043E\u0436\u0435\u043D\u0438\u0435 \u0441\u044E\u0434\u0430 \u043D\u0435 \u043F\u043E\u043F\u0430\u0434\u0430\u044E\u0442 \u2014 \u044D\u0442\u043E \xAB\u0410\u0443\u0434\u0438\u0442 \u043E\u0442\u0437\u044B\u0432\u043E\u0432\xBB.")), /*#__PURE__*/React.createElement("section", {
     className: "sec"
-  }, /*#__PURE__*/React.createElement("h3", null, "\u041A\u0442\u043E \u0447\u0438\u0442\u0430\u0435\u0442"), /*#__PURE__*/React.createElement("ul", {
+  }, /*#__PURE__*/React.createElement("h3", null, "\u041A\u0442\u043E \u0447\u0438\u0442\u0430\u0435\u0442 \u0438 \u043A\u0430\u043A \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C"), /*#__PURE__*/React.createElement("ul", {
     className: "facts"
-  }, /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, "\u041A\u0430\u0436\u0434\u044B\u0439 \u043E\u0442\u0437\u044B\u0432 \u0447\u0438\u0442\u0430\u0435\u0442 \u043C\u043E\u0434\u0435\u043B\u044C: \u0441\u043D\u0430\u0447\u0430\u043B\u0430 \u043E\u0442\u0431\u0438\u0440\u0430\u0435\u0442 \u0438\u0441\u0442\u043E\u0440\u0438\u0438, \u043F\u043E\u0442\u043E\u043C \u043F\u0438\u0448\u0435\u0442 \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443 \u2014 \u0447\u0442\u043E \u043F\u0440\u043E\u0438\u0437\u043E\u0448\u043B\u043E, \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u0430, \u043F\u0440\u043E\u0434\u0443\u043A\u0442, \u0442\u044F\u0436\u0435\u0441\u0442\u044C, \u0447\u044C\u044F \u0432\u0438\u043D\u0430 \u0438 \u0434\u043E\u0441\u043B\u043E\u0432\u043D\u0443\u044E \u0446\u0438\u0442\u0430\u0442\u0443. \u0426\u0438\u0442\u0430\u0442\u0443 \u043F\u0440\u043E\u0432\u0435\u0440\u044F\u0435\u0442 \u043A\u043E\u0434.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, "\u041C\u043E\u0434\u0435\u043B\u0438 \u0432\u044B\u0431\u0440\u0430\u043D\u044B \u0437\u0430\u043C\u0435\u0440\u043E\u043C \u043D\u0430 2 137 \u043E\u0442\u0437\u044B\u0432\u0430\u0445, \u0440\u0430\u0437\u043C\u0435\u0447\u0435\u043D\u043D\u044B\u0445 \u0432\u0440\u0443\u0447\u043D\u0443\u044E: \u043D\u0430 \u043E\u0442\u0431\u043E\u0440\u0435 \u2014 gpt-oss-120b, \u043D\u0430 \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0435 \u2014 DeepSeek V4.1 Flash.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, "\u0427\u0438\u0441\u043B\u0430, \u0441\u0440\u0430\u0432\u043D\u0435\u043D\u0438\u0435 \u0441 \u043F\u043E\u0445\u043E\u0436\u0438\u043C\u0438 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F\u043C\u0438 \u0438 \u043F\u043E\u0440\u044F\u0434\u043E\u043A \u0441\u043F\u0438\u0441\u043A\u0430 \u0441\u0447\u0438\u0442\u0430\u0435\u0442 \u043A\u043E\u0434. \u0411\u0430\u043B\u043B\u0430 \u043D\u0435\u0442.")))), /*#__PURE__*/React.createElement("section", {
+  }, /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, "\u041A\u0430\u0436\u0434\u044B\u0439 \u043E\u0442\u0437\u044B\u0432 \u0447\u0438\u0442\u0430\u0435\u0442 \u043C\u043E\u0434\u0435\u043B\u044C: \u0441\u043D\u0430\u0447\u0430\u043B\u0430 \u043E\u0442\u0431\u0438\u0440\u0430\u0435\u0442 \u0438\u0441\u0442\u043E\u0440\u0438\u0438, \u043F\u043E\u0442\u043E\u043C \u043F\u0438\u0448\u0435\u0442 \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443 \u2014 \u0447\u0442\u043E \u043F\u0440\u043E\u0438\u0437\u043E\u0448\u043B\u043E, \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u0430, \u043F\u0440\u043E\u0434\u0443\u043A\u0442, \u0442\u044F\u0436\u0435\u0441\u0442\u044C, \u0447\u044C\u044F \u0432\u0438\u043D\u0430 \u0438 \u0434\u043E\u0441\u043B\u043E\u0432\u043D\u0443\u044E \u0446\u0438\u0442\u0430\u0442\u0443.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, "\u041A\u043E\u0434 \u043F\u0440\u043E\u0432\u0435\u0440\u044F\u0435\u0442, \u0447\u0442\u043E \u0446\u0438\u0442\u0430\u0442\u0430 \u0434\u043E\u0441\u043B\u043E\u0432\u043D\u043E \u0435\u0441\u0442\u044C \u0432 \u043E\u0442\u0437\u044B\u0432\u0435 \u0438 \u0447\u0442\u043E \u043D\u0430\u0437\u0432\u0430\u043D\u043D\u043E\u0435 \u043C\u043E\u0434\u0435\u043B\u044C \u0438\u043C\u044F \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0442\u0435\u043B\u044C\u043D\u043E \u043D\u0430\u043F\u0438\u0441\u0430\u043D\u043E \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u043C. \u0415\u0441\u043B\u0438 \u043D\u0435\u0442 \u2014 \u0438\u0441\u0442\u043E\u0440\u0438\u044F \u043F\u043E\u043C\u0435\u0447\u0430\u0435\u0442\u0441\u044F \xAB\u043D\u0435 \u0434\u043E\u0441\u043B\u043E\u0432\u043D\u043E\xBB, \u0438\u043C\u044F \u043D\u0435 \u0443\u0447\u0438\u0442\u044B\u0432\u0430\u0435\u0442\u0441\u044F.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, "\u041C\u043E\u0434\u0435\u043B\u0438 \u0432\u044B\u0431\u0440\u0430\u043D\u044B \u0437\u0430\u043C\u0435\u0440\u043E\u043C \u043D\u0430 2 137 \u043E\u0442\u0437\u044B\u0432\u0430\u0445, \u0440\u0430\u0437\u043C\u0435\u0447\u0435\u043D\u043D\u044B\u0445 \u0432\u0440\u0443\u0447\u043D\u0443\u044E: \u043D\u0430 \u043E\u0442\u0431\u043E\u0440\u0435 \u2014 gpt-oss-120b, \u043D\u0430 \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0435 \u2014 DeepSeek V4.1 Flash.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, "\u0427\u0438\u0441\u043B\u0430, \u0441\u0440\u0430\u0432\u043D\u0435\u043D\u0438\u0435 \u0441 \u043F\u043E\u0445\u043E\u0436\u0438\u043C\u0438 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F\u043C\u0438 \u0438 \u043F\u043E\u0440\u044F\u0434\u043E\u043A \u0441\u043F\u0438\u0441\u043A\u0430 \u0441\u0447\u0438\u0442\u0430\u0435\u0442 \u043A\u043E\u0434. \u0411\u0430\u043B\u043B\u0430 \u043D\u0435\u0442.")))), /*#__PURE__*/React.createElement("section", {
     className: "sec"
   }, /*#__PURE__*/React.createElement("h3", null, "\u041A\u043E\u0433\u0434\u0430 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0435 \u043F\u043E\u043F\u0430\u0434\u0430\u0435\u0442 \u0432 \u0441\u043F\u0438\u0441\u043E\u043A"), /*#__PURE__*/React.createElement("p", {
     style: {
@@ -22600,11 +22898,14 @@ function VspMethod2() {
     className: "sec"
   }, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0435\u0433\u043E \u043D\u0435 \u0432\u0438\u0434\u043D\u043E"), /*#__PURE__*/React.createElement("ul", {
     className: "facts"
-  }, /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, "\u041E\u0442\u0437\u044B\u0432\u044B \u2014 \u0441\u043B\u043E\u0432\u0430 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432, \u0430 \u043D\u0435 \u0443\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043D\u044B\u0435 \u0444\u0430\u043A\u0442\u044B.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, "\u0423 \u0431\u043E\u043B\u044C\u0448\u0438\u043D\u0441\u0442\u0432\u0430 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u043C\u0430\u043B\u043E \u2014 \u043E \u043D\u0438\u0445 \u0432\u043A\u043B\u0430\u0434\u043A\u0430 \u043C\u043E\u043B\u0447\u0438\u0442.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, "\u041E\u0434\u0438\u043D \u0447\u0435\u043B\u043E\u0432\u0435\u043A \u0441 \u043D\u0435\u0441\u043A\u043E\u043B\u044C\u043A\u0438\u043C\u0438 \u0430\u043A\u043A\u0430\u0443\u043D\u0442\u0430\u043C\u0438 \u043D\u0435 \u043E\u0442\u043B\u0438\u0447\u0438\u043C \u043E\u0442 \u0440\u0430\u0437\u043D\u044B\u0445 \u043B\u044E\u0434\u0435\u0439.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, "\u041E\u0442\u0437\u044B\u0432\u044B, \u0443\u0434\u0430\u043B\u0451\u043D\u043D\u044B\u0435 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u043E\u0439 \u0434\u043E \u043D\u0430\u0447\u0430\u043B\u0430 \u0441\u0431\u043E\u0440\u0430, \u043D\u0435 \u0432\u0438\u0434\u043D\u044B; \u042F\u043D\u0434\u0435\u043A\u0441 \u041A\u0430\u0440\u0442\u044B \u0441\u043E\u0431\u0438\u0440\u0430\u044E\u0442\u0441\u044F \u2014 \u0434\u043E 600 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0445 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u043D\u0430 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0435.")))));
+  }, /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, "\u041E\u0442\u0437\u044B\u0432\u044B \u2014 \u0441\u043B\u043E\u0432\u0430 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432, \u0430 \u043D\u0435 \u0443\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043D\u044B\u0435 \u0444\u0430\u043A\u0442\u044B.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, "\u0423 \u0431\u043E\u043B\u044C\u0448\u0438\u043D\u0441\u0442\u0432\u0430 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u043C\u0430\u043B\u043E \u2014 \u043E \u043D\u0438\u0445 \u0432\u043A\u043B\u0430\u0434\u043A\u0430 \u043C\u043E\u043B\u0447\u0438\u0442.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, "\u041E\u0434\u0438\u043D \u0447\u0435\u043B\u043E\u0432\u0435\u043A \u0441 \u043D\u0435\u0441\u043A\u043E\u043B\u044C\u043A\u0438\u043C\u0438 \u0430\u043A\u043A\u0430\u0443\u043D\u0442\u0430\u043C\u0438 \u043D\u0435 \u043E\u0442\u043B\u0438\u0447\u0438\u043C \u043E\u0442 \u0440\u0430\u0437\u043D\u044B\u0445 \u043B\u044E\u0434\u0435\u0439.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, "\u041E\u0442\u0437\u044B\u0432\u044B, \u0443\u0434\u0430\u043B\u0451\u043D\u043D\u044B\u0435 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u043E\u0439 \u0434\u043E \u043D\u0430\u0447\u0430\u043B\u0430 \u0441\u0431\u043E\u0440\u0430, \u043D\u0435 \u0432\u0438\u0434\u043D\u044B. \u0421 \u042F\u043D\u0434\u0435\u043A\u0441 \u041A\u0430\u0440\u0442 \u0443 \u043A\u0440\u0443\u043F\u043D\u044B\u0445 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439 \u0441\u043E\u0431\u0438\u0440\u0430\u0435\u0442\u0441\u044F \u043D\u0435 \u0432\u0441\u044F \u0438\u0441\u0442\u043E\u0440\u0438\u044F: \u042F\u043D\u0434\u0435\u043A\u0441 \u043E\u0442\u0434\u0430\u0451\u0442 \u043D\u0435 \u0431\u043E\u043B\u044C\u0448\u0435 600 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u0438 \u043D\u0435 \u043F\u043E \u0434\u0430\u0442\u0435.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, "\u0423 \u043F\u043B\u043E\u0449\u0430\u0434\u043E\u043A \u043D\u0435\u0442 \u0441\u0441\u044B\u043B\u043A\u0438 \u043D\u0430 \u043E\u0442\u0434\u0435\u043B\u044C\u043D\u044B\u0439 \u043E\u0442\u0437\u044B\u0432 \u2014 \xAB\u041E\u0440\u0438\u0433\u0438\u043D\u0430\u043B\xBB \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u0435\u0442 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F.")))));
 }
+
+// ── поиск ────────────────────────────────────────────────────────────────────
 function VSearchBox({
   openPoint
 }) {
+  const ev = useContext(VEv);
   const [q, setQ] = useState("");
   const [d, setD] = useState(null);
   const [open, setOpen] = useState(false);
@@ -22624,8 +22925,14 @@ function VSearchBox({
       setD(null);
       return;
     }
-    const t = setTimeout(() => apiFetch("/api/vsp/search?q=" + encodeURIComponent(q.trim())).then(setD).catch(() => {}), 300);
-    return () => clearTimeout(t);
+    let alive = true;
+    const t = setTimeout(() => apiFetch("/api/vsp/search?q=" + encodeURIComponent(q.trim())).then(x => {
+      if (alive) setD(x);
+    }).catch(() => {}), 300);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
   }, [q]);
   const pick = p => {
     setOpen(false);
@@ -22663,7 +22970,7 @@ function VSearchBox({
     className: "t"
   }, vPlace(p)), /*#__PURE__*/React.createElement("div", {
     className: "m"
-  }, vCode(p))))), d.people.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, vCode(p), p.gosb ? ` · ГОСБ ${p.gosb}` : "")))), d.people.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "eyebrow"
   }, "\u0418\u043C\u0435\u043D\u0430 \u0432 \u0438\u0441\u0442\u043E\u0440\u0438\u044F\u0445"), d.people.map((x, i) => /*#__PURE__*/React.createElement("button", {
     key: i,
@@ -22678,7 +22985,10 @@ function VSearchBox({
   }, "\u0412 \u043E\u0442\u0437\u044B\u0432\u0430\u0445"), d.reviews.map(r => /*#__PURE__*/React.createElement("button", {
     key: r.rid,
     className: "lk",
-    onClick: () => pick(r.point)
+    onClick: () => {
+      setOpen(false);
+      ev.open(r.rid);
+    }
   }, /*#__PURE__*/React.createElement("div", {
     className: "m"
   }, /*#__PURE__*/React.createElement(VMark, {
@@ -22690,44 +23000,133 @@ function VSearchBox({
     className: "vempty"
   }, "\u041D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u043D\u0430\u0448\u043B\u043E\u0441\u044C")));
 }
+
+// ── ход сбора и чтения моделью (пока идёт) ──────────────────────────────────
+function VProgress({
+  p
+}) {
+  const [open, setOpen] = useState(false);
+  if (!p) return null;
+  const rv = p.reviews || {},
+    cd = p.cards || {},
+    ys = p.yandex_search || {};
+  const pct = (a, b) => b ? Math.min(100, Math.round(a / b * 100)) : 0;
+  const read = pct(p.screened, p.with_text),
+    cards = pct(p.carded, p.relevant);
+  const done = ys.finished && read >= 98 && cards >= 98;
+  if (done) return null;
+  const bar = (v, l) => /*#__PURE__*/React.createElement("span", {
+    className: "vprog-b",
+    role: "progressbar",
+    "aria-valuenow": v,
+    "aria-valuemin": 0,
+    "aria-valuemax": 100,
+    "aria-label": l
+  }, /*#__PURE__*/React.createElement("i", {
+    style: {
+      width: `${v}%`
+    }
+  }));
+  return /*#__PURE__*/React.createElement("section", {
+    className: "vprog",
+    "aria-label": "\u0425\u043E\u0434 \u0441\u0431\u043E\u0440\u0430 \u0438 \u0447\u0442\u0435\u043D\u0438\u044F"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "vprog-h",
+    onClick: () => setOpen(!open),
+    "aria-expanded": open
+  }, /*#__PURE__*/React.createElement("b", null, "\u0418\u0434\u0451\u0442 \u0441\u0431\u043E\u0440 \u0438 \u0447\u0442\u0435\u043D\u0438\u0435 \u043E\u0442\u0437\u044B\u0432\u043E\u0432"), /*#__PURE__*/React.createElement("span", null, "\u043C\u043E\u0434\u0435\u043B\u044C \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043B\u0430 ", read, "%"), bar(read, "Прочитано моделью"), /*#__PURE__*/React.createElement("span", null, "\u043A\u0430\u0440\u0442\u043E\u0447\u0435\u043A ", cards, "%"), bar(cards, "Карточки историй"), /*#__PURE__*/React.createElement("span", {
+    className: "note"
+  }, open ? "Свернуть" : "Подробнее")), open && /*#__PURE__*/React.createElement("div", {
+    className: "vprog-d"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, "\u0421\u0431\u043E\u0440."), " 2\u0413\u0418\u0421 \u2014 ", vN(cd["2gis"] || 0), " ", vPl(cd["2gis"] || 0, "отделение", "отделения", "отделений"), ", ", vN(rv["2gis"] || 0), " ", vPl(rv["2gis"] || 0, "отзыв", "отзыва", "отзывов"), ", \u0432\u0441\u044F \u0438\u0441\u0442\u043E\u0440\u0438\u044F.", " ", "\u042F\u043D\u0434\u0435\u043A\u0441 \u041A\u0430\u0440\u0442\u044B \u2014 ", vN(cd.yandex || 0), " ", vPl(cd.yandex || 0, "отделение", "отделения", "отделений"), ", ", vN(rv.yandex || 0), " ", vPl(rv.yandex || 0, "отзыв", "отзыва", "отзывов"), ys.points ? ys.finished ? " · поиск отделений закончен" : ` · поиск отделений: ${vN(ys.done)} из ${vN(ys.points)} точек` : "", "."), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, "\u0427\u0442\u0435\u043D\u0438\u0435 \u043C\u043E\u0434\u0435\u043B\u044C\u044E."), " \u041E\u0442\u043E\u0431\u0440\u0430\u043D\u043E ", vN(p.screened), " \u0438\u0437 ~", vN(p.with_text), " \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u0441 \u0442\u0435\u043A\u0441\u0442\u043E\u043C; \u0438\u0441\u0442\u043E\u0440\u0438\u0439 \u043E \u0432\u043E\u0437\u043C\u043E\u0436\u043D\u044B\u0445 \u043D\u0430\u0440\u0443\u0448\u0435\u043D\u0438\u044F\u0445 \u2014 ", vN(p.relevant), ";", " ", "\u043F\u043E\u0434\u0440\u043E\u0431\u043D\u044B\u0445 \u043A\u0430\u0440\u0442\u043E\u0447\u0435\u043A \u2014 ", vN(p.carded), "."), /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, "\u041F\u043E\u043A\u0430 \u0447\u0442\u0435\u043D\u0438\u0435 \u0438\u0434\u0451\u0442, \u0441\u043F\u0438\u0441\u043A\u0438 \u0438 \u0447\u0438\u0441\u043B\u0430 \u0432\u043E \u0432\u043A\u043B\u0430\u0434\u043A\u0435 \u0440\u0430\u0441\u0442\u0443\u0442: \u0440\u0430\u0441\u0447\u0451\u0442 \u043E\u0431\u043D\u043E\u0432\u043B\u044F\u0435\u0442\u0441\u044F \u043A\u0430\u0436\u0434\u044B\u0435 2 \u0447\u0430\u0441\u0430. \u041E\u0442\u0437\u044B\u0432\u044B, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u043C\u043E\u0434\u0435\u043B\u044C \u0435\u0449\u0451 \u043D\u0435 \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043B\u0430, \u0443\u0447\u0442\u0435\u043D\u044B \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C.")));
+}
+
+// ── страница: вкладки, общие фильтры, досье по адресу #vsp?point=…, проверка истории ──
+function vHashPoint() {
+  try {
+    const h = parseHash();
+    return h.p === "vsp" ? h.prm.point || null : null;
+  } catch (e) {
+    return null;
+  }
+}
 function VspPage() {
   const me = useMe();
   const [tab, setTabS] = useState(() => vLS("vsp_tab", "branches"));
   const [f, setFState] = useState({
     ...V_F0
   });
-  const [point, setPoint] = useState(null);
+  const [point, setPoint] = useState(vHashPoint);
   const [scheme, setScheme] = useState(null);
   const [planOpen, setPlanOpen] = useState(false);
-  const [tiles, setTiles] = useState(null);
-  const [meta, setMeta] = useState(null);
+  const [evRid, setEvRid] = useState(null);
+  const meta = useVFetch("/api/vsp/meta");
   const plan = useVPlan();
+  const scrollY = useRef(0);
+  const pushed = useRef(false);
   useEffect(() => {
-    apiFetch("/api/vsp/home").then(x => {
-      setTiles(x.tiles);
-      setMeta(x.run);
-    }).catch(() => {});
+    const on = () => {
+      const p = vHashPoint();
+      const h = parseHash();
+      if (h.p !== "vsp") return;
+      setPoint(p);
+      if (!p) requestAnimationFrame(() => {
+        try {
+          window.scrollTo({
+            top: scrollY.current || 0
+          });
+        } catch (e) {}
+      });
+    };
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
   }, []);
+  const evCtx = useMemo(() => ({
+    open: rid => setEvRid(rid)
+  }), []);
   if (me && !me.can_vsp) return /*#__PURE__*/React.createElement(ErrState, {
     msg: "\u0420\u0430\u0437\u0434\u0435\u043B \u043E\u0442\u043A\u0440\u044B\u0442 \u0442\u043E\u043B\u044C\u043A\u043E \u0432\u043B\u0430\u0434\u0435\u043B\u044C\u0446\u0443 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0430."
   });
+  const tiles = meta && !meta.err ? meta.tiles : null;
   const setF = x => setFState(s => ({
     ...s,
     ...x
   }));
   const openPoint = p => {
-    setPoint(p);
+    setEvRid(null);
+    if (!vHashPoint()) {
+      scrollY.current = window.scrollY;
+      pushed.current = true;
+    }
+    location.hash = "vsp?point=" + encodeURIComponent(p);
+  };
+  const closePoint = () => {
+    if (pushed.current) {
+      pushed.current = false;
+      history.back();
+    } else location.hash = "vsp";
   };
   const goTab = t => {
-    setPoint(null);
     setScheme(null);
     setTabS(t);
     vLSset("vsp_tab", t);
+    if (vHashPoint()) {
+      pushed.current = false;
+      location.hash = "vsp";
+    }
     try {
       window.scrollTo({
         top: 0
       });
     } catch (e) {}
+  };
+  const goFilter = x => {
+    setF({
+      ...x
+    });
+    goTab("branches");
   };
   const TABS = [["branches", "Отделения"], ["stories", "Истории"], ["people", "Люди"], ["schemes", "Схемы"], ["trends", "Динамика"]];
   const SHOW = {
@@ -22739,19 +23138,22 @@ function VspPage() {
     stories: {
       action: 1,
       fmt: 1,
-      toggles: 1
+      toggles: 1,
+      story: 1
     },
     people: {},
     trends: {
       action: 1
     }
   };
-  return /*#__PURE__*/React.createElement("div", {
+  return /*#__PURE__*/React.createElement(VEv.Provider, {
+    value: evCtx
+  }, /*#__PURE__*/React.createElement("div", {
     className: "vsp fade-in"
   }, /*#__PURE__*/React.createElement(PageHead, {
     eyebrow: "\u0410\u043D\u0430\u043B\u0438\u0437 \xB7 \u0440\u0430\u0437\u0434\u0435\u043B \u0432\u0438\u0434\u0435\u043D \u0442\u043E\u043B\u044C\u043A\u043E \u0432\u0430\u043C",
     title: "\u0410\u0443\u0434\u0438\u0442 \u0441\u0435\u0442\u0438 \u0412\u0421\u041F",
-    meta: `Какие отделения проверить и почему${meta ? ` · данные на ${vD(meta.finished_at)}` : ""}`,
+    meta: `Какие отделения проверить и почему${meta && meta.run ? ` · данные на ${vD(meta.run.finished_at)}` : ""}`,
     actions: /*#__PURE__*/React.createElement("div", {
       className: "row",
       style: {
@@ -22764,6 +23166,8 @@ function VspPage() {
       className: "btn " + (plan.plan.length ? "btn-ink" : "btn-ghost"),
       onClick: () => setPlanOpen(true)
     }, "\u041F\u043B\u0430\u043D \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438", plan.plan.length ? ` · ${plan.plan.length}` : ""))
+  }), /*#__PURE__*/React.createElement(VProgress, {
+    p: meta && !meta.err ? meta.progress : null
   }), /*#__PURE__*/React.createElement("div", {
     className: "vtabs"
   }, /*#__PURE__*/React.createElement("div", {
@@ -22784,18 +23188,21 @@ function VspPage() {
     onClick: () => goTab("method")
   }, "\u041A\u0430\u043A \u044D\u0442\u043E \u0440\u0430\u0431\u043E\u0442\u0430\u0435\u0442"))), /*#__PURE__*/React.createElement("div", {
     className: "vmain"
-  }, !point && SHOW[tab] && /*#__PURE__*/React.createElement(VFilters, {
+  }, point && /*#__PURE__*/React.createElement(VspDossier, {
+    key: point,
+    point: point,
+    onBack: closePoint,
+    openPoint: openPoint,
+    plan: plan,
+    goFilter: goFilter
+  }), /*#__PURE__*/React.createElement("div", {
+    hidden: !!point
+  }, SHOW[tab] && /*#__PURE__*/React.createElement(VFilters, {
     f: f,
     setF: setF,
     tiles: tiles,
     show: SHOW[tab]
-  }), point ? /*#__PURE__*/React.createElement(VspDossier, {
-    key: point,
-    point: point,
-    onBack: () => setPoint(null),
-    openPoint: openPoint,
-    plan: plan
-  }) : tab === "branches" ? /*#__PURE__*/React.createElement(VspHome3, {
+  }), tab === "branches" ? /*#__PURE__*/React.createElement(VspHome3, {
     openPoint: openPoint,
     f: f,
     setF: setF,
@@ -22814,7 +23221,9 @@ function VspPage() {
     openPoint: openPoint,
     goStories: k => {
       setF({
-        action: k
+        action: k,
+        severity: 0,
+        period: "all"
       });
       goTab("stories");
     }
@@ -22825,11 +23234,15 @@ function VspPage() {
     setF: setF,
     openPoint: openPoint,
     goTab: goTab
-  }) : /*#__PURE__*/React.createElement(VspMethod2, null)), planOpen && /*#__PURE__*/React.createElement(VPlanPanel, {
+  }) : /*#__PURE__*/React.createElement(VspMethod2, null))), planOpen && /*#__PURE__*/React.createElement(VPlanPanel, {
     plan: plan,
     onClose: () => setPlanOpen(false),
     openPoint: openPoint
-  }));
+  }), evRid && /*#__PURE__*/React.createElement(VEvidencePanel, {
+    rid: evRid,
+    onClose: () => setEvRid(null),
+    openPoint: openPoint
+  })));
 }
 
 // ─── Loophole page (встраивает frontend модуля loophole) ─────────────────────
