@@ -25,9 +25,14 @@ import asyncio
 import json
 import logging
 import math
+import os
 import random
 import re
+import socket
+import ssl
 from collections.abc import Iterable
+from pathlib import Path
+from urllib.parse import urlsplit
 
 from ..http import CAPTCHA_MARKERS
 from ..models import CollectorError, SourceBlocked
@@ -125,6 +130,30 @@ def parse_office(f: dict) -> dict | None:
     }
 
 
+def ca_bundle() -> str | None:
+    """Набор корневых сертификатов AuditLens с корнем Минцифры (config/ca_bundle_combined.pem):
+    с российских адресов сайт банка отдаёт сертификат этого центра."""
+    for p in (os.getenv("VSP_CA_BUNDLE"), os.getenv("CA_BUNDLE_PATH"), "/app/config/ca_bundle_combined.pem",
+              str(Path(__file__).resolve().parents[4] / "config" / "ca_bundle_combined.pem")):
+        if p and Path(p).is_file():
+            return p
+    return None
+
+
+def verify_tls(site: str, bundle: str | None, timeout_s: float = 15.0) -> bool:
+    """Проверить сертификат сайта по набору корней (с российским). Браузер Playwright этот
+    корень не знает и откроет сайт с отключённой проверкой — поэтому подлинность сайта
+    подтверждаем здесь, до запуска браузера. Ошибка проверки — исключение ssl."""
+    if not bundle:
+        log.warning("banksite: набор корневых сертификатов не найден — проверка TLS пропущена")
+        return False
+    host = urlsplit(site).hostname
+    ctx = ssl.create_default_context(cafile=bundle)
+    with socket.create_connection((host, 443), timeout=timeout_s) as sock:
+        with ctx.wrap_socket(sock, server_hostname=host):
+            return True
+
+
 class BankSiteBrowser:
     """Браузер-посетитель: страница офисов открыта, запросы — изнутри неё (те же куки и
     проверки, что у человека). Один запрос в 1/rps секунд с небольшим разбросом."""
@@ -140,10 +169,16 @@ class BankSiteBrowser:
 
     async def __aenter__(self) -> "BankSiteBrowser":
         from playwright.async_api import async_playwright
+        try:
+            await asyncio.to_thread(verify_tls, self.site, ca_bundle())
+        except (OSError, ssl.SSLError) as e:
+            raise CollectorError(f"banksite: сертификат сайта не прошёл проверку: {e}") from e
         self._pw = await async_playwright().start()
         # в контейнере без привилегий песочница Chromium недоступна — как в основном браузерном модуле
         self._browser = await self._pw.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
-        ctx = await self._browser.new_context(locale="ru-RU", user_agent=self.user_agent)
+        # сертификат уже проверен выше по набору с российским корнем; Chromium этого корня не знает
+        ctx = await self._browser.new_context(locale="ru-RU", user_agent=self.user_agent,
+                                              ignore_https_errors=True)
         self._page = await ctx.new_page()
         await self._open()
         return self

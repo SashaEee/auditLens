@@ -148,3 +148,7 @@ def test_refresh_banksite_end_to_end(db_url, monkeypatch):
     assert asyncio.run(mass.refresh_banksite(st, s)) == {"skipped": "свежий обход"}
     s.bank_site = ""
     assert asyncio.run(mass.refresh_banksite(st, s, force=True)) == {"skipped": "VSP_BANK_SITE не задан"}
+
+
+def test_verify_tls_without_bundle_is_reported_not_silent():
+    assert bs.verify_tls("https://bank.example", None) is False
