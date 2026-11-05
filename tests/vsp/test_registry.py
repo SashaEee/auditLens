@@ -111,3 +111,23 @@ def test_store_adds_missing_columns(tmp_path):
     with st.engine.connect() as c:
         row = c.execute(select(branches.c.name, branches.c.registry_num)).first()
     assert row.name == "старое" and row.registry_num is None
+
+
+def test_cbr_number_of_mobile_office_is_conflict_not_match(tmp_path):
+    """Карточка Яндекса в городе с номером передвижного пункта (по реестру — объезд сёл):
+    номер не повод склеивать — конфликт на разбор. То же для номера из другого города."""
+    st = Store(f"sqlite:///{tmp_path / 'm.sqlite'}")
+    van = _cbr("5", "602212, ВЛАДИМИРСКАЯ ОБЛАСТЬ, МУРОМСКИЙ РАЙОН, С. БОРИСОГЛЕБ, УЛ. КОМИНТЕРНА, Д. 48",
+               kind="BNK_PPKO", name="С000ТС00 Автомобиль", num="1481/261/2/МО")
+    office = _cbr("6", "602267, ВЛАДИМИРСКАЯ ОБЛАСТЬ, Г. МУРОМ, УЛ. ЛЕНИНА, Д. 1", num="1481/261/77")
+    import_registry(st, [van, office])
+    st.upsert_source_branch(SourceBranch("yandex", "y1", address="Муром, Муромская улица, 3/1", city="Муром",
+                                         lat=55.57, lon=42.05, raw={"cbr_num": "1481/261/2/МО"}))
+    st.upsert_source_branch(SourceBranch("yandex", "y2", address="Ковров, улица Мира, 5", city="Ковров",
+                                         lat=56.36, lon=41.31, raw={"cbr_num": "1481/261/77"}))
+    res = match_all(st)
+    with st.engine.connect() as c:
+        got = {r.source_branch_id: (r.branch_id, r.match_method, r.match_status)
+               for r in c.execute(select(source_branches))}
+    assert got["y1"] == (None, "registry_code", "conflict") and got["y2"] == (None, "registry_code", "conflict")
+    assert res["code_conflict"] == 2 and "by_code" not in res

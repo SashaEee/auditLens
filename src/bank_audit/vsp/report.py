@@ -41,7 +41,8 @@ def completeness_report(store: Store, *, source: str | None = None, out: str | N
         s["stored"] += r["stored_total"] or 0
         s["status"][r["completeness"] or r["status"] or "never"] += 1
     prof: dict[str, dict] = defaultdict(lambda: {"years": Counter(), "ratings": Counter(), "replies": 0,
-                                                  "five_2026": 0, "five_2026_single_author": 0})
+                                                  "five_2026": 0, "five_2026_single_author": 0,
+                                                  "has_author_count": False})
     for src, _sid, rating, d, reply, raw in revs:
         p = prof[src]
         y = str(d)[:4] if d else "?"
@@ -51,16 +52,20 @@ def completeness_report(store: Store, *, source: str | None = None, out: str | N
         if y == "2026" and rating == 5:
             p["five_2026"] += 1
             try:
-                if (json.loads(raw or "{}").get("author_reviews_count") or 0) == 1:
-                    p["five_2026_single_author"] += 1
+                arc = json.loads(raw or "{}").get("author_reviews_count")
             except ValueError:
-                pass
+                arc = None
+            if arc is not None:
+                p["has_author_count"] = True
+                p["five_2026_single_author"] += 1 if arc == 1 else 0
     summary = {k: {**v, "status": dict(v["status"]),
                    "share_fetched": round(v["fetched"] / v["declared"], 3) if v["declared"] else None}
                for k, v in by_src.items()}
     profile = {k: {"years": dict(sorted(v["years"].items())), "ratings": dict(v["ratings"]),
                    "replies": v["replies"], "five_2026": v["five_2026"],
-                   "five_2026_single_author": v["five_2026_single_author"]} for k, v in prof.items()}
+                   # у источника нет числа отзывов автора (Яндекс) — None, а не 0
+                   "five_2026_single_author": v["five_2026_single_author"] if v["has_author_count"] else None}
+               for k, v in prof.items()}
     res = {"by_source": summary, "profile": profile,
            "branches": [{k: (str(v) if k.endswith("_at") or k.endswith("_date") else v) for k, v in r.items()
                          if k in ("source", "source_branch_id", "name", "address", "city", "region",
@@ -85,7 +90,7 @@ def _markdown(res: dict) -> str:
     for s, p in res["profile"].items():
         L.append(f"**{s}**: по годам {p['years']}; оценки {p['ratings']}; с ответом банка {p['replies']}; "
                  f"пятёрок 2026 года {p['five_2026']}, из них от авторов с единственным отзывом "
-                 f"{p['five_2026_single_author']}.")
+                 f"{p['five_2026_single_author'] if p['five_2026_single_author'] is not None else 'нет данных (источник не отдаёт число отзывов автора)'}.")
     L += ["", "## По отделениям", "",
           "| Источник | id | Город | Адрес | Заявлено | Получено | Полнота | Старейший | Свежий | Ошибка |",
           "|---|---|---|---|---|---|---|---|---|---|"]

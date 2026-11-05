@@ -31,7 +31,9 @@ def _2gis_review(i, answer=False):
             "date_created": f"2025-0{1 + i % 9}-01T10:00:00+03:00", "date_edited": None,
             "official_answer": {"text": "Спасибо", "date_created": "2025-02-01T10:00:00+03:00"} if answer else None,
             "provider": "2gis", "is_hidden": False, "likes_count": 0, "comments_count": 0,
-            "user": {"public_id": f"u{i}", "name": "Автор", "reviews_count": 1}}
+            "user": {"public_id": f"u{i}", "name": "Автор", "reviews_count": 1},
+            "trust_factors": {"factors": [{"caption": "Сбер", "transaction_provider": "sbol",
+                                           "type": "transaction_confirmation"}]} if i == 3 else None}
 
 
 def test_twogis_pages_until_next_link_ends():
@@ -53,7 +55,8 @@ def test_twogis_pages_until_next_link_ends():
     r3 = next(r for r in revs if r.source_review_id == "1003")
     assert r3.organization_reply == "Спасибо" and r3.reply_date is not None
     assert r3.author_ref and "Автор" not in json.dumps(r3.raw, ensure_ascii=False)
-    assert r3.raw["author_reviews_count"] == 1
+    assert r3.raw["author_reviews_count"] == 1 and r3.raw["confirmed_by"] == ["sbol"]
+    assert next(r for r in revs if r.source_review_id == "1004").raw["confirmed_by"] is None
     card = asyncio.run(c.branch("7000"))
     assert card.declared_reviews == total
 
@@ -194,3 +197,32 @@ def test_yandex_card_carries_cbr_number():
     b = to_source_branch(it)
     assert b.raw["cbr_num"] == "1481/1948/115" and b.raw["office_type"] == ["office_retail", "office_sme"]
     assert b.raw["division_type"] == ["additional_bank"] and b.raw["cbr_actual"] == "04.10.2026"
+
+
+def test_branch_then_pages_reuses_first_page(tmp_path):
+    """sync: карточка и первая страница — один запрос (2ГИС и Яндекс без подписи)."""
+    from bank_audit.vsp.storage import Store
+    from bank_audit.vsp.sync import sync_branch
+    calls = {"2gis": 0, "yandex": 0}
+
+    def g_handler(req: httpx.Request):
+        if req.url.host == "2gis.ru":
+            return httpx.Response(200, text='"reviewApiKey":"00000000-0000-0000-0000-000000000000"')
+        calls["2gis"] += 1
+        q = parse_qs(urlparse(str(req.url)).query)
+        off, lim = int(q["offset"][0]), int(q["limit"][0])
+        items = [_2gis_review(i) for i in range(off, min(off + lim, 120))]
+        nxt = f"https://x/?offset={off + lim}" if off + lim < 120 else None
+        return httpx.Response(200, json={"meta": {"branch_reviews_count": 120, "next_link": nxt}, "reviews": items})
+
+    def y_handler(req: httpx.Request):
+        calls["yandex"] += 1
+        page = int(parse_qs(urlparse(str(req.url)).query).get("page", ["1"])[0])
+        return httpx.Response(200, text=_ya_state("42", page, 120))
+
+    st = Store(f"sqlite:///{tmp_path / 'c.sqlite'}")
+    r1 = asyncio.run(sync_branch(TwoGisCollector(Settings(), http=http_for(g_handler, "2gis")), st, "7000"))
+    r2 = asyncio.run(sync_branch(YandexMapsCollector(Settings(), http=http_for(y_handler, "yandex"), signed=False),
+                                 st, "42"))
+    assert (r1.fetched, r1.completeness, calls["2gis"]) == (120, "complete", 3)
+    assert (r2.fetched, r2.completeness, calls["yandex"]) == (120, "complete", 3)

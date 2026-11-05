@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from collections.abc import AsyncIterator
 from datetime import datetime
 from urllib.parse import parse_qs, urlparse
@@ -33,7 +34,8 @@ log = logging.getLogger(__name__)
 
 REVIEWS_URL = "https://public-api.reviews.2gis.com/3.0/branches/{bid}/reviews"
 FIELDS = ("meta.providers,meta.branch_rating,meta.branch_reviews_count,meta.total_count,"
-          "reviews.hiding_reason")
+          "reviews.hiding_reason,reviews.trust_factors")
+FIRST_PAGE_TTL = 60.0                 # с: первая страница из branch() годится для pages()
 SBER_ORG_ID = "4504136498537001"     # организация «Сбербанк» в каталоге 2ГИС
 
 
@@ -64,7 +66,17 @@ def parse_review(x: dict, bid: str, salt: str) -> Review:
              "is_hidden": x.get("is_hidden"), "hiding_reason": x.get("hiding_reason"),
              "likes": x.get("likes_count"), "comments": x.get("comments_count"),
              "author_reviews_count": user.get("reviews_count"),
-             "is_rated": x.get("is_rated")})
+             "is_rated": x.get("is_rated"),
+             # «Отзыв подтверждён»: операция подтверждена провайдером (sbol — СберБанк Онлайн)
+             "confirmed_by": _confirmed_by(x.get("trust_factors"))})
+
+
+def _confirmed_by(tf) -> list[str] | None:
+    if not isinstance(tf, dict):
+        return None
+    out = sorted({f.get("transaction_provider") or f.get("type") for f in tf.get("factors") or []
+                  if isinstance(f, dict) and (f.get("transaction_provider") or f.get("type"))})
+    return out or None
 
 
 class TwoGisCollector(Collector):
@@ -75,6 +87,7 @@ class TwoGisCollector(Collector):
 
     def __init__(self, settings, http: SourceHttp | None = None):
         super().__init__(settings)
+        self._first: dict[tuple[str, str], tuple[float, dict]] = {}
         self.http = http or SourceHttp("2gis", rps=self.cfg.rps, timeout_s=self.cfg.timeout_s,
                                        max_retries=self.cfg.max_retries, user_agent=settings.user_agent,
                                        headers={"Referer": "https://2gis.ru/", "Origin": "https://2gis.ru"})
@@ -106,7 +119,10 @@ class TwoGisCollector(Collector):
             "fields": FIELDS, "key": key})
 
     async def branch(self, source_branch_id: str) -> SourceBranch:
-        d = await self._page(source_branch_id, sort="date_edited", offset=0, limit=1)
+        # карточка = meta первой страницы; страница кладётся в кэш, и pages() её не перезапрашивает
+        sort = self.capabilities.sorts[0]
+        d = await self._page(source_branch_id, sort=sort, offset=0, limit=min(self.cfg.page_size, 50))
+        self._first[(source_branch_id, sort)] = (time.monotonic(), d)
         meta = d.get("meta") or {}
         if meta.get("code") and int(meta["code"]) == 404:
             raise NotFound(f"2gis: отделения {source_branch_id} нет")
@@ -123,7 +139,11 @@ class TwoGisCollector(Collector):
         offset = int(cursor or 0)
         n = 0
         while True:
-            d = await self._page(source_branch_id, sort=sort, offset=offset, limit=limit)
+            hit = self._first.pop((source_branch_id, sort), None) if offset == 0 else None
+            if hit and time.monotonic() - hit[0] < FIRST_PAGE_TTL:
+                d = hit[1]
+            else:
+                d = await self._page(source_branch_id, sort=sort, offset=offset, limit=limit)
             meta = d.get("meta") or {}
             items = d.get("reviews") or []
             revs = [parse_review(x, source_branch_id, self.settings.author_salt) for x in items]

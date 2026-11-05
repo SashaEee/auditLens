@@ -22,7 +22,7 @@ from sqlalchemy import select, update
 from ..models import utcnow
 from ..storage import Store, branches, source_branches
 from .cbr import RegistryRow
-from .match import Item, address_key, match_sources
+from .match import Item, address_key, match_sources, norm_city
 
 log = logging.getLogger(__name__)
 
@@ -61,8 +61,9 @@ def match_all(store: Store) -> dict:
     with store.engine.connect() as c:
         reg = list(c.execute(select(branches.c.branch_id, branches.c.address_key, branches.c.lat,
                                     branches.c.lon).where(branches.c.status == "active")))
-        by_num = {r.registry_num: r.branch_id for r in c.execute(
-            select(branches.c.registry_num, branches.c.branch_id).where(branches.c.registry_num.isnot(None)))}
+        by_num = {r.registry_num: (r.branch_id, r.status, r.city) for r in c.execute(
+            select(branches.c.registry_num, branches.c.branch_id, branches.c.status, branches.c.city)
+            .where(branches.c.registry_num.isnot(None)))}
         cards = list(c.execute(select(source_branches)).mappings())
     by_key: dict[str, list[int]] = defaultdict(list)
     for b in reg:
@@ -74,8 +75,17 @@ def match_all(store: Store) -> dict:
             continue
         num = _raw(x).get("cbr_num")
         if num and num in by_num:
-            assign[(x["source"], x["source_branch_id"])] = (by_num[num], "registry_code", "auto", 1.0)
-            st["by_code"] += 1
+            bid, status, rcity = by_num[num]
+            same_city = not (rcity and x["city"]) or norm_city(rcity) == norm_city(x["city"])
+            if status == "active" and same_city:
+                assign[(x["source"], x["source_branch_id"])] = (bid, "registry_code", "auto", 1.0)
+                st["by_code"] += 1
+            else:
+                # номер есть, но по реестру это передвижной пункт / КИЦ / другой город —
+                # карточку не склеиваем, отдаём на разбор (пример: номер автомобиля-офиса,
+                # который по реестру ездит по сёлам района, у стационарной карточки в городе)
+                assign[(x["source"], x["source_branch_id"])] = (None, "registry_code", "conflict", None)
+                st["code_conflict"] += 1
             continue
         k = address_key(x["address"], x["city"])
         ids = by_key.get(k or "", [])

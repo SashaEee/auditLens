@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import re
+import time
 from urllib.parse import quote
 from collections.abc import AsyncIterator
 from datetime import datetime
@@ -42,6 +43,7 @@ ORG_URL = "https://yandex.ru/maps/org/{seo}/{oid}/reviews/"
 # отдаёт отделения Екатеринбурга).
 CHAIN_URL = "https://yandex.ru/maps/213/moscow/chain/sberbank/{chain}/"
 SBER_CHAIN = "6003612"
+FIRST_PAGE_TTL = 60.0
 MAX_PAGES = 12                      # 12 × 50 = 600 — потолок выдачи страниц организации
 _STATE = re.compile(r'<script type="application/json" class="state-view">(.*?)</script>', re.S)
 
@@ -170,6 +172,7 @@ class YandexMapsCollector(Collector):
         self.signed = os.getenv("VSP_YANDEX_SIGNED_API", "0") == "1" if signed is None else signed
         self.capabilities = API_CAPS if self.signed else PAGE_CAPS
         self._sess: dict[str, dict] = {}
+        self._p1: dict[str, tuple[float, dict]] = {}
 
     async def close(self) -> None:
         await self.http.close()
@@ -184,6 +187,7 @@ class YandexMapsCollector(Collector):
         if it.get("seoname"):
             self._seo[oid] = it["seoname"]
         if page == 1:
+            self._p1[oid] = (time.monotonic(), it)
             cfg = st.get("config") or {}
             self._sess[oid] = {
                 "url": url, "csrf": cfg.get("csrfToken"),
@@ -209,6 +213,11 @@ class YandexMapsCollector(Collector):
             return j if isinstance(j, dict) else {}
         raise CollectorError("yandex: csrf-токен не принят дважды")
 
+    def _fresh_p1(self, oid: str) -> dict | None:
+        """Первая страница организации, только что полученная в branch(): не перезапрашиваем."""
+        hit = self._p1.pop(oid, None)
+        return hit[1] if hit and time.monotonic() - hit[0] < FIRST_PAGE_TTL else None
+
     async def branch(self, source_branch_id: str) -> SourceBranch:
         return to_source_branch(await self._org_page(source_branch_id, 1))
 
@@ -220,7 +229,8 @@ class YandexMapsCollector(Collector):
             return
         page = int(cursor or 1)
         while page <= MAX_PAGES:
-            it = await self._org_page(source_branch_id, page)
+            it = self._fresh_p1(source_branch_id) if page == 1 else None
+            it = it or await self._org_page(source_branch_id, page)
             rr = it.get("reviewResults") or {}
             params = rr.get("params") or {}
             items = rr.get("reviews") or []
@@ -240,7 +250,8 @@ class YandexMapsCollector(Collector):
         ranks = list(RANKINGS) if sort == "union" else [sort]
         ri, page = (int(x) for x in (cursor or "0:1").split(":"))
         seen: set[str] = set()
-        await self._org_page(oid, 1)                         # сессия и заявленное число
+        if not (self._fresh_p1(oid) and oid in self._sess):
+            await self._org_page(oid, 1)                     # сессия и заявленное число
         n = 0
         while ri < len(ranks):
             j = await self._api_page(oid, ranks[ri], page)

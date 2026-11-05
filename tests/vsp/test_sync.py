@@ -184,3 +184,15 @@ def test_completeness_rules():
     assert completeness_of("end", full_history=False, declared=134, fetched=134) == "complete"
     assert completeness_of("end", full_history=False, declared=None, fetched=50) == "window"
     assert completeness_of("max_pages", full_history=True, declared=None, fetched=10) == "partial"
+
+
+def test_report_single_author_unknown_when_source_lacks_field(store):
+    from bank_audit.vsp.report import completeness_report
+    now = datetime(2026, 3, 1, tzinfo=timezone.utc)
+    a = Review(source="ya", source_review_id="1", source_branch_id="b", rating=5, review_text="т",
+               review_date=now, collection_method="t", raw={})
+    g = Review(source="gis", source_review_id="1", source_branch_id="b", rating=5, review_text="т",
+               review_date=now, collection_method="t", raw={"author_reviews_count": 1})
+    store.save_reviews([a, g], seen_at=now)
+    prof = completeness_report(store)["profile"]
+    assert prof["ya"]["five_2026_single_author"] is None and prof["gis"]["five_2026_single_author"] == 1
