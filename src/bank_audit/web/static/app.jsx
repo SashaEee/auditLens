@@ -10985,10 +10985,10 @@ function VEvidencePanel({rid,onClose,openPoint}){
 }
 
 // ── фильтры, общие для вкладок ───────────────────────────────────────────────
-const V_F0={subject:"",gosb:"",action:"",vulnerable:false,named:false,fresh:false,fmt:"",severity:0,period:"730"};
+const V_F0={subject:"",gosb:"",action:"",vulnerable:false,named:false,fresh:false,fmt:"",severity:2,period:"730"};
 function VFilters({f,setF,tiles,show}){
   const regions=useMemo(()=>(tiles||[]).filter(t=>t.n>0).slice().sort((a,b)=>a.name.localeCompare(b.name,"ru")),[tiles]);
-  const any=f.subject||f.gosb||(show.action&&f.action)||(show.fmt&&f.fmt)||(show.toggles&&(f.vulnerable||f.named||f.fresh))||(show.story&&(f.severity||f.period!=="730"));
+  const any=f.subject||f.gosb||(show.action&&f.action)||(show.fmt&&f.fmt)||(show.toggles&&(f.vulnerable||f.named||f.fresh))||(show.story&&(f.severity!==V_F0.severity||f.period!==V_F0.period));
   return <div className="vfil" role="group" aria-label="Фильтры">
     <select className="vsel" value={f.subject} onChange={e=>setF({subject:e.target.value,gosb:""})} aria-label="Регион">
       <option value="">Вся сеть</option>{regions.map(t=><option key={t.code} value={t.code}>{t.name}</option>)}</select>
@@ -11224,7 +11224,7 @@ function VspStories({f,setF,openPoint}){
       <div className="vtools">
         <label className="vin" style={{flex:"1 1 260px"}}><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Слова клиента, имя сотрудника, продукт" aria-label="Поиск по историям"/></label>
         <select className="vsel" value={f.severity} onChange={e=>setF({severity:+e.target.value})} aria-label="Тяжесть">
-          <option value={0}>Любая тяжесть</option><option value={2}>Тяжёлые и очень тяжёлые</option><option value={3}>Только очень тяжёлые</option></select>
+          <option value={2}>Тяжёлые и очень тяжёлые</option><option value={3}>Только очень тяжёлые</option><option value={0}>Все, включая лёгкие (ошибки, некомпетентность)</option></select>
         <select className="vsel" value={per} disabled={f.fresh} onChange={e=>setF({period:e.target.value})} aria-label="Период">
           <option value="90">3 месяца</option><option value="180">Полгода</option><option value="365">Год</option><option value="730">2 года</option><option value="all">Всё время</option></select>
         <div className="seg vseg" role="group" aria-label="Порядок"><button aria-pressed={sort==="new"} onClick={()=>setSort("new")}>Сначала новые</button>
@@ -11429,7 +11429,7 @@ function VPassport({d}){
 }
 
 function VspDossier({point,onBack,openPoint,plan,goFilter}){
-  const[fb,setFb]=useState(null);const[act,setAct]=useState("");const[heavyOnly,setHeavyOnly]=useState(false);const[lim,setLim]=useState(8);
+  const[fb,setFb]=useState(null);const[act,setAct]=useState("");const[heavyPick,setHeavyOnly]=useState(null);const[lim,setLim]=useState(8);
   const d=useVFetch(`/api/vsp/dossier/${encodeURIComponent(point)}`);
   useEffect(()=>{try{window.scrollTo({top:0});}catch(e){}},[point]);
   const send=v=>fetch("/api/vsp/feedback",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({target:point,verdict:v})}).then(()=>setFb(v)).catch(()=>{});
@@ -11437,6 +11437,7 @@ function VspDossier({point,onBack,openPoint,plan,goFilter}){
   if(d.err)return <ErrState msg="Досье не загрузилось"/>;
   const a=d.risk||{};const stories=d.stories||[];
   const heavy=stories.filter(s=>s.severity>=2);
+  const heavyOnly=heavyPick===null?heavy.length>0:heavyPick;   // по умолчанию — тяжёлые, если они есть
   const shown=stories.filter(s=>(!act||(s.actions||[]).includes(act))&&(!heavyOnly||s.severity>=2));
   return <article className="view vdos">
     <nav className="vcrumb" aria-label="Где вы"><button className="vmore" onClick={onBack}>← Назад</button>
@@ -11471,10 +11472,10 @@ function VspDossier({point,onBack,openPoint,plan,goFilter}){
       <p className="note">Имена — как написали клиенты, только внутри этого отделения; с другими ВСП не сопоставляются.</p></section>
     <section className="sec"><div className="row"><h3 style={{margin:0}}>Истории клиентов · {stories.length}</h3><span className="sp"/><VBars bars={d.bars} stories={stories}/></div>
       <p className="note">У каждой истории — «Полный отзыв и проверка»: текст клиента с выделенной цитатой, что увидела модель и что проверил код.</p>
-      {(d.actions||[]).length>1&&<div className="chips" style={{marginTop:10}}>
+      {((d.actions||[]).length>1||stories.length>heavy.length)&&<div className="chips" style={{marginTop:10}}>
         <button className={"chip"+(!act?" on":"")} aria-pressed={!act} onClick={()=>{setAct("");setLim(8);}}>Все</button>
         {d.actions.map(x=><button key={x.key} className={"chip"+(act===x.key?" on":"")} aria-pressed={act===x.key} title={x.label} onClick={()=>{setAct(act===x.key?"":x.key);setLim(8);}}>{x.short} · {x.n}</button>)}
-        <label className="vchk" style={{marginLeft:6}}><input type="checkbox" checked={heavyOnly} onChange={e=>setHeavyOnly(e.target.checked)}/>только тяжёлые</label></div>}
+        <label className="vchk" style={{marginLeft:6}}><input type="checkbox" checked={heavyOnly} onChange={e=>setHeavyOnly(e.target.checked)}/>только тяжёлые{heavyOnly&&stories.length>heavy.length?` (скрыто лёгких: ${stories.length-heavy.length})`:""}</label></div>}
       <div style={{display:"grid",gap:8,marginTop:10}}>{shown.slice(0,lim).map(s=><VStory key={s.rid} s={s} noPlace/>)}</div>
       {!shown.length&&<p className="note">Историй с такими условиями нет.</p>}
       {shown.length>lim&&<button className="vmore" style={{marginTop:8}} onClick={()=>setLim(lim+20)}>Показать ещё (осталось {shown.length-lim})</button>}

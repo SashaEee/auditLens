@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 9d412bce5d3a292d76033c94746547bdba3806337ab10cbfc5e97b611a1bc5e6): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 e6f79f474be9b0324f792f44b5f021a74e118483ec0cab1aa584e99892a4626b): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -21632,7 +21632,7 @@ const V_F0 = {
   named: false,
   fresh: false,
   fmt: "",
-  severity: 0,
+  severity: 2,
   period: "730"
 };
 function VFilters({
@@ -21642,7 +21642,7 @@ function VFilters({
   show
 }) {
   const regions = useMemo(() => (tiles || []).filter(t => t.n > 0).slice().sort((a, b) => a.name.localeCompare(b.name, "ru")), [tiles]);
-  const any = f.subject || f.gosb || show.action && f.action || show.fmt && f.fmt || show.toggles && (f.vulnerable || f.named || f.fresh) || show.story && (f.severity || f.period !== "730");
+  const any = f.subject || f.gosb || show.action && f.action || show.fmt && f.fmt || show.toggles && (f.vulnerable || f.named || f.fresh) || show.story && (f.severity !== V_F0.severity || f.period !== V_F0.period);
   return /*#__PURE__*/React.createElement("div", {
     className: "vfil",
     role: "group",
@@ -22422,12 +22422,12 @@ function VspStories({
     }),
     "aria-label": "\u0422\u044F\u0436\u0435\u0441\u0442\u044C"
   }, /*#__PURE__*/React.createElement("option", {
-    value: 0
-  }, "\u041B\u044E\u0431\u0430\u044F \u0442\u044F\u0436\u0435\u0441\u0442\u044C"), /*#__PURE__*/React.createElement("option", {
     value: 2
   }, "\u0422\u044F\u0436\u0451\u043B\u044B\u0435 \u0438 \u043E\u0447\u0435\u043D\u044C \u0442\u044F\u0436\u0451\u043B\u044B\u0435"), /*#__PURE__*/React.createElement("option", {
     value: 3
-  }, "\u0422\u043E\u043B\u044C\u043A\u043E \u043E\u0447\u0435\u043D\u044C \u0442\u044F\u0436\u0451\u043B\u044B\u0435")), /*#__PURE__*/React.createElement("select", {
+  }, "\u0422\u043E\u043B\u044C\u043A\u043E \u043E\u0447\u0435\u043D\u044C \u0442\u044F\u0436\u0451\u043B\u044B\u0435"), /*#__PURE__*/React.createElement("option", {
+    value: 0
+  }, "\u0412\u0441\u0435, \u0432\u043A\u043B\u044E\u0447\u0430\u044F \u043B\u0451\u0433\u043A\u0438\u0435 (\u043E\u0448\u0438\u0431\u043A\u0438, \u043D\u0435\u043A\u043E\u043C\u043F\u0435\u0442\u0435\u043D\u0442\u043D\u043E\u0441\u0442\u044C)")), /*#__PURE__*/React.createElement("select", {
     className: "vsel",
     value: per,
     disabled: f.fresh,
@@ -23093,7 +23093,7 @@ function VspDossier({
 }) {
   const [fb, setFb] = useState(null);
   const [act, setAct] = useState("");
-  const [heavyOnly, setHeavyOnly] = useState(false);
+  const [heavyPick, setHeavyOnly] = useState(null);
   const [lim, setLim] = useState(8);
   const d = useVFetch(`/api/vsp/dossier/${encodeURIComponent(point)}`);
   useEffect(() => {
@@ -23122,6 +23122,7 @@ function VspDossier({
   const a = d.risk || {};
   const stories = d.stories || [];
   const heavy = stories.filter(s => s.severity >= 2);
+  const heavyOnly = heavyPick === null ? heavy.length > 0 : heavyPick; // по умолчанию — тяжёлые, если они есть
   const shown = stories.filter(s => (!act || (s.actions || []).includes(act)) && (!heavyOnly || s.severity >= 2));
   return /*#__PURE__*/React.createElement("article", {
     className: "view vdos"
@@ -23249,7 +23250,7 @@ function VspDossier({
     stories: stories
   })), /*#__PURE__*/React.createElement("p", {
     className: "note"
-  }, "\u0423 \u043A\u0430\u0436\u0434\u043E\u0439 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u2014 \xAB\u041F\u043E\u043B\u043D\u044B\u0439 \u043E\u0442\u0437\u044B\u0432 \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0430\xBB: \u0442\u0435\u043A\u0441\u0442 \u043A\u043B\u0438\u0435\u043D\u0442\u0430 \u0441 \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u043D\u043E\u0439 \u0446\u0438\u0442\u0430\u0442\u043E\u0439, \u0447\u0442\u043E \u0443\u0432\u0438\u0434\u0435\u043B\u0430 \u043C\u043E\u0434\u0435\u043B\u044C \u0438 \u0447\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u043B \u043A\u043E\u0434."), (d.actions || []).length > 1 && /*#__PURE__*/React.createElement("div", {
+  }, "\u0423 \u043A\u0430\u0436\u0434\u043E\u0439 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u2014 \xAB\u041F\u043E\u043B\u043D\u044B\u0439 \u043E\u0442\u0437\u044B\u0432 \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0430\xBB: \u0442\u0435\u043A\u0441\u0442 \u043A\u043B\u0438\u0435\u043D\u0442\u0430 \u0441 \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u043D\u043E\u0439 \u0446\u0438\u0442\u0430\u0442\u043E\u0439, \u0447\u0442\u043E \u0443\u0432\u0438\u0434\u0435\u043B\u0430 \u043C\u043E\u0434\u0435\u043B\u044C \u0438 \u0447\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u043B \u043A\u043E\u0434."), ((d.actions || []).length > 1 || stories.length > heavy.length) && /*#__PURE__*/React.createElement("div", {
     className: "chips",
     style: {
       marginTop: 10
@@ -23279,7 +23280,7 @@ function VspDossier({
     type: "checkbox",
     checked: heavyOnly,
     onChange: e => setHeavyOnly(e.target.checked)
-  }), "\u0442\u043E\u043B\u044C\u043A\u043E \u0442\u044F\u0436\u0451\u043B\u044B\u0435")), /*#__PURE__*/React.createElement("div", {
+  }), "\u0442\u043E\u043B\u044C\u043A\u043E \u0442\u044F\u0436\u0451\u043B\u044B\u0435", heavyOnly && stories.length > heavy.length ? ` (скрыто лёгких: ${stories.length - heavy.length})` : "")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
       gap: 8,
