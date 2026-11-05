@@ -10793,7 +10793,7 @@ function puReveal(el){
 // правило даст красное), у каждой анимации — свой reduced-motion.
 const PU2_CSS=`
 .pu2{max-width:1320px;margin:0 auto;min-width:0}
-.pu2 :where(button,a,summary,[tabindex]):focus-visible,[class*="pu2-"]:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.pu2 :where(button,a,summary,input,select,textarea,[tabindex]):focus-visible,[class*="pu2-"]:focus-visible{outline:2px solid var(--select);outline-offset:2px}
 .pu2 [id^="pu2-"]{scroll-margin-top:calc(var(--topbar) + 72px)}
 .pu2-ic{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
 .pu2-ic.sm{width:14px;height:14px}
@@ -11247,8 +11247,12 @@ class PuBoundary extends React.Component{
 // lv info|warn). Пункт: {key, lv, title, meta, act, ic, sys, to:{section, anchor} | href}.
 // sys[key] — состояние службы СЕГОДНЯ по тем же правилам ('o'|'w'|'b'; 'n' — блока нет
 // в ответе): одна логика для очереди и для последней ячейки ленты.
+// extra: {days; isOwner — заявки на источники видит только владелец (по умолчанию
+// m.is_owner); flags — отметки срезов доступны (false, когда /api/reviews/slice-flags
+// ответил 403 или ещё не ответил: пункт не показываем)}.
 function puSignals(m,extra){
-  m=m||{}; const days=(extra&&extra.days)||m.days||14;
+  m=m||{}; extra=extra||{}; const days=extra.days||m.days||14;
+  const own=extra.isOwner!=null?!!extra.isOwner:!!m.is_owner;
   const t=m.today||{}, ing=(m.ingest||{}).queue||{};
   const dg=Array.isArray(m.digest)?m.digest:[];
   const fb=m.ai_feedback||{}, f=m.features||{}, ev=m.eval||{};
@@ -11261,10 +11265,11 @@ function puSignals(m,extra){
     ic:lv==="bad"?"stop":"alert",to:{section:section||"systems",anchor:anchor===undefined?(sys?"pu2-sys-"+sys:null):anchor}});
   const job=(key,lv,ic,title,meta,act,to,href)=>todo.push({key,lv,ic,title,meta:meta||"",act,sys:null,to:to||null,href:href||null});
 
-  // ── сайт и сервер
+  // ── сайт и сервер: 1–9 ошибок за день — внимание, от 10 — сбой
   if((t.errors||0)>0){
     const last=(m.errors_recent||[])[0], dd=ddmm(mskToday());
-    inc("errors","warn","server",`${puNum(t.errors)} ${plural(t.errors,"ошибка","ошибки","ошибок")} сегодня`,
+    inc("errors",t.errors>=10?"bad":"warn","server",
+      `${puNum(t.errors)} ${plural(t.errors,"ошибка","ошибки","ошибок")} сервера сегодня`,
       last&&last.ts&&String(last.ts).slice(0,5)===dd?`Последняя — в ${String(last.ts).slice(6)}.`:"","Журнал");
   }
   // ── индексация
@@ -11332,10 +11337,13 @@ function puSignals(m,extra){
     `Поиск по жалобам не отработал ${puNum(rsh.failed)} ${plural(rsh.failed,"раз","раза","раз")}`,`За ${days} ${dn(days)}.`);
 
   // ── ждёт решения владельца
-  const ib=m.inbox||{};
-  if((ib.unread||0)>0) job("inbox","info","inbox",
-    `${puNum(ib.unread)} ${plural(ib.unread,"обращение ждёт","обращения ждут","обращений ждут")} ответа`,
-    ib.oldest_new_days?`Старейшему ${ib.oldest_new_days} ${dn(ib.oldest_new_days)}.`:"","Ответить",{section:"inbox",anchor:null});
+  // обращения без первого ответа команды (unanswered); у прежнего сервера — новые (unread)
+  const ib=m.inbox||{}, ibN=ib.unanswered!=null?+ib.unanswered||0:+ib.unread||0;
+  const ibAge=ib.unanswered!=null&&ib.oldest_unanswered_h!=null?Math.floor(ib.oldest_unanswered_h/24):ib.oldest_new_days;
+  if(ibN>0) job("inbox","info","inbox",
+    `${puNum(ibN)} ${plural(ibN,"обращение ждёт","обращения ждут","обращений ждут")} первого ответа`,
+    ibAge?`Старейшему ${ibAge} ${dn(ibAge)}.`:ib.unanswered!=null&&ib.oldest_unanswered_h!=null?"Старейшему меньше дня.":"",
+    "Ответить",{section:"inbox",anchor:null});
   if((fb.dislikes||0)>0){
     const lastBad=(fb.items||[]).find(x=>x.verdict<0), top=(fb.reasons||[])[0];
     job("complaints","info","dislike",
@@ -11348,13 +11356,14 @@ function puSignals(m,extra){
     `${puNum(risk.length)} ${plural(risk.length,"человек","человека","человек")} из постоянных ${risk.length===1?"перестал":"перестали"} заходить`,
     risk.slice(0,2).map(x=>`${x.name||x.username} — ${x.gap_days} ${dn(x.gap_days)}`).join(", ")+(risk.length>2?" и другие.":"."),
     "Написать",{section:"people",anchor:"pu2-risk"});
-  if((pr.pending||0)>0){
+  if(own&&(pr.pending||0)>0){                   // заявки рассматривает только владелец
     const doms=[...new Set((pr.items||[]).map(x=>x.domain).filter(Boolean))].slice(0,3);
     job("proposals","info","db",`${puNum(pr.pending)} ${plural(pr.pending,"заявка","заявки","заявок")} на новые источники`,
       (pr.oldest_days?`Старейшей ${pr.oldest_days} ${dn(pr.oldest_days)}`:"Старейшей меньше дня")+(doms.length?`: ${doms.join(", ")}.`:"."),
       "Рассмотреть",null,"#sources");
   }
-  if((rp.flags_open||0)>0&&(rp.flags_oldest_days||0)>=3){ const n=Math.floor(rp.flags_oldest_days);
+  // отметки разбирает команда: у кого /api/reviews/slice-flags отвечает 403, пункта нет
+  if(extra.flags&&(rp.flags_open||0)>0&&(rp.flags_oldest_days||0)>=3){ const n=Math.floor(rp.flags_oldest_days);
     job("slice_flags","warn","msg",
       `${puNum(rp.flags_open)} ${plural(rp.flags_open,"отметка","отметки","отметок")} «не относится к срезу» ${rp.flags_open===1?"ждёт":"ждут"} решения`,
       `Старейшей ${n} ${dn(n)}.`,"Разобрать",{section:"inbox",anchor:"pu2-flags"}); }
@@ -11481,11 +11490,13 @@ function PuPalette({onClose,onPick}){
     ...(((R.d||{}).reports)||[]).map(r=>({g:"Отчёты",t:puLine(r.title||r.question)||`Отчёт № ${r.report_id}`,
       s:puShort(r.name||r.username||""),ic:"doc",report:r.report_id})),
   ],[U.d,T.d,R.d]);
-  const qq=q.trim().toLowerCase();
+  // «Ковалева» находит «Ковалёву»: ё и е не различаем, номер — и с «№», и без
+  const norm=(s)=>String(s||"").toLowerCase().replace(/ё/g,"е").replace(/№\s*/g,"").replace(/\s+/g," ");
+  const qq=norm(q).trim();
   const items=useMemo(()=>{
     if(!qq){ const per={}; return all.filter(it=>it.go||(per[it.g]=(per[it.g]||0)+1)<=4); }
-    return all.filter(it=>(it.t+" "+it.s).toLowerCase().includes(qq)).slice(0,40);
-  },[all,qq]);
+    return all.filter(it=>norm(it.t+" "+it.s).includes(qq)).slice(0,40);
+  },[all,qq]); // eslint-disable-line
   useEffect(()=>{ setSel(0); },[qq]);
   const cur=Math.min(sel,Math.max(0,items.length-1));
   useEffect(()=>{ const el=listRef.current&&listRef.current.querySelector('[aria-selected="true"]');
@@ -11640,13 +11651,15 @@ function PulsePage({params}){
     if(/^\d+$/.test(params.ticket||"")){ setTicket(+params.ticket); if(!params.tab){ setSection("inbox"); store("al-pulse-tab","inbox"); } }
     if(params.person) setPerson(String(params.person));
   },[params]);
-  // выбранный раздел — в адресе (ссылку можно переслать); пишем только пока «Пульс» на экране
+  // выбранный раздел, открытое обращение и лист человека — в адресе (ссылку можно
+  // переслать, обновление страницы их не теряет); пишем только пока «Пульс» на экране
   useEffect(()=>{
     if(!visible) return;
     const cur=(location.hash||"").slice(1).split("?")[0];
-    const want="#pulse?tab="+section;
+    const want="#pulse?tab="+section+(section==="inbox"&&ticket!=null?"&ticket="+ticket:"")
+      +(person?"&person="+encodeURIComponent(person):"");
     if(cur==="pulse"&&location.hash!==want){ try{ history.replaceState(null,"",want); }catch{} }
-  },[section,visible]);
+  },[section,visible,ticket,person]);
   // на узком экране вкладки прокручиваются вбок: выбранная (в том числе из поиска) — в поле зрения
   useEffect(()=>{
     const b=document.getElementById("pu2-tab-"+section), l=b&&b.parentElement; if(!l||l.scrollWidth<=l.clientWidth) return;
@@ -11668,7 +11681,14 @@ function PulsePage({params}){
     return ()=>window.removeEventListener("keydown",h,true);
   },[visible,allowed]);
 
-  const sig=useMemo(()=>puSignals(m||{},{days}),[m,days]);
+  // отметки «не относится к срезу» разбирает команда: пункт очереди — только если сервер
+  // отдаёт их этому человеку (тот же адрес и кэш, что у раздела «Обращения»)
+  const rp=(m&&m.reviews_pipeline)||{};
+  const needFlags=(rp.flags_open||0)>0&&(rp.flags_oldest_days||0)>=3;
+  const SF=usePuData("/api/reviews/slice-flags",{ttl:120000,enabled:visible&&needFlags});
+  const flagsOk=needFlags&&SF.d!==undefined&&!(SF.err&&SF.err.status===403);
+  const own=isOwner||!!(m&&m.is_owner);
+  const sig=useMemo(()=>puSignals(m||{},{days,isOwner:own,flags:flagsOk}),[m,days,own,flagsOk]);
   const meOn=withMe!=null?withMe:!!(m&&m.with_me!==false);
   const hiddenN=m?(m.hidden_n!=null?m.hidden_n:Math.max(0,(m.excluded||0)-(meOn?0:1))):0;
   const reload=load;
@@ -11702,8 +11722,10 @@ function PulsePage({params}){
     isOwner&&{t:<span className="pu2-mi">Плашка «Турбулентность»<small>включается в разделе «Системы»</small></span>,
       ic:<PuIcon n="cloud"/>,on:()=>go("systems","pu2-banner")},
     {t:<span className="pu2-mi">Скачать итоги в Excel<small>сводка раздела «Итоги» файлом</small></span>,ic:<PuIcon n="download"/>,on:xlsx},
-    {t:<span className="pu2-mi">Служебные учётки: {puNum(hiddenN)}<small>не входят в итоги · помечаются в карточке человека</small></span>,
-      ic:<PuIcon n="user"/>,on:()=>fbToast("Служебные учётки помечаются в карточке человека")},
+    {t:<span className="pu2-mi">Служебные учётки: {puNum(hiddenN)}<small>{isOwner?"не входят в итоги · помечаются в карточке человека"
+        :"не входят в итоги · помечает владелец инструмента"}</small></span>,
+      ic:<PuIcon n="user"/>,on:()=>fbToast(isOwner?"Служебные учётки помечаются в карточке человека"
+        :"Служебные учётки помечает владелец инструмента")},
   ];
   const hidTxt=`${hiddenN} ${plural(hiddenN,"служебной учётки","служебных учёток","служебных учёток")}`;
   const countNote=meOn?(hiddenN>0?`Считаются все, включая вас, кроме ${hidTxt}`:"Считаются все, включая вас")
@@ -11737,7 +11759,9 @@ function PulsePage({params}){
         </div>
       </div>
 
-      <div id="pu2-panel" role="tabpanel" aria-labelledby={"pu2-tab-"+section} className="rv-panel pu2-panel" key={section}>
+      {/* data-ticket — обращение, которое оболочка просит открыть (ссылка, поиск); его читает и стенд */}
+      <div id="pu2-panel" role="tabpanel" aria-labelledby={"pu2-tab-"+section} className="rv-panel pu2-panel" key={section}
+          data-ticket={ticket!=null?ticket:undefined}>
         <PuBoundary name={section}><Sec/></PuBoundary>
       </div>
 
@@ -13044,11 +13068,13 @@ function Shell(){
   const closeBell=()=>{ setBellOpen(false); loadBell(); setTimeout(()=>{ try{ bellRef.current&&bellRef.current.focus(); }catch{} },0); };
   const goBell=(it)=>{ setBellOpen(false); setBellToast(null); setNavOpen(false); loadBell();
     const link=String(it.link||"");
-    // «#pulse?tab=inbox&ticket=17» — уведомления команды: раздел «Пульса» и обращение.
-    // Параметры — новым объектом: «Пульс» отрабатывает и повторный переход по той же ссылке.
-    if(link.startsWith("#pulse")){ const qi=link.indexOf("?"); let prm={};
-      if(qi>=0){try{prm=Object.fromEntries(new URLSearchParams(link.slice(qi+1)).entries());}catch{}}
-      setPageParams(prm); setPage("pulse"); return; }
+    // «#pulse?tab=inbox&ticket=17», «#reviews?tab=complaints&bank=…» — переход по адресу:
+    // страницу и параметры ставит обработчик hashchange. Адрес уже такой же (событие не
+    // придёт) — параметры новым объектом напрямую: страница отрабатывает и повторный переход.
+    if(link.startsWith("#")){ const was=location.hash;
+      try{ location.hash=link; }catch{}
+      if(location.hash===was){ const{p,prm}=parseHash(); setPageParams(prm); setPage(p||"overview"); }
+      return; }
     const[k,id,sub,msg]=link.split(":");
     if(k==="case") openCases(+id,sub?{tab:sub,msg:msg?+msg:null}:null);
     else if(k==="report"){ _pendingReport=+id; setPage("ai"); try{ window.dispatchEvent(new Event("al-open-report")); }catch{} }
