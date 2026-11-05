@@ -5,6 +5,7 @@
   sync      --source 2gis --city Казань | --region … | --all все отделения из реестра
             [--mode full|new]                                full — обновить базу, new — только новые
   match                                                      сопоставить отделения между источниками
+  pilot     [--out …] [--from-step all|yandex]               пилот на ~30 отделениях (pilot.py)
   report    [--source …] [--out report.md]                    полнота сбора
   export    --out file.jsonl [--source …] [--city …]           выгрузка отзывов
 
@@ -42,7 +43,9 @@ def collector_for(source: str, settings: Settings):
 def setup_logging(settings: Settings, verbose: bool) -> None:
     Path(settings.log_dir).mkdir(parents=True, exist_ok=True)
     fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
-    logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO, format=fmt,
+    # force: пакет bank_audit при импорте уже настраивает корневой журнал — без force
+    # basicConfig молча ничего не делает и vsp.log не появляется
+    logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO, format=fmt, force=True,
                         handlers=[logging.StreamHandler(sys.stderr),
                                   logging.FileHandler(Path(settings.log_dir) / "vsp.log", encoding="utf-8")])
     logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -106,6 +109,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--mode", choices=("full", "new"), default="full")
     s.add_argument("--limit", type=int)
     sub.add_parser("match")
+    pl = sub.add_parser("pilot")
+    pl.add_argument("--out", default="workspace/vsp/pilot")
+    pl.add_argument("--from-step", choices=("all", "yandex"), default="all",
+                    help="yandex — продолжить с шага Яндекса (реестр и 2ГИС из прошлого запуска)")
     r = sub.add_parser("report")
     r.add_argument("--source")
     r.add_argument("--out")
@@ -122,6 +129,9 @@ def main(argv: list[str] | None = None) -> int:
         out = asyncio.run(cmd_discover(a, settings, store))
     elif a.cmd == "sync":
         out = asyncio.run(cmd_sync(a, settings, store))
+    elif a.cmd == "pilot":
+        from .pilot import run as pilot_run
+        out = asyncio.run(pilot_run(store, settings, a.out, from_step=a.from_step))
     elif a.cmd == "match":
         from .registry.apply import match_all
         out = match_all(store)

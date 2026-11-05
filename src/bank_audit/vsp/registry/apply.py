@@ -1,6 +1,8 @@
 """Справочник отделений: загрузка реестра ЦБ и привязка карточек источников.
 
 Порядок привязки карточки источника (2ГИС, Яндекс, Домклик) к отделению справочника:
+0. номер подразделения по ЦБ в самой карточке (у Яндекса — признак nomer_sp_cbr,
+   совпадает с FILIAL_NUM реестра) — привязка auto (match_method=registry_code), точная;
 1. ключ адреса (город|улица|дом) совпал ровно с одним отделением справочника —
    привязка auto (match_method=registry_address);
    совпал с несколькими (два ВСП по одному адресу) — conflict, без привязки;
@@ -11,6 +13,7 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 from collections import defaultdict
 
@@ -32,6 +35,7 @@ def import_registry(store: Store, rows: list[RegistryRow], source: str = "cbr") 
             select(branches.c.registry_ref, branches.c.branch_id).where(branches.c.registry_source == source))}
         for r in rows:
             vals = dict(region=r.region, city=r.city, name=r.name, address=r.address, address_key=r.akey,
+                        registry_num=(r.number or "").strip() or None,
                         status="active" if r.kind == "office" else r.kind, updated_at=utcnow())
             if r.ref in have:
                 c.execute(update(branches).where(branches.c.branch_id == have[r.ref]).values(**vals))
@@ -43,6 +47,13 @@ def import_registry(store: Store, rows: list[RegistryRow], source: str = "cbr") 
     return st
 
 
+def _raw(x) -> dict:
+    try:
+        return json.loads(x["raw_json"] or "{}")
+    except (TypeError, ValueError):
+        return {}
+
+
 def match_all(store: Store) -> dict:
     """Привязать все карточки источников к справочнику. Повторный запуск не трогает
     подтверждённые вручную привязки (match_status=confirmed)."""
@@ -50,6 +61,8 @@ def match_all(store: Store) -> dict:
     with store.engine.connect() as c:
         reg = list(c.execute(select(branches.c.branch_id, branches.c.address_key, branches.c.lat,
                                     branches.c.lon).where(branches.c.status == "active")))
+        by_num = {r.registry_num: r.branch_id for r in c.execute(
+            select(branches.c.registry_num, branches.c.branch_id).where(branches.c.registry_num.isnot(None)))}
         cards = list(c.execute(select(source_branches)).mappings())
     by_key: dict[str, list[int]] = defaultdict(list)
     for b in reg:
@@ -58,6 +71,11 @@ def match_all(store: Store) -> dict:
     assign: dict[tuple[str, str], tuple[int | None, str, str, float | None]] = {}
     for x in cards:
         if x["match_status"] == "confirmed":
+            continue
+        num = _raw(x).get("cbr_num")
+        if num and num in by_num:
+            assign[(x["source"], x["source_branch_id"])] = (by_num[num], "registry_code", "auto", 1.0)
+            st["by_code"] += 1
             continue
         k = address_key(x["address"], x["city"])
         ids = by_key.get(k or "", [])

@@ -23,7 +23,7 @@ log = logging.getLogger(__name__)
 CAPTCHA_MARKERS = (
     "SmartCaptcha", "smartcaptcha", "showcaptcha", "checkcaptcha", "captcha-delivery",
     "Подтвердите, что запросы отправляли вы", "похожи на автоматические",
-    "Вы не робот", "Are you not a robot",
+    "Вы не робот", "Are you not a robot", '"type":"captcha"',
 )
 
 

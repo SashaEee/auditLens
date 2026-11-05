@@ -60,6 +60,9 @@ class Review:
     source_url: str | None = None
     collection_method: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
+    # ключ сортировки «сначала новые» у источника: дата правки (2ГИС date_edited, Яндекс
+    # updatedTime). Нужен режиму new: правка старого отзыва поднимает его наверх выдачи
+    edited_at: datetime | None = None
 
     @property
     def review_id(self) -> str:

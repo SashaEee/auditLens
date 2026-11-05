@@ -3,8 +3,10 @@
 Режимы:
   full — полный проход выдачи отделения с начала до конца: обновляет ответы
          организации, ловит правки, помечает пропавшие отзывы (gone_at);
-  new  — только новые: выдача «сначала новые» до первой страницы, где все отзывы
-         уже известны (инкрементальная синхронизация).
+  new  — только новые: выдача «сначала новые» (по дате правки) до первой страницы, где
+         все отзывы уже известны, без правок, И старше прошлой успешной синхронизации
+         минус запас NEW_OVERLAP. Одного «всё знакомо» мало: отзыв, отредактированный без
+         смены текста, стоит выше новых, созданных раньше его правки.
 
 Прерванный полный проход продолжается с сохранённого курсора (resume), а начало
 прохода хранится в состоянии — поэтому и после продолжения пропавшие отзывы
@@ -25,11 +27,15 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from .collectors.base import Collector
 from .models import CollectorError, NotFound, SourceBlocked, utcnow
 from .storage import Store
+
+# запас по времени для режима new: часовые пояса источников (2ГИС отдаёт +07:00),
+# задержка индексации, правки «задним числом»
+NEW_OVERLAP = timedelta(days=3)
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +60,7 @@ class BranchResult:
     updated: int = 0
     gone: int = 0
     pages: int = 0
+    dupes: int = 0                  # строк страниц сверх разных отзывов (повторы в выдаче)
     stop: str | None = None
     seconds: float = 0.0
     error: str | None = None
@@ -66,7 +73,7 @@ class RunStats:
 
     def summary(self) -> dict:
         out: dict = {"branches": len(self.results), "blocked": self.blocked}
-        for k in ("new", "updated", "gone", "fetched", "pages"):
+        for k in ("new", "updated", "gone", "fetched", "pages", "dupes"):
             out[k] = sum(getattr(r, k) for r in self.results)
         by: dict[str, int] = {}
         for r in self.results:
@@ -107,10 +114,17 @@ async def sync_branch(collector: Collector, store: Store, sid: str, *, mode: str
 
     caps = collector.capabilities
     sort = caps.sorts[0] if caps.sorts else None
-    if mode == "new" and not caps.extra.get("newest_first", True):
+    if mode == "new" and caps.extra.get("newest_sort"):
+        sort = caps.extra["newest_sort"]          # своя сортировка «сначала новые»
+    elif mode == "new" and not caps.extra.get("newest_first", True):
         # выдача не «сначала новые» (Яндекс — по релевантности): новое может стоять
         # на любой странице, поэтому «только новые» = короткий полный проход
         mode = "full"
+    # отсечка режима new — от прошлой УСПЕШНОЙ синхронизации; без неё (первый раз,
+    # после сбоя) new идёт до конца выдачи — дороже, но ничего не теряет
+    cutoff = None
+    if mode == "new" and prev.get("status") == "done" and prev.get("last_sync_at"):
+        cutoff = _aware(prev["last_sync_at"]) - NEW_OVERLAP
     resume = mode == "full" and prev.get("status") == "running" and prev.get("cursor")
     cursor = prev.get("cursor") if resume else None
     pass_started = _aware(prev.get("pass_started_at")) if resume else utcnow()
@@ -137,11 +151,15 @@ async def sync_branch(collector: Collector, store: Store, sid: str, *, mode: str
             # прогресс после каждой страницы — прерывание не теряет пройденное
             store.put_state(src, sid, cursor=page.next_cursor, pages=pages, fetched_total=fetched,
                             declared_total=res.declared)
-            # «только новые»: страница целиком знакома и без правок — дальше старое
-            # (правка старого отзыва поднимает его наверх — это не повод остановиться)
+            # «только новые»: страница целиком знакома, без правок и старше отсечки —
+            # дальше только старое (правка старого отзыва поднимает его наверх, поэтому
+            # «всё знакомо» без отсечки по времени — не повод остановиться)
             if mode == "new" and page.reviews and st["new"] == 0 and st["updated"] == 0:
-                stop = "caught_up"
-                break
+                eds = [_aware(r.edited_at or r.review_date) for r in page.reviews]
+                eds = [d for d in eds if d]
+                if cutoff is not None and (not eds or min(eds) < cutoff):
+                    stop = "caught_up"
+                    break
             if pages >= collector.cfg.max_pages:
                 stop = "max_pages"
                 break
@@ -162,7 +180,12 @@ async def sync_branch(collector: Collector, store: Store, sid: str, *, mode: str
         res.seconds = round(asyncio.get_running_loop().time() - t0, 1)
         return res
 
+    # «получено» — разные отзывы за проход (с продолжением), а не строки страниц:
+    # у Яндекса по релевантности один отзыв бывает на двух страницах
+    rows_on_pages = fetched
+    fetched = store.count_seen(src, sid, pass_started)
     res.fetched = fetched
+    res.dupes = max(0, rows_on_pages - fetched)
     res.stop = stop
     full_pass = mode == "full" and stop == "end"
     if full_pass:
@@ -183,9 +206,9 @@ async def sync_branch(collector: Collector, store: Store, sid: str, *, mode: str
     store.put_state(src, sid, **vals)
     res.status = "done"
     res.seconds = round(asyncio.get_running_loop().time() - t0, 1)
-    log.info("%s %s: %s, заявлено %s, получено %s (новых %s, изменено %s, пропало %s), стр. %s, %.1f с",
-             src, sid, res.completeness, res.declared, fetched, res.new, res.updated, res.gone,
-             res.pages, res.seconds)
+    log.info("%s %s: %s, заявлено %s, получено %s (новых %s, изменено %s, пропало %s, повторов %s), "
+             "стр. %s, %.1f с", src, sid, res.completeness, res.declared, fetched, res.new, res.updated,
+             res.gone, res.dupes, res.pages, res.seconds)
     return res
 
 

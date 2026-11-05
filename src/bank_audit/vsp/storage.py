@@ -38,7 +38,8 @@ branches = Table(
     Column("lat", Float), Column("lon", Float),
     Column("registry_source", String(40)),            # откуда отделение пришло в реестр
     Column("registry_ref", String(200)),               # id в том источнике
-    Column("status", String(20), default="active"),    # active | closed | merged
+    Column("registry_num", String(40), index=True),    # номер подразделения по ЦБ (FILIAL_NUM)
+    Column("status", String(20), default="active"),    # active | mobile | remote | cash_center | closed
     Column("created_at", DateTime(timezone=True), default=utcnow),
     Column("updated_at", DateTime(timezone=True), default=utcnow),
 )
@@ -147,6 +148,23 @@ class Store:
         self.engine: Engine = create_engine(url, future=True)
         meta.create_all(self.engine)
         self.pg = self.engine.dialect.name == "postgresql"
+        self._add_missing_columns()
+
+    def _add_missing_columns(self) -> None:
+        """Своя база модуля: новые столбцы добавляются при запуске (только ADD COLUMN,
+        без перестройки таблиц). На PostgreSQL — с lock_timeout, чтобы не ждать чужую блокировку."""
+        from sqlalchemy import inspect, text
+        insp = inspect(self.engine)
+        for t in meta.sorted_tables:
+            have = {c["name"] for c in insp.get_columns(t.name)}
+            for col in t.columns:
+                if col.name in have:
+                    continue
+                ddl = f'ALTER TABLE {t.name} ADD COLUMN {col.name} {col.type.compile(self.engine.dialect)}'
+                with self.engine.begin() as c:
+                    if self.pg:
+                        c.execute(text("SET LOCAL lock_timeout = '3s'"))
+                    c.execute(text(ddl))
 
     # ── отделения ───────────────────────────────────────────────────────────
     def upsert_source_branch(self, b: SourceBranch, *, availability: str = "ok") -> None:
@@ -258,6 +276,15 @@ class Store:
             q = q.where(reviews.c.review_date >= window_from)
         with self.engine.begin() as c:
             return c.execute(q.values(gone_at=utcnow())).rowcount or 0
+
+    def count_seen(self, source: str, sid: str, since: datetime) -> int:
+        """Сколько РАЗНЫХ отзывов отделения встречено с момента since (за проход).
+        Выдача по релевантности бывает с повторами между страницами — счёт строк страниц
+        завысил бы полноту."""
+        with self.engine.connect() as c:
+            return int(c.execute(select(func.count()).where(
+                reviews.c.source == source, reviews.c.source_branch_id == sid,
+                reviews.c.last_seen_at >= since)).scalar() or 0)
 
     def counts(self, source: str, sid: str) -> dict:
         with self.engine.connect() as c:

@@ -59,6 +59,7 @@ def parse_review(x: dict, bid: str, salt: str) -> Review:
         reply_date=_dt(ans.get("date_created")),
         source_url=f"https://2gis.ru/firm/{bid}/tab/reviews",
         collection_method="public_api",
+        edited_at=_dt(x.get("date_edited")) or _dt(x.get("date_created")),
         raw={"provider": x.get("provider"), "date_edited": x.get("date_edited"),
              "is_hidden": x.get("is_hidden"), "hiding_reason": x.get("hiding_reason"),
              "likes": x.get("likes_count"), "comments": x.get("comments_count"),
@@ -151,7 +152,7 @@ class TwoGisCollector(Collector):
             html = await self.http.get("https://2gis.ru/moscow", expect_json=False)
             seen, out = set(), []
             for m in re.finditer(r'\{"id":"(\d+)","region_id":"(\d+)","segment_id":"(\d+)","name":"([^"]+)",'
-                                 r'"cc":"ru","alias":"([a-z0-9_-]+)"\}', html):
+                                 r'"(?:country_code|cc)":"ru","alias":"([a-z0-9_-]+)"', html):
                 if m.group(5) not in seen:
                     seen.add(m.group(5))
                     out.append({"id": m.group(1), "region_id": m.group(2), "segment_id": m.group(3),
@@ -227,7 +228,8 @@ def is_sber_office(d: dict) -> bool:
     org = (d.get("org") or {}).get("name") or ""
     name = d.get("name") or ""
     rubrics = {r.get("name") for r in d.get("rubrics") or []}
-    if not (org.startswith("СберБанк") or name.startswith("СберБанк")):
+    # решает организация карточки; название — только если организации нет
+    if not (org.startswith("СберБанк") if org else name.startswith("СберБанк")):
         return False
     if re.search(r"банкомат|терминал|инфокиоск", org + " " + name, re.I):
         return False

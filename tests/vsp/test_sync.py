@@ -130,6 +130,38 @@ def test_new_mode_stops_at_known_page(store):
     assert r.new == 2 and r.stop == "caught_up" and len(c.calls) == 2
 
 
+def test_new_mode_does_not_stop_on_recently_edited_known_page(store):
+    """Сверху три старых отзыва, отредактированных после прошлой синхронизации без смены
+    текста (2ГИС сортирует по дате правки), под ними — новый. Правило «страница целиком
+    знакома» остановилось бы на первой странице и потеряло новый отзыв; отсечка по времени — нет."""
+    from bank_audit.vsp.models import utcnow
+    old = [_rev("a", k) for k in range(10, 20)]
+    run(sync_branch(Fake({"a": old}), store, "a"))
+    now = utcnow()
+    edited = [Review(**{**r.__dict__, "edited_at": now}) for r in old[:3]]       # правка без смены содержимого
+    fresh = Review(source="fake", source_review_id="a-new", source_branch_id="a", rating=1, review_text="новый",
+                   review_date=now - timedelta(hours=1), edited_at=now - timedelta(hours=1), collection_method="test")
+    c = Fake({"a": edited + [fresh] + old[3:]})
+    r = run(sync_branch(c, store, "a", mode="new"))
+    assert r.new == 1 and r.stop == "caught_up" and len(c.calls) == 3
+
+
+def test_new_mode_without_previous_success_goes_to_end(store):
+    data = {"a": [_rev("a", k) for k in range(1, 8)]}
+    c = Fake(data)
+    r = run(sync_branch(c, store, "a", mode="new"))
+    assert r.new == 7 and r.stop == "end"
+
+
+def test_duplicates_across_pages_do_not_inflate_completeness(store):
+    """Выдача по релевантности повторила отзыв на соседней странице: строк 5 = заявлено 5,
+    но разных 4 — это below_declared, а не complete."""
+    revs = [_rev("a", k) for k in range(1, 5)]
+    c = Fake({"a": revs[:3] + [revs[2]] + revs[3:]}, declared=5)
+    r = run(sync_branch(c, store, "a"))
+    assert (r.fetched, r.dupes, r.completeness) == (4, 1, "below_declared")
+
+
 def test_block_stops_source_and_records(store):
     data = {s: [_rev(s, k) for k in range(1, 8)] for s in "abcd"}
     c = Fake(data, block_at=1)

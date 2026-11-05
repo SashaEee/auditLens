@@ -37,7 +37,7 @@ _SETTLEMENT = re.compile(r"^(г|город|пгт|рп|п|пос|поселок|
 @dataclass
 class RegistryRow:
     ref: str
-    kind: str                 # office | mobile | remote
+    kind: str                 # office | mobile | remote | cash_center
     name: str
     number: str | None
     address: str
@@ -77,6 +77,8 @@ def split_address(address: str) -> tuple[str | None, str | None]:
 def parse_row(r: dict) -> RegistryRow:
     addr = (r.get("FILIAL_ADDRESS") or "").strip()
     kind = TYPES.get(r.get("FILIAL_SBJ_TYPE_CODE") or "", "office")
+    if kind == "office" and "инкассатор" in (r.get("FILIAL_NAME") or "").lower():
+        kind = "cash_center"     # кассово-инкассаторский центр: клиентов не обслуживает (~300 из 9 540)
     region, city = split_address(addr.split("#")[0])
     return RegistryRow(ref=str(r["FILIAL_SBJ_ID"]), kind=kind, name=(r.get("FILIAL_NAME") or "").strip(),
                        number=r.get("FILIAL_NUM"), address=addr, region=region, city=city,
