@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 2eb38a9018b257d47b85a6b4cc118749bad4d7d5683d63b2af5c67e38488a1fb): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 958d5414c9473c4096855467bca3e83baccf8042dcebb00688c451fc828a5f9b): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -20571,641 +20571,19 @@ function LoopholePage({
 }
 
 // ─── SHELL ────────────────────────────────────────────────────────────────────
-// ─── «Пульс» — дашборд владельца: аудитория + продукт + техника в одном ───────
-const AD_CSS = `
-.pu-tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:18px 0 16px;}
-@media(max-width:900px){.pu-tiles{grid-template-columns:repeat(6,minmax(0,1fr))}.pu-tiles>.pu-tile{grid-column:span 2}
-  .pu-tiles>.pu-tile:nth-child(n+4){grid-column:span 3}}
-@media(max-width:560px){.pu-tiles{grid-template-columns:1fr 1fr}.pu-tiles>.pu-tile,.pu-tiles>.pu-tile:nth-child(n+4){grid-column:auto}
-  .pu-tiles>.pu-tile:last-child:nth-child(odd){grid-column:1/-1}}
-.pu-tile{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:14px 16px 12px;}
-.pu-tile .l{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
-  color:var(--ink-3);margin-bottom:7px;display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
-.pu-tile .v{font-family:'Source Serif 4',Georgia,serif;font-size:27px;line-height:1;}
-.pu-tile .s{font-size:12px;color:var(--ink-3);margin-top:5px;font-family:inherit;font-variant-numeric:tabular-nums}
-.pu-tile.neg .v{color:var(--neg);}
-.pu-live{width:6px;height:6px;border-radius:50%;background:var(--pos);animation:pulse 1.8s ease infinite;}
-.pu-sec{margin-top:24px;}
-.pu-grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;margin-top:12px;}
-.pu-grid2.top{align-items:start}
-/* две широкие таблицы рядом не помещаются — до 1400px друг под другом */
-@media(max-width:1400px){.pu-grid2.wide{grid-template-columns:minmax(0,1fr)}}
-@media(max-width:1000px){.pu-grid2{grid-template-columns:1fr;}}
-.pu-card{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:16px 18px;min-width:0;}
-.pu-card .h{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
-  color:var(--ink-3);margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:8px 12px;flex-wrap:wrap;font-variant-numeric:tabular-nums}
-.pu-x-scroll{overflow-x:auto;min-width:0}
-.pu-bar-row{display:flex;align-items:center;gap:10px;padding:4px 0;font-size:12.5px;}
-.pu-bar-row .lb{width:130px;flex:none;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.pu-bar-row .tr{flex:1;height:16px;background:var(--paper-2);border-radius:4px;overflow:hidden;}
-.pu-bar-row .fl{display:block;height:100%;background:color-mix(in oklab,var(--accent),transparent 35%);border-radius:4px;
-  transition:width .5s ease;}
-.pu-bar-row .vv{width:100px;flex:none;text-align:right;font-family:inherit;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
-.pu-kv{display:flex;justify-content:space-between;align-items:baseline;padding:7px 2px;border-top:1px solid var(--hair);font-size:12.5px;}
-.pu-kv:first-of-type{border-top:0;}
-.pu-kv b{font-family:inherit;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}
-.pu-heat{display:grid;grid-template-columns:34px repeat(24,1fr);gap:2px;margin-top:12px;}
-.pu-heat .hl{font-family:inherit;font-size:11px;color:var(--ink-3);align-self:center;font-variant-numeric:tabular-nums}
-.pu-heat .c{aspect-ratio:1;border-radius:2.5px;background:var(--paper-2);min-width:0;}
-.pu-heat .hh{font-size:10px;color:var(--ink-3);font-variant-numeric:tabular-nums;min-width:0;overflow:visible;white-space:nowrap}
-.pu-tbl{width:100%;font-size:11.5px;border-collapse:collapse;}
-.pu-tbl th{font-family:inherit;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
-  color:var(--ink-3);text-align:right;padding:4px 6px;border-bottom:1px solid var(--hair);font-weight:500;font-variant-numeric:tabular-nums}
-.pu-tbl th:first-child{text-align:left;}
-.pu-tbl td{padding:5px 6px;border-bottom:1px solid var(--hair);font-family:inherit;
-  font-size:12px;text-align:right;color:var(--ink-2);font-variant-numeric:tabular-nums}
-.pu-tbl td:first-child{text-align:left;color:var(--ink);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.pu-tbl tr:last-child td{border-bottom:0;}
-.pu-err{display:flex;gap:9px;align-items:baseline;padding:6px 2px;border-top:1px solid var(--hair);font-size:11.5px;}
-.pu-err:first-of-type{border-top:0;}
-.pu-err .t{font-family:inherit;font-size:11px;color:var(--ink-3);flex:none;font-variant-numeric:tabular-nums}
-.pu-err .k{font-family:inherit;font-size:11px;color:var(--neg);flex:none;text-transform:uppercase;font-variant-numeric:tabular-nums}
-.pu-err .m{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);}
-.pu-feed-row{display:flex;gap:9px;align-items:center;padding:5px 2px;border-top:1px solid var(--hair);font-size:11.5px;}
-.pu-feed-row:first-of-type{border-top:0;}
-.pu-feed-row .t{font-family:inherit;font-size:11px;color:var(--ink-3);flex:none;width:34px;font-variant-numeric:tabular-nums}
-.pu-feed-row .a{width:20px;height:20px;border-radius:50%;background:var(--accent-soft);color:var(--accent-ink);
-  display:grid;place-items:center;font-size:8.5px;font-weight:600;flex:none;}
-.pu-feed-row .w{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);}
-.pu-chip{font-family:inherit;font-size:11px;padding:3px 9px;border-radius:999px;border:1px solid var(--hair);color:var(--ink-3);font-variant-numeric:tabular-nums}
-.pu-chip.ok{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 70%);}
-.pu-chip.bad{color:var(--neg);border-color:color-mix(in oklab,var(--neg),transparent 70%);}
-.pu-note{font-family:inherit;font-size:11px;color:var(--ink-3);margin-top:10px;line-height:1.6;font-variant-numeric:tabular-nums}
-.pu-note .acc{color:var(--accent);}
-.pu-u{display:inline-flex;align-items:center;gap:8px;font-family:'Geist','Inter',sans-serif;font-size:12.5px;color:var(--ink);}
-.pu-u .a{width:22px;height:22px;border-radius:50%;background:var(--accent-soft);color:var(--accent-ink);
-  display:grid;place-items:center;font-size:8.5px;font-weight:600;flex:none;}
-.pu-crown{font-family:inherit;font-size:11px;color:var(--accent-ink);white-space:nowrap;
-  border:1px solid color-mix(in oklab,var(--accent),transparent 70%);background:var(--accent-soft);
-  border-radius:999px;padding:2px 7px;font-variant-numeric:tabular-nums}
-.pu-tm{display:inline-flex;align-items:center;gap:7px;justify-content:flex-end;}
-.pu-tm .bar{height:5px;border-radius:3px;background:color-mix(in oklab,var(--accent),transparent 40%);display:inline-block;}
-.pu-team td:first-child{max-width:220px;}
-/* ── Люди: директория, карточка, отчёты, жалобы ─────────────────────────── */
-.pu-people-ctl{display:flex;align-items:center;gap:8px}
-.pu-search{font:inherit;font-size:11.5px;padding:3px 9px;border-radius:6px;
-  border:1px solid var(--hair);background:var(--paper);color:var(--ink);width:210px}
-.pu-search:focus{outline:none;border-color:var(--select);box-shadow:0 0 0 3px color-mix(in oklab,var(--select),transparent 80%);}
-.pu-sel{font:inherit;font-size:11.5px;padding:3px 6px;border-radius:6px;
-  border:1px solid var(--hair);background:var(--paper);color:var(--ink-2)}
-.pu-tblwrap{overflow-x:auto;max-height:560px;overflow-y:auto}
-.pu-tiles4{grid-template-columns:repeat(4,minmax(0,1fr))}
-@media(max-width:900px){.pu-tiles4{grid-template-columns:1fr 1fr}.pu-tiles4>.pu-tile,.pu-tiles4>.pu-tile:nth-child(n+4){grid-column:auto}}
-.pu-reach td,.pu-reach th{text-align:right}
-.pu-reach td:first-child,.pu-reach th:first-child{text-align:left}
-.pu-reach .pu-reach-bar{text-align:left;min-width:150px}
-.pu-rb{display:inline-block;vertical-align:middle;width:90px;height:8px;margin-right:8px;border-radius:4px;background:var(--paper-2);overflow:hidden}
-.pu-rb i{display:block;height:100%;border-radius:4px;background:color-mix(in oklab,var(--select),transparent 25%)}
-.pu-reach-tot td{font-weight:600;border-top:1px solid var(--hair-2)}
-.pu-reach-act{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}
-.pu-wait{display:inline-block;margin-left:8px;font-size:11px;font-weight:400;color:var(--ink-3);white-space:nowrap}
-.pu-wait.late{color:var(--neg)}
-/* ── Итоги: направления, качество запросов, путь к результату ─────────────── */
-.oc-bar{display:flex;align-items:center;gap:10px 12px;flex-wrap:wrap;margin:4px 0 2px}
-.oc-bar .sp{flex:1}
-.oc-u{color:var(--ink-3);font-size:11px;margin-left:5px}
-.oc-tbl td b{font-weight:600;color:var(--ink)}
-.oc-tbl td.z{color:var(--hair-2)}
-.oc-tbl td.oc-ai{text-align:left;min-width:170px}
-.oc-tbl th.oc-ai{text-align:left}
-.oc-tbl tr.oc-oth td{color:var(--ink-3)}
-.oc-stack{display:flex;height:12px;border-radius:6px;overflow:hidden;background:var(--paper-2);margin:8px 0 10px}
-.oc-stack i{display:block;height:100%}
-.oc-leg{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:4px 14px;font-size:12px;color:var(--ink-2)}
-.oc-leg .sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:7px}
-.oc-leg .n{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink)}
-.oc-leg .p{text-align:right;color:var(--ink-3);font-variant-numeric:tabular-nums;min-width:36px}
-.oc-leg .bad{color:var(--ink)}
-.oc-sec+.oc-sec{margin-top:16px;padding-top:14px;border-top:1px solid var(--hair)}
-.oc-sec h4{margin:0;font-size:12.5px;font-weight:600;display:flex;justify-content:space-between;gap:8px}
-.oc-sec h4 span{font-weight:400;color:var(--ink-3);font-variant-numeric:tabular-nums}
-.oc-d{display:block;font-size:11px;color:var(--ink-3);margin-top:3px}
-.oc-d.good{color:var(--pos)}
-.oc-d.bad{color:var(--neg)}
-.oc-bad td{vertical-align:top;text-align:left}
-.oc-bad td.q{white-space:normal;color:var(--ink);min-width:260px}
-.oc-bad td.w{white-space:normal;color:var(--ink-3);min-width:140px}
-.oc-bad td.c{white-space:nowrap}
-.oc-bad th{text-align:left}
-.oc-flt{display:flex;gap:6px;flex-wrap:wrap}
-.oc-list{display:flex;flex-direction:column}
-.oc-li{display:grid;grid-template-columns:70px minmax(0,1fr) auto;gap:10px;align-items:baseline;padding:7px 0;border-top:1px solid var(--hair);font-size:12.5px}
-.oc-li:first-child{border-top:0}
-.oc-li .dt{font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
-.oc-li .tx{color:var(--ink);overflow-wrap:anywhere}
-.oc-li .tx small{display:block;font-size:11px;color:var(--ink-3)}
-.oc-st{display:inline-block;font-size:11px;padding:1px 6px;border-radius:3px;border:1px solid var(--hair-2);color:var(--ink-3);white-space:nowrap}
-.oc-st.ok{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 65%)}
-.oc-st.wait{color:var(--warn);border-color:color-mix(in oklab,var(--warn),transparent 55%)}
-.oc-fun .pu-kv .sub{display:block;margin:2px 0 0;line-height:1.45}
-.oc-kpis{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:8px;font-size:12px;color:var(--ink-3)}
-.oc-kpis b{display:block;font-family:'Source Serif 4',Georgia,serif;font-size:22px;font-weight:400;color:var(--ink);line-height:1.1}
-.pu-lim{position:relative;height:6px;margin-top:8px;border-radius:3px;background:var(--paper-2)}
-.pu-lim i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--select)}
-.pu-lim u{position:absolute;top:-3px;width:2px;height:12px;margin-left:-1px;background:var(--warn);text-decoration:none}
-.pu-days{display:flex;align-items:flex-end;gap:2px;height:140px;padding-top:6px}
-.pu-dcol{flex:1 1 0;min-width:0;height:100%;display:flex;flex-direction:column;justify-content:flex-end;cursor:default}
-.pu-dcol .o{display:block;background:color-mix(in oklab,var(--ink-3),transparent 55%);border-radius:2px 2px 0 0}
-.pu-dcol .a{display:block;background:var(--select)}
-.pu-dcol.prev{opacity:.45}
-.pu-dcol:hover{opacity:1;filter:brightness(.92)}
-.pu-sw{display:inline-block;width:10px;height:10px;margin:0 5px 0 0;border-radius:2px;vertical-align:-1px}
-.pu-sw.a{background:var(--select)}
-.pu-bars-sel .pu-bar-row .fl{background:color-mix(in oklab,var(--select),transparent 25%)}
-.pu-bars-sel .pu-bar-row .lb{width:170px}
-.pu-models .pu-bar-row .vv{width:170px;white-space:nowrap}.pu-sw.o{margin-left:10px;background:color-mix(in oklab,var(--ink-3),transparent 55%)}
-.pu-rowclick{cursor:pointer}
-.pu-rowclick:hover{background:var(--surface)}
-.pu-nm{display:block;font-weight:500}
-.pu-login{display:block;font-family:inherit;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
-.pu-badge{display:inline-block;font-size:11px;text-transform:uppercase;letter-spacing:.05em;
-  padding:1px 5px;border-radius:3px;border:1px solid var(--hair-2);color:var(--ink-3);margin-left:6px}
-.pu-badge.on{color:var(--pos);border-color:color-mix(in oklab,var(--pos),transparent 65%)}
-.pu-badge.tod{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 65%)}
-.pu-badge.off{color:var(--ink-3);border:0}
-.pu-badge.adm{color:var(--warn);border-color:color-mix(in oklab,var(--warn),transparent 60%)}
-.pu-badge.sig{color:var(--select);border-color:color-mix(in oklab,var(--select),transparent 60%)}
-.pu-mail .pu-badge{margin-left:0}
-.pu-mail td .pu-badge.off{margin-left:6px}
-.pu-mail-k{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:2px 0 14px}
-@media(max-width:900px){.pu-mail-k{grid-template-columns:1fr 1fr}}
-.pu-mail-a{margin-left:8px;color:var(--ink-3);font-size:12px}
-.pu-mail tr.pu-exrow td{opacity:.55}
-.pu-mail tr.pu-exrow:hover td{opacity:.85}
-.pu-pages{color:var(--ink-3);font-size:12px;max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pu-team tr.pu-exrow td{opacity:.55}
-.pu-team tr.pu-exrow:hover td{opacity:.85}
-.pu-deep{font-style:normal;color:var(--ink-3);font-size:11px;margin-left:2px}
-.pu-badrow{background:color-mix(in oklab,var(--neg),transparent 94%)}
-.pu-qcell{max-width:420px}
-.pu-link{background:none;border:0;padding:0;font:inherit;font-size:11px;color:var(--accent);
-  cursor:pointer;white-space:nowrap}
-.pu-link:hover{text-decoration:underline}
-.pu-link.strong{font-weight:500;font-size:12px}
-.pu-cmt{color:var(--ink-3);font-style:italic}
-/* карточка человека и отчёт — выдвижная панель */
-.pu-drawer{position:fixed;inset:0;background:color-mix(in oklab,#000,transparent 45%);
-  z-index:60;display:flex;justify-content:flex-end}
-.pu-dr{width:min(860px,96vw);height:100%;overflow-y:auto;background:var(--paper);
-  border-left:1px solid var(--hair);box-shadow:var(--shadow-2);animation:pudr .18s ease-out}
-@keyframes pudr{from{transform:translateX(24px);opacity:.6}to{transform:none;opacity:1}}
-.pu-drhead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
-  padding:18px 22px;border-bottom:1px solid var(--hair);position:sticky;top:0;
-  background:var(--paper);z-index:2}
-.pu-drname{font-size:17px;font-weight:500}
-.pu-drsub{font-size:11px;color:var(--ink-3);margin-top:2px}
-.pu-x{background:none;border:0;font-size:16px;color:var(--ink-3);cursor:pointer;padding:2px 6px}
-.pu-x:hover{color:var(--ink)}
-.pu-u .a.big{width:38px;height:38px;font-size:13px}
-.pu-drtiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));
-  background:var(--paper);border-bottom:1px solid var(--hair)}
-.pu-drtiles>div{padding:11px 13px;display:flex;flex-direction:column;gap:1px;
-  box-shadow:inset -1px -1px 0 var(--hair)}
-.pu-drtiles b{font-size:17px;font-weight:500}
-.pu-drtiles span{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3)}
-.pu-drtiles .neg b{color:var(--neg)}
-.pu-drsec{padding:16px 22px;border-bottom:1px solid var(--hair)}
-.pu-drh{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);margin-bottom:8px}
-.pu-drp{font-size:12.5px;line-height:1.55;color:var(--ink-2);margin:0 0 6px}
-.pu-drtabs{display:flex;gap:4px;padding:12px 22px 0;flex-wrap:wrap}
-.pu-days{display:flex;align-items:flex-end;gap:3px;height:56px}
-.pu-dbar{display:flex;flex-direction:column;align-items:center;gap:3px;flex:1;min-width:9px}
-.pu-dbar i{display:block;width:100%;background:var(--accent);border-radius:2px 2px 0 0;opacity:.75}
-.pu-dbar span{font-size:11px;color:var(--ink-3);font-family:inherit;font-variant-numeric:tabular-nums}
-.pu-qrow{display:flex;align-items:baseline;gap:9px;padding:6px 0;border-bottom:1px solid var(--hair);
-  font-size:12px}
-.pu-qrow:last-child{border-bottom:0}
-.pu-qrow .at{font-family:inherit;font-size:11px;color:var(--ink-3);flex-shrink:0;font-variant-numeric:tabular-nums}
-.pu-qrow .qq{flex:1;color:var(--ink-2)}
-.pu-qrow .md{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3);flex-shrink:0}
-.pu-qrow.bad{background:color-mix(in oklab,var(--neg),transparent 95%)}
-.pu-vd{flex-shrink:0}
-.pu-trail{display:flex;gap:10px;font-size:11px;padding:2px 0;font-family:inherit;font-variant-numeric:tabular-nums}
-.pu-trail .at{color:var(--ink-3)}
-.pu-trail .k{color:var(--ink-3);width:118px;flex:none}
-.pu-trail .p{color:var(--ink-2);flex:1}
-.pu-trail .d{color:var(--ink-3)}
-.pu-report{font-size:13px;line-height:1.6}
-.pu-cmp{padding:10px 0;border-bottom:1px solid var(--hair)}
-.pu-cmp:last-child{border-bottom:0}
-.pu-cmphead{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
-.pu-cmphead .md{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3)}
-.pu-cmphead .at{font-family:inherit;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
-.pu-cmpbody{font-size:12.5px;color:var(--ink-2);margin-top:3px}
-.pu-cmpwhy{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}
-.pu-cmpwhy span{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--neg);
-  border:1px solid color-mix(in oklab,var(--neg),transparent 72%);border-radius:3px;padding:1px 5px}
-.pu-cmpnote{font-size:12px;color:var(--ink-3);font-style:italic;margin-top:4px}
-.pu-msg{padding:10px 0;border-bottom:1px solid var(--hair)}
-.pu-msg:last-child{border-bottom:0}
-.pu-msghead{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3);
-  margin-bottom:4px}
-.pu-msg.user .pu-msgbody{font-size:13px;font-weight:500;color:var(--ink)}
-.pu-msg.assistant .pu-msgbody{font-size:12.5px;line-height:1.6;color:var(--ink-2)}
+// ─── «Пульс» v2 — состояние инструмента для владельца ─────────────────────────
+// Макет и спецификация: docs/design/pulse/pulse-v2.html, docs/design/pulse/README.md.
+// Порядок ответа страницы: что сломано → что ждёт решения → пользуются ли →
+// качество ИИ → итоги для руководства. Числа считает код (бриф собирается шаблоном,
+// без модели). Строение кода:
+//   1) общее — справочники, форматтеры, кэш запросов, хуки, примитивы (pu2-*);
+//   2) сигналы — puSignals(m): очередь «Требует внимания» и состояние систем сегодня;
+//   3) разделы — каждый в своём размеченном блоке ⟦pu2:…⟧ (их правят агенты разделов);
+//   4) оболочка — PulsePage: права, опрос, бриф, полоса разделов, поиск, слои.
+// Всё на токенах темы (html.dark); красный — только сбой и жалоба, жёлтый — внимание,
+// зелёный — «в норме», нейтральные данные — графитовая шкала --viz.
 
-
-/* ── новые разделы «Пульса» ── */
-.pu-guard{margin:0 0 14px;padding:11px 15px;border-radius:10px;font-size:12.5px;
-  background:color-mix(in oklab,var(--neg),transparent 92%);
-  border:1px solid color-mix(in oklab,var(--neg),transparent 72%);
-  display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;}
-.pu-guard.ok{background:color-mix(in oklab,var(--pos),transparent 93%);
-  border-color:color-mix(in oklab,var(--pos),transparent 78%);color:var(--ink-2);}
-.pu-guard.warn{background:color-mix(in oklab,var(--warn),transparent 91%);
-  border-color:color-mix(in oklab,var(--warn),transparent 70%);}
-.pu-guard b{color:var(--neg);}
-.pu-guard.warn b{color:var(--ink);}
-/* без вертикальных разделителей: при переносе строки они вставали в её начало */
-.pu-guard{column-gap:18px;row-gap:6px}
-.pu-guard-i{padding:0;border:0;background:none;font:inherit;
-  font-size:12.5px;color:var(--ink-2);cursor:pointer;text-align:left}
-@media(max-width:760px){.pu-guard{flex-direction:column;align-items:flex-start}}
-.pu-guard-i:hover{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
-.pu-guard-i .lv{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:6px;vertical-align:1px;background:var(--warn)}
-.pu-guard-i .lv.bad{background:var(--neg)}
-/* переход из сторожа: блок не прячется под липкой строкой вкладок */
-.pu-card[id],.pu-grid2[id]{scroll-margin-top:120px}
-.pu-flash{animation:puflash 1.4s ease-out}
-@keyframes puflash{0%{box-shadow:0 0 0 3px color-mix(in oklab,var(--select),transparent 40%)}100%{box-shadow:0 0 0 0 transparent}}
-.pu-me{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);cursor:pointer;white-space:nowrap}
-.pu-me input{accent-color:var(--accent)}
-
-
-.pu-empty{padding:16px 18px;border:1px dashed var(--hair-2);border-radius:9px;
-  font-size:12.5px;line-height:1.6;color:var(--ink-3);}
-.pu-empty b{color:var(--ink);display:block;margin-bottom:5px;}
-.pu-empty p{margin:0;}
-
-.pu-reasons{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;}
-.pu-reason{font-size:11.5px;color:var(--ink-2);background:var(--paper-2);
-  border:1px solid var(--hair);border-radius:20px;padding:3px 10px;
-  display:inline-flex;align-items:baseline;gap:6px;}
-.pu-reason.sm{font-size:12px;padding:2px 8px;}
-.pu-reason.bad{border-color:color-mix(in oklab,var(--neg),transparent 60%);color:var(--neg);}
-.pu-reason.ok{border-color:color-mix(in oklab,var(--pos),transparent 60%);}
-.pu-reason i{font-style:normal;font-family:inherit;
-  font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
-
-.pu-fb-seg{display:flex;gap:4px;margin-bottom:12px;}
-.pu-fb{padding:11px 13px;border-radius:9px;margin-bottom:8px;background:var(--paper-2);
-  border-left:2px solid var(--hair-2);}
-.pu-fb.neg{border-left-color:var(--neg);}
-.pu-fb-h{display:flex;gap:8px;align-items:baseline;}
-.pu-fb-h b{font-size:13px;font-weight:500;color:var(--ink);line-height:1.45;}
-.pu-fb-v{flex:none;}
-.pu-fb-m{display:flex;gap:10px;flex-wrap:wrap;margin-top:5px;
-  font-family:inherit;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
-.pu-fb-m a{color:var(--accent);}
-.pu-fb-r{margin-top:7px;display:flex;gap:5px;flex-wrap:wrap;}
-.pu-fb-c{margin:7px 0 0;font-size:12.5px;color:var(--ink-2);font-style:italic;line-height:1.55;}
-
-.pu-mini{display:inline-block;width:72px;height:6px;border-radius:3px;
-  background:var(--paper-2);overflow:hidden;vertical-align:middle;margin-right:8px;}
-.pu-mini i{display:block;height:100%;border-radius:3px;
-  background:color-mix(in oklab,var(--accent),transparent 40%);}
-.pu-chk{text-align:center;}
-.pu-chk .yes{color:var(--pos);}
-.pu-chk .no{color:var(--ink-3);}
-.pu-off{font-size:11px;color:var(--ink-3);border:1px solid var(--hair);
-  border-radius:4px;padding:0 4px;margin-left:6px;}
-
-.pu-todo{border-color:color-mix(in oklab,var(--accent),transparent 70%);}
-.pu-todo-row{padding:7px 0;border-top:1px solid var(--hair);font-size:12.5px;
-  display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;}
-.pu-todo-row:first-of-type{border-top:0;}
-
-.pu-kv4{display:grid;grid-template-columns:repeat(4,auto);gap:5px 20px;
-  justify-content:start;font-size:12.5px;margin-bottom:4px;}
-.pu-kv4 span{color:var(--ink-3);}
-.pu-kv4 b{font-family:inherit;font-size:12px;color:var(--ink-2);font-variant-numeric:tabular-nums}
-.pu-kv4 b.neg{color:var(--neg);}
-@media(max-width:560px){.pu-kv4{grid-template-columns:auto auto}}
-.pu-kv .sub{color:var(--ink-3);font-size:11.5px;margin-left:6px;font-weight:400}
-.pu-err .n{font-size:11px;color:var(--ink-3);flex:none;font-variant-numeric:tabular-nums}
-.pu-feed-row .w b{font-weight:500;color:var(--ink)}
-@media(max-width:760px){.pu-search{width:100%}.pu-people-ctl{flex-wrap:wrap;width:100%}
-  .pu-bar-row .lb{width:96px}.pu-bar-row .vv{width:84px}}
-.pu-kv-row{display:flex;justify-content:space-between;padding:5px 2px;
-  border-top:1px solid var(--hair);font-size:12.5px;}
-.pu-kv-row b{font-family:inherit;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
-
-`;
-const AD_PAGE_RU = {
-  overview: "Новостные обзоры",
-  foryou: "Для вас",
-  market: "Рынок · позиция",
-  sber: "Сбер/Рынок",
-  reviews: "Аудит отзывов",
-  ai: "ИИ-помощник",
-  knowledge: "База знаний",
-  loophole: "Аудит уязвимостей",
-  banks: "Банки",
-  sources: "Источники",
-  quality: "Качество",
-  profile: "Профиль",
-  pulse: "Пульс"
-};
-const adFmtS = s => {
-  s = Math.round(s || 0);
-  if (s < 60) return s + "с";
-  if (s < 3600) return Math.round(s / 60) + "м";
-  return (s / 3600).toFixed(1).replace(".", ",") + "ч";
-};
-
-// area-график: люди в день, ось слева. Просмотры раньше шли второй линией в
-// своём масштабе без осей — пересечения линий ничего не значили; теперь
-// просмотры — в подсказке над точкой и в подписи под графиком
-function AdArea({
-  data,
-  h = 140
-}) {
-  const w = 640,
-    vals = data || [],
-    L = 26;
-  if (vals.length < 2) return /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: "var(--ink-3)",
-      fontSize: 12,
-      padding: "20px 0"
-    }
-  }, "\u0414\u0430\u043D\u043D\u044B\u0435 \u043D\u0430\u043A\u0430\u043F\u043B\u0438\u0432\u0430\u044E\u0442\u0441\u044F \u2014 \u0433\u0440\u0430\u0444\u0438\u043A \u043F\u043E\u044F\u0432\u0438\u0442\u0441\u044F \u043F\u043E\u0441\u043B\u0435 \u043F\u0430\u0440\u044B \u0434\u043D\u0435\u0439 \u0436\u0438\u0437\u043D\u0438 \u0442\u0435\u043B\u0435\u043C\u0435\u0442\u0440\u0438\u0438.");
-  const maxRaw = Math.max(...vals.map(v => +v.users || 0), 1);
-  const maxU = maxRaw <= 4 ? 4 : Math.ceil(maxRaw / 4) * 4; // круглая шкала: 4, 8, 12…
-  const px = i => L + i / (vals.length - 1) * (w - L - 8);
-  const py = v => h - 18 - (+v || 0) / maxU * (h - 30);
-  const dU = vals.map((v, i) => (i ? "L" : "M") + px(i).toFixed(1) + "," + py(v.users).toFixed(1)).join("");
-  const last = vals[vals.length - 1];
-  const dd = s => (s || "").slice(8, 10) + "." + (s || "").slice(5, 7);
-  const ticks = [0, maxU / 2, maxU];
-  const F = {
-    fontSize: 10,
-    fill: "var(--ink-3)",
-    fontFamily: "Geist, Inter, sans-serif"
-  };
-  return /*#__PURE__*/React.createElement("svg", {
-    width: "100%",
-    viewBox: "0 0 " + w + " " + h,
-    style: {
-      display: "block"
-    },
-    role: "img",
-    "aria-label": "Люди по дням: от " + Math.min(...vals.map(v => +v.users || 0)) + " до " + maxRaw
-  }, ticks.map(t => /*#__PURE__*/React.createElement("g", {
-    key: t
-  }, /*#__PURE__*/React.createElement("line", {
-    x1: L,
-    x2: w - 4,
-    y1: py(t),
-    y2: py(t),
-    stroke: "var(--hair)",
-    strokeWidth: "1"
-  }), /*#__PURE__*/React.createElement("text", _extends({
-    x: L - 6,
-    y: py(t) + 3,
-    textAnchor: "end"
-  }, F), t))), /*#__PURE__*/React.createElement("path", {
-    d: dU + "L" + px(vals.length - 1) + "," + (h - 18) + "L" + L + "," + (h - 18) + "Z",
-    fill: "var(--accent-soft)",
-    opacity: ".6"
-  }), /*#__PURE__*/React.createElement("path", {
-    d: dU,
-    fill: "none",
-    stroke: "var(--accent)",
-    strokeWidth: "1.6",
-    strokeLinejoin: "round"
-  }), vals.map((v, i) => /*#__PURE__*/React.createElement("circle", {
-    key: v.d,
-    cx: px(i),
-    cy: py(v.users),
-    r: i === vals.length - 1 ? 2.8 : 2,
-    fill: "var(--accent)",
-    opacity: i === vals.length - 1 ? 1 : .55
-  }, /*#__PURE__*/React.createElement("title", null, dd(v.d), ": ", v.users, " \u0447\u0435\u043B. \xB7 ", v.views, " ", plural(+v.views || 0, "просмотр", "просмотра", "просмотров")))), /*#__PURE__*/React.createElement("text", _extends({
-    x: L,
-    y: h - 3
-  }, F), dd(vals[0].d)), /*#__PURE__*/React.createElement("text", _extends({
-    x: w - 4,
-    y: h - 3,
-    textAnchor: "end"
-  }, F), dd(last.d)));
-}
-function AdHeat({
-  cells
-}) {
-  const map = {};
-  let max = 1;
-  (cells || []).forEach(c => {
-    map[c.dow + "-" + c.hour] = c.n;
-    if (c.n > max) max = c.n;
-  });
-  const days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
-  const out = [/*#__PURE__*/React.createElement("span", {
-    key: "hx",
-    className: "hl"
-  })];
-  for (let hh = 0; hh < 24; hh++) out.push(/*#__PURE__*/React.createElement("span", {
-    key: "h" + hh,
-    className: "hh"
-  }, hh % 3 === 0 ? hh : ""));
-  days.forEach((dl, di) => {
-    out.push(/*#__PURE__*/React.createElement("span", {
-      key: "l" + di,
-      className: "hl"
-    }, dl));
-    for (let hh = 0; hh < 24; hh++) {
-      const n = map[di + 1 + "-" + hh] || 0;
-      out.push(/*#__PURE__*/React.createElement("span", {
-        key: di + "-" + hh,
-        className: "c",
-        title: dl + " " + hh + ":00 · " + n + " " + plural(n, "открытие", "открытия", "открытий") + " страниц",
-        style: n ? {
-          background: "color-mix(in oklab,var(--accent),var(--paper-2) " + Math.round(88 - n / max * 78) + "%)"
-        } : null
-      }));
-    }
-  });
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-heat"
-  }, out);
-}
-
-// донат-сегментация аудитории (SVG, без библиотек)
-function AdDonut({
-  parts,
-  center,
-  sub
-}) {
-  const total = (parts || []).reduce((s, p) => s + (p.value || 0), 0) || 1;
-  const R = 40,
-    C = 2 * Math.PI * R;
-  let cum = 0;
-  return /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 22,
-      alignItems: "center",
-      flexWrap: "wrap"
-    }
-  }, /*#__PURE__*/React.createElement("svg", {
-    width: "116",
-    height: "116",
-    viewBox: "0 0 116 116",
-    style: {
-      flex: "none"
-    }
-  }, /*#__PURE__*/React.createElement("circle", {
-    cx: "58",
-    cy: "58",
-    r: R,
-    fill: "none",
-    stroke: "var(--paper-2)",
-    strokeWidth: "15"
-  }), (parts || []).filter(p => p.value > 0).map((p, i) => {
-    const frac = p.value / total;
-    const el = /*#__PURE__*/React.createElement("circle", {
-      key: i,
-      cx: "58",
-      cy: "58",
-      r: R,
-      fill: "none",
-      stroke: p.color,
-      strokeWidth: "15",
-      strokeDasharray: Math.max(frac * C - 1.6, .6) + " " + (C - Math.max(frac * C - 1.6, .6)),
-      transform: "rotate(" + (cum * 360 - 90) + " 58 58)"
-    });
-    cum += frac;
-    return el;
-  }), /*#__PURE__*/React.createElement("text", {
-    x: "58",
-    y: "57",
-    textAnchor: "middle",
-    fontSize: "21",
-    fontWeight: "600",
-    fill: "var(--ink)",
-    fontFamily: "'Source Serif 4',Georgia,serif"
-  }, center), /*#__PURE__*/React.createElement("text", {
-    x: "58",
-    y: "73",
-    textAnchor: "middle",
-    fontSize: "10",
-    fill: "var(--ink-3)",
-    fontFamily: "Geist, Inter, sans-serif"
-  }, sub)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      flexDirection: "column",
-      gap: 7
-    }
-  }, (parts || []).map((p, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    style: {
-      display: "flex",
-      alignItems: "center",
-      gap: 9,
-      fontSize: 12
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      width: 9,
-      height: 9,
-      borderRadius: 3,
-      background: p.color,
-      flex: "none"
-    }
-  }), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--ink-2)"
-    }
-  }, p.label), /*#__PURE__*/React.createElement("b", {
-    className: "tnum",
-    style: {
-      fontSize: 11
-    }
-  }, p.value || 0)))));
-}
-
-// парные колонки по дням: ИИ-запросы (accent) + отчёты (ink); ось — дни из dau
-function AdCols({
-  axis,
-  a,
-  b,
-  h = 118
-}) {
-  const w = 620;
-  const am = {};
-  (a || []).forEach(x => am[x.d] = +x.n || 0);
-  const bm = {};
-  (b || []).forEach(x => bm[x.d] = +x.n || 0);
-  const days = (axis || []).map(x => x.d);
-  if (!days.length) return /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: "var(--ink-3)",
-      fontSize: 12
-    }
-  }, "\u041D\u0430\u043A\u0430\u043F\u043B\u0438\u0432\u0430\u0435\u0442\u0441\u044F.");
-  const max = Math.max(...days.map(d => Math.max(am[d] || 0, bm[d] || 0)), 1);
-  const slot = (w - 32) / days.length,
-    bw = Math.max(3, Math.min(13, slot / 2 - 2));
-  const dd = s => (s || "").slice(8, 10) + "." + (s || "").slice(5, 7);
-  return /*#__PURE__*/React.createElement("svg", {
-    width: "100%",
-    viewBox: "0 0 " + w + " " + h,
-    style: {
-      display: "block"
-    }
-  }, days.map((d, i) => {
-    const x = 16 + i * slot + (slot - bw * 2 - 2) / 2;
-    const ha = (am[d] || 0) / max * (h - 32),
-      hb = (bm[d] || 0) / max * (h - 32);
-    return /*#__PURE__*/React.createElement("g", {
-      key: d
-    }, am[d] > 0 && /*#__PURE__*/React.createElement("rect", {
-      x: x,
-      y: h - 16 - Math.max(ha, 2),
-      width: bw,
-      height: Math.max(ha, 2),
-      rx: "2",
-      fill: "var(--accent)",
-      opacity: ".88"
-    }), bm[d] > 0 && /*#__PURE__*/React.createElement("rect", {
-      x: x + bw + 2,
-      y: h - 16 - Math.max(hb, 2),
-      width: bw,
-      height: Math.max(hb, 2),
-      rx: "2",
-      fill: "var(--ink-3)",
-      opacity: ".65"
-    }));
-  }), /*#__PURE__*/React.createElement("text", {
-    x: "16",
-    y: h - 3,
-    fontSize: "10",
-    fill: "var(--ink-3)",
-    fontFamily: "Geist, Inter, sans-serif"
-  }, dd(days[0])), /*#__PURE__*/React.createElement("text", {
-    x: w - 16,
-    y: h - 3,
-    fontSize: "10",
-    fill: "var(--ink-3)",
-    fontFamily: "Geist, Inter, sans-serif",
-    textAnchor: "end"
-  }, dd(days[days.length - 1])), /*#__PURE__*/React.createElement("text", {
-    x: w - 16,
-    y: "10",
-    fontSize: "10",
-    fill: "var(--ink-3)",
-    fontFamily: "Geist, Inter, sans-serif",
-    textAnchor: "end"
-  }, "\u043C\u0430\u043A\u0441 ", max, "/\u0434\u0435\u043D\u044C"));
-}
-
-// ─── Новые разделы «Пульса» ──────────────────────────────────────────────────
-// Владелец спросил: что оценивают в ответах ИИ и насколько заполнены профили.
-// К этому добавлены блоки, закрывающие вопросы, на которые панель не отвечала:
-// что ждёт моего решения, доходит ли фоновая индексация, что не доехало в базу.
-
-// Сторож в шапке: всё плохое одной строкой. Раньше, чтобы понять «всё ли в
-// порядке», приходилось пролистать весь экран. Аудит 03.10: сторож был слеп —
+// ══ Общее: справочники ═══════════════════════════════════════════════════════
 // выпуск проверял по полю, которого нет (digest — массив), а площадки,
 // регрессионный набор и пропавшие оценки не смотрел вовсе; «жалоб нет»
 // горело зелёным, когда оценок не ставили больше месяца.
@@ -21237,160 +20615,28 @@ const mskHour = () => {
     return 12;
   }
 };
-function puGuardItems(m) {
-  const t = m.today || {},
-    ing = (m.ingest || {}).queue || {};
-  const dg = Array.isArray(m.digest) ? m.digest : [];
-  const fb = m.ai_feedback || {},
-    f = m.features || {},
-    ev = m.eval || {};
-  const rs = (m.review_sources || {}).sources || [];
-  const nq = m.news_quality || {},
-    gw = (m.search || {}).gateway || {},
-    pr = m.proposals || {};
-  const num = x => String(x).replace(".", ",");
-  const out = [];
-  const add = (lv, s, to, id) => out.push({
-    lv,
-    s,
-    to,
-    id
-  });
-  if ((t.errors || 0) > 0) add("bad", `ошибок сегодня: ${t.errors}`, "tech", "pu-errors");
-  if ((ing.dropped || 0) > 0) add("bad", `очередь индексации переполнялась: ${ing.dropped}`, "data", "pu-ingest");
-  if (ing.workers === 0) add("bad", "воркеры индексации не запущены", "data", "pu-ingest");
-  const failed = dg.filter(x => x.status && x.status !== "ok");
-  if (failed.length) add("bad", `выпуск собрался не полностью: ${failed.map(x => DG_SECTION_RU[x.section] || x.section).join(", ")}`, "tech", "pu-digest");
-  const dgDate = (dg[0] || {}).d;
-  if (dgDate && dgDate < mskToday() && mskHour() >= 8) add("bad", `сегодняшнего выпуска нет — последний ${rvDate(dgDate)}`, "tech", "pu-digest");
-  const down = rs.filter(x => x.status === "встал" || x.status === "просел");
-  if (down.length) add("bad", `площадки отзывов: ${down.map(x => x.label + " — " + x.status).join(", ")}`, "data", "pu-sources");
-  const surge = rs.filter(x => x.status === "всплеск" && x.norm > 0);
-  if (surge.length) add("warn", `всплеск на площадке: ${surge.map(x => `${x.label} ×${Math.round(x.week / x.norm)} к норме`).join(", ")} — наплыв жалоб или догрузка`, "data", "pu-sources");
-  if (gw.breaker_open) add("bad", `поисковый шлюз отключён${gw.breaker_reason ? ": " + gw.breaker_reason : ""}`, "data", "pu-search");
-  if ((fb.dislikes || 0) > 0) add("bad", `${plural(fb.dislikes, "жалоба", "жалобы", "жалоб")} на ответы ИИ: ${fb.dislikes}`, "ai", "pu-aifb");
-  [["hermes", "быстрого ответа"], ["deep", "отчёта"]].forEach(([k, nm]) => {
-    const e = ev[k];
-    if (!e || e.score == null) return;
-    if (e.delta != null && e.delta <= -5) add("warn", `проверочный набор ${nm}: ${num(e.score)} из 100 (−${num(-e.delta)})`, "ai", "pu-eval");else if (e.score < 75) add("warn", `проверочный набор ${nm}: ${num(e.score)} из 100`, "ai", "pu-eval");
-    if (k === "hermes" && e.age_days > 8) add("warn", `проверочный набор не прогонялся ${e.age_days} дн`, "ai", "pu-eval");
-  });
-  const rl = (f.ratings_last || [])[0],
-    ageR = rl ? rl.age_days : null;
-  if (ageR == null || ageR >= 14) add("warn", ageR == null ? "оценок 👍/👎 не ставили ни разу — «жалоб нет» ничего не значит" : `оценок 👍/👎 не ставили ${ageR} дн — «жалоб нет» ничего не значит`, "ai", "pu-aifb");
-  const nerr = ((nq.stream || {}).sources || []).filter(x => x.last_error);
-  if (nerr.length) add("warn", `ленты новостей с ошибкой: ${nerr.map(x => x.label || x.source).join(", ")}`, "data", "pu-news");
-  const ib = m.inbox || {};
-  if ((ib.unread || 0) > 0) add("warn", `${ib.unread} ${plural(ib.unread, "обращение ждёт", "обращения ждут", "обращений ждут")} ответа${ib.oldest_new_days ? ` · старейшему ${ib.oldest_new_days} дн` : ""}`, "inbox", "pu-inbox");
-  if ((pr.pending || 0) > 0) add("warn", `${pr.pending} ${plural(pr.pending, "заявка", "заявки", "заявок")} на источники ${pr.pending === 1 ? "ждёт" : "ждут"} решения · старейшей ${pr.oldest_days} дн`, "data", "pu-proposals");
-  // конвейер «Аудита отзывов» (с 04.11.2026): разметка, срезы, склейка копий, сюжеты, поиск
-  const rp = m.reviews_pipeline || {},
-    rsh = m.reviews_search || {};
-  if ((rp.pending_old || 0) > 50) add("bad", `разметка жалоб отстаёт: ${fmtNum(rp.pending_old)} ждут дольше 6 ч`, "data", "pu-slices");
-  if ((rp.slices_not_ready || []).length) add("warn", `срезы на доразметке (скрыты в фильтре): ${rp.slices_not_ready.map(x => `${x.label} ${Math.round(x.share * 100)}%`).join(", ")}`, "data", "pu-slices");
-  if ((rp.flags_open || 0) > 0 && (rp.flags_oldest_days || 0) >= 3) add("warn", `отметки «не относится к срезу» ждут решения: ${rp.flags_open} · старейшей ${Math.floor(rp.flags_oldest_days)} дн`, "inbox", "pu-inbox");
-  if (rp.dedup_age_h != null && rp.dedup_age_h > 30) add("warn", `склейка копий отзывов не проходила ${Math.round(rp.dedup_age_h)} ч`, "data", "pu-slices");
-  if (rp.stories_age_h != null && rp.stories_age_h > 50) add("warn", `«Сюжеты» не пересчитывались ${Math.round(rp.stories_age_h)} ч`, "data", "pu-slices");
-  const sc = (m.slice_canary || [])[0];
-  if (rp.canary_age_days != null && rp.canary_age_days > 9) add("warn", `канарейка срезов не отрабатывала ${Math.floor(rp.canary_age_days)} дн (должна раз в неделю)`, "data", "pu-slices");
-  if (sc && sc.alert) add("bad", `канарейка срезов ${rvDate(sc.run_at)}: ${(sc.reasons || []).join("; ")}`, "data", "pu-slices");
-  if ((rsh.failed || 0) > 0) add("warn", `поиск по жалобам не отработал ${rsh.failed} ${plural(rsh.failed, "раз", "раза", "раз")}`, "data", "pu-rsearch");
-  return out.sort((a, b) => (a.lv === "bad" ? 0 : 1) - (b.lv === "bad" ? 0 : 1));
-}
-function PuGuard({
-  m,
-  onGo
-}) {
-  const items = puGuardItems(m);
-  if (!items.length) return /*#__PURE__*/React.createElement("div", {
-    className: "pu-guard ok",
-    role: "status"
-  }, "\u0412\u0441\u0451 \u0432 \u043F\u043E\u0440\u044F\u0434\u043A\u0435: \u043E\u0448\u0438\u0431\u043E\u043A \u043D\u0435\u0442, \u0432\u044B\u043F\u0443\u0441\u043A \u0441\u043E\u0431\u0440\u0430\u043D, \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0438 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u0438 \u0444\u043E\u043D \u0440\u0430\u0431\u043E\u0442\u0430\u044E\u0442, \u043D\u0430 \u043E\u0442\u0432\u0435\u0442\u044B \u0418\u0418 \u043D\u0435 \u0436\u0430\u043B\u043E\u0432\u0430\u043B\u0438\u0441\u044C.");
-  const bad = items.some(x => x.lv === "bad");
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-guard" + (bad ? "" : " warn"),
-    role: "status"
-  }, /*#__PURE__*/React.createElement("b", null, bad ? "Требует внимания:" : "Обратить внимание:"), items.map((x, i) => /*#__PURE__*/React.createElement("button", {
-    key: i,
-    type: "button",
-    className: "pu-guard-i",
-    onClick: () => onGo && onGo(x.to, x.id),
-    title: "\u043F\u0435\u0440\u0435\u0439\u0442\u0438 \u043A \u0431\u043B\u043E\u043A\u0443"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "lv" + (x.lv === "bad" ? " bad" : "")
-  }), x.s)));
-}
-
-// ── Оценки ответов ИИ ───────────────────────────────────────────────────────
-// Проценты сознательно не показываем: на десятке оценок доля — генератор
-// ложных выводов. Абсолютные числа и сырой журнал честнее.
-function PuAiFeedback({
-  fb,
-  days,
-  lastAt,
-  onOpenReport,
-  onOpenUser
-}) {
-  const [only, setOnly] = useState("all");
-  const items = (fb.items || []).filter(x => only === "all" ? true : x.verdict < 0);
-  const rated = (fb.likes || 0) + (fb.dislikes || 0);
-  const ans = fb.answers || 0;
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card pu-sec",
-    id: "pu-aifb"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0446\u0435\u043D\u043A\u0438 \u043E\u0442\u0432\u0435\u0442\u043E\u0432 \u0418\u0418 \xB7 ", days, " \u0434\u043D"), /*#__PURE__*/React.createElement("span", {
-    className: "mono"
-  }, "\uD83D\uDC4D ", fb.likes || 0, " \xB7 \uD83D\uDC4E ", fb.dislikes || 0, " \xB7 \u043E\u0446\u0435\u043D\u0435\u043D\u043E ", rated, " \u0438\u0437 ", ans)), (fb.reasons || []).length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "pu-reasons"
-  }, fb.reasons.map(r => /*#__PURE__*/React.createElement("span", {
-    key: r.key,
-    className: "pu-reason"
-  }, r.label, /*#__PURE__*/React.createElement("i", null, r.n)))), rated === 0 ? /*#__PURE__*/React.createElement("div", {
-    className: "pu-empty"
-  }, /*#__PURE__*/React.createElement("b", null, "\u0417\u0430 ", days, " \u0434\u043D \u043E\u0442\u0432\u0435\u0442\u044B \u0418\u0418 \u043D\u0438\u043A\u0442\u043E \u043D\u0435 \u043E\u0446\u0435\u043D\u0438\u0432\u0430\u043B", lastAt ? ` (последняя оценка — ${rvDate(lastAt)})` : "", "."), /*#__PURE__*/React.createElement("p", null, "\u0417\u0430 \u043F\u0435\u0440\u0438\u043E\u0434 \u2014 ", ans, " ", plural(ans, "ответ", "ответа", "ответов"), ". \u041A\u043D\u043E\u043F\u043A\u0438 \uD83D\uDC4D/\uD83D\uDC4E \u0441\u0442\u043E\u044F\u0442 \u043F\u043E\u0434 \u043A\u0430\u0436\u0434\u044B\u043C \u043E\u0442\u0432\u0435\u0442\u043E\u043C \u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u0430; \u043F\u0440\u0438 \uD83D\uDC4E \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u0435\u0442\u0441\u044F \u0432\u044B\u0431\u043E\u0440 \u043F\u0440\u0438\u0447\u0438\u043D\u044B \u0438 \u043F\u043E\u043B\u0435 \u043A\u043E\u043C\u043C\u0435\u043D\u0442\u0430\u0440\u0438\u044F \u2014 \u044D\u0442\u043E \u0438 \u043F\u043E\u043F\u0430\u0434\u0451\u0442 \u0441\u044E\u0434\u0430. \u041F\u043E\u043A\u0430 \u043E\u0446\u0435\u043D\u043E\u043A \u043D\u0435\u0442, \xAB\u0436\u0430\u043B\u043E\u0431 \u043D\u0435\u0442\xBB \u043D\u0438 \u043E \u0447\u0451\u043C \u043D\u0435 \u0433\u043E\u0432\u043E\u0440\u0438\u0442.")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "pu-fb-seg"
-  }, [["all", "все оценки"], ["neg", "только жалобы"]].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
-    key: k,
-    className: "seg-btn" + (only === k ? " on" : ""),
-    onClick: () => setOnly(k)
-  }, l))), !items.length && /*#__PURE__*/React.createElement("div", {
-    className: "pu-empty"
-  }, /*#__PURE__*/React.createElement("b", null, "\u0416\u0430\u043B\u043E\u0431 \u043D\u0435 \u0431\u044B\u043B\u043E."), /*#__PURE__*/React.createElement("p", null, "\u0417\u0430 \u043F\u0435\u0440\u0438\u043E\u0434 \u2014 \u0442\u043E\u043B\u044C\u043A\u043E \u043F\u043E\u043B\u043E\u0436\u0438\u0442\u0435\u043B\u044C\u043D\u044B\u0435 \u043E\u0446\u0435\u043D\u043A\u0438.")), items.map((x, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    className: "pu-fb" + (x.verdict < 0 ? " neg" : "")
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-fb-h"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "pu-fb-v"
-  }, x.verdict < 0 ? "👎" : "👍"), /*#__PURE__*/React.createElement("b", null, x.question || "без текста вопроса")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-fb-m"
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "pu-link",
-    onClick: () => onOpenUser && onOpenUser(x.username)
-  }, x.name || x.username), /*#__PURE__*/React.createElement("span", null, x.mode === "deep" ? "отчёт" : "быстрый ответ"), /*#__PURE__*/React.createElement("span", null, fmtDateMsk(x.created_at)), x.report_id && /*#__PURE__*/React.createElement("button", {
-    className: "pu-link",
-    onClick: () => onOpenReport && onOpenReport(x.report_id)
-  }, "\u043E\u0442\u043A\u0440\u044B\u0442\u044C \u043E\u0442\u0447\u0451\u0442 \u2192")), x.reasons && x.reasons.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "pu-fb-r"
-  }, x.reasons.map((r, j) => /*#__PURE__*/React.createElement("span", {
-    key: j,
-    className: "pu-reason sm"
-  }, r))), x.comment && /*#__PURE__*/React.createElement("p", {
-    className: "pu-fb-c"
-  }, "\xAB", x.comment, "\xBB"), x.quote && /*#__PURE__*/React.createElement("p", {
-    className: "pu-fb-c",
-    title: "\u0432\u044B\u0434\u0435\u043B\u0435\u043D\u043D\u044B\u0439 \u0430\u0443\u0434\u0438\u0442\u043E\u0440\u043E\u043C \u0444\u0440\u0430\u0433\u043C\u0435\u043D\u0442 \u043E\u0442\u0447\u0451\u0442\u0430"
-  }, "\u2691 \u0444\u0440\u0430\u0433\u043C\u0435\u043D\u0442: \xAB", String(x.quote).slice(0, 220), String(x.quote).length > 220 ? "…" : "", "\xBB"), x.verdict < 0 && !x.comment && !(x.reasons || []).length && /*#__PURE__*/React.createElement("p", {
-    className: "pu-fb-c t-cap"
-  }, "\u0431\u0435\u0437 \u043F\u0440\u0438\u0447\u0438\u043D\u044B \u2014 \u043F\u0430\u043D\u0435\u043B\u044C \u043D\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0430")))));
-}
-
-// ── Готовность к персонализации ─────────────────────────────────────────────
-// Не «заполнение профиля»: полям профиля соответствует половина баллов,
-// остальное — накопленное поведение (вопросы, оценки).
-// короткие заголовки колонок: раньше брали первое слово подписи — выходило «5+ 3+ 5+ 3+»
+const AD_PAGE_RU = {
+  overview: "Новостные обзоры",
+  foryou: "Для вас",
+  market: "Рынок · позиция",
+  sber: "Сбер/Рынок",
+  reviews: "Аудит отзывов",
+  ai: "ИИ-помощник",
+  knowledge: "База знаний",
+  loophole: "Аудит уязвимостей",
+  banks: "Банки",
+  sources: "Источники",
+  quality: "Качество",
+  profile: "Профиль",
+  pulse: "Пульс"
+};
+const adFmtS = s => {
+  s = Math.round(s || 0);
+  if (s < 60) return s + "с";
+  if (s < 3600) return Math.round(s / 60) + "м";
+  return (s / 3600).toFixed(1).replace(".", ",") + "ч";
+};
+// короткие заголовки колонок готовности к персонализации
 const PU_PERSONA_COL = {
   desc: "описание",
   ratings: "оценки ленты",
@@ -21408,9 +20654,9 @@ function puLen(r) {
   const bad = n < 500 || r.status === "failed";
   return /*#__PURE__*/React.createElement("span", {
     style: bad ? {
-      color: "var(--neg)"
+      color: "var(--accent-ink)"
     } : undefined,
-    title: r.elapsed_s ? `строился ${puDur(r.elapsed_s)}` : undefined
+    "data-tip": r.elapsed_s ? `строился ${puDur(r.elapsed_s)}` : undefined
   }, txt, st);
 }
 function puDur(s) {
@@ -21418,467 +20664,23 @@ function puDur(s) {
   s = Math.round(+s);
   return s < 90 ? `${s} с` : `${Math.round(s / 60)} мин`;
 }
-
-// Удержание: сегменты по дням активности, когорты новичков, кто под угрозой
-// ухода (из ядра и регулярных) и кто уже ушёл — с последним разделом.
-function PuRetention({
-  rt,
-  onOpenUser
-}) {
-  const [allGone, setAllGone] = useState(false);
-  if (!rt || !rt.segments) return null;
-  const sg = rt.segments,
-    pct = (a, b) => b ? Math.round(a * 100 / b) + "%" : "—";
-  const who = r => /*#__PURE__*/React.createElement("button", {
-    className: "pu-link",
-    onClick: () => onOpenUser && onOpenUser(r.username)
-  }, r.name);
-  // Вернуть лично: короткий текст от владельца по рабочему каналу — массово без
-  // согласия не пишем (волна 5). Ссылка с from=winback — видно, кто вернулся.
-  const winback = r => {
-    const fn = (r.name || "").trim().split(/\s+/)[1] || (r.name || "").trim().split(/\s+/)[0] || "";
-    const txt = `${fn ? fn + ", добрый день!" : "Добрый день!"} Вы заходили в AuditLens ${fmtDateMsk(r.last)}. ` + `С тех пор появилось: каждое утро — выпуск с главным по Сберу и рынку, сверху — «С прошлого визита» ` + `(что изменилось с вашего захода), а на продукты Сбера из вашей зоны можно подписаться — ` + `о новых всплесках жалоб сообщим в колокольчике и на почту. ` + `Если что-то мешало пользоваться — ответьте одной строкой, поправим. ` + `${location.origin}/?go=overview&from=mail&m=winback`;
-    try {
-      navigator.clipboard.writeText(txt).then(() => fbToast("Текст скопирован — отправьте его сами"));
-    } catch {}
-  };
-  const wb = r => /*#__PURE__*/React.createElement("button", {
-    className: "pu-link",
-    title: "\u0421\u043A\u043E\u043F\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u043A\u043E\u0440\u043E\u0442\u043A\u0438\u0439 \u043B\u0438\u0447\u043D\u044B\u0439 \u0442\u0435\u043A\u0441\u0442 \u0434\u043B\u044F \u043F\u0438\u0441\u044C\u043C\u0430 \u0438\u043B\u0438 \u043C\u0435\u0441\u0441\u0435\u043D\u0434\u0436\u0435\u0440\u0430",
-    onClick: () => winback(r)
-  }, "\u0442\u0435\u043A\u0441\u0442 \u0434\u043B\u044F \u043F\u0438\u0441\u044C\u043C\u0430");
-  const where = r => AD_PAGE_RU[r.page] || r.page || "—";
-  const gone = allGone ? rt.churned : (rt.churned || []).slice(0, 8);
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0423\u0434\u0435\u0440\u0436\u0430\u043D\u0438\u0435 \xB7 30 \u0434\u043D"), /*#__PURE__*/React.createElement("span", null, "\u0437\u0430\u0445\u043E\u0434\u0438\u043B\u0438 \u0437\u0430 7 \u0434\u043D: ", rt.active_7d, " \xB7 \u043F\u0440\u043E\u0448\u043B\u044B\u0435 7: ", rt.active_prev_7d)), /*#__PURE__*/React.createElement("div", {
-    className: "pu-grid4",
-    style: {
-      display: "grid",
-      gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))",
-      gap: 8,
-      margin: "6px 0 10px"
-    }
-  }, [["ядро", "8 и больше дней", sg.core, "var(--pos)"], ["регулярные", "3–7 дней", sg.regular, "var(--accent)"], ["разовые", "1–2 дня", sg.once, "var(--ink-3)"], ["ушли", "были раньше, за 30 дн — нет", sg.churned, "var(--neg)"]].map(([t, sub, v, c]) => /*#__PURE__*/React.createElement("div", {
-    key: t,
-    className: "pu-kv",
-    style: {
-      flexDirection: "column",
-      alignItems: "flex-start"
-    }
-  }, /*#__PURE__*/React.createElement("b", {
-    className: "tnum",
-    style: {
-      fontSize: 22,
-      color: c
-    }
-  }, v || 0), /*#__PURE__*/React.createElement("span", null, t, /*#__PURE__*/React.createElement("span", {
-    className: "sub"
-  }, sub))))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-note"
-  }, "\u043D\u043E\u0432\u044B\u0445 \u0437\u0430 30 \u0434\u043D: ", sg.new || 0, " \xB7 \u043F\u0440\u0438\u0448\u043B\u0438 \u043F\u043E \u0441\u0441\u044B\u043B\u043A\u0435 \u0438\u0437 \u043F\u0438\u0441\u044C\u043C\u0430 \u0437\u0430 7 \u0434\u043D: ", rt.from_mail_7d || 0), (rt.cohorts || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "h",
-    style: {
-      marginTop: 12
-    }
-  }, /*#__PURE__*/React.createElement("span", null, "\u041D\u043E\u0432\u0438\u0447\u043A\u0438 \u043F\u043E \u043D\u0435\u0434\u0435\u043B\u044F\u043C \u043F\u0440\u0438\u0445\u043E\u0434\u0430"), /*#__PURE__*/React.createElement("span", null, "\u0432\u0435\u0440\u043D\u0443\u043B\u0438\u0441\u044C \u043D\u0430 2-\u0439 \xB7 \u043D\u0430 4-\u0439 \u043D\u0435\u0434\u0435\u043B\u0435")), (rt.cohorts || []).map(c => /*#__PURE__*/React.createElement("div", {
-    key: c.week,
-    className: "pu-bar-row"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "lb"
-  }, "\u0441 ", fmtDateMsk(c.week), " \xB7 ", c.n, " \u0447\u0435\u043B."), /*#__PURE__*/React.createElement("span", {
-    className: "tr"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "fl",
-    style: {
-      width: Math.max(3, c.w2_ready ? c.w2 * 100 / c.w2_ready : 0) + "%"
-    }
-  })), /*#__PURE__*/React.createElement("span", {
-    className: "vv tnum"
-  }, c.w2_ready ? pct(c.w2, c.w2_ready) : "рано", " \xB7 ", c.w4_ready ? pct(c.w4, c.w4_ready) : "рано")))), /*#__PURE__*/React.createElement("div", {
-    className: "h",
-    style: {
-      marginTop: 12
-    }
-  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u043E\u0434 \u0443\u0433\u0440\u043E\u0437\u043E\u0439 \u0443\u0445\u043E\u0434\u0430 \xB7 ", (rt.at_risk || []).length), /*#__PURE__*/React.createElement("span", null, "\u0437\u0430\u0445\u043E\u0434\u0438\u043B\u0438 \u0440\u0435\u0433\u0443\u043B\u044F\u0440\u043D\u043E, \u0430 \u0442\u0435\u043F\u0435\u0440\u044C \u043D\u0435\u0442 7\u201329 \u0434\u043D")), (rt.at_risk || []).length === 0 ? /*#__PURE__*/React.createElement("div", {
-    className: "pu-empty"
-  }, "\u0412\u0441\u0435, \u043A\u0442\u043E \u0437\u0430\u0445\u043E\u0434\u0438\u043B \u0440\u0435\u0433\u0443\u043B\u044F\u0440\u043D\u043E, \u0437\u0430\u0445\u043E\u0434\u044F\u0442 \u0438 \u0441\u0435\u0439\u0447\u0430\u0441.") : (rt.at_risk || []).map(r => /*#__PURE__*/React.createElement("div", {
-    key: r.username,
-    className: "pu-qrow"
-  }, who(r), /*#__PURE__*/React.createElement("span", {
-    className: "md"
-  }, "\u043D\u0435\u0442 ", r.gap_days, " \u0434\u043D."), /*#__PURE__*/React.createElement("span", {
-    className: "md"
-  }, r.days_60, " \u0434\u043D. \u0437\u0430 60"), /*#__PURE__*/React.createElement("span", {
-    className: "md"
-  }, "\u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0440\u0430\u0437\u0434\u0435\u043B \u2014 ", where(r)), r.ai ? /*#__PURE__*/React.createElement("span", {
-    className: "md"
-  }, "\u0432\u043E\u043F\u0440\u043E\u0441\u043E\u0432 \u0418\u0418: ", r.ai) : null, wb(r))), /*#__PURE__*/React.createElement("div", {
-    className: "h",
-    style: {
-      marginTop: 12
-    }
-  }, /*#__PURE__*/React.createElement("span", null, "\u0423\u0448\u043B\u0438 \xB7 ", rt.churned_total || 0), /*#__PURE__*/React.createElement("span", null, "\u0431\u044B\u043B\u0438 \u0430\u043A\u0442\u0438\u0432\u043D\u044B 1\u20133 \u043C\u0435\u0441. \u043D\u0430\u0437\u0430\u0434")), gone.map(r => /*#__PURE__*/React.createElement("div", {
-    key: r.username,
-    className: "pu-qrow"
-  }, who(r), /*#__PURE__*/React.createElement("span", {
-    className: "md"
-  }, "\u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0440\u0430\u0437 ", fmtDateMsk(r.last)), /*#__PURE__*/React.createElement("span", {
-    className: "md"
-  }, r.days_prev, " \u0434\u043D. \u0430\u043A\u0442\u0438\u0432\u043D\u043E\u0441\u0442\u0438"), /*#__PURE__*/React.createElement("span", {
-    className: "md"
-  }, where(r)), r.ai ? /*#__PURE__*/React.createElement("span", {
-    className: "md"
-  }, "\u0432\u043E\u043F\u0440\u043E\u0441\u043E\u0432 \u0418\u0418: ", r.ai) : null, wb(r))), (rt.churned || []).length > 8 && /*#__PURE__*/React.createElement("button", {
-    className: "pu-link",
-    onClick: () => setAllGone(v => !v)
-  }, allGone ? "свернуть" : `показать всех (${rt.churned.length})`));
-}
-function PuPersona({
-  p
-}) {
-  const [all, setAll] = useState(false);
-  const parts = p.parts || [];
-  const us = p.users || [];
-  // сервер сортирует: сначала заходившие за месяц, от пустых профилей к полным
-  const recent = us.filter(u => u.recent);
-  const shown = all ? us : recent.slice(0, 25);
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card pu-sec"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0413\u043E\u0442\u043E\u0432\u043D\u043E\u0441\u0442\u044C \u043A \u043F\u0435\u0440\u0441\u043E\u043D\u0430\u043B\u0438\u0437\u0430\u0446\u0438\u0438 \xB7 \u043D\u0430\u043A\u043E\u043F\u043B\u0435\u043D\u043E \u0437\u0430 \u0432\u0441\u0451 \u0432\u0440\u0435\u043C\u044F"), /*#__PURE__*/React.createElement("span", {
-    className: "mono"
-  }, "\u043C\u0435\u0434\u0438\u0430\u043D\u0430 ", p.median || 0, "%")), /*#__PURE__*/React.createElement("p", {
-    className: "t-cap",
-    style: {
-      margin: "0 0 12px"
-    }
-  }, "\u041D\u0430\u0441\u043A\u043E\u043B\u044C\u043A\u043E \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442 \u0437\u043D\u0430\u0435\u0442, \u0447\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u044F\u0435\u0442 \u043A\u0430\u0436\u0434\u044B\u0439. \u0421\u043A\u043B\u0430\u0434\u044B\u0432\u0430\u0435\u0442\u0441\u044F \u0438\u0437 \u043E\u043F\u0438\u0441\u0430\u043D\u0438\u044F \u0437\u043E\u043D\u044B \u043E\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0435\u043D\u043D\u043E\u0441\u0442\u0438, \u0442\u0435\u043C \u0432 \u0444\u043E\u043A\u0443\u0441\u0435, \u0432\u043E\u043F\u0440\u043E\u0441\u043E\u0432 \u0418\u0418 \u0438 \u043E\u0446\u0435\u043D\u043E\u043A \u2014 \u043F\u043E \u043D\u0438\u043C \u0441\u0442\u0440\u043E\u0438\u0442\u0441\u044F \u043B\u0435\u043D\u0442\u0430 \xAB\u0414\u043B\u044F \u0432\u0430\u0441\xBB. \u0421\u0432\u0435\u0440\u0445\u0443 \u2014 \u043A\u0442\u043E \u0437\u0430\u0445\u043E\u0434\u0438\u043B \u0437\u0430 \u043C\u0435\u0441\u044F\u0446, \u043E\u0442 \u043F\u0443\u0441\u0442\u044B\u0445 \u043F\u0440\u043E\u0444\u0438\u043B\u0435\u0439 \u043A \u043F\u043E\u043B\u043D\u044B\u043C. \u041B\u0438\u0447\u043D\u044B\u0435 \u0438\u043D\u0442\u0435\u0440\u0435\u0441\u044B \u0438 \u0442\u0435\u043A\u0441\u0442\u044B \u0432\u043E\u043F\u0440\u043E\u0441\u043E\u0432 \u0437\u0434\u0435\u0441\u044C \u043D\u0435 \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u044E\u0442\u0441\u044F."), /*#__PURE__*/React.createElement("div", {
-    className: "pu-x-scroll"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "pu-tbl"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u0410\u0443\u0434\u0438\u0442\u043E\u0440"), /*#__PURE__*/React.createElement("th", null, "\u0413\u043E\u0442\u043E\u0432\u043D\u043E\u0441\u0442\u044C"), parts.map(x => /*#__PURE__*/React.createElement("th", {
-    key: x.key,
-    title: x.label,
-    className: "pu-chk"
-  }, PU_PERSONA_COL[x.key] || x.label)))), /*#__PURE__*/React.createElement("tbody", null, shown.map(u => /*#__PURE__*/React.createElement("tr", {
-    key: u.username
-  }, /*#__PURE__*/React.createElement("td", {
-    title: "@" + u.username
-  }, u.name, !u.personal_on && /*#__PURE__*/React.createElement("span", {
-    className: "pu-off",
-    title: "\u043F\u0435\u0440\u0441\u043E\u043D\u0430\u043B\u0438\u0437\u0430\u0446\u0438\u044F \u0432\u044B\u043A\u043B\u044E\u0447\u0435\u043D\u0430 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C"
-  }, " \u0432\u044B\u043A\u043B")), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("div", {
-    className: "pu-mini"
-  }, /*#__PURE__*/React.createElement("i", {
-    style: {
-      width: `${u.score}%`
-    }
-  })), /*#__PURE__*/React.createElement("span", {
-    className: "mono"
-  }, u.score, "%")), parts.map(x => /*#__PURE__*/React.createElement("td", {
-    key: x.key,
-    className: "pu-chk",
-    title: x.label
-  }, u.parts[x.key] ? /*#__PURE__*/React.createElement("span", {
-    className: "yes"
-  }, "\u2713") : /*#__PURE__*/React.createElement("span", {
-    className: "no"
-  }, "\u25CB")))))))), us.length > shown.length || all ? /*#__PURE__*/React.createElement("button", {
-    className: "pu-link",
-    style: {
-      marginTop: 10
-    },
-    onClick: () => setAll(!all)
-  }, all ? `Только заходившие за месяц (${recent.length})` : `Показать всех (${us.length})`) : null, (p.gaps || []).length > 0 && /*#__PURE__*/React.createElement("p", {
-    className: "t-cap",
-    style: {
-      marginTop: 10
-    }
-  }, "\u0427\u0430\u0449\u0435 \u0432\u0441\u0435\u0433\u043E \u043D\u0435 \u0445\u0432\u0430\u0442\u0430\u0435\u0442: ", p.gaps.map(g => `${g.label.toLowerCase()} (${g.miss} чел.)`).join(" · "), "."));
-}
-
-// ── Заявки на источники: очередь решений владельца ──────────────────────────
-function PuProposals({
-  p
-}) {
-  if (!p || !p.pending) return null;
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card pu-todo",
-    id: "pu-proposals"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0417\u0430\u044F\u0432\u043A\u0438 \u043D\u0430 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438 \xB7 \u0436\u0434\u0443\u0442 \u0432\u0430\u0448\u0435\u0433\u043E \u0440\u0435\u0448\u0435\u043D\u0438\u044F"), /*#__PURE__*/React.createElement("span", {
-    className: "mono"
-  }, p.pending, " ", plural(p.pending, "заявка", "заявки", "заявок"), " \xB7 \u0441\u0442\u0430\u0440\u0435\u0439\u0448\u0435\u0439 ", p.oldest_days, " \u0434\u043D")), (p.items || []).map(x => /*#__PURE__*/React.createElement("div", {
-    key: x.proposal_id,
-    className: "pu-todo-row"
-  }, /*#__PURE__*/React.createElement("b", null, x.domain), /*#__PURE__*/React.createElement("span", {
-    className: "t-cap"
-  }, x.title || "", " \xB7 \u043F\u0440\u0435\u0434\u043B\u043E\u0436\u0438\u043B ", x.author, " \xB7 ", fmtDateMsk(x.created_at)))), /*#__PURE__*/React.createElement("a", {
-    className: "btn btn-sm",
-    href: "#sources",
-    style: {
-      marginTop: 10
-    }
-  }, "\u0420\u0430\u0441\u0441\u043C\u043E\u0442\u0440\u0435\u0442\u044C \u0432 \u0440\u0430\u0437\u0434\u0435\u043B\u0435 \xAB\u0418\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438\xBB"));
-}
-
-// ── Фоновая индексация ──────────────────────────────────────────────────────
-// Персонализация по пользователям: сила профиля, просмотры/клики «Для вас»,
-// оценки (этап F, 05.08.2026). Владелец видит, у кого персонализация пустая.
-// Своя почта для уведомлений (03.10): сколько и кто подключил, сколько писем ушло,
-// как сработало приглашение. Адреса приходят только владельцу.
+// почта для уведомлений: вид подключения → [подпись, вид бейджа]
 const PU_MAIL_KIND = {
-  sigma: ["Sigma", "sig"],
+  sigma: ["Sigma", "ok"],
   private: ["личная", ""],
-  sso: ["из учётной записи", "off"]
+  sso: ["из учётной записи", ""]
 };
-function PuMail({
-  ml,
-  days,
-  onOpenUser
-}) {
-  if (!ml || ml.connected == null) return null;
-  const ppl = ml.people || [],
-    pr = ml.promo || {};
-  const share = ml.active ? Math.round(ml.active_connected / ml.active * 100) : null;
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card pu-sec pu-mail"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u043E\u0447\u0442\u0430 \u0434\u043B\u044F \u0443\u0432\u0435\u0434\u043E\u043C\u043B\u0435\u043D\u0438\u0439"), ml.active > 0 && /*#__PURE__*/React.createElement("span", {
-    className: "pu-chip",
-    title: `среди тех, кто открывал разделы за ${days} дн`
-  }, "\u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0438\u043B\u0438 ", ml.active_connected, " \u0438\u0437 ", ml.active, " \u0430\u043A\u0442\u0438\u0432\u043D\u044B\u0445 \xB7 ", share, "%")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-mail-k"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, "\u041F\u043E\u0434\u043A\u043B\u044E\u0447\u0438\u043B\u0438 \u043F\u043E\u0447\u0442\u0443"), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, ml.connected), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, "Sigma \u2014 ", ml.sigma, " \xB7 \u043B\u0438\u0447\u043D\u0430\u044F \u2014 ", ml.private, ml.sso ? ` · из учётной записи — ${ml.sso}` : "")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, "\u0416\u0434\u0443\u0442 \u043A\u043E\u0434\u0430"), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, ml.pending), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, "\u0443\u043A\u0430\u0437\u0430\u043B\u0438 \u0430\u0434\u0440\u0435\u0441, \u0435\u0449\u0451 \u043D\u0435 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u043B\u0438")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile" + (ml.failed ? " neg" : "")
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, "\u041F\u0438\u0441\u0435\u043C \xB7 ", days, " \u0434\u043D"), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, ml.sent), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, ml.failed ? `не ушло — ${ml.failed}` : "без сбоев", " \xB7 \u043A\u043E\u0434\u043E\u0432 \u2014 ", ml.codes)), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, "\u041F\u0440\u0438\u0433\u043B\u0430\u0448\u0435\u043D\u0438\u0435"), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, pr.shown || 0), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, "\u0443\u0432\u0438\u0434\u0435\u043B\u0438 \xB7 \xAB\u041F\u043E\u0434\u043A\u043B\u044E\u0447\u0438\u0442\u044C\xBB \u2014 ", pr.connect || 0, ", \xAB\u041D\u0435 \u0441\u0435\u0439\u0447\u0430\u0441\xBB \u2014 ", pr.later || 0))), ppl.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    className: "pu-note"
-  }, "\u041F\u043E\u043A\u0430 \u043D\u0438\u043A\u0442\u043E \u043D\u0435 \u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0438\u043B \u043F\u043E\u0447\u0442\u0443.") : /*#__PURE__*/React.createElement("div", {
-    className: "pu-x-scroll"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "pu-tbl"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u043A\u0442\u043E"), /*#__PURE__*/React.createElement("th", null, "\u043F\u043E\u0447\u0442\u0430"), /*#__PURE__*/React.createElement("th", null, "\u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0438\u043B(\u0430)"), /*#__PURE__*/React.createElement("th", null, "\u043F\u0438\u0441\u0435\u043C \xB7 ", days, " \u0434\u043D"), /*#__PURE__*/React.createElement("th", null, "\u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0435\u0435 \u043F\u0438\u0441\u044C\u043C\u043E"))), /*#__PURE__*/React.createElement("tbody", null, ppl.map(u => {
-    const [kl, kc] = PU_MAIL_KIND[u.kind] || [u.kind, ""];
-    return /*#__PURE__*/React.createElement("tr", {
-      key: u.username,
-      className: "pu-rowclick" + (u.excluded ? " pu-exrow" : ""),
-      onClick: () => onOpenUser && onOpenUser(u.username)
-    }, /*#__PURE__*/React.createElement("td", {
-      title: "@" + u.username
-    }, u.name, u.excluded && /*#__PURE__*/React.createElement("span", {
-      className: "pu-badge off"
-    }, "\u043D\u0435 \u0432 \u0441\u0447\u0451\u0442")), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("span", {
-      className: "pu-badge " + kc
-    }, kl), u.email && /*#__PURE__*/React.createElement("span", {
-      className: "pu-mail-a"
-    }, u.email)), /*#__PURE__*/React.createElement("td", null, u.since || "—"), /*#__PURE__*/React.createElement("td", null, u.sent, u.failed ? /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: "var(--neg)"
-      }
-    }, " \xB7 \u043D\u0435 \u0443\u0448\u043B\u043E ", u.failed) : null), /*#__PURE__*/React.createElement("td", null, u.last_mail || "—"));
-  })))));
-}
-function PuPersonalization({
-  pz,
-  days,
-  onOpenUser
-}) {
-  const us = pz.users || [];
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card pu-sec"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u0435\u0440\u0441\u043E\u043D\u0430\u043B\u0438\u0437\u0430\u0446\u0438\u044F \xAB\u0414\u043B\u044F \u0432\u0430\u0441\xBB \xB7 ", days, " \u0434\u043D"), pz.ctr != null && /*#__PURE__*/React.createElement("span", {
-    className: "pu-chip",
-    title: "\u043A\u043B\u0438\u043A\u0438 \u043F\u043E \u043D\u043E\u0432\u043E\u0441\u0442\u044F\u043C \u043D\u0430 100 \u043E\u0442\u043A\u0440\u044B\u0442\u0438\u0439 \xAB\u0414\u043B\u044F \u0432\u0430\u0441\xBB"
-  }, "\u043A\u043B\u0438\u043A\u043E\u0432 \u043D\u0430 100 \u043E\u0442\u043A\u0440\u044B\u0442\u0438\u0439: ", String(pz.ctr).replace(".", ","))), us.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: "var(--ink-3)",
-      fontSize: 12
-    }
-  }, "\u0417\u0430 \u043F\u0435\u0440\u0438\u043E\u0434 \u043D\u0438\u043A\u0442\u043E \u043D\u0435 \u0437\u0430\u0445\u043E\u0434\u0438\u043B.") : /*#__PURE__*/React.createElement("div", {
-    className: "pu-x-scroll"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "pu-tbl"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u043A\u0442\u043E"), /*#__PURE__*/React.createElement("th", null, "\u0441\u0438\u043B\u0430 \u043F\u0440\u043E\u0444\u0438\u043B\u044F"), /*#__PURE__*/React.createElement("th", null, "\u043E\u0442\u043A\u0440\u044B\u0442\u0438\u0439 \xAB\u0414\u043B\u044F \u0432\u0430\u0441\xBB"), /*#__PURE__*/React.createElement("th", null, "\u043A\u043B\u0438\u043A\u043E\u0432 \u0432 \xAB\u0414\u043B\u044F \u0432\u0430\u0441\xBB"), /*#__PURE__*/React.createElement("th", null, "\u043A\u043B\u0438\u043A\u043E\u0432 \u0432 \u0432\u044B\u043F\u0443\u0441\u043A\u0435"), /*#__PURE__*/React.createElement("th", null, "\u043E\u0446\u0435\u043D\u043E\u043A"))), /*#__PURE__*/React.createElement("tbody", null, us.map((u, i) => /*#__PURE__*/React.createElement("tr", {
-    key: i,
-    className: "pu-rowclick",
-    onClick: () => onOpenUser && onOpenUser(u.username)
-  }, /*#__PURE__*/React.createElement("td", {
-    title: "@" + u.username
-  }, u.name || u.username), /*#__PURE__*/React.createElement("td", {
-    style: u.score != null && u.score < 40 ? {
-      color: "var(--warn)"
-    } : null
-  }, u.score != null ? u.score + "%" : "—"), /*#__PURE__*/React.createElement("td", null, u.views), /*#__PURE__*/React.createElement("td", null, u.clicks), /*#__PURE__*/React.createElement("td", null, u.clicks_issue || 0), /*#__PURE__*/React.createElement("td", null, u.fb)))))));
-}
-
-// Качество новостного выпуска: ночной LLM-судья + клики (этап 6, 05.08.2026).
-// До этого качество отбора не измерялось — деградацию замечал только владелец.
 const ddmm = d => {
   const m = String(d || "").match(/^\d{4}-(\d{2})-(\d{2})/);
   return m ? `${m[2]}.${m[1]}` : d || "";
 };
-function PuNewsQuality({
-  q,
-  days
-}) {
-  const s = q.series || [],
-    today = q.today,
-    clicks = q.clicks || [];
-  const nClicks = clicks.reduce((a, c) => a + (c.n || 0), 0);
-  const junkPct = r => r && r.n_items ? Math.round(100 * r.junk / r.n_items) : null;
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-grid2 top wide pu-sec",
-    id: "pu-news"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0412\u044B\u043F\u0443\u0441\u043A: \u043D\u0435\u0437\u0430\u0432\u0438\u0441\u0438\u043C\u044B\u0439 \u0441\u0443\u0434\u044C\u044F"), today && today.head != null && /*#__PURE__*/React.createElement("span", {
-    className: "pu-chip " + (today.head < 4 ? "bad" : "ok")
-  }, "\u0437\u0430\u0433\u043E\u043B\u043E\u0432\u043E\u043A ", today.head, "/5")), /*#__PURE__*/React.createElement("p", {
-    className: "t-cap",
-    style: {
-      margin: "0 0 10px"
-    }
-  }, "\u0420\u0443\u0431\u0440\u0438\u043A\u0430 \u2014 \xAB\u043F\u043E\u0432\u043E\u0434 \u0434\u043B\u044F \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u0430\u0443\u0434\u0438\u0442\u043E\u0440\u0430 \u0440\u043E\u0437\u043D\u0438\u0446\u044B\xBB: \u0444\u043E\u043D \u2014 \u0441\u0442\u0430\u0432\u043A\u0438, \u0442\u0430\u0440\u0438\u0444\u044B, \u043C\u0430\u043A\u0440\u043E; \u043F\u0440\u043E\u043F\u0443\u0449\u0435\u043D\u043E \u2014 \u0441\u0438\u043B\u044C\u043D\u044B\u0435 \u043F\u043E\u0432\u043E\u0434\u044B \u0438\u0437 \u043F\u043E\u0442\u043E\u043A\u0430, \u043D\u0435 \u043F\u043E\u043F\u0430\u0432\u0448\u0438\u0435 \u0432 \u0432\u044B\u043F\u0443\u0441\u043A.", q.cards && (q.cards.useful || q.cards.noise) ? /*#__PURE__*/React.createElement(React.Fragment, null, " \u0410\u0443\u0434\u0438\u0442\u043E\u0440\u044B: \u043F\u043E\u043B\u0435\u0437\u043D\u043E ", q.cards.useful, ", \u043D\u0435 \u043F\u043E \u0434\u0435\u043B\u0443 ", q.cards.noise, ".") : null), s.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: "var(--ink-3)",
-      fontSize: 12
-    }
-  }, "\u0421\u0443\u0434\u044C\u044F \u0435\u0449\u0451 \u043D\u0435 \u043E\u0446\u0435\u043D\u0438\u043B \u043D\u0438 \u043E\u0434\u043D\u043E\u0433\u043E \u0432\u044B\u043F\u0443\u0441\u043A\u0430 (\u043F\u0435\u0440\u0432\u044B\u0439 \u043F\u0440\u043E\u0433\u043E\u043D \u2014 \u0432 ", "", String(8).padStart(2, "0"), ":00 \u041C\u0421\u041A).") : /*#__PURE__*/React.createElement("div", {
-    className: "pu-x-scroll"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "pu-tbl"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u0434\u0430\u0442\u0430"), /*#__PURE__*/React.createElement("th", null, "\u0437\u0430\u0433\u043E\u043B\u043E\u0432\u043E\u043A"), /*#__PURE__*/React.createElement("th", null, "\u043D\u043E\u0432\u043E\u0441\u0442\u0435\u0439"), /*#__PURE__*/React.createElement("th", null, "\u0441\u0438\u043B\u044C\u043D\u044B\u0445"), /*#__PURE__*/React.createElement("th", null, "\u0444\u043E\u043D"), /*#__PURE__*/React.createElement("th", null, "\u043C\u0443\u0441\u043E\u0440"), /*#__PURE__*/React.createElement("th", null, "\u043F\u0440\u043E\u043F\u0443\u0449\u0435\u043D\u043E"))), /*#__PURE__*/React.createElement("tbody", null, s.slice(-10).reverse().map((r, i) => /*#__PURE__*/React.createElement("tr", {
-    key: i
-  }, /*#__PURE__*/React.createElement("td", null, ddmm(r.d)), /*#__PURE__*/React.createElement("td", null, r.head != null ? `${r.head}/5` : "—"), /*#__PURE__*/React.createElement("td", null, r.n_items), /*#__PURE__*/React.createElement("td", null, r.strong ?? "—"), /*#__PURE__*/React.createElement("td", null, r.borderline), /*#__PURE__*/React.createElement("td", {
-    style: r.junk > 0 ? {
-      color: "var(--warn)"
-    } : null
-  }, r.junk, r.n_items ? ` (${junkPct(r)}%)` : ""), /*#__PURE__*/React.createElement("td", {
-    style: r.missed > 0 ? {
-      color: "var(--warn)"
-    } : null
-  }, r.missed ?? "—"))))))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u043E\u0442\u043E\u043A \u043D\u043E\u0432\u043E\u0441\u0442\u0435\u0439 \xB7 24 \u0447"), /*#__PURE__*/React.createElement("span", {
-    className: "pu-chip"
-  }, nClicks, " ", plural(nClicks, "клик", "клика", "кликов"), " \u0437\u0430 ", days, " \u0434\u043D")), q.stream && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u043C\u0430\u0442\u0435\u0440\u0438\u0430\u043B\u043E\u0432 \u0441\u043E\u0431\u0440\u0430\u043D\u043E"), /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, q.stream.items_24h)), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u043F\u0440\u043E \u0440\u043E\u0437\u043D\u0438\u0446\u0443"), /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, q.stream.relevant_24h)), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0441\u0438\u043B\u044C\u043D\u044B\u0445 \u043F\u043E\u0432\u043E\u0434\u043E\u0432 (\u043E\u0442 7)"), /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, q.stream.strong_24h)), (q.stream.sources || []).filter(x => x.last_error).map((x, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    className: "pu-err"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "k"
-  }, x.label || x.source), /*#__PURE__*/React.createElement("span", {
-    className: "m"
-  }, x.last_error)))), q.stream && (q.stream.yield_14d || []).length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "pu-x-scroll"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "pu-tbl",
-    style: {
-      marginBottom: 12
-    },
-    title: "\u041E\u0442\u0434\u0430\u0447\u0430 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430: \u0441\u0438\u043B\u044C\u043D\u044B\u0435 \u2014 \u043C\u0430\u0442\u0435\u0440\u0438\u0430\u043B\u044B \u0441\u043E\u0431\u044B\u0442\u0438\u0439 \u0441 \u0446\u0435\u043D\u043D\u043E\u0441\u0442\u044C\u044E \u043E\u0442 7; \u0441\u043B\u0430\u0431\u044B\u0435 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438 \u0438\u0441\u043A\u043B\u044E\u0447\u0430\u044E\u0442\u0441\u044F \u043F\u043E \u044D\u0442\u0438\u043C \u0446\u0438\u0444\u0440\u0430\u043C"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A \xB7 14 \u0434\u043D"), /*#__PURE__*/React.createElement("th", null, "\u0441\u043E\u0431\u0440\u0430\u043D\u043E"), /*#__PURE__*/React.createElement("th", null, "\u043F\u0440\u043E \u0440\u043E\u0437\u043D\u0438\u0446\u0443"), /*#__PURE__*/React.createElement("th", null, "\u0441\u0438\u043B\u044C\u043D\u044B\u0445"), /*#__PURE__*/React.createElement("th", null, "\u0432 \u0432\u044B\u043F\u0443\u0441\u043A\u0435"))), /*#__PURE__*/React.createElement("tbody", null, q.stream.yield_14d.map((r, i) => /*#__PURE__*/React.createElement("tr", {
-    key: i
-  }, /*#__PURE__*/React.createElement("td", {
-    title: r.source
-  }, r.label || r.source), /*#__PURE__*/React.createElement("td", null, r.items), /*#__PURE__*/React.createElement("td", null, r.relevant), /*#__PURE__*/React.createElement("td", {
-    style: r.items >= 20 && !r.strong ? {
-      color: "var(--warn)"
-    } : null
-  }, r.strong), /*#__PURE__*/React.createElement("td", null, r.published)))))), (q.top_clicked || []).length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "h",
-    style: {
-      marginTop: 6
-    }
-  }, /*#__PURE__*/React.createElement("span", null, "\u0427\u0442\u043E \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u043B\u0438 \u0447\u0430\u0449\u0435 \xB7 ", days, " \u0434\u043D")), (q.top_clicked || []).length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: "var(--ink-3)",
-      fontSize: 12
-    }
-  }, "\u041A\u043B\u0438\u043A\u043E\u0432 \u0435\u0449\u0451 \u043D\u0435\u0442 \u2014 \u0442\u0440\u0435\u043A\u0438\u043D\u0433 \u0432\u043A\u043B\u044E\u0447\u0451\u043D \u0441 05.08.") : (q.top_clicked || []).map((r, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    className: "pu-err"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "k"
-  }, r.n, "\xD7"), /*#__PURE__*/React.createElement("a", {
-    className: "m",
-    href: r.url,
-    target: "_blank",
-    rel: "noopener noreferrer",
-    title: r.url || "",
-    style: {
-      color: "var(--ink-2)"
-    }
-  }, r.title || (r.url || "").replace(/^https?:\/\/(www\.)?/, "").slice(0, 70))))));
-}
-
-// Качество ИИ-аналитика: регрессионный набор (вопросы по всем вкладкам с
-// эталоном из живых данных). Нужен, потому что агент учится сам — пишет себе
-// навыки, — и без замера деградацию заметил бы только аудитор.
+// проверочный набор: вердикт → [подпись, вид бейджа]; маршруты моделей Hermes → названия
 const PU_VERDICT = {
   pass: ["зачёт", "ok"],
-  partial: ["частично", ""],
+  partial: ["частично", "warn"],
   fail: ["провал", "bad"],
   skip: ["пропуск", ""]
 };
-// маршруты моделей Hermes (model_routes) → названия моделей
 const PU_MODEL = {
   default: "по умолчанию",
   oss: "gpt-oss-120b",
@@ -21906,943 +20708,18 @@ const PU_EVAL_TAB = {
   "Рынок": "Рынок · позиция",
   "Уязвимости": "Аудит уязвимостей"
 };
-function PuAgentEval() {
-  const me = useMe();
-  const [d, setD] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState(null);
-  // режим: быстрый ответ (Hermes) или отчёт (deep research) — у каждого свой набор
-  const [eng, setEng] = useState("hermes");
-  const load = useCallback(() => {
-    apiFetch("/api/admin/agent-eval?engine=" + eng).then(setD).catch(() => setD({
-      error: true
-    }));
-  }, [eng]);
-  useEffect(() => {
-    setOpen(null);
-    load();
-  }, [load]);
-  useEffect(() => {
-    if (!(d && d.running)) return;
-    const t = setInterval(load, 20000);
-    return () => clearInterval(t);
-  }, [d, load]);
-  const start = () => {
-    setBusy(true);
-    apiPost("/api/admin/agent-eval", {
-      engine: eng === "deep" ? "deep" : "quick"
-    }).then(() => setTimeout(load, 1500)).catch(() => {}).finally(() => setBusy(false));
-  };
-  if (!d) return null;
-  const runs = d.runs || [],
-    last = runs[0],
-    cases = d.last_cases || [];
-  const prev = last && runs.slice(1).find(r => r.model === last.model);
-  const delta = last && prev && last.score != null && prev.score != null ? Math.round((last.score - prev.score) * 10) / 10 : null;
-  const num = x => x == null ? "—" : String(x).replace(".", ",");
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card pu-sec",
-    id: "pu-eval"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A: \u043F\u0440\u043E\u0432\u0435\u0440\u043E\u0447\u043D\u044B\u0439 \u043D\u0430\u0431\u043E\u0440 \u0432\u043E\u043F\u0440\u043E\u0441\u043E\u0432"), /*#__PURE__*/React.createElement("div", {
-    className: "seg",
-    style: {
-      marginLeft: 12
-    }
-  }, [["hermes", "Быстрый ответ"], ["deep", "Отчёт"]].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
-    key: k,
-    className: "seg-btn" + (eng === k ? " on" : ""),
-    onClick: () => setEng(k)
-  }, l))), last && /*#__PURE__*/React.createElement("span", {
-    className: "pu-chip " + (last.score >= 75 ? "ok" : last.score < 50 ? "bad" : "")
-  }, num(last.score), " \u0438\u0437 100", delta != null && delta !== 0 ? ` · ${delta > 0 ? "+" : "−"}${num(Math.abs(delta))}` : ""), me && me.is_admin ? /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-sm",
-    style: {
-      marginLeft: "auto"
-    },
-    disabled: busy || d.running,
-    onClick: start
-  }, d.running ? "Идёт прогон…" : "Запустить прогон") : d.running ? /*#__PURE__*/React.createElement("span", {
-    className: "pu-chip",
-    style: {
-      marginLeft: "auto"
-    }
-  }, "\u0438\u0434\u0451\u0442 \u043F\u0440\u043E\u0433\u043E\u043D") : null), /*#__PURE__*/React.createElement("p", {
-    className: "t-cap",
-    style: {
-      margin: "0 0 10px"
-    }
-  }, "\u0412\u043E\u043F\u0440\u043E\u0441\u044B \u043F\u043E \u0432\u0441\u0435\u043C \u0432\u043A\u043B\u0430\u0434\u043A\u0430\u043C; \u044D\u0442\u0430\u043B\u043E\u043D \u0441\u0447\u0438\u0442\u0430\u0435\u0442\u0441\u044F \u0432 \u043C\u043E\u043C\u0435\u043D\u0442 \u043F\u0440\u043E\u0433\u043E\u043D\u0430 \u0442\u0435\u043C\u0438 \u0436\u0435 \u0444\u0443\u043D\u043A\u0446\u0438\u044F\u043C\u0438, \u0447\u0442\u043E \u0440\u0438\u0441\u0443\u044E\u0442 \u0432\u043A\u043B\u0430\u0434\u043A\u0438. \u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0438: \u0447\u0438\u0441\u043B\u0430, \u0442\u0435\u043C\u044B, \u0437\u0430\u043F\u0440\u0435\u0442\u044B (\u0432\u043D\u0443\u0442\u0440\u0435\u043D\u043D\u0438\u0435 \u0430\u0434\u0440\u0435\u0441\u0430, \u0441\u043B\u0443\u0436\u0435\u0431\u043D\u044B\u0435 \u043A\u043B\u044E\u0447\u0438, \u0437\u0430\u0433\u043B\u0443\u0448\u043A\u0438) \u0438 \u0441\u0443\u0434\u044C\u044F-\u043C\u043E\u0434\u0435\u043B\u044C. \u0420\u0430\u0437 \u0432 \u043D\u0435\u0434\u0435\u043B\u044E \u043F\u0440\u043E\u0433\u043E\u043D \u043F\u0440\u043E\u0432\u0435\u0440\u044F\u0435\u0442 \u0441\u0430\u043C\u043E\u043E\u0431\u0443\u0447\u0435\u043D\u0438\u0435 \u0430\u0433\u0435\u043D\u0442\u0430: \u0435\u0441\u043B\u0438 \u043A\u0430\u0447\u0435\u0441\u0442\u0432\u043E \u0443\u043F\u0430\u043B\u043E, \u043D\u0430\u0432\u044B\u043A\u0438 \u043E\u0442\u043A\u0430\u0442\u044B\u0432\u0430\u044E\u0442\u0441\u044F."), runs.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: "var(--ink-3)",
-      fontSize: 12
-    }
-  }, "\u041F\u0440\u043E\u0433\u043E\u043D\u043E\u0432 \u0435\u0449\u0451 \u043D\u0435 \u0431\u044B\u043B\u043E.") : /*#__PURE__*/React.createElement("div", {
-    className: "pu-x-scroll"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "pu-tbl",
-    style: {
-      marginBottom: 12
-    }
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u043A\u043E\u0433\u0434\u0430"), /*#__PURE__*/React.createElement("th", null, "\u043C\u043E\u0434\u0435\u043B\u044C"), /*#__PURE__*/React.createElement("th", null, "\u0437\u0430\u043F\u0443\u0441\u043A"), /*#__PURE__*/React.createElement("th", null, "\u0438\u0442\u043E\u0433"), /*#__PURE__*/React.createElement("th", null, "\u0437\u0430\u0447\u0451\u0442"), /*#__PURE__*/React.createElement("th", null, "\u0447\u0430\u0441\u0442\u0438\u0447\u043D\u043E"), /*#__PURE__*/React.createElement("th", null, "\u043F\u0440\u043E\u0432\u0430\u043B"), /*#__PURE__*/React.createElement("th", null, "\u043C\u0435\u0434\u0438\u0430\u043D\u0430, \u0441"))), /*#__PURE__*/React.createElement("tbody", null, runs.slice(0, 10).map(r => /*#__PURE__*/React.createElement("tr", {
-    key: r.run_id
-  }, /*#__PURE__*/React.createElement("td", null, fyDay(r.finished_at || r.started_at)), /*#__PURE__*/React.createElement("td", null, PU_MODEL[r.model] || r.model), /*#__PURE__*/React.createElement("td", null, PU_TRIGGER[r.trigger] || r.trigger), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, num(r.score))), /*#__PURE__*/React.createElement("td", null, r.n_pass), /*#__PURE__*/React.createElement("td", null, r.n_partial), /*#__PURE__*/React.createElement("td", {
-    style: r.n_fail > 0 ? {
-      color: "var(--neg)"
-    } : null
-  }, r.n_fail), /*#__PURE__*/React.createElement("td", null, num(r.median_s)))))), /*#__PURE__*/React.createElement("table", {
-    className: "pu-tbl"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u043A\u0435\u0439\u0441"), /*#__PURE__*/React.createElement("th", null, "\u0432\u043A\u043B\u0430\u0434\u043A\u0430"), /*#__PURE__*/React.createElement("th", null, "\u0438\u0442\u043E\u0433"), /*#__PURE__*/React.createElement("th", null, "\u0441"), /*#__PURE__*/React.createElement("th", null, "\u0441\u0443\u0434\u044C\u044F"), /*#__PURE__*/React.createElement("th", null, "\u0447\u0442\u043E \u043D\u0435 \u0442\u0430\u043A"))), /*#__PURE__*/React.createElement("tbody", null, cases.map(c => {
-    const v = PU_VERDICT[c.verdict] || [c.verdict, ""];
-    const bad = (c.checks || []).filter(x => !x.ok).map(x => x.check + (x.detail != null && x.detail !== "" ? ` (${x.detail})` : ""));
-    const iss = ((c.judge || {}).issues || []).slice(0, 2);
-    return /*#__PURE__*/React.createElement(React.Fragment, {
-      key: c.id
-    }, /*#__PURE__*/React.createElement("tr", {
-      onClick: () => setOpen(open === c.id ? null : c.id),
-      style: {
-        cursor: "pointer"
-      }
-    }, /*#__PURE__*/React.createElement("td", null, c.id, " \xB7 ", c.title), /*#__PURE__*/React.createElement("td", null, PU_EVAL_TAB[c.tab] || c.tab), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("span", {
-      className: "pu-chip " + v[1]
-    }, v[0])), /*#__PURE__*/React.createElement("td", null, num(c.seconds)), /*#__PURE__*/React.createElement("td", null, (c.judge || {}).score ?? "—"), /*#__PURE__*/React.createElement("td", {
-      style: {
-        fontSize: 12,
-        color: "var(--ink-3)"
-      }
-    }, c.error || [...bad, ...iss].join("; ") || "—")), open === c.id && c.answer && /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
-      colSpan: 6
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 12,
-        color: "var(--ink-3)",
-        margin: "4px 0 6px"
-      }
-    }, c.question), /*#__PURE__*/React.createElement("div", {
-      className: "chat-bubble",
-      style: {
-        maxWidth: "none"
-      }
-    }, renderMD(c.answer)))));
-  })))));
-}
-
-// Полнота площадок отзывов: без неё падение сборщика видно только в ручном
-// аудите (к сентябрю 2026 наши сборщики принесли <1% потока, и никто не знал)
-// Срезы «Аудита отзывов» (rag/review_slices.py): какая версия разметки в ходу, догнала ли
-// она кандидатов (срез в списке продуктов — только при готовности ≥97%), что показал
-// эталон и сколько отметок «не относится» ждёт решения
-function PuSlices() {
-  const [d, setD] = useState(null);
-  useEffect(() => {
-    apiFetch("/api/admin/pulse/slices").then(setD).catch(() => setD({
-      err: 1
-    }));
-  }, []);
-  if (!d) return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card pu-sec"
-  }, /*#__PURE__*/React.createElement(Skel, {
-    h: 90
-  }));
-  if (d.err) return null;
-  const pc = v => v == null ? "—" : String(v).replace(".", ",");
-  const sp = Object.entries(d.spend || {}).map(([k, v]) => `${k}: ${fmtNum(v.rows)} жалоб, ${fmtNum(v.rub)} ₽`).join(" · ");
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card pu-sec",
-    id: "pu-slices"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0421\u0440\u0435\u0437\u044B \xAB\u0410\u0443\u0434\u0438\u0442\u0430 \u043E\u0442\u0437\u044B\u0432\u043E\u0432\xBB"), d.keys.some(k => !k.ready) ? /*#__PURE__*/React.createElement("span", {
-    className: "pu-chip"
-  }, "\u0440\u0430\u0437\u043C\u0435\u0442\u043A\u0430 \u0434\u043E\u0433\u043E\u043D\u044F\u0435\u0442") : null), /*#__PURE__*/React.createElement("div", {
-    className: "pu-x-scroll"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "pu-tbl"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u0441\u0440\u0435\u0437"), /*#__PURE__*/React.createElement("th", null, "\u0432\u0435\u0440\u0441\u0438\u044F"), /*#__PURE__*/React.createElement("th", null, "\u0440\u0430\u0437\u043C\u0435\u0447\u0435\u043D\u043E \u043A\u0430\u043D\u0434\u0438\u0434\u0430\u0442\u043E\u0432"), /*#__PURE__*/React.createElement("th", null, "\u0442\u043E\u0447\u043D\u043E\u0441\u0442\u044C / \u043F\u043E\u043B\u043D\u043E\u0442\u0430 (\u044D\u0442\u0430\u043B\u043E\u043D)"), /*#__PURE__*/React.createElement("th", null, "\u0431\u044B\u043B\u043E (s6)"), /*#__PURE__*/React.createElement("th", null, "\xAB\u043D\u0435 \u043E\u0442\u043D\u043E\u0441\u0438\u0442\u0441\u044F\xBB"))), /*#__PURE__*/React.createElement("tbody", null, d.keys.map(k => /*#__PURE__*/React.createElement("tr", {
-    key: k.key
-  }, /*#__PURE__*/React.createElement("td", {
-    title: k.note || ""
-  }, k.label), /*#__PURE__*/React.createElement("td", null, k.schema, k.switched_at ? /*#__PURE__*/React.createElement("span", {
-    className: "t-cap"
-  }, " \xB7 \u0441 ", rvDate(k.switched_at)) : null), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("span", {
-    className: "pu-chip " + (k.ready ? "ok" : "")
-  }, k.share != null ? Math.round(k.share * 100) + "%" : "—"), /*#__PURE__*/React.createElement("span", {
-    className: "t-cap"
-  }, " ", fmtNum(k.tagged || 0), " \u0438\u0437 ", fmtNum(k.candidates || 0))), /*#__PURE__*/React.createElement("td", null, k.gold ? `${pc(k.gold.precision)} / ${pc(k.gold.recall)}` : "—"), /*#__PURE__*/React.createElement("td", null, k.gold && k.gold.precision_s6 != null ? pc(k.gold.precision_s6) : "—"), /*#__PURE__*/React.createElement("td", null, k.open_flags || "—")))))), /*#__PURE__*/React.createElement("p", {
-    className: "t-cap",
-    style: {
-      margin: "8px 0 0"
-    }
-  }, "\u042D\u0442\u0430\u043B\u043E\u043D 04.11: 260 \u0436\u0430\u043B\u043E\u0431, \u0434\u0432\u0430 \u0441\u043B\u0435\u043F\u044B\u0445 \u0440\u0430\u0437\u043C\u0435\u0442\u0447\u0438\u043A\u0430 \u0438 \u0430\u0440\u0431\u0438\u0442\u0440. \u0422\u0440\u0430\u0442\u044B \u0440\u0430\u0437\u043C\u0435\u0442\u043A\u0438: ", sp || "—", ".", d.sieve ? ` Сито по смыслу (жалобы без ключевых слов): просеяно ${fmtNum(d.sieve.sieved)}, отмечено ${fmtNum(d.sieve.flagged)}, ${fmtNum(d.sieve.rub)} ₽.` : ""), (d.canary || []).length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "pu-x-scroll",
-    style: {
-      marginTop: 10
-    }
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "pu-tbl"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u043A\u0430\u043D\u0430\u0440\u0435\u0439\u043A\u0430"), d.keys.map(k => /*#__PURE__*/React.createElement("th", {
-    key: k.key
-  }, k.label)), /*#__PURE__*/React.createElement("th", null, "\u20BD"))), /*#__PURE__*/React.createElement("tbody", null, d.canary.map(r => /*#__PURE__*/React.createElement("tr", {
-    key: r.run_at,
-    title: r.note || ""
-  }, /*#__PURE__*/React.createElement("td", null, rvDate(r.run_at), r.alert ? /*#__PURE__*/React.createElement("span", {
-    className: "pu-chip bad",
-    title: (r.reasons || []).join("; ")
-  }, " \u0442\u0440\u0435\u0432\u043E\u0433\u0430") : null), d.keys.map(k => {
-    const m = (r.metrics || {})[k.key];
-    return /*#__PURE__*/React.createElement("td", {
-      key: k.key
-    }, m ? `${pc(m.precision)} / ${pc(m.recall)}` : "—");
-  }), /*#__PURE__*/React.createElement("td", null, fmtNum(Math.round(r.rub || 0)))))))));
-}
-function PuReviewSources({
-  r
-}) {
-  const src = r.sources || [];
-  if (r.error) return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u043B\u043E\u0449\u0430\u0434\u043A\u0438 \u043E\u0442\u0437\u044B\u0432\u043E\u0432")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: "var(--warn)",
-      fontSize: 12
-    }
-  }, r.error));
-  const tone = st => st === "встал" || st === "просел" ? "bad" : st === "норма" ? "ok" : "";
-  const down = src.some(x => x.status === "встал" || x.status === "просел");
-  const surge = src.some(x => x.status === "всплеск");
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card pu-sec",
-    id: "pu-sources"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u043B\u043E\u0449\u0430\u0434\u043A\u0438 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \xB7 \u043D\u0435\u0434\u0435\u043B\u044F \u043F\u043E ", rvDate(r.week_end)), down ? /*#__PURE__*/React.createElement("span", {
-    className: "pu-chip bad"
-  }, "\u0435\u0441\u0442\u044C \u043F\u0440\u043E\u0441\u0430\u0434\u043A\u0430") : surge ? /*#__PURE__*/React.createElement("span", {
-    className: "pu-chip"
-  }, "\u0435\u0441\u0442\u044C \u0432\u0441\u043F\u043B\u0435\u0441\u043A") : null), /*#__PURE__*/React.createElement("div", {
-    className: "pu-x-scroll"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "pu-tbl"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0430"), /*#__PURE__*/React.createElement("th", null, "\u0437\u0430 7 \u0434\u043D"), /*#__PURE__*/React.createElement("th", null, "\u043D\u043E\u0440\u043C\u0430"), /*#__PURE__*/React.createElement("th", null, "\u0441\u0442\u0430\u0442\u0443\u0441"), /*#__PURE__*/React.createElement("th", null, "\u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0441\u0431\u043E\u0440"), /*#__PURE__*/React.createElement("th", null, "\u0441\u0432\u0435\u0436\u0438\u0439 \u043E\u0442\u0437\u044B\u0432"))), /*#__PURE__*/React.createElement("tbody", null, src.map(x => /*#__PURE__*/React.createElement("tr", {
-    key: x.source,
-    style: x.status === "выключен" ? {
-      opacity: .6
-    } : null
-  }, /*#__PURE__*/React.createElement("td", null, x.label), /*#__PURE__*/React.createElement("td", null, x.week), /*#__PURE__*/React.createElement("td", null, x.norm), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("span", {
-    className: "pu-chip " + tone(x.status),
-    title: x.status === "всплеск" ? "неделя больше трёх норм: наплыв жалоб или догрузка после починки сборщика" : x.status === "выключен" ? "выключен в настройках сбора; собранное раньше остаётся в индексе" : ""
-  }, x.status, x.status === "всплеск" && x.norm > 0 ? ` ×${Math.round(x.week / x.norm)}` : "")), /*#__PURE__*/React.createElement("td", {
-    title: x.last_error || "",
-    style: x.last_run_status === "failed" ? {
-      color: "var(--warn)"
-    } : null
-  }, x.external ? "внешний корпус" : x.last_run ? `${rvDate(x.last_run)} ${x.last_run.slice(11, 16)}` : "—", x.last_run_status === "failed" ? " · ошибка" : ""), /*#__PURE__*/React.createElement("td", null, x.last_item ? rvDate(x.last_item) : "—")))))), (r.gone_banks || []).filter(g => !g.known).length > 0 && /*#__PURE__*/React.createElement("p", {
-    className: "t-cap",
-    style: {
-      margin: "10px 0 0"
-    }
-  }, "\u041F\u0440\u043E\u043F\u0430\u043B\u0438 \u0438\u0437 \u043A\u043E\u0440\u043F\u0443\u0441\u0430 (\u043F\u0440\u0438 \u0438\u0445 \u043F\u043E\u0442\u043E\u043A\u0435 \u0437\u0430 \u0434\u043D\u0438 \u0442\u0438\u0448\u0438\u043D\u044B \u0436\u0434\u0430\u043B\u0438 \u0431\u044B 10+ \u0436\u0430\u043B\u043E\u0431):", " ", r.gone_banks.filter(g => !g.known).map(g => `${g.bank} (~${g.per_month}/мес, последняя ${rvDate(g.last)}` + (g.silent_days != null ? `, тишина ${g.silent_days} дн.` : "") + ((g.rename_candidates || []).length ? `; возможно, переименован в ${g.rename_candidates.join(" или ")}` : "") + ")").join(", ")), (r.gone_banks || []).filter(g => g.known).length > 0 && /*#__PURE__*/React.createElement("p", {
-    className: "t-cap",
-    style: {
-      margin: "6px 0 0",
-      color: "var(--ink-3)"
-    }
-  }, "\u0423\u0448\u043B\u0438 \u0441 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0438 \u043F\u043E \u0438\u0437\u0432\u0435\u0441\u0442\u043D\u043E\u0439 \u043F\u0440\u0438\u0447\u0438\u043D\u0435:", " ", r.gone_banks.filter(g => g.known).map(g => `${g.bank} — ${g.known}`).join("; ")));
-}
-
-// Точность радара «Отзывов»: эпизоды всплесков из журнала сигналов и
-// отметки аудиторов «подтвердился / ложный»
-function PuSignalJournal({
-  j
-}) {
-  if (!j || j.error) return null;
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card pu-sec"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0422\u043E\u0447\u043D\u043E\u0441\u0442\u044C \u0441\u0438\u0433\u043D\u0430\u043B\u043E\u0432 \xB7 \u0410\u0443\u0434\u0438\u0442 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \xB7 ", j.days, " \u0434\u043D"), j.precision != null && /*#__PURE__*/React.createElement("span", {
-    className: "pu-chip " + (j.precision >= 70 ? "ok" : j.precision < 50 ? "bad" : "")
-  }, j.precision, "% \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u043B\u0438\u0441\u044C")), /*#__PURE__*/React.createElement("p", {
-    className: "t-cap",
-    style: {
-      margin: "0 0 10px"
-    }
-  }, "\u042D\u043F\u0438\u0437\u043E\u0434 \u2014 \u0432\u0441\u043F\u043B\u0435\u0441\u043A \u0436\u0430\u043B\u043E\u0431, \u0437\u0430\u043F\u0438\u0441\u0430\u043D\u043D\u044B\u0439 \u0440\u0430\u0434\u0430\u0440\u043E\u043C \u0432\u043C\u0435\u0441\u0442\u0435 \u0441\u043E \u0441\u043D\u0438\u043C\u043A\u043E\u043C \u0436\u0430\u043B\u043E\u0431. \u0410\u0443\u0434\u0438\u0442\u043E\u0440\u044B \u043E\u0442\u043C\u0435\u0447\u0430\u044E\u0442 \u0432 \u0436\u0443\u0440\u043D\u0430\u043B\u0435 \u0441\u0438\u0433\u043D\u0430\u043B\u043E\u0432, \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u043B\u0441\u044F \u043B\u0438 \u043E\u043D \u043F\u0440\u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0435. \u042D\u043F\u0438\u0437\u043E\u0434\u043E\u0432 ", j.episodes, ", \u043E\u0442\u043C\u0435\u0447\u0435\u043D\u043E ", j.rated, j.rated ? ` (подтвердились ${j.confirmed}, ложных ${j["false"]})` : "", "."), (j.by_bank || []).length > 0 && /*#__PURE__*/React.createElement("table", {
-    className: "pu-tbl"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u0431\u0430\u043D\u043A"), /*#__PURE__*/React.createElement("th", null, "\u044D\u043F\u0438\u0437\u043E\u0434\u043E\u0432"), /*#__PURE__*/React.createElement("th", null, "\u043E\u0442\u043C\u0435\u0447\u0435\u043D\u043E"), /*#__PURE__*/React.createElement("th", null, "\u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u043B\u0438\u0441\u044C"))), /*#__PURE__*/React.createElement("tbody", null, j.by_bank.map(b => /*#__PURE__*/React.createElement("tr", {
-    key: b.bank
-  }, /*#__PURE__*/React.createElement("td", null, b.bank), /*#__PURE__*/React.createElement("td", null, b.episodes), /*#__PURE__*/React.createElement("td", null, b.rated), /*#__PURE__*/React.createElement("td", null, b.precision != null ? b.precision + "%" : "—"))))));
-}
-function PuIngest({
-  ing
-}) {
-  const q = ing.queue || {},
-    days = ing.per_day || [];
-  const mx = Math.max(1, ...days.map(d => +d.n || 0));
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card",
-    id: "pu-ingest"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0424\u043E\u043D\u043E\u0432\u0430\u044F \u0438\u043D\u0434\u0435\u043A\u0441\u0430\u0446\u0438\u044F"), /*#__PURE__*/React.createElement("span", {
-    className: "mono"
-  }, "\u0432\u043E\u0440\u043A\u0435\u0440\u043E\u0432 ", q.workers ?? "—")), /*#__PURE__*/React.createElement("p", {
-    className: "t-cap",
-    style: {
-      margin: "0 0 10px"
-    }
-  }, "\u0421\u0442\u0440\u0430\u043D\u0438\u0446\u044B, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u0431\u044B\u0441\u0442\u0440\u044B\u0439 \u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u0447\u0438\u0442\u0430\u0435\u0442 \u043F\u043E \u0434\u043E\u0440\u043E\u0433\u0435, \u043F\u043E\u043F\u0430\u0434\u0430\u044E\u0442 \u0432 \u0431\u0430\u0437\u0443 \u0437\u043D\u0430\u043D\u0438\u0439 \u0444\u043E\u043D\u043E\u043C (\u043E\u0442\u0447\u0451\u0442\u044B \u0431\u0430\u0437\u0443 \u043D\u0435 \u043F\u043E\u043F\u043E\u043B\u043D\u044F\u044E\u0442). \u0421\u0447\u0451\u0442\u0447\u0438\u043A\u0438 \u043E\u0447\u0435\u0440\u0435\u0434\u0438 \u043E\u0431\u043D\u0443\u043B\u044F\u044E\u0442\u0441\u044F \u043F\u0440\u0438 \u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u043A\u0435 \u2014 \u043F\u0443\u0441\u0442\u0430\u044F \u043E\u0447\u0435\u0440\u0435\u0434\u044C \u043D\u0435 \u043E\u0437\u043D\u0430\u0447\u0430\u0435\u0442, \u0447\u0442\u043E \u0444\u043E\u043D \u043D\u0435 \u0440\u0430\u0431\u043E\u0442\u0430\u0435\u0442."), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv4"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0412 \u043E\u0447\u0435\u0440\u0435\u0434\u0438"), /*#__PURE__*/React.createElement("b", null, q.depth ?? "—"), /*#__PURE__*/React.createElement("span", null, "\u041E\u0431\u0440\u0430\u0431\u043E\u0442\u0430\u043D\u043E"), /*#__PURE__*/React.createElement("b", null, q.done ?? "—"), /*#__PURE__*/React.createElement("span", null, "\u041E\u0442\u0431\u0440\u043E\u0448\u0435\u043D\u043E"), /*#__PURE__*/React.createElement("b", {
-    className: q.dropped ? "neg" : ""
-  }, q.dropped ?? "—"), /*#__PURE__*/React.createElement("span", null, "\u041E\u0448\u0438\u0431\u043E\u043A"), /*#__PURE__*/React.createElement("b", {
-    className: q.failed ? "neg" : ""
-  }, q.failed ?? "—")), days.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "h",
-    style: {
-      marginTop: 14
-    }
-  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u043E \u0434\u043D\u044F\u043C"), /*#__PURE__*/React.createElement("span", null, "\u0432\u0441\u0435\u0433\u043E \xB7 \u043F\u0443\u0441\u0442\u043E \xB7 p95")), days.slice(-10).map(d => /*#__PURE__*/React.createElement("div", {
-    key: d.d,
-    className: "pu-bar-row"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "lb"
-  }, rvDate(d.d)), /*#__PURE__*/React.createElement("span", {
-    className: "tr"
-  }, /*#__PURE__*/React.createElement("i", {
-    className: "fl",
-    style: {
-      width: `${d.n / mx * 100}%`
-    }
-  })), /*#__PURE__*/React.createElement("span", {
-    className: "vv",
-    style: {
-      width: 130
-    }
-  }, d.n, " \xB7 ", d.empty, " \xB7 ", (+d.p95 || 0) >= 1000 ? String(Math.round(+d.p95 / 100) / 10).replace(".", ",") + " с" : (d.p95 || 0) + " мс")))));
-}
-
-// ── Здоровье сбора: что не доехало в базу знаний ────────────────────────────
-function PuCollect({
-  c
-}) {
-  const total = (c.ok || 0) + (c.hard || 0) + (c.soft || 0);
-  if (!total) return null;
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card",
-    id: "pu-collect"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0427\u0442\u043E \u043D\u0435 \u0434\u043E\u0435\u0445\u0430\u043B\u043E \u0432 \u0431\u0430\u0437\u0443 \u0437\u043D\u0430\u043D\u0438\u0439"), /*#__PURE__*/React.createElement("span", {
-    className: "mono"
-  }, c.hard || 0, " \u0441\u0431\u043E\u0435\u0432 \u0438\u0437 ", total)), /*#__PURE__*/React.createElement("p", {
-    className: "t-cap",
-    style: {
-      margin: "0 0 10px"
-    }
-  }, "\u0420\u0430\u0437\u0434\u0435\u043B\u0435\u043D\u043E \u043D\u0430\u043C\u0435\u0440\u0435\u043D\u043D\u043E: \xAB\u0441\u0431\u043E\u0439\xBB \u0442\u0440\u0435\u0431\u0443\u0435\u0442 \u0432\u043C\u0435\u0448\u0430\u0442\u0435\u043B\u044C\u0441\u0442\u0432\u0430 (\u043A\u0430\u043F\u0447\u0430, \u0441\u0435\u0442\u044C), \xAB\u0448\u0442\u0430\u0442\u043D\u043E \u043F\u0440\u043E\u043F\u0443\u0449\u0435\u043D\u043E\xBB \u2014 \u043D\u043E\u0440\u043C\u0430\u043B\u044C\u043D\u0430\u044F \u0440\u0430\u0431\u043E\u0442\u0430 (\u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442 \u0443\u0436\u0435 \u0431\u044B\u043B \u0432 \u0431\u0430\u0437\u0435). \u0423\u0447\u0438\u0442\u044B\u0432\u0430\u044E\u0442\u0441\u044F \u0442\u043E\u043B\u044C\u043A\u043E \u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0438 \u0447\u0435\u0440\u0435\u0437 \u043E\u0447\u0435\u0440\u0435\u0434\u044C."), /*#__PURE__*/React.createElement("div", {
-    className: "pu-reasons"
-  }, (c.reasons || []).map(r => /*#__PURE__*/React.createElement("span", {
-    key: r.key,
-    className: "pu-reason" + (r.hard ? " bad" : r.key === "ok" ? " ok" : "")
-  }, r.label, /*#__PURE__*/React.createElement("i", null, r.n)))), (c.domains || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "h",
-    style: {
-      marginTop: 14
-    }
-  }, /*#__PURE__*/React.createElement("span", null, "\u0413\u0434\u0435 \u0441\u0440\u044B\u0432\u0430\u0435\u0442\u0441\u044F \u0447\u0430\u0449\u0435")), c.domains.map(d => /*#__PURE__*/React.createElement("div", {
-    key: d.domain,
-    className: "pu-kv-row"
-  }, /*#__PURE__*/React.createElement("span", null, d.domain), /*#__PURE__*/React.createElement("b", null, d.n)))));
-}
-
-// ── Веб-поиск и копии страниц ───────────────────────────────────────────────
-// Поиск по жалобам во вкладке «Аудит отзывов» (журнал reviews_search, с 04.11.2026):
-// сколько ждут, у какой доли нет совпадений по словам, сбои; запросы без совпадений — без
-// авторов, из них набираются эталонные запросы для замеров поиска
-function PuReviewSearch({
-  r
-}) {
-  if (!r || r.error || !r.n) return null;
-  const pct = v => r.n ? Math.round(100 * (v || 0) / r.n) + "%" : "—";
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card",
-    id: "pu-rsearch"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u043E\u0438\u0441\u043A \u043F\u043E \u0436\u0430\u043B\u043E\u0431\u0430\u043C"), /*#__PURE__*/React.createElement("span", {
-    className: "mono"
-  }, fmtNum(r.n), " \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \xB7 ", fmtNum(r.users), " \u0447\u0435\u043B.")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0416\u0434\u0430\u043B\u0438 (\u043C\u0435\u0434\u0438\u0430\u043D\u0430 \xB7 90%)"), /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, r.p50 != null ? (r.p50 / 1000).toFixed(1).replace(".", ",") : "—", " \u0441 \xB7 ", r.p90 != null ? (r.p90 / 1000).toFixed(1).replace(".", ",") : "—", " \u0441")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041D\u0435\u0442 \u0441\u043E\u0432\u043F\u0430\u0434\u0435\u043D\u0438\u0439 \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C"), /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, pct(r.no_words))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u043E\u0438\u0441\u043A \u043D\u0435 \u043E\u0442\u0440\u0430\u0431\u043E\u0442\u0430\u043B"), /*#__PURE__*/React.createElement("b", {
-    className: "tnum",
-    style: r.failed ? {
-      color: "var(--warn)"
-    } : null
-  }, fmtNum(r.failed || 0))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\xAB\u041F\u043E \u0441\u043C\u044B\u0441\u043B\u0443\xBB \u0431\u0435\u0437 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438"), /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, fmtNum(r.unchecked || 0))), (r.zero_queries || []).length > 0 && /*#__PURE__*/React.createElement("p", {
-    className: "t-cap",
-    style: {
-      margin: "10px 0 0"
-    }
-  }, "\u0411\u0435\u0437 \u0441\u043E\u0432\u043F\u0430\u0434\u0435\u043D\u0438\u0439 \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C: ", r.zero_queries.map(q => `«${q}»`).join(", ")));
-}
-function PuSearch({
-  s
-}) {
-  const rows = (s || {}).backends || [],
-    gw = (s || {}).gateway || {};
-  if (!rows.length && !gw.enabled) return null;
-  const RU = {
-    ok: "нашёл",
-    empty: "пусто",
-    limited: "лимит",
-    down: "недоступен",
-    error: "ошибка"
-  };
-  const NAME = {
-    "web_search:yandex": "Яндекс (шлюз) — каждый вызов",
-    "web_search_chain:yandex_gw": "Итог поиска — ответил Яндекс",
-    "web_search_chain:fleet": "Итог поиска — выручил запасной fleet",
-    "web_search_chain:none": "Итог поиска — не нашёл никто",
-    "web_read:yandex_copy": "Копии страниц · Яндекс"
-  };
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card",
-    id: "pu-search"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0412\u0435\u0431-\u043F\u043E\u0438\u0441\u043A"), /*#__PURE__*/React.createElement("span", {
-    className: "mono"
-  }, gw.enabled ? "основной: " + (gw.primary === "fleet" ? "fleet" : "Яндекс") : "шлюз не настроен", gw.breaker_open ? " · шлюз отключён" : "")), /*#__PURE__*/React.createElement("p", {
-    className: "t-cap",
-    style: {
-      margin: "0 0 10px"
-    }
-  }, "\xAB\u041B\u0438\u043C\u0438\u0442\xBB \u0438 \xAB\u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D\xBB \u2014 \u0437\u0430\u043F\u0440\u043E\u0441 \u0443\u0448\u0451\u043B \u043D\u0430 \u0437\u0430\u043F\u0430\u0441\u043D\u043E\u0439 \u043F\u043E\u0438\u0441\u043A; \xAB\u043F\u0443\u0441\u0442\u043E\xBB \u2014 \u0447\u0435\u0441\u0442\u043D\u043E \u043D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u043D\u0430\u0448\u043B\u043E\u0441\u044C. \u041A\u043E\u043F\u0438\u0438 \u2014 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B, \u0437\u0430\u043A\u0440\u044B\u0442\u044B\u0435 \u0430\u043D\u0442\u0438\u0431\u043E\u0442\u043E\u043C, \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043D\u044B\u0435 \u0438\u0437 \u0441\u043E\u0445\u0440\u0430\u043D\u0451\u043D\u043D\u043E\u0439 \u043A\u043E\u043F\u0438\u0438 \u042F\u043D\u0434\u0435\u043A\u0441\u0430. \u041F\u043E\u0432\u0442\u043E\u0440\u044B \u0438\u0437 \u043A\u044D\u0448\u0430 \u043D\u0435 \u0441\u0447\u0438\u0442\u0430\u044E\u0442\u0441\u044F.", gw.breaker_open && gw.breaker_reason ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("br", null), "\u041F\u0440\u0438\u0447\u0438\u043D\u0430 \u043E\u0442\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u044F: ", gw.breaker_reason) : null), rows.map(r => {
-    const k = r.kind + ":" + r.backend,
-      bs = r.by_status || {};
-    return /*#__PURE__*/React.createElement("div", {
-      key: k,
-      style: {
-        marginBottom: 10
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "pu-kv"
-    }, /*#__PURE__*/React.createElement("span", null, NAME[k] || k), /*#__PURE__*/React.createElement("b", {
-      className: "tnum"
-    }, r.total, r.p50_ok != null ? ` · p50 ${r.p50_ok} мс` : "")), /*#__PURE__*/React.createElement("div", {
-      className: "pu-reasons"
-    }, Object.keys(bs).map(st => /*#__PURE__*/React.createElement("span", {
-      key: st,
-      className: "pu-reason" + (st === "ok" ? " ok" : st === "down" || st === "error" || st === "limited" ? " bad" : "")
-    }, RU[st] || st, /*#__PURE__*/React.createElement("i", null, bs[st])))));
-  }));
-}
-
-// ── Что проверяет отдел ─────────────────────────────────────────────────────
-function PuTopics({
-  t,
-  days
-}) {
-  const banks = (t || {}).banks || [];
-  if (!banks.length) return null;
-  const mx = Math.max(1, ...banks.map(b => +b.n || 0));
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0427\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u044F\u0435\u0442 \u043E\u0442\u0434\u0435\u043B \xB7 ", days, " \u0434\u043D"), /*#__PURE__*/React.createElement("span", null, "\u0431\u0430\u043D\u043A\u0438 \u0432 \u043E\u0442\u0447\u0451\u0442\u0430\u0445 \u0438 \u043E\u0442\u0432\u0435\u0442\u0430\u0445")), /*#__PURE__*/React.createElement("p", {
-    className: "t-cap",
-    style: {
-      margin: "0 0 10px"
-    }
-  }, "\u0410\u0433\u0440\u0435\u0433\u0430\u0442 \u043F\u043E \u043A\u043E\u043C\u0430\u043D\u0434\u0435 \u0431\u0435\u0437 \u0438\u043C\u0451\u043D: \u043F\u043E\u0434 \u043A\u0430\u043A\u0438\u0435 \u0442\u0435\u043C\u044B \u0437\u0430\u0442\u0430\u0447\u0438\u0432\u0430\u0442\u044C \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442."), banks.map(b => /*#__PURE__*/React.createElement("div", {
-    key: b.slug || b.name,
-    className: "pu-bar-row"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "lb",
-    title: b.slug
-  }, BANK_RU[b.slug] || b.name), /*#__PURE__*/React.createElement("span", {
-    className: "tr"
-  }, /*#__PURE__*/React.createElement("i", {
-    className: "fl",
-    style: {
-      width: `${b.n / mx * 100}%`
-    }
-  })), /*#__PURE__*/React.createElement("span", {
-    className: "vv"
-  }, b.n))));
-}
-
-// ── Обращения из «Обратной связи» ───────────────────────────────────────────
-// Ответ и смена статуса приходят автору туда, где он писал: точкой у строки
-// меню и в «Моих обращениях». Непрочитанные (новые или с уточнением автора) — сверху.
+// обращения: фильтры и шаблоны ответа; сколько обращение ждёт ответа — «3 ч», «2 дн»
 const PU_TK_FILTER = [["new", "Новые"], ["open", "Открытые"], ["all", "Все"]];
 const PU_TK_TPL = [["Взяли в работу", "Спасибо, взяли в работу. Напишем здесь, когда будет готово."], ["Уточнить", "Уточните, пожалуйста: в каком разделе и с какими фильтрами это видно?"], ["Сделали", "Сделали — обновите страницу и проверьте, пожалуйста."], ["Уже есть", "Это уже есть: "]];
-// сколько обращение ждёт ответа команды: «3 ч», «2 дн»
 const puWait = iso => {
   const h = (Date.now() - new Date(iso).getTime()) / 36e5;
   return h < 1 ? "меньше часа" : h < 48 ? `${Math.floor(h)} ч` : `${Math.floor(h / 24)} дн`;
 };
-// Отметки «не относится к срезу» из карточки жалобы (rag/review_slices.py): решает
-// команда — «убрать» снимает срез с жалобы в индексе сразу и навсегда, «оставить» закрывает
-// отметку. Кроме команды никто этот блок не видит (ручка отвечает 403 — блока нет).
-function PuSliceFlags({
-  onOpenUser
-}) {
-  const [d, setD] = useState(null),
-    [busy, setBusy] = useState(0);
-  const load = () => apiFetch("/api/reviews/slice-flags").then(setD).catch(() => setD({
-    hidden: true
-  }));
-  useEffect(() => {
-    load();
-  }, []);
-  if (!d || d.hidden || !(d.items || []).length) return null;
-  const decide = (id, decision) => {
-    setBusy(id);
-    apiFetch("/api/reviews/slice-flags/" + id, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        decision
-      })
-    }).then(() => {
-      fbToast(decision === "excluded" ? "Жалоба убрана из среза" : "Срез оставлен", false);
-      load();
-    }).catch(e => {
-      fbToast(/409/.test(String(e && e.message || e)) ? "По этой отметке уже решили — список обновлён" : "Не получилось — попробуйте ещё раз", false);
-      load();
-    }).finally(() => setBusy(0));
-  };
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card",
-    style: {
-      marginBottom: 16
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0442\u043C\u0435\u0442\u043A\u0438 \xAB\u043D\u0435 \u043E\u0442\u043D\u043E\u0441\u0438\u0442\u0441\u044F \u043A \u0441\u0440\u0435\u0437\u0443\xBB \xB7 ", d.items.length)), /*#__PURE__*/React.createElement("p", {
-    className: "t-cap",
-    style: {
-      margin: "-4px 0 10px"
-    }
-  }, "\u0410\u0443\u0434\u0438\u0442\u043E\u0440 \u0441\u0447\u0438\u0442\u0430\u0435\u0442, \u0447\u0442\u043E \u0436\u0430\u043B\u043E\u0431\u0430 \u043F\u043E\u043F\u0430\u043B\u0430 \u0432 \u0441\u0440\u0435\u0437 \xAB\u0410\u0443\u0434\u0438\u0442\u0430 \u043E\u0442\u0437\u044B\u0432\u043E\u0432\xBB \u043F\u043E \u043E\u0448\u0438\u0431\u043A\u0435. \xAB\u0423\u0431\u0440\u0430\u0442\u044C\xBB \u0441\u043D\u0438\u043C\u0430\u0435\u0442 \u0441\u0440\u0435\u0437 \u0441 \u0436\u0430\u043B\u043E\u0431\u044B \u0441\u0440\u0430\u0437\u0443 \u0438 \u043D\u0430\u0432\u0441\u0435\u0433\u0434\u0430 \u2014 \u043F\u0435\u0440\u0435\u0440\u0430\u0437\u043C\u0435\u0442\u043A\u0430 \u0435\u0433\u043E \u043D\u0435 \u0432\u0435\u0440\u043D\u0451\u0442."), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tblwrap"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "pu-tbl"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u0441\u0440\u0435\u0437"), /*#__PURE__*/React.createElement("th", null, "\u0436\u0430\u043B\u043E\u0431\u0430"), /*#__PURE__*/React.createElement("th", null, "\u043E\u0441\u043D\u043E\u0432\u0430\u043D\u0438\u0435"), /*#__PURE__*/React.createElement("th", null, "\u043A\u0442\u043E \u0438 \u043F\u043E\u0447\u0435\u043C\u0443"), /*#__PURE__*/React.createElement("th", null))), /*#__PURE__*/React.createElement("tbody", null, d.items.map(x => /*#__PURE__*/React.createElement("tr", {
-    key: x.id
-  }, /*#__PURE__*/React.createElement("td", null, x.label), /*#__PURE__*/React.createElement("td", {
-    style: {
-      maxWidth: 320
-    }
-  }, /^https?:\/\//.test(x.url || "") ? /*#__PURE__*/React.createElement("a", {
-    href: x.url,
-    target: "_blank",
-    rel: "noopener noreferrer"
-  }, [x.bank, x.date].filter(Boolean).join(" · ") || "открыть") : /*#__PURE__*/React.createElement("span", {
-    className: "t-cap"
-  }, x.url), x.summary && /*#__PURE__*/React.createElement("div", {
-    className: "t-cap"
-  }, x.summary)), /*#__PURE__*/React.createElement("td", {
-    style: {
-      maxWidth: 260
-    },
-    className: "t-cap"
-  }, x.evidence ? rvSliceWhy(x.evidence) : "—"), /*#__PURE__*/React.createElement("td", {
-    style: {
-      maxWidth: 220
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "pu-link",
-    onClick: () => onOpenUser && onOpenUser(x.username)
-  }, x.username), x.note && /*#__PURE__*/React.createElement("div", {
-    className: "t-cap"
-  }, "\xAB", x.note, "\xBB")), /*#__PURE__*/React.createElement("td", {
-    style: {
-      whiteSpace: "nowrap"
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "seg-btn",
-    disabled: busy === x.id,
-    onClick: () => decide(x.id, "excluded")
-  }, "\u0423\u0431\u0440\u0430\u0442\u044C"), " ", /*#__PURE__*/React.createElement("button", {
-    className: "seg-btn",
-    disabled: busy === x.id,
-    onClick: () => decide(x.id, "kept")
-  }, "\u041E\u0441\u0442\u0430\u0432\u0438\u0442\u044C"))))))));
-}
-function PuInbox({
-  rev,
-  onOpenUser,
-  onChanged,
-  openTicket
-}) {
-  const [st, setSt] = useState("open");
-  const [kind, setKind] = useState("");
-  const [d, setD] = useState(null);
-  const [cur, setCur] = useState(openTicket || null);
-  const [r2, setR2] = useState(0);
-  useEffect(() => {
-    setD(null);
-    const sp = new URLSearchParams({
-      status: st
-    });
-    if (kind) sp.set("kind", kind);
-    apiFetch("/api/admin/inbox?" + sp).then(setD).catch(() => setD({
-      tickets: [],
-      error: true
-    }));
-  }, [st, kind, rev, r2]);
-  const c = d && d.counts || {};
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card",
-    id: "pu-inbox"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u044F \xB7 \u0431\u0435\u0437 \u043E\u0442\u0432\u0435\u0442\u0430 ", c.unanswered || 0, c.unanswered ? ` (дольше всех — ${c.oldest_unanswered_h >= 48 ? Math.floor(c.oldest_unanswered_h / 24) + " дн" : c.oldest_unanswered_h + " ч"})` : "", " \xB7 \u043E\u0442\u043A\u0440\u044B\u0442\u044B\u0445 ", c.open || 0, " \xB7 \u0432\u0441\u0435\u0433\u043E ", c.total || 0, c.median_answer_h != null ? ` · первый ответ за 30 дн — медиана ${c.median_answer_h >= 48 ? Math.round(c.median_answer_h / 24) + " дн" : String(c.median_answer_h).replace(".", ",") + " ч"}` : ""), /*#__PURE__*/React.createElement("span", {
-    className: "pu-people-ctl"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "seg",
-    role: "group",
-    "aria-label": "\u0421\u0442\u0430\u0442\u0443\u0441"
-  }, PU_TK_FILTER.map(([k, l]) => /*#__PURE__*/React.createElement("button", {
-    key: k,
-    className: "seg-btn" + (st === k ? " on" : ""),
-    "aria-pressed": st === k,
-    onClick: () => setSt(k)
-  }, l))), /*#__PURE__*/React.createElement("select", {
-    className: "pu-sel",
-    value: kind,
-    onChange: e => setKind(e.target.value),
-    "aria-label": "\u0422\u0438\u043F \u043E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u044F"
-  }, /*#__PURE__*/React.createElement("option", {
-    value: ""
-  }, "\u0432\u0441\u0435 \u0442\u0438\u043F\u044B"), Object.entries(SAY_KIND_RU).map(([k, l]) => /*#__PURE__*/React.createElement("option", {
-    key: k,
-    value: k
-  }, l))))), /*#__PURE__*/React.createElement("p", {
-    className: "t-cap",
-    style: {
-      margin: "-4px 0 10px"
-    }
-  }, "\u0418\u0437 \u0441\u0442\u0440\u043E\u043A\u0438 \xAB\u041E\u0431\u0440\u0430\u0442\u043D\u0430\u044F \u0441\u0432\u044F\u0437\u044C\xBB \u0432\u043D\u0438\u0437\u0443 \u043C\u0435\u043D\u044E. \u0421\u0432\u0435\u0440\u0445\u0443 \u2014 \u043D\u043E\u0432\u044B\u0435 \u0438 \u0442\u0435, \u0433\u0434\u0435 \u0430\u0432\u0442\u043E\u0440 \u0447\u0442\u043E-\u0442\u043E \u0434\u043E\u043F\u0438\u0441\u0430\u043B. \u041E\u0442\u0432\u0435\u0442 \u0438 \u0441\u0442\u0430\u0442\u0443\u0441 \u0430\u0432\u0442\u043E\u0440 \u0443\u0432\u0438\u0434\u0438\u0442 \u0442\u0430\u043C \u0436\u0435, \u0433\u0434\u0435 \u043F\u0438\u0441\u0430\u043B."), !d ? /*#__PURE__*/React.createElement(Skel, {
-    h: 120
-  }) : d.error ? /*#__PURE__*/React.createElement("div", {
-    className: "pu-empty"
-  }, "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u043E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u044F.") : !d.tickets.length ? /*#__PURE__*/React.createElement("div", {
-    className: "pu-empty"
-  }, st === "new" ? "Новых обращений нет." : "Обращений нет.") : /*#__PURE__*/React.createElement("div", {
-    className: "pu-tblwrap"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "pu-tbl"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u043E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u0435"), /*#__PURE__*/React.createElement("th", null, "\u0430\u0432\u0442\u043E\u0440"), /*#__PURE__*/React.createElement("th", null, "\u0440\u0430\u0437\u0434\u0435\u043B"), /*#__PURE__*/React.createElement("th", null, "\u0441\u0442\u0430\u0442\u0443\u0441"), /*#__PURE__*/React.createElement("th", null, "\u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u043E"))), /*#__PURE__*/React.createElement("tbody", null, d.tickets.map(t => /*#__PURE__*/React.createElement("tr", {
-    key: t.ticket_id,
-    className: "pu-rowclick",
-    onClick: () => setCur(t.ticket_id)
-  }, /*#__PURE__*/React.createElement("td", {
-    title: t.body,
-    style: {
-      maxWidth: 300,
-      fontWeight: t.unread ? 600 : 400
-    }
-  }, t.unread && /*#__PURE__*/React.createElement("span", {
-    className: "nav-dot",
-    style: {
-      display: "inline-block",
-      marginRight: 7,
-      verticalAlign: 1
-    },
-    "aria-label": "\u0436\u0434\u0451\u0442 \u043E\u0442\u0432\u0435\u0442\u0430"
-  }), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--ink-3)",
-      fontWeight: 400
-    }
-  }, t.kind_label, " \xB7 "), t.body, !t.answered_at && ["new", "accepted", "in_progress"].includes(t.status) && /*#__PURE__*/React.createElement("span", {
-    className: "pu-wait" + (Date.now() - new Date(t.created_at).getTime() > 864e5 ? " late" : ""),
-    title: "\u043A\u043E\u043C\u0430\u043D\u0434\u0430 \u0435\u0449\u0451 \u043D\u0435 \u043E\u0442\u0432\u0435\u0442\u0438\u043B\u0430"
-  }, "\u0431\u0435\u0437 \u043E\u0442\u0432\u0435\u0442\u0430 ", puWait(t.created_at))), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("button", {
-    className: "pu-link",
-    onClick: e => {
-      e.stopPropagation();
-      onOpenUser && onOpenUser(t.username);
-    }
-  }, t.name)), /*#__PURE__*/React.createElement("td", {
-    style: {
-      whiteSpace: "nowrap",
-      maxWidth: 180,
-      overflow: "hidden",
-      textOverflow: "ellipsis"
-    },
-    title: t.section_label || ""
-  }, t.section_label || "—"), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("span", {
-    className: "tk-st " + t.status
-  }, t.status_label)), /*#__PURE__*/React.createElement("td", {
-    style: {
-      whiteSpace: "nowrap"
-    }
-  }, sayDate(t.updated_at), +t.n_files > 0 ? /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--ink-3)"
-    },
-    title: "\u0435\u0441\u0442\u044C \u0441\u043D\u0438\u043C\u043A\u0438 \u044D\u043A\u0440\u0430\u043D\u0430"
-  }, " \xB7 \u0441\u043D\u0438\u043C\u043A\u0438") : null)))))), cur && ReactDOM.createPortal(/*#__PURE__*/React.createElement(PuTicket, {
-    tid: cur,
-    onClose: () => setCur(null),
-    onOpenUser: onOpenUser,
-    onChanged: () => {
-      setR2(x => x + 1);
-      onChanged && onChanged();
-    }
-  }), document.body));
-}
-function PuTicket({
-  tid,
-  onClose,
-  onOpenUser,
-  onChanged
-}) {
-  const [t, setT] = useState(null);
-  const [st, setSt] = useState("");
-  const [reply, setReply] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  useEffect(() => {
-    setT(null);
-    apiFetch(`/api/admin/inbox/${tid}`).then(x => {
-      setT(x);
-      setSt(x.status);
-      onChanged && onChanged();
-    }).catch(() => setT({
-      error: true
-    }));
-  }, [tid]); // eslint-disable-line
-  useEffect(() => {
-    const k = e => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", k);
-    return () => window.removeEventListener("keydown", k);
-  }, [onClose]);
-  const save = () => {
-    if (busy) return;
-    if (st === t.status && !reply.trim()) {
-      setErr("Выберите статус или напишите ответ");
-      return;
-    }
-    setBusy(true);
-    setErr("");
-    sayPost(`/api/admin/inbox/${tid}`, {
-      status: st !== t.status ? st : null,
-      reply: reply.trim() || null
-    }).then(x => {
-      setT(x);
-      setSt(x.status);
-      setReply("");
-      onChanged && onChanged();
-    }).catch(e => setErr(e.message)).finally(() => setBusy(false));
-  };
-  const c = t && t.context || {};
-  const ctxRows = t && !t.error ? [["Страница", c.url], ["Версия", c.version], ["Браузер", c.browser], ["Экран", c.screen], ["Тема", c.theme], ["Ошибки страницы", (c.errors || []).join("\n")]].filter(x => x[1]) : [];
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-drawer",
-    onClick: e => {
-      if (e.target === e.currentTarget) onClose();
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-dr",
-    role: "dialog",
-    "aria-label": "\u041E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u0435"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-drhead"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "pu-drname"
-  }, "\u041E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u0435 \u2116 ", tid), t && !t.error && /*#__PURE__*/React.createElement("div", {
-    className: "pu-drsub"
-  }, t.kind_label, " \xB7 ", t.section_label || "AuditLens", " \xB7 ", fmtDateMsk(t.created_at), " \xB7", " ", /*#__PURE__*/React.createElement("button", {
-    className: "pu-link",
-    onClick: () => onOpenUser && onOpenUser(t.username)
-  }, t.name), t.confirmed === true && /*#__PURE__*/React.createElement("span", {
-    className: "pu-badge on"
-  }, "\u0430\u0432\u0442\u043E\u0440: \u0440\u0430\u0431\u043E\u0442\u0430\u0435\u0442"), t.confirmed === false && /*#__PURE__*/React.createElement("span", {
-    className: "pu-badge adm"
-  }, "\u0430\u0432\u0442\u043E\u0440: \u043D\u0435 \u0440\u0430\u0431\u043E\u0442\u0430\u0435\u0442"))), /*#__PURE__*/React.createElement("button", {
-    className: "pu-x",
-    onClick: onClose,
-    "aria-label": "\u0417\u0430\u043A\u0440\u044B\u0442\u044C"
-  }, "\u2715")), !t ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: 24
-    }
-  }, /*#__PURE__*/React.createElement(Skel, {
-    h: 140
-  })) : t.error ? /*#__PURE__*/React.createElement(ErrState, {
-    msg: "\u041E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u0435 \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u043E."
-  }) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "pu-drsec"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "tk-full",
-    style: {
-      fontSize: 13.5,
-      color: "var(--ink)"
-    }
-  }, t.body), (t.files || []).length > 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "grid",
-      gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))",
-      gap: 8,
-      marginTop: 12
-    }
-  }, t.files.map(f => /*#__PURE__*/React.createElement("a", {
-    key: f.file_id,
-    href: `/api/inbox/file/${f.file_id}`,
-    target: "_blank",
-    rel: "noopener noreferrer",
-    style: {
-      display: "block",
-      borderRadius: 8,
-      overflow: "hidden",
-      border: "1px solid var(--hair)"
-    }
-  }, /*#__PURE__*/React.createElement("img", {
-    src: `/api/inbox/file/${f.file_id}`,
-    alt: "\u0421\u043D\u0438\u043C\u043E\u043A \u044D\u043A\u0440\u0430\u043D\u0430",
-    style: {
-      width: "100%",
-      display: "block"
-    }
-  }))))), ctxRows.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "pu-drsec"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-drh"
-  }, "\u041F\u0440\u0438\u043B\u043E\u0436\u0435\u043D\u043E \u0430\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u0435\u0441\u043A\u0438"), /*#__PURE__*/React.createElement("div", {
-    className: "tk-ctx",
-    style: {
-      marginTop: 0
-    }
-  }, /*#__PURE__*/React.createElement("dl", {
-    style: {
-      marginTop: 0
-    }
-  }, ctxRows.map(([k, v]) => /*#__PURE__*/React.createElement(React.Fragment, {
-    key: k
-  }, /*#__PURE__*/React.createElement("dt", null, k), /*#__PURE__*/React.createElement("dd", {
-    style: {
-      whiteSpace: "pre-line"
-    }
-  }, k === "Страница" ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("a", {
-    href: "/" + v,
-    target: "_blank",
-    rel: "noopener noreferrer"
-  }, v), " \xB7 \u043E\u0442\u043A\u0440\u044B\u0442\u044C \u0442\u0443 \u0436\u0435 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443") : v)))))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-drsec"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-drh"
-  }, "\u041F\u0435\u0440\u0435\u043F\u0438\u0441\u043A\u0430"), (t.messages || []).length === 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: "var(--ink-3)"
-    }
-  }, "\u041E\u0442\u0432\u0435\u0442\u0430 \u0435\u0449\u0451 \u043D\u0435 \u0431\u044B\u043B\u043E."), (t.messages || []).map((m, i) => m.role === "system" ? /*#__PURE__*/React.createElement("div", {
-    key: i,
-    className: "tk-sys"
-  }, m.body, " \xB7 ", sayDate(m.at)) : /*#__PURE__*/React.createElement("div", {
-    key: i,
-    className: "tk-msg " + m.role
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, m.role === "team" ? "Команда" : "Автор", " \xB7 ", sayDate(m.at)), m.body))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-drsec"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-drh"
-  }, "\u041E\u0442\u0432\u0435\u0442 \u0430\u0432\u0442\u043E\u0440\u0443"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 8,
-      alignItems: "center",
-      flexWrap: "wrap",
-      marginBottom: 8
-    }
-  }, /*#__PURE__*/React.createElement("select", {
-    className: "pu-sel",
-    value: st,
-    onChange: e => setSt(e.target.value),
-    "aria-label": "\u0421\u0442\u0430\u0442\u0443\u0441"
-  }, Object.entries(SAY_STATUS_RU).map(([k, l]) => /*#__PURE__*/React.createElement("option", {
-    key: k,
-    value: k
-  }, l))), PU_TK_TPL.map(([l, x]) => /*#__PURE__*/React.createElement("button", {
-    key: l,
-    className: "seg-btn",
-    onClick: () => setReply(r => r ? r + "\n" + x : x)
-  }, l))), /*#__PURE__*/React.createElement("textarea", {
-    className: "tk-ta",
-    style: {
-      minHeight: 90
-    },
-    value: reply,
-    maxLength: 2000,
-    placeholder: "\u041E\u0442\u0432\u0435\u0442 \u0443\u0432\u0438\u0434\u0438\u0442 \u0442\u043E\u043B\u044C\u043A\u043E \u0430\u0432\u0442\u043E\u0440 \u2014 \u0443 \u0441\u0442\u0440\u043E\u043A\u0438 \xAB\u041E\u0431\u0440\u0430\u0442\u043D\u0430\u044F \u0441\u0432\u044F\u0437\u044C\xBB \u0437\u0430\u0433\u043E\u0440\u0438\u0442\u0441\u044F \u0442\u043E\u0447\u043A\u0430",
-    onChange: e => {
-      setReply(e.target.value);
-      if (err) setErr("");
-    },
-    onKeyDown: e => {
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        save();
-      }
-    }
-  }), err && /*#__PURE__*/React.createElement("div", {
-    className: "tk-err",
-    role: "alert"
-  }, err), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      justifyContent: "flex-end",
-      marginTop: 10
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-primary btn-sm",
-    disabled: busy,
-    onClick: save
-  }, busy ? "Сохраняю…" : reply.trim() ? "Ответить" : "Сохранить статус"))))));
-}
-const PU_TABS = [["people", "Люди"], ["outcomes", "Итоги"], ["reach", "Охват и траты"], ["reports", "Отчёты"], ["ai", "Качество ИИ"], ["inbox", "Обращения"], ["data", "Данные"], ["tech", "Техника"]];
-// «Имя Фамилия» → «Имя Ф.»; логин остаётся логином
+// «Имя Фамилия» → «Имя Ф.»; логин остаётся логином (общий помощник — им пользуются и «Аудит-дела»)
 const puShort = n => {
   const p = String(n || "").trim().split(/\s+/);
   return p.length >= 2 ? `${p[0]} ${p[1][0]}.` : n || "";
 };
-const puNum = n => (+n || 0).toLocaleString("ru");
-
-// ══ ЛЮДИ: директория, карточка человека, отчёты и жалобы ═══════════════════
-// «Сегодня зашло 30 человек» — бесполезная цифра, если не видно, КТО и что
-// делал. Ниже — все пользователи поимённо, полный разрез по каждому и
-// служебный доступ владельца к чужим отчётам: иначе жалобу «отчёты плохие»
-// разобрать нечем.
-
 const PU_KIND_RU = {
   ai_answer: "ответ ИИ",
   news: "новость",
@@ -22862,137 +20739,6 @@ const puClip = t => {
   const sp = t.lastIndexOf(" ");
   return (sp > 0 ? t.slice(0, sp) : t).replace(/[,;:—–\s]+$/, "") + "…";
 };
-function PuPeople({
-  days,
-  withMe,
-  rev,
-  onOpenUser
-}) {
-  const [d, setD] = useState(null);
-  const [qq, setQq] = useState("");
-  const [sort, setSort] = useState("score");
-  useEffect(() => {
-    setD(null);
-    apiFetch("/api/admin/users?days=" + days + puMe(withMe)).then(setD).catch(() => setD({
-      users: []
-    }));
-  }, [days, withMe, rev]);
-  if (!d) return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card pu-sec"
-  }, /*#__PURE__*/React.createElement(Skel, {
-    h: 160
-  }));
-  const all = d.users || [];
-  const ql = qq.trim().toLowerCase();
-  let rows = ql ? all.filter(u => (u.name || "").toLowerCase().includes(ql) || (u.username || "").toLowerCase().includes(ql)) : all;
-  const num = k => (a, b) => (+b[k] || 0) - (+a[k] || 0);
-  if (sort !== "score") rows = [...rows].sort(sort === "last" ? (a, b) => (a.last_seen_ago_s || 1e12) - (b.last_seen_ago_s || 1e12) : num(sort));
-  // служебные и сам владелец — в конце списка: в итоги не входят
-  rows = [...rows.filter(u => !u.excluded), ...rows.filter(u => u.excluded)];
-  const maxT = Math.max(...all.filter(x => !x.excluded).map(x => +x.time_s || 0), 1);
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card pu-sec",
-    id: "pu-people"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041B\u044E\u0434\u0438 \xB7 ", d.total || 0, " \xB7 \u0437\u0430\u0445\u043E\u0434\u0438\u043B\u0438 \u0437\u0430 ", days, " \u0434\u043D: ", d.active || 0, " \xB7 \u043C\u043E\u043B\u0447\u0430\u0442: ", d.silent || 0, d.excluded ? /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 \u043D\u0435 \u0441\u0447\u0438\u0442\u0430\u0435\u043C: ", d.excluded) : null), /*#__PURE__*/React.createElement("span", {
-    className: "pu-people-ctl"
-  }, /*#__PURE__*/React.createElement("input", {
-    className: "pu-search",
-    placeholder: "\u043F\u043E\u0438\u0441\u043A \u043F\u043E \u0424\u0418\u041E \u0438\u043B\u0438 \u043B\u043E\u0433\u0438\u043D\u0443",
-    "aria-label": "\u041F\u043E\u0438\u0441\u043A \u043F\u043E \u043B\u044E\u0434\u044F\u043C",
-    value: qq,
-    onChange: e => setQq(e.target.value)
-  }), /*#__PURE__*/React.createElement("select", {
-    className: "pu-sel",
-    value: sort,
-    onChange: e => setSort(e.target.value),
-    "aria-label": "\u0421\u043E\u0440\u0442\u0438\u0440\u043E\u0432\u043A\u0430"
-  }, /*#__PURE__*/React.createElement("option", {
-    value: "score"
-  }, "\u043F\u043E \u0430\u043A\u0442\u0438\u0432\u043D\u043E\u0441\u0442\u0438"), /*#__PURE__*/React.createElement("option", {
-    value: "last"
-  }, "\u043F\u043E \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0435\u043C\u0443 \u0432\u0438\u0437\u0438\u0442\u0443"), /*#__PURE__*/React.createElement("option", {
-    value: "views"
-  }, "\u043F\u043E \u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440\u0430\u043C"), /*#__PURE__*/React.createElement("option", {
-    value: "time_s"
-  }, "\u043F\u043E \u0432\u0440\u0435\u043C\u0435\u043D\u0438"), /*#__PURE__*/React.createElement("option", {
-    value: "ai"
-  }, "\u043F\u043E \u0418\u0418-\u0437\u0430\u043F\u0440\u043E\u0441\u0430\u043C"), /*#__PURE__*/React.createElement("option", {
-    value: "reports"
-  }, "\u043F\u043E \u043E\u0442\u0447\u0451\u0442\u0430\u043C"), /*#__PURE__*/React.createElement("option", {
-    value: "dislikes"
-  }, "\u043F\u043E \u0436\u0430\u043B\u043E\u0431\u0430\u043C")))), /*#__PURE__*/React.createElement("p", {
-    className: "t-cap",
-    style: {
-      margin: "-4px 0 10px"
-    }
-  }, "\u041A\u043B\u0438\u043A \u043F\u043E \u0441\u0442\u0440\u043E\u043A\u0435 \u2014 \u043F\u043E\u043B\u043D\u0430\u044F \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0430. \u0421\u043B\u0443\u0436\u0435\u0431\u043D\u044B\u0435 \u0443\u0447\u0451\u0442\u043A\u0438 \u043F\u043E\u043C\u0435\u0447\u0430\u044E\u0442\u0441\u044F \u0432 \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0435 \u0438 \u0432 \u0438\u0442\u043E\u0433\u0438 \u043D\u0435 \u0432\u0445\u043E\u0434\u044F\u0442."), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tblwrap"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "pu-tbl pu-team"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044C"), /*#__PURE__*/React.createElement("th", null, "\u0441\u0442\u0430\u0442\u0443\u0441"), /*#__PURE__*/React.createElement("th", {
-    title: "\u0430\u043A\u0442\u0438\u0432\u043D\u043E\u0435 \u0432\u0440\u0435\u043C\u044F \u043D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430\u0445: \u0441 03.10 \u0431\u0435\u0437 \u043F\u0440\u043E\u0441\u0442\u043E\u044F \u0434\u043E\u043B\u044C\u0448\u0435 5 \u043C\u0438\u043D, \u0440\u0430\u043D\u044C\u0448\u0435 \u2014 \u043F\u043E\u043A\u0430 \u0432\u043A\u043B\u0430\u0434\u043A\u0430 \u043E\u0442\u043A\u0440\u044B\u0442\u0430"
-  }, "\u0432\u0440\u0435\u043C\u044F"), /*#__PURE__*/React.createElement("th", null, "\u0432\u0438\u0437\u0438\u0442\u043E\u0432"), /*#__PURE__*/React.createElement("th", null, "\u0434\u043D\u0435\u0439"), /*#__PURE__*/React.createElement("th", null, "\u043F\u0440\u043E\u0441\u043C."), /*#__PURE__*/React.createElement("th", null, "\u0418\u0418"), /*#__PURE__*/React.createElement("th", {
-    title: "\u043E\u0442\u0447\u0451\u0442\u044B; \u0432 \u0441\u043A\u043E\u0431\u043A\u0430\u0445 \u2014 \u0441\u043E\u0445\u0440\u0430\u043D\u0451\u043D\u043D\u044B\u0435 \u0431\u044B\u0441\u0442\u0440\u044B\u0435 \u043E\u0442\u0432\u0435\u0442\u044B"
-  }, "\u043E\u0442\u0447\u0451\u0442\u044B"), /*#__PURE__*/React.createElement("th", null, "\u043E\u0446\u0435\u043D\u043A\u0438"), /*#__PURE__*/React.createElement("th", null, "\u0440\u0430\u0437\u0434\u0435\u043B\u044B"), /*#__PURE__*/React.createElement("th", {
-    title: "\u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0435\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435 \u0432 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0435"
-  }, "\u0431\u044B\u043B(\u0430)"))), /*#__PURE__*/React.createElement("tbody", null, rows.map(u => /*#__PURE__*/React.createElement("tr", {
-    key: u.username,
-    className: "pu-rowclick" + (u.excluded ? " pu-exrow" : ""),
-    onClick: () => onOpenUser(u.username)
-  }, /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("span", {
-    className: "pu-u"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "a"
-  }, initials(u.name)), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
-    className: "pu-nm"
-  }, u.name), /*#__PURE__*/React.createElement("span", {
-    className: "pu-login"
-  }, "@", u.username)))), /*#__PURE__*/React.createElement("td", null, u.excluded ? /*#__PURE__*/React.createElement("span", {
-    className: "pu-badge off"
-  }, u.hidden ? "служебная" : "вы") : u.online ? /*#__PURE__*/React.createElement("span", {
-    className: "pu-badge on"
-  }, "\u043E\u043D\u043B\u0430\u0439\u043D") : u.today ? /*#__PURE__*/React.createElement("span", {
-    className: "pu-badge tod"
-  }, "\u0441\u0435\u0433\u043E\u0434\u043D\u044F") : /*#__PURE__*/React.createElement("span", {
-    className: "pu-badge off"
-  }, "\u2014")), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("span", {
-    className: "pu-tm"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "bar",
-    style: {
-      width: Math.max(4, Math.min(1, (+u.time_s || 0) / maxT) * 54) + "px"
-    }
-  }), adFmtS(u.time_s))), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, u.visits), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, u.days_active), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, u.views), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, u.ai), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, u.reports, +u.quick > 0 && /*#__PURE__*/React.createElement("i", {
-    className: "pu-deep",
-    title: "\u0441\u043E\u0445\u0440\u0430\u043D\u0451\u043D\u043D\u044B\u0435 \u0431\u044B\u0441\u0442\u0440\u044B\u0435 \u043E\u0442\u0432\u0435\u0442\u044B"
-  }, " (", u.quick, ")")), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, +u.likes > 0 && /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--pos)"
-    }
-  }, "+", u.likes), +u.dislikes > 0 && /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--neg)"
-    }
-  }, " \u2212", u.dislikes), !+u.likes && !+u.dislikes && "—"), /*#__PURE__*/React.createElement("td", {
-    className: "pu-pages",
-    title: (u.top_pages || []).map(x => AD_PAGE_RU[x] || x).join(" · ")
-  }, (u.top_pages || []).slice(0, 2).map(x => AD_PAGE_RU[x] || x).join(" · ") || "—"), /*#__PURE__*/React.createElement("td", null, u.last_seen || "—")))))));
-}
-
 // хронология по-русски; «уход» пишется и при сворачивании вкладки
 const PU_TRAIL_RU = {
   page_view: "открыт раздел",
@@ -23002,936 +20748,15 @@ const PU_TRAIL_RU = {
   api_error: "ошибка сервера",
   ui: "действие"
 };
-function PuUserCard({
-  username,
-  days,
-  onClose,
-  onOpenReport,
-  onOpenSession,
-  onHidden
-}) {
-  const me = useMe();
-  const [c, setC] = useState(null);
-  const [tab, setTab] = useState("act");
-  const [hBusy, setHBusy] = useState(false);
-  // служебная учётка (разработка, админ входа) — не считать в «Пульсе»
-  const toggleHidden = () => {
-    if (!c || !c.user) return;
-    const h = !c.user.hidden;
-    setHBusy(true);
-    apiPost(`/api/admin/users/${encodeURIComponent(username)}/hidden`, {
-      hidden: h
-    }).then(() => {
-      setC(x => ({
-        ...x,
-        user: {
-          ...x.user,
-          hidden: h
-        }
-      }));
-      onHidden && onHidden();
-    }).catch(() => {}).finally(() => setHBusy(false));
-  };
-  useEffect(() => {
-    setC(null);
-    apiFetch(`/api/admin/users/${encodeURIComponent(username)}?days=${days}`).then(setC).catch(() => setC({
-      error: true
-    }));
-  }, [username, days]);
-  useEffect(() => {
-    const k = e => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", k);
-    return () => window.removeEventListener("keydown", k);
-  }, [onClose]);
-  const u = c && c.user || {},
-    pr = c && c.profile || {};
-  const maxV = Math.max(...(c && c.by_day || []).map(x => +x.views || 0), 1);
-  const maxP = Math.max(...(c && c.pages || []).map(x => +x.views || 0), 1);
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-drawer",
-    onClick: e => {
-      if (e.target === e.currentTarget) onClose();
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-dr"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-drhead"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-u"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "a big"
-  }, initials(u.name)), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "pu-drname"
-  }, u.name || username), /*#__PURE__*/React.createElement("div", {
-    className: "pu-drsub"
-  }, "@", username, u.online ? /*#__PURE__*/React.createElement("span", {
-    className: "pu-badge on"
-  }, "\u043E\u043D\u043B\u0430\u0439\u043D") : u.today ? /*#__PURE__*/React.createElement("span", {
-    className: "pu-badge tod"
-  }, "\u0431\u044B\u043B \u0441\u0435\u0433\u043E\u0434\u043D\u044F") : null, u.hidden && /*#__PURE__*/React.createElement("span", {
-    className: "pu-badge off"
-  }, "\u0441\u043B\u0443\u0436\u0435\u0431\u043D\u0430\u044F"), u.first_seen && /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 \u043F\u0435\u0440\u0432\u044B\u0439 \u0432\u0438\u0437\u0438\u0442 ", u.first_seen), u.last_seen && /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 ", u.last_seen)))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      alignItems: "center",
-      gap: 8,
-      flex: "none"
-    }
-  }, c && c.user && me && me.is_admin && /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-sm",
-    disabled: hBusy,
-    onClick: toggleHidden,
-    title: u.hidden ? "снова считать в метриках «Пульса»" : "учётка разработки или администратора входа: в метриках про людей не считается"
-  }, u.hidden ? "Снять пометку «служебная»" : "Пометить служебной"), /*#__PURE__*/React.createElement("button", {
-    className: "pu-x",
-    onClick: onClose,
-    "aria-label": "\u0417\u0430\u043A\u0440\u044B\u0442\u044C"
-  }, "\u2715"))), !c ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: 24
-    }
-  }, /*#__PURE__*/React.createElement(Skel, {
-    h: 120
-  })) : c.error ? /*#__PURE__*/React.createElement(ErrState, {
-    msg: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443."
-  }) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "pu-drtiles"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, adFmtS(u.time_s)), /*#__PURE__*/React.createElement("span", null, "\u0432 \u0441\u0438\u0441\u0442\u0435\u043C\u0435")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, u.visits), /*#__PURE__*/React.createElement("span", null, "\u0432\u0438\u0437\u0438\u0442\u043E\u0432")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, u.days_active), /*#__PURE__*/React.createElement("span", null, "\u0434\u043D\u0435\u0439 \u0430\u043A\u0442\u0438\u0432\u043D\u043E\u0441\u0442\u0438")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, u.views), /*#__PURE__*/React.createElement("span", null, "\u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440\u043E\u0432")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, u.ai), /*#__PURE__*/React.createElement("span", null, "\u0432\u043E\u043F\u0440\u043E\u0441\u043E\u0432 \u0418\u0418")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, u.reports), /*#__PURE__*/React.createElement("span", null, "\u043E\u0442\u0447\u0451\u0442\u043E\u0432")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, u.quick || 0), /*#__PURE__*/React.createElement("span", null, "\u0431\u044B\u0441\u0442\u0440\u044B\u0445 \u043E\u0442\u0432\u0435\u0442\u043E\u0432")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, u.likes, "/", u.dislikes), /*#__PURE__*/React.createElement("span", null, "\u043E\u0446\u0435\u043D\u043E\u043A \uD83D\uDC4D/\uD83D\uDC4E")), /*#__PURE__*/React.createElement("div", {
-    className: +u.errors > 0 ? "neg" : ""
-  }, /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, u.errors), /*#__PURE__*/React.createElement("span", null, "\u043E\u0448\u0438\u0431\u043E\u043A"))), (pr.role_desc || pr.profile_note) && /*#__PURE__*/React.createElement("div", {
-    className: "pu-drsec"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-drh"
-  }, "\u041F\u0440\u043E\u0444\u0438\u043B\u044C"), pr.role_desc && /*#__PURE__*/React.createElement("p", {
-    className: "pu-drp"
-  }, /*#__PURE__*/React.createElement("b", null, "\u0417\u043E\u043D\u0430 \u043E\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0435\u043D\u043D\u043E\u0441\u0442\u0438:"), " ", pr.role_desc), pr.profile_note && /*#__PURE__*/React.createElement("p", {
-    className: "pu-drp"
-  }, /*#__PURE__*/React.createElement("b", null, "\u0427\u0435\u043C \u0438\u043D\u0442\u0435\u0440\u0435\u0441\u0443\u0435\u0442\u0441\u044F"), pr.note_at ? ` (собрано ${pr.note_at})` : "", ": ", puClip(pr.profile_note))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-drtabs"
-  }, [["act", "Активность"], ["q", "Вопросы ИИ"], ["r", "Отчёты"], ["fb", "Оценки"], ["err", "Ошибки"], ["trail", "Хронология"]].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
-    key: k,
-    className: "seg-btn" + (tab === k ? " on" : ""),
-    onClick: () => setTab(k)
-  }, l))), tab === "act" && /*#__PURE__*/React.createElement("div", {
-    className: "pu-drsec"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-drh"
-  }, "\u041F\u043E \u0434\u043D\u044F\u043C \xB7 ", days, " \u0434\u043D"), /*#__PURE__*/React.createElement("div", {
-    className: "pu-days"
-  }, (c.by_day || []).map(x => /*#__PURE__*/React.createElement("div", {
-    key: x.d,
-    className: "pu-dbar",
-    title: `${x.d}: ${x.views} просмотров, ${adFmtS(x.time_s)}`
-  }, /*#__PURE__*/React.createElement("i", {
-    style: {
-      height: Math.max(3, (+x.views || 0) / maxV * 46) + "px"
-    }
-  }), /*#__PURE__*/React.createElement("span", null, x.d.slice(8, 10)))), (c.by_day || []).length === 0 && /*#__PURE__*/React.createElement("div", {
-    className: "pu-empty"
-  }, "\u041D\u0435\u0442 \u0430\u043A\u0442\u0438\u0432\u043D\u043E\u0441\u0442\u0438 \u0437\u0430 \u043F\u0435\u0440\u0438\u043E\u0434.")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-drh",
-    style: {
-      marginTop: 14
-    }
-  }, "\u0420\u0430\u0437\u0434\u0435\u043B\u044B"), (c.pages || []).map(pg => /*#__PURE__*/React.createElement("div", {
-    key: pg.page,
-    className: "pu-bar-row"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "lb"
-  }, AD_PAGE_RU[pg.page] || pg.page), /*#__PURE__*/React.createElement("span", {
-    className: "tr"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "fl",
-    style: {
-      width: Math.max(3, pg.views / maxP * 100) + "%"
-    }
-  })), /*#__PURE__*/React.createElement("span", {
-    className: "vv tnum"
-  }, pg.views, " \xB7 ", adFmtS(pg.total_s)))), (c.pages || []).length === 0 && /*#__PURE__*/React.createElement("div", {
-    className: "pu-empty"
-  }, "\u0421\u0442\u0440\u0430\u043D\u0438\u0446 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u043B.")), tab === "q" && /*#__PURE__*/React.createElement("div", {
-    className: "pu-drsec"
-  }, (c.questions || []).map((x, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    className: "pu-qrow"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "at"
-  }, x.at), /*#__PURE__*/React.createElement("span", {
-    className: "qq"
-  }, x.question || "—"), x.mode && /*#__PURE__*/React.createElement("span", {
-    className: "md"
-  }, x.mode === "deep" ? "глубокий" : "быстрый"), +x.answer_len > 0 && /*#__PURE__*/React.createElement("span", {
-    className: "md"
-  }, Math.round(+x.answer_len / 1000) || 1, "\u0442 \u0437\u043D."), !x.answer_len && /*#__PURE__*/React.createElement("span", {
-    className: "md",
-    title: "\u043E\u0442\u0432\u0435\u0442\u0430 \u0432 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u043D\u0435\u0442 \u2014 \u0432\u043E\u043F\u0440\u043E\u0441 \u043E\u0441\u0442\u0430\u043B\u0441\u044F \u0431\u0435\u0437 \u043E\u0442\u0432\u0435\u0442\u0430"
-  }, "\u0431\u0435\u0437 \u043E\u0442\u0432\u0435\u0442\u0430"), x.report_id && /*#__PURE__*/React.createElement("button", {
-    className: "pu-link",
-    onClick: () => onOpenReport(x.report_id)
-  }, "\u043E\u0442\u0447\u0451\u0442 \u2192"))), (c.questions || []).length === 0 && /*#__PURE__*/React.createElement("div", {
-    className: "pu-empty"
-  }, "\u0412\u043E\u043F\u0440\u043E\u0441\u043E\u0432 \u043D\u0435 \u0437\u0430\u0434\u0430\u0432\u0430\u043B.")), tab === "r" && /*#__PURE__*/React.createElement("div", {
-    className: "pu-drsec"
-  }, (c.reports || []).map(r => /*#__PURE__*/React.createElement("div", {
-    key: r.report_id,
-    className: "pu-qrow"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "at"
-  }, r.at), /*#__PURE__*/React.createElement("span", {
-    className: "qq"
-  }, r.title || r.question), /*#__PURE__*/React.createElement("span", {
-    className: "md"
-  }, r.mode === "quick" ? "быстрый ответ" : "отчёт"), /*#__PURE__*/React.createElement("span", {
-    className: "md"
-  }, puLen(r)), /*#__PURE__*/React.createElement("button", {
-    className: "pu-link",
-    onClick: () => onOpenReport(r.report_id)
-  }, "\u043E\u0442\u043A\u0440\u044B\u0442\u044C \u2192"))), (c.reports || []).length === 0 && /*#__PURE__*/React.createElement("div", {
-    className: "pu-empty"
-  }, "\u041E\u0442\u0447\u0451\u0442\u043E\u0432 \u043D\u0435 \u0441\u0442\u0440\u043E\u0438\u043B.")), tab === "fb" && /*#__PURE__*/React.createElement("div", {
-    className: "pu-drsec"
-  }, (c.ratings || []).map((x, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    className: "pu-qrow" + (x.verdict < 0 ? " bad" : "")
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "at"
-  }, x.at), /*#__PURE__*/React.createElement("span", {
-    className: "md"
-  }, PU_KIND_RU[x.kind] || x.kind), /*#__PURE__*/React.createElement("span", {
-    className: "qq"
-  }, x.question || x.title || x.item_key, x.comment && /*#__PURE__*/React.createElement("em", {
-    className: "pu-cmt"
-  }, " \xAB", x.comment, "\xBB")), /*#__PURE__*/React.createElement("span", {
-    className: x.verdict < 0 ? "pu-vd neg" : "pu-vd pos"
-  }, x.verdict < 0 ? "👎" : "👍"), x.report_id && /*#__PURE__*/React.createElement("button", {
-    className: "pu-link",
-    onClick: () => onOpenReport(x.report_id)
-  }, "\u043E\u0442\u0447\u0451\u0442 \u2192"), !x.report_id && x.session_id && /*#__PURE__*/React.createElement("button", {
-    className: "pu-link",
-    onClick: () => onOpenSession(x.session_id)
-  }, "\u0434\u0438\u0430\u043B\u043E\u0433 \u2192"))), (c.ratings || []).length === 0 && /*#__PURE__*/React.createElement("div", {
-    className: "pu-empty"
-  }, "\u041D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u043E\u0446\u0435\u043D\u0438\u0432\u0430\u043B.")), tab === "err" && /*#__PURE__*/React.createElement("div", {
-    className: "pu-drsec"
-  }, (c.errors || []).map((x, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    className: "pu-qrow bad"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "at"
-  }, x.at), /*#__PURE__*/React.createElement("span", {
-    className: "md"
-  }, x.kind === "client_error" ? "браузер" : "сервер"), /*#__PURE__*/React.createElement("span", {
-    className: "qq"
-  }, AD_PAGE_RU[x.page] || x.page || "—", x.status ? ` · ${x.status}` : "", x.message ? ` · ${x.message}` : ""))), (c.errors || []).length === 0 && /*#__PURE__*/React.createElement("div", {
-    className: "pu-empty"
-  }, "\u041E\u0448\u0438\u0431\u043E\u043A \u043D\u0435 \u0431\u044B\u043B\u043E.")), tab === "trail" && /*#__PURE__*/React.createElement("div", {
-    className: "pu-drsec"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-drh"
-  }, "\u041F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \xB7 ", (c.trail || []).length, " \xB7 \u0431\u0435\u0437 \u0444\u043E\u043D\u043E\u0432\u044B\u0445 \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \u043A \u0441\u0435\u0440\u0432\u0435\u0440\u0443"), (c.trail || []).map((x, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    className: "pu-trail"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "at"
-  }, x.at), /*#__PURE__*/React.createElement("span", {
-    className: "k"
-  }, PU_TRAIL_RU[x.kind] || x.kind), /*#__PURE__*/React.createElement("span", {
-    className: "p"
-  }, AD_PAGE_RU[x.page] || x.page || ""), /*#__PURE__*/React.createElement("span", {
-    className: "d",
-    title: x.kind === "page_leave" ? "активное время на странице" : ""
-  }, x.kind === "page_leave" && x.dur_ms != null ? "активно " + adFmtS(x.dur_ms / 1000) : "", x.status ? ` · ${x.status}` : "")))))));
-}
-function PuReportView({
-  rid,
-  onClose
-}) {
-  const [r, setR] = useState(null);
-  useEffect(() => {
-    setR(null);
-    apiFetch(`/api/reports/${rid}`).then(setR).catch(() => setR({
-      error: true
-    }));
-  }, [rid]);
-  useEffect(() => {
-    const k = e => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", k);
-    return () => window.removeEventListener("keydown", k);
-  }, [onClose]);
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-drawer",
-    onClick: e => {
-      if (e.target === e.currentTarget) onClose();
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-dr"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-drhead"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "pu-drname"
-  }, r && !r.error ? r.title || r.question : "Отчёт"), /*#__PURE__*/React.createElement("div", {
-    className: "pu-drsub"
-  }, r && !r.error && /*#__PURE__*/React.createElement(React.Fragment, null, "\u0430\u0432\u0442\u043E\u0440: ", r.owner_name || r.owner, r.admin_view && /*#__PURE__*/React.createElement("span", {
-    className: "pu-badge adm",
-    title: "\u043E\u0442\u043A\u0440\u044B\u0442\u043E \u0441\u043B\u0443\u0436\u0435\u0431\u043D\u044B\u043C \u0434\u043E\u0441\u0442\u0443\u043F\u043E\u043C \u0432\u043B\u0430\u0434\u0435\u043B\u044C\u0446\u0430; \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435 \u0437\u0430\u043F\u0438\u0441\u0430\u043D\u043E \u0432 \u0436\u0443\u0440\u043D\u0430\u043B"
-  }, "\u0441\u043B\u0443\u0436\u0435\u0431\u043D\u044B\u0439 \u0434\u043E\u0441\u0442\u0443\u043F")))), /*#__PURE__*/React.createElement("button", {
-    className: "pu-x",
-    onClick: onClose,
-    "aria-label": "\u0417\u0430\u043A\u0440\u044B\u0442\u044C"
-  }, "\u2715")), !r ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: 24
-    }
-  }, /*#__PURE__*/React.createElement(Skel, {
-    h: 140
-  })) : r.error ? /*#__PURE__*/React.createElement(ErrState, {
-    msg: "\u041E\u0442\u0447\u0451\u0442 \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D."
-  }) : /*#__PURE__*/React.createElement("div", {
-    className: "pu-drsec pu-report"
-  }, renderMD(r.body || ""))));
-}
-function PuSessionView({
-  sid,
-  onClose
-}) {
-  const [d, setD] = useState(null);
-  useEffect(() => {
-    setD(null);
-    apiFetch(`/api/admin/session/${sid}`).then(setD).catch(() => setD({
-      error: true
-    }));
-  }, [sid]);
-  useEffect(() => {
-    const k = e => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", k);
-    return () => window.removeEventListener("keydown", k);
-  }, [onClose]);
-  const se = d && d.session || {};
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-drawer",
-    onClick: e => {
-      if (e.target === e.currentTarget) onClose();
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-dr"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-drhead"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "pu-drname"
-  }, se.title || "Диалог"), /*#__PURE__*/React.createElement("div", {
-    className: "pu-drsub"
-  }, d && !d.error && /*#__PURE__*/React.createElement(React.Fragment, null, "\u0430\u0432\u0442\u043E\u0440: ", se.name, " \xB7 \u043D\u0430\u0447\u0430\u0442 ", se.at, /*#__PURE__*/React.createElement("span", {
-    className: "pu-badge adm",
-    title: "\u0441\u043B\u0443\u0436\u0435\u0431\u043D\u044B\u0439 \u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440 \u0432\u043B\u0430\u0434\u0435\u043B\u044C\u0446\u0430; \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435 \u0437\u0430\u043F\u0438\u0441\u0430\u043D\u043E \u0432 \u0436\u0443\u0440\u043D\u0430\u043B"
-  }, "\u0441\u043B\u0443\u0436\u0435\u0431\u043D\u044B\u0439 \u0434\u043E\u0441\u0442\u0443\u043F")))), /*#__PURE__*/React.createElement("button", {
-    className: "pu-x",
-    onClick: onClose,
-    "aria-label": "\u0417\u0430\u043A\u0440\u044B\u0442\u044C"
-  }, "\u2715")), !d ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: 24
-    }
-  }, /*#__PURE__*/React.createElement(Skel, {
-    h: 140
-  })) : d.error ? /*#__PURE__*/React.createElement(ErrState, {
-    msg: "\u0414\u0438\u0430\u043B\u043E\u0433 \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D."
-  }) : /*#__PURE__*/React.createElement("div", {
-    className: "pu-drsec"
-  }, (d.messages || []).map((m, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    className: "pu-msg " + m.role
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-msghead"
-  }, m.role === "user" ? "вопрос" : "ответ", " \xB7 ", m.at, m.meta && m.meta.mode ? /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 ", m.meta.mode === "deep" ? "глубокий" : "быстрый") : null), /*#__PURE__*/React.createElement("div", {
-    className: "pu-msgbody"
-  }, m.role === "user" ? m.content : renderMD(m.content || "")))))));
-}
-function PuReports({
-  days,
-  withMe,
-  rev,
-  onOpenReport,
-  onOpenUser
-}) {
-  const [d, setD] = useState(null);
-  const [qq, setQq] = useState("");
-  const [bad, setBad] = useState(false);
-  // отчёт (deep) и сохранённый быстрый ответ лежат в одной таблице — раньше
-  // смешивались в одно «88 отчётов»
-  const [mode, setMode] = useState("all");
-  useEffect(() => {
-    setD(null);
-    const sp = new URLSearchParams({
-      days: String(days),
-      limit: "300"
-    });
-    if (bad) sp.set("only_bad", "true");
-    if (withMe != null) sp.set("me", withMe ? "true" : "false");
-    apiFetch("/api/admin/reports?" + sp).then(setD).catch(() => setD({
-      reports: []
-    }));
-  }, [days, bad, withMe, rev]);
-  if (!d) return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card pu-sec"
-  }, /*#__PURE__*/React.createElement(Skel, {
-    h: 160
-  }));
-  const ql = qq.trim().toLowerCase();
-  const rows = (d.reports || []).filter(r => (mode === "all" || mode === "quick" === (r.mode === "quick")) && (!ql || (r.question || "").toLowerCase().includes(ql) || (r.title || "").toLowerCase().includes(ql) || (r.name || "").toLowerCase().includes(ql)));
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card pu-sec"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0442\u0447\u0451\u0442\u044B \u0438 \u043E\u0442\u0432\u0435\u0442\u044B \xB7 ", days, " \u0434\u043D \xB7 \u043E\u0442\u0447\u0451\u0442\u043E\u0432 ", d.deep || 0, " \xB7 \u0431\u044B\u0441\u0442\u0440\u044B\u0445 \u043E\u0442\u0432\u0435\u0442\u043E\u0432 ", d.quick || 0, d.bad > 0 ? /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 \u0441 \u0436\u0430\u043B\u043E\u0431\u0430\u043C\u0438 ", d.bad) : ""), /*#__PURE__*/React.createElement("span", {
-    className: "pu-people-ctl"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "seg",
-    role: "group",
-    "aria-label": "\u0427\u0442\u043E \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0442\u044C"
-  }, [["all", "все"], ["deep", "отчёты"], ["quick", "быстрые ответы"]].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
-    key: k,
-    className: "seg-btn" + (mode === k ? " on" : ""),
-    "aria-pressed": mode === k,
-    onClick: () => setMode(k)
-  }, l))), /*#__PURE__*/React.createElement("input", {
-    className: "pu-search",
-    placeholder: "\u043F\u043E\u0438\u0441\u043A \u043F\u043E \u0432\u043E\u043F\u0440\u043E\u0441\u0443 \u0438\u043B\u0438 \u0430\u0432\u0442\u043E\u0440\u0443",
-    "aria-label": "\u041F\u043E\u0438\u0441\u043A \u043F\u043E \u043E\u0442\u0447\u0451\u0442\u0430\u043C",
-    value: qq,
-    onChange: e => setQq(e.target.value)
-  }), /*#__PURE__*/React.createElement("button", {
-    className: "seg-btn" + (bad ? " on" : ""),
-    "aria-pressed": bad,
-    onClick: () => setBad(!bad)
-  }, "\u0442\u043E\u043B\u044C\u043A\u043E \u0441 \u0436\u0430\u043B\u043E\u0431\u0430\u043C\u0438"))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tblwrap"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "pu-tbl"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u0430\u0432\u0442\u043E\u0440"), /*#__PURE__*/React.createElement("th", null, "\u0432\u043E\u043F\u0440\u043E\u0441"), /*#__PURE__*/React.createElement("th", null, "\u0432\u0438\u0434"), /*#__PURE__*/React.createElement("th", null, "\u0441\u043E\u0437\u0434\u0430\u043D"), /*#__PURE__*/React.createElement("th", {
-    title: "\u0442\u044B\u0441\u044F\u0447 \u0437\u043D\u0430\u043A\u043E\u0432"
-  }, "\u043E\u0431\u044A\u0451\u043C"), /*#__PURE__*/React.createElement("th", null, "\u043E\u0446\u0435\u043D\u043A\u0438"), /*#__PURE__*/React.createElement("th", null, "\u043E\u0442\u043A\u0440\u044B\u0442\u0438\u0439"), /*#__PURE__*/React.createElement("th", null))), /*#__PURE__*/React.createElement("tbody", null, rows.map(r => /*#__PURE__*/React.createElement("tr", {
-    key: r.report_id,
-    className: +r.dislikes > 0 ? "pu-badrow" : ""
-  }, /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("button", {
-    className: "pu-link",
-    onClick: () => onOpenUser(r.username)
-  }, r.name)), /*#__PURE__*/React.createElement("td", {
-    className: "pu-qcell"
-  }, r.title || r.question, r.comment && /*#__PURE__*/React.createElement("em", {
-    className: "pu-cmt"
-  }, " \xAB", r.comment, "\xBB")), /*#__PURE__*/React.createElement("td", {
-    style: {
-      whiteSpace: "nowrap"
-    }
-  }, r.mode === "quick" ? "ответ" : "отчёт"), /*#__PURE__*/React.createElement("td", {
-    style: {
-      whiteSpace: "nowrap"
-    }
-  }, r.at), /*#__PURE__*/React.createElement("td", {
-    className: "tnum",
-    style: {
-      whiteSpace: "nowrap"
-    }
-  }, puLen(r)), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, +r.likes > 0 && /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--pos)"
-    }
-  }, "+", r.likes), +r.dislikes > 0 && /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--neg)"
-    }
-  }, " \u2212", r.dislikes), !+r.likes && !+r.dislikes && "—"), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, r.opens, +r.shares > 0 ? ` · ${r.shares}⇗` : ""), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("button", {
-    className: "pu-link",
-    onClick: () => onOpenReport(r.report_id)
-  }, "\u043E\u0442\u043A\u0440\u044B\u0442\u044C \u2192")))))), rows.length === 0 && /*#__PURE__*/React.createElement("div", {
-    className: "pu-empty"
-  }, "\u041D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u043E.")));
-}
-function PuComplaints({
-  days,
-  withMe,
-  rev,
-  onOpenReport,
-  onOpenUser,
-  onOpenSession
-}) {
-  const [d, setD] = useState(null);
-  useEffect(() => {
-    setD(null);
-    apiFetch("/api/admin/complaints?days=" + days + puMe(withMe)).then(setD).catch(() => setD({
-      items: []
-    }));
-  }, [days, withMe, rev]);
-  if (!d) return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card pu-sec"
-  }, /*#__PURE__*/React.createElement(Skel, {
-    h: 120
-  }));
-  const items = d.items || [];
-  const total = d.total != null ? d.total : items.length;
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card pu-sec",
-    id: "pu-complaints"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0416\u0430\u043B\u043E\u0431\u044B \xB7 \u043A\u0442\u043E \u0438 \u043D\u0430 \u0447\u0442\u043E \xB7 ", days, " \u0434\u043D"), /*#__PURE__*/React.createElement("span", null, total, " \u0437\u0430 \u043F\u0435\u0440\u0438\u043E\u0434", total > items.length ? ` · показаны последние ${items.length}` : "")), items.length === 0 && /*#__PURE__*/React.createElement("div", {
-    className: "pu-empty"
-  }, "\u0417\u0430 \u043F\u0435\u0440\u0438\u043E\u0434 \u0436\u0430\u043B\u043E\u0431 \u043D\u0435 \u0431\u044B\u043B\u043E. \u0423\u0447\u0442\u0438\u0442\u0435: \u043E\u0446\u0435\u043D\u043A\u0438 \uD83D\uDC4D/\uD83D\uDC4E \u0441\u0442\u0430\u0432\u044F\u0442 \u0440\u0435\u0434\u043A\u043E \u2014 \u0441\u0442\u043E\u0440\u043E\u0436 \u0432\u0432\u0435\u0440\u0445\u0443 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B \u043F\u043E\u0434\u0441\u043A\u0430\u0436\u0435\u0442, \u0435\u0441\u043B\u0438 \u0438\u0445 \u0434\u0430\u0432\u043D\u043E \u043D\u0435\u0442."), items.map((x, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    className: "pu-cmp"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-cmphead"
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "pu-link strong",
-    onClick: () => onOpenUser(x.username)
-  }, x.name), /*#__PURE__*/React.createElement("span", {
-    className: "md"
-  }, PU_KIND_RU[x.kind] || x.kind), /*#__PURE__*/React.createElement("span", {
-    className: "at"
-  }, x.at), x.report_id && /*#__PURE__*/React.createElement("button", {
-    className: "pu-link",
-    onClick: () => onOpenReport(x.report_id)
-  }, "\u043E\u0442\u043A\u0440\u044B\u0442\u044C \u043E\u0442\u0447\u0451\u0442 \u2192"), !x.report_id && x.session_id && /*#__PURE__*/React.createElement("button", {
-    className: "pu-link",
-    onClick: () => onOpenSession(x.session_id)
-  }, "\u043F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0434\u0438\u0430\u043B\u043E\u0433 \u2192")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-cmpbody"
-  }, x.question || x.title || x.item_key), (x.reasons || []).length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "pu-cmpwhy"
-  }, x.reasons.map((r, j) => /*#__PURE__*/React.createElement("span", {
-    key: j
-  }, r))), x.comment && /*#__PURE__*/React.createElement("div", {
-    className: "pu-cmpnote"
-  }, "\xAB", x.comment, "\xBB"))));
-}
-
-// Плашка «В облаках турбулентность» для всех — включает и выключает только владелец
-// ══ ОХВАТ И ТРАТЫ: доля штата подразделений и траты на модели ══════════════
-// Для доклада руководству: сколько людей подразделения пользуется инструментом
-// (по загруженной кадровой выгрузке) и сколько стоят модели — против лимита отдела.
-const puRub = n => n == null ? "—" : Math.round(+n).toLocaleString("ru") + " ₽";
-const puPct = (x, d = 0) => x == null ? "—" : (Math.round(x * 100 * 10 ** d) / 10 ** d).toLocaleString("ru") + "%";
 const PU_MON = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
 const PU_MON_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
 const puMonth = ym => {
   const [y, m] = String(ym || "").split("-").map(Number);
   return m ? `${PU_MON[m - 1]} ${y}` : ym;
 };
-function PuReach({
-  isOwner,
-  withMe
-}) {
-  const [d, setD] = useState(null),
-    [err, setErr] = useState(false);
-  const [busy, setBusy] = useState(false),
-    [msg, setMsg] = useState("");
-  const fileRef = useRef(null);
-  const load = () => apiFetch("/api/admin/pulse/reach?v=1" + puMe(withMe)).then(x => {
-    setD(x);
-    setErr(false);
-  }).catch(() => setErr(true));
-  useEffect(() => {
-    load();
-  }, [withMe]); // eslint-disable-line
-  const upload = f => {
-    if (!f) return;
-    setBusy(true);
-    setMsg("");
-    const rd = new FileReader();
-    rd.onload = () => {
-      const b64 = String(rd.result).split(",")[1] || "";
-      fetch("/api/admin/pulse/reach", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          name: f.name,
-          data: b64
-        })
-      }).then(async r => {
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(j.detail || "проверьте файл");
-        return j;
-      }).then(r => {
-        setMsg(`Загружено ${puNum(r.rows)} ${plural(r.rows, "запись", "записи", "записей")}, работают ${puNum(r.current)}.`);
-        load();
-      }).catch(e => setMsg("Не загрузилось: " + e.message)).finally(() => {
-        setBusy(false);
-        if (fileRef.current) fileRef.current.value = "";
-      });
-    };
-    rd.readAsDataURL(f);
-  };
-  const pick = isOwner && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("input", {
-    ref: fileRef,
-    type: "file",
-    accept: ".xlsx",
-    hidden: true,
-    onChange: e => upload(e.target.files && e.target.files[0])
-  }), /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    className: "btn btn-ghost btn-sm",
-    disabled: busy,
-    onClick: () => fileRef.current && fileRef.current.click()
-  }, busy ? "Загружаю…" : d && d.loaded ? "Обновить штат (.xlsx)" : "Загрузить штат (.xlsx)"));
-  if (err && !d) return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-empty"
-  }, "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u043E\u0441\u0447\u0438\u0442\u0430\u0442\u044C \u043E\u0445\u0432\u0430\u0442. ", /*#__PURE__*/React.createElement("button", {
-    className: "pu-link",
-    onClick: load
-  }, "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C")));
-  if (!d) return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement(Skel, {
-    h: 160
-  }));
-  if (!d.loaded) return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0445\u0432\u0430\u0442 \u043F\u043E\u0434\u0440\u0430\u0437\u0434\u0435\u043B\u0435\u043D\u0438\u0439")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-empty"
-  }, "\u0428\u0442\u0430\u0442 \u043D\u0435 \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D. ", isOwner ? "Загрузите кадровую выгрузку (xlsx: табельный номер, статус, ФИО, должность, номер подразделения) — посчитаем, какая доля каждого подразделения пользуется AuditLens. ФИО не сохраняются." : "Его загружает владелец инструмента."), /*#__PURE__*/React.createElement("div", {
-    className: "pu-reach-act"
-  }, pick, msg && /*#__PURE__*/React.createElement("span", {
-    className: "pu-note"
-  }, msg)));
-  const lab = d.label || "Подразделение";
-  const maxR = Math.max(...d.units.map(u => u.reach || 0), 0.01);
-  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "pu-tiles pu-tiles4"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, "\u041F\u043E\u043B\u044C\u0437\u0443\u044E\u0442\u0441\u044F \u0438\u0437 \u0448\u0442\u0430\u0442\u0430"), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, puNum(d.users)), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, "\u0438\u0437 ", puNum(d.head), " \u0440\u0430\u0431\u043E\u0442\u0430\u044E\u0449\u0438\u0445 \xB7 ", puPct(d.reach))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, "\u0410\u043A\u0442\u0438\u0432\u043D\u044B \u0437\u0430 30 \u0434\u043D\u0435\u0439"), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, puNum(d.active30)), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, "\u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u043E\u0432 \u0438\u0437 \u0448\u0442\u0430\u0442\u0430")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, "\u041D\u0435 \u0438\u0437 \u0448\u0442\u0430\u0442\u0430"), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, puNum(d.other.users)), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, "\u0434\u0440\u0443\u0433\u0438\u0435 \u043F\u043E\u0434\u0440\u0430\u0437\u0434\u0435\u043B\u0435\u043D\u0438\u044F \xB7 ", puNum(d.other.active30), " \u0437\u0430 30 \u0434\u043D\u0435\u0439")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, "\u0412\u043E\u043F\u0440\u043E\u0441\u043E\u0432 \u0418\u0418 \u043E\u0442 \u0448\u0442\u0430\u0442\u0430"), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, puNum(d.units.reduce((a, u) => a + u.ai, 0))), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, "\u0437\u0430\u0434\u0430\u0432\u0430\u043B\u0438 ", puNum(d.units.reduce((a, u) => a + u.ai_users, 0)), " \u0447\u0435\u043B."))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0445\u0432\u0430\u0442 \u043F\u043E \u043F\u043E\u0434\u0440\u0430\u0437\u0434\u0435\u043B\u0435\u043D\u0438\u044F\u043C \xB7 \u0434\u043E\u043B\u044F \u0440\u0430\u0431\u043E\u0442\u0430\u044E\u0449\u0438\u0445 \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u043E\u0432, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u043F\u043E\u043B\u044C\u0437\u0443\u044E\u0442\u0441\u044F"), /*#__PURE__*/React.createElement("span", null, "\u0432\u0441\u0435\u0433\u043E \u0437\u0430 \u0432\u0441\u0451 \u0432\u0440\u0435\u043C\u044F")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tblwrap"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "pu-tbl pu-reach"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, lab), /*#__PURE__*/React.createElement("th", null, "\u0428\u0442\u0430\u0442"), /*#__PURE__*/React.createElement("th", null, "\u041F\u043E\u043B\u044C\u0437\u0443\u044E\u0442\u0441\u044F"), /*#__PURE__*/React.createElement("th", {
-    className: "pu-reach-bar"
-  }, "\u041E\u0445\u0432\u0430\u0442"), /*#__PURE__*/React.createElement("th", null, "\u0410\u043A\u0442\u0438\u0432\u043D\u044B 30 \u0434\u043D"), /*#__PURE__*/React.createElement("th", null, "\u0412\u043E\u043F\u0440\u043E\u0441\u044B \u0418\u0418"), /*#__PURE__*/React.createElement("th", null, "\u041F\u043E\u0441\u0442\u043E\u044F\u043D\u043D\u044B\u0435"), /*#__PURE__*/React.createElement("th", null, "\u0427\u0430\u0441\u044B"))), /*#__PURE__*/React.createElement("tbody", null, d.units.map(u => /*#__PURE__*/React.createElement("tr", {
-    key: u.code
-  }, /*#__PURE__*/React.createElement("td", {
-    title: u.code && u.code !== "-" ? `номер ${u.code}` : "без номера"
-  }, u.name), /*#__PURE__*/React.createElement("td", {
-    className: "tnum",
-    title: u.head_set ? `задано отдельно; по выгрузке — ${u.head_roster}` : undefined
-  }, u.head), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, u.users), /*#__PURE__*/React.createElement("td", {
-    className: "pu-reach-bar"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "pu-rb"
-  }, /*#__PURE__*/React.createElement("i", {
-    style: {
-      width: Math.round((u.reach || 0) / maxR * 100) + "%"
-    }
-  })), /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, puPct(u.reach))), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, u.active30), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, u.ai), /*#__PURE__*/React.createElement("td", {
-    className: "tnum",
-    title: "\u0437\u0430\u0445\u043E\u0434\u0438\u043B\u0438 5 \u0438 \u0431\u043E\u043B\u044C\u0448\u0435 \u0440\u0430\u0437\u043D\u044B\u0445 \u0434\u043D\u0435\u0439"
-  }, u.regular), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, u.hours.toLocaleString("ru")))), /*#__PURE__*/React.createElement("tr", {
-    className: "pu-reach-tot"
-  }, /*#__PURE__*/React.createElement("td", null, "\u0418\u0442\u043E\u0433\u043E"), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, d.head), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, d.users), /*#__PURE__*/React.createElement("td", {
-    className: "pu-reach-bar"
-  }, /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, puPct(d.reach))), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, d.active30), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, d.units.reduce((a, u) => a + u.ai, 0)), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, d.units.reduce((a, u) => a + u.regular, 0)), /*#__PURE__*/React.createElement("td", {
-    className: "tnum"
-  }, Math.round(d.units.reduce((a, u) => a + u.hours, 0)).toLocaleString("ru")))))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-grid2 top"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-bars-sel"
-  }, d.roles.map(r => /*#__PURE__*/React.createElement("div", {
-    className: "pu-bar-row",
-    key: r.role
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "lb"
-  }, r.role), /*#__PURE__*/React.createElement("span", {
-    className: "tr"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "fl",
-    style: {
-      width: Math.round((r.reach || 0) * 100) + "%"
-    }
-  })), /*#__PURE__*/React.createElement("span", {
-    className: "vv"
-  }, r.users, " \u0438\u0437 ", r.head, " \xB7 ", puPct(r.reach))))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-note"
-  }, "\u0421\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A \u043F\u043E\u0434\u0440\u0430\u0437\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u2014 \u0442\u0430\u0431\u0435\u043B\u044C\u043D\u044B\u0439 \u043D\u043E\u043C\u0435\u0440 \u0432 \u043B\u043E\u0433\u0438\u043D\u0435 \u0441\u043E\u0432\u043F\u0430\u043B \u0441\u043E \u0448\u0442\u0430\u0442\u043E\u043C (", d.matched.tab, ") \u0438\u043B\u0438 \u0441\u043E\u0432\u043F\u0430\u043B\u0438 \u0438\u043C\u044F \u0438 \u0444\u0430\u043C\u0438\u043B\u0438\u044F (", d.matched.name, ").", d.head_set ? /*#__PURE__*/React.createElement(React.Fragment, null, "\u0427\u0438\u0441\u043B\u0435\u043D\u043D\u043E\u0441\u0442\u044C \u0448\u0442\u0430\u0442\u0430 ", d.head_set, " ", plural(d.head_set, "подразделения", "подразделений", "подразделений"), " \u0437\u0430\u0434\u0430\u043D\u0430 \u043E\u0442\u0434\u0435\u043B\u044C\u043D\u043E (\u043D\u0430\u0432\u0435\u0434\u0438\u0442\u0435 \u043D\u0430 \u0447\u0438\u0441\u043B\u043E \u2014 \u043F\u043E \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u0435), \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u044B\u0445 \u2014 \u043F\u043E \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u0435 \u0431\u0435\u0437 \u0443\u0432\u043E\u043B\u0435\u043D\u043D\u044B\u0445.") : "Штат — без уволенных.", " \u0421\u043B\u0443\u0436\u0435\u0431\u043D\u044B\u0435 \u0443\u0447\u0451\u0442\u043A\u0438 \u043D\u0435 \u0441\u0447\u0438\u0442\u0430\u044E\u0442\u0441\u044F. \u0428\u0442\u0430\u0442 \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D ", new Date(d.loaded_at).toLocaleDateString("ru"), ".")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-reach-act"
-  }, pick, msg && /*#__PURE__*/React.createElement("span", {
-    className: "pu-note"
-  }, msg))));
-}
-function PuCosts() {
-  const [d, setD] = useState(null),
-    [err, setErr] = useState(false);
-  const load = () => apiFetch("/api/admin/pulse/costs").then(x => {
-    setD(x);
-    setErr(false);
-  }).catch(() => setErr(true));
-  useEffect(() => {
-    load();
-    const t = setInterval(() => {
-      if (!document.hidden) load();
-    }, 600000);
-    return () => clearInterval(t);
-  }, []);
-  if (err && !d) return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-empty"
-  }, "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u043E\u043B\u0443\u0447\u0438\u0442\u044C \u0442\u0440\u0430\u0442\u044B. ", /*#__PURE__*/React.createElement("button", {
-    className: "pu-link",
-    onClick: load
-  }, "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C")));
-  if (!d) return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement(Skel, {
-    h: 160
-  }));
-  if (!d.configured) return /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0422\u0440\u0430\u0442\u044B \u043D\u0430 \u043C\u043E\u0434\u0435\u043B\u0438")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-empty"
-  }, "\u0423\u0447\u0451\u0442 \u0442\u0440\u0430\u0442 \u043D\u0435 \u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0451\u043D: \u043D\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0435 \u043D\u0443\u0436\u043D\u044B \u0430\u0434\u0440\u0435\u0441 \u0441\u0435\u0440\u0432\u0438\u0441\u0430 \u0443\u0447\u0451\u0442\u0430 \u0440\u0430\u0441\u0445\u043E\u0434\u043E\u0432 \u043E\u0431\u043B\u0430\u043A\u0430 \u0438 \u0442\u043E\u043A\u0435\u043D \u043E\u0442\u0434\u0435\u043B\u0430 (\u043F\u0435\u0440\u0435\u043C\u0435\u043D\u043D\u044B\u0435 CLOUD_COSTS_*)."));
-  const mo = d.month,
-    mname = puMonth(mo.period);
-  const curM = mo.period;
-  // текущий месяц в своём масштабе: разовый прогон прошлого месяца (разметка
-  // всего корпуса) сжимал бы его в полоски; в первые дни месяца — и конец прошлого
-  const cur = d.days.filter(x => x.day.startsWith(curM));
-  const shown = cur.length >= 10 ? cur : d.days.slice(-Math.max(cur.length, 14));
-  const dmax = Math.max(...shown.map(x => x.dept), 1);
-  const firstApp = (d.months.find(x => x.app > 0) || {}).month;
-  const mmax = Math.max(...d.models.map(x => x.month), 1);
-  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "pu-tiles pu-tiles4"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, "\u041E\u0442\u0434\u0435\u043B \xB7 ", mname), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, puRub(mo.dept)), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, mo.threshold ? /*#__PURE__*/React.createElement(React.Fragment, null, puPct(mo.util, 1), " \u043B\u0438\u043C\u0438\u0442\u0430 ", puRub(mo.threshold)) : "лимит не задан"), mo.threshold && /*#__PURE__*/React.createElement("div", {
-    className: "pu-lim",
-    title: `прогноз на месяц по темпу — ${puRub(mo.forecast)}`
-  }, /*#__PURE__*/React.createElement("i", {
-    style: {
-      width: Math.min(100, mo.util * 100) + "%"
-    }
-  }), /*#__PURE__*/React.createElement("u", {
-    style: {
-      left: Math.min(100, mo.util_forecast * 100) + "%"
-    }
-  }))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, "\u041F\u0440\u043E\u0433\u043D\u043E\u0437 \u043E\u0442\u0434\u0435\u043B\u0430 \u043D\u0430 \u043C\u0435\u0441\u044F\u0446"), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, puRub(mo.forecast)), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, mo.threshold ? /*#__PURE__*/React.createElement(React.Fragment, null, puPct(mo.util_forecast, 1), " \u043B\u0438\u043C\u0438\u0442\u0430 \u043F\u043E \u0442\u0435\u043C\u043F\u0443") : "по темпу трат")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, "AuditLens \xB7 ", mname), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, puRub(mo.app)), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, puPct(mo.app_share), " \u0442\u0440\u0430\u0442 \u043E\u0442\u0434\u0435\u043B\u0430 \xB7 \u043F\u0440\u043E\u0433\u043D\u043E\u0437 ", puRub(mo.app_forecast))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, "AuditLens \u0432 \u043E\u0431\u044B\u0447\u043D\u044B\u0439 \u0434\u0435\u043D\u044C"), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, puRub(mo.app_median_day)), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, "\u043C\u0435\u0434\u0438\u0430\u043D\u0430 \u0437\u0430 4 \u043D\u0435\u0434\u0435\u043B\u0438 \u2014 \u0440\u0430\u0437\u043E\u0432\u044B\u0435 \u043F\u0440\u043E\u0433\u043E\u043D\u044B \u0435\u0451 \u043F\u043E\u0447\u0442\u0438 \u043D\u0435 \u0434\u0432\u0438\u0433\u0430\u044E\u0442"))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-grid2 top wide"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u043E \u0434\u043D\u044F\u043C \xB7 AuditLens \u0438 \u0434\u0440\u0443\u0433\u0438\u0435 \u0437\u0430\u0434\u0430\u0447\u0438 \u043E\u0442\u0434\u0435\u043B\u0430"), /*#__PURE__*/React.createElement("span", null, d.as_of ? `данные облака на ${new Date(d.as_of).toLocaleString("ru", {
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit"
-  })}` : "")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-days",
-    role: "img",
-    "aria-label": "\u0422\u0440\u0430\u0442\u044B \u043F\u043E \u0434\u043D\u044F\u043C: AuditLens \u0438 \u0434\u0440\u0443\u0433\u0438\u0435 \u0437\u0430\u0434\u0430\u0447\u0438 \u043E\u0442\u0434\u0435\u043B\u0430"
-  }, shown.map(x => /*#__PURE__*/React.createElement("div", {
-    key: x.day,
-    className: "pu-dcol" + (x.day.startsWith(curM) ? "" : " prev"),
-    "data-tip": `${new Date(x.day + "T00:00:00").toLocaleDateString("ru", {
-      day: "numeric",
-      month: "long",
-      weekday: "short"
-    })}: отдел ${puRub(x.dept)}, AuditLens ${puRub(x.app)}`
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "o",
-    style: {
-      height: Math.max(0, (x.dept - x.app) / dmax * 100) + "%"
-    }
-  }), /*#__PURE__*/React.createElement("span", {
-    className: "a",
-    style: {
-      height: x.app / dmax * 100 + "%"
-    }
-  })))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-note"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "pu-sw a"
-  }), "AuditLens ", /*#__PURE__*/React.createElement("span", {
-    className: "pu-sw o"
-  }), "\u0434\u0440\u0443\u0433\u0438\u0435 \u0437\u0430\u0434\u0430\u0447\u0438 \u043E\u0442\u0434\u0435\u043B\u0430", shown.length > cur.length ? " · бледнее — прошлый месяц" : "", " \xB7 \u043D\u0430\u0432\u0435\u0434\u0438\u0442\u0435 \u043D\u0430 \u0441\u0442\u043E\u043B\u0431\u0435\u0446")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041C\u043E\u0434\u0435\u043B\u0438 AuditLens \xB7 ", mname), /*#__PURE__*/React.createElement("span", null, "\u043F\u0440\u043E\u0448\u043B\u044B\u0439 \u043C\u0435\u0441\u044F\u0446")), d.models.length ? /*#__PURE__*/React.createElement("div", {
-    className: "pu-bars-sel pu-models"
-  }, d.models.map(x => /*#__PURE__*/React.createElement("div", {
-    className: "pu-bar-row",
-    key: x.model
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "lb",
-    title: x.model
-  }, x.model), /*#__PURE__*/React.createElement("span", {
-    className: "tr"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "fl",
-    style: {
-      width: Math.round(x.month / mmax * 100) + "%"
-    }
-  })), /*#__PURE__*/React.createElement("span", {
-    className: "vv"
-  }, puRub(x.month), " \xB7 ", puRub(x.prev))))) : /*#__PURE__*/React.createElement("div", {
-    className: "pu-empty"
-  }, "\u0412 \u044D\u0442\u043E\u043C \u043C\u0435\u0441\u044F\u0446\u0435 \u0442\u0440\u0430\u0442 AuditLens \u0435\u0449\u0451 \u043D\u0435\u0442."))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-card",
-    style: {
-      marginTop: 12
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u043E \u043C\u0435\u0441\u044F\u0446\u0430\u043C"), /*#__PURE__*/React.createElement("span", null, d.months.length ? (() => {
-    const [y, m] = d.months[0].month.split("-").map(Number);
-    return `история с ${PU_MON_GEN[m - 1]} ${y}`;
-  })() : "")), /*#__PURE__*/React.createElement("table", {
-    className: "pu-tbl"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u041C\u0435\u0441\u044F\u0446"), /*#__PURE__*/React.createElement("th", null, "\u041E\u0442\u0434\u0435\u043B"), /*#__PURE__*/React.createElement("th", null, "AuditLens"), /*#__PURE__*/React.createElement("th", null, "\u0414\u043E\u043B\u044F AuditLens"))), /*#__PURE__*/React.createElement("tbody", null, d.months.slice().reverse().map(x => {
-    const shared = firstApp && x.month < firstApp;
-    return /*#__PURE__*/React.createElement("tr", {
-      key: x.month
-    }, /*#__PURE__*/React.createElement("td", null, puMonth(x.month)), /*#__PURE__*/React.createElement("td", {
-      className: "tnum"
-    }, puRub(x.dept)), /*#__PURE__*/React.createElement("td", {
-      className: "tnum",
-      title: shared ? "приложение работало на общем ключе отдела — его траты не выделены" : undefined
-    }, shared ? "—" : puRub(x.app)), /*#__PURE__*/React.createElement("td", {
-      className: "tnum"
-    }, shared || !x.dept ? "—" : puPct(x.app / x.dept)));
-  }))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-note"
-  }, "AuditLens \u2014 \u043A\u043B\u044E\u0447\u0438 \u043F\u0440\u0438\u043B\u043E\u0436\u0435\u043D\u0438\u044F \u0432 \u0443\u0447\u0451\u0442\u0435 \u0440\u0430\u0441\u0445\u043E\u0434\u043E\u0432 \u043E\u0431\u043B\u0430\u043A\u0430; \u0434\u043E \u043F\u0435\u0440\u0435\u0445\u043E\u0434\u0430 \u043D\u0430 \u0441\u0432\u043E\u0439 \u043A\u043B\u044E\u0447 \u043F\u0440\u0438\u043B\u043E\u0436\u0435\u043D\u0438\u0435 \u0434\u0435\u043B\u0438\u043B\u043E \u043E\u0431\u0449\u0438\u0439 \u043A\u043B\u044E\u0447 \u043E\u0442\u0434\u0435\u043B\u0430, \u0438 \u0435\u0433\u043E \u0442\u0440\u0430\u0442\u044B \u0437\u0434\u0435\u0441\u044C \u043D\u0435 \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u044B.")));
-}
-
-// ══ ИТОГИ: пользуются ли по направлениям и доходит ли до результата ═════════
-// Ответ на вопросы руководства к отчётам: сколько
-// предложений и сколько сделано, какие запросы не могут дать результата,
-// запросы по направлениям аудита. Цифры живые; направление и пригодность
-// запроса размечает модель каждую ночь (web/outcomes.py).
+// «Итоги»: периоды и пригодность запросов (размечает модель каждую ночь, web/outcomes.py)
 const OC_PER = [[0, "Всё время"], [90, "90 дн"], [30, "30 дн"], [7, "7 дн"]];
-const OC_Q = [["ok", "Годные", "var(--pos)"], ["followup", "Уточнения к ответу", "color-mix(in oklab,var(--pos),transparent 55%)"], ["reference", "Простые справки", "color-mix(in oklab,var(--ink-3),transparent 30%)"], ["template", "Готовые карточки (до 25.09)", "var(--hair-2)"], ["vague", "Слишком общие", "var(--warn)"], ["internal", "Нужны закрытые данные", "color-mix(in oklab,var(--warn),var(--neg))"], ["personal", "Персональные данные", "var(--neg)"], ["offtopic", "Вне темы", "color-mix(in oklab,var(--neg),transparent 45%)"], ["test", "Тест, случайный ввод", "color-mix(in oklab,var(--neg),transparent 70%)"]];
+const OC_Q = [["ok", "Годные", "var(--viz)"], ["followup", "Уточнения к ответу", "var(--viz-2)"], ["reference", "Простые справки", "var(--viz-3)"], ["template", "Готовые карточки (до 25.09)", "var(--hair-2)"], ["vague", "Слишком общие", "var(--warn)"], ["internal", "Нужны закрытые данные", "color-mix(in oklab,var(--warn),var(--neg))"], ["personal", "Персональные данные", "var(--neg)"], ["offtopic", "Вне темы", "color-mix(in oklab,var(--neg),transparent 45%)"], ["test", "Тест, случайный ввод", "color-mix(in oklab,var(--neg),transparent 70%)"]];
 const OC_QL = Object.fromEntries(OC_Q.map(([k, l]) => [k, l]));
 const OC_BAD = ["vague", "internal", "personal", "offtopic", "test"];
 const ocDate = s => s ? new Date(s).toLocaleDateString("ru", {
@@ -23939,477 +20764,1693 @@ const ocDate = s => s ? new Date(s).toLocaleDateString("ru", {
   month: "2-digit",
   year: "2-digit"
 }) : "";
-// изменение к прошлому такому же периоду; inv — рост это плохо
-const ocDelta = (cur, prev, days, pp, inv) => {
-  if (!days || prev == null || cur == null) return null;
-  const d = pp ? Math.round((cur - prev) * 1000) / 10 : cur - prev;
-  if (!d) return /*#__PURE__*/React.createElement("span", {
-    className: "oc-d"
-  }, "\u043A\u0430\u043A \u0432 \u043F\u0440\u043E\u0448\u043B\u044B\u0435 ", days, " \u0434\u043D");
-  const good = inv ? d < 0 : d > 0;
-  return /*#__PURE__*/React.createElement("span", {
-    className: "oc-d " + (good ? "good" : "bad")
-  }, d > 0 ? "+" : "−", pp ? Math.abs(d).toLocaleString("ru") + " п. п." : puNum(Math.abs(d)), " \u043A \u043F\u0440\u043E\u0448\u043B\u044B\u043C ", days, " \u0434\u043D");
+
+// разделы «Пульса» и прежние ключи вкладок: уведомления сервера (#pulse?tab=inbox,
+// #pulse?tab=ai) и сохранённый выбор в localStorage живут дольше старого интерфейса
+const PU2_SECTIONS = [["overview", "Сводка"], ["people", "Люди"], ["quality", "Качество ИИ"], ["inbox", "Обращения"], ["systems", "Системы"], ["results", "Итоги"]];
+const PU_ALIAS = {
+  people: "people",
+  outcomes: "results",
+  reach: "results",
+  reports: "quality",
+  ai: "quality",
+  inbox: "inbox",
+  data: "systems",
+  tech: "systems",
+  overview: "overview",
+  quality: "quality",
+  systems: "systems",
+  results: "results"
 };
-function PuOutcomes({
-  isOwner,
-  withMe
-}) {
-  const [days, setDays] = useState(() => {
-    try {
-      const v = +localStorage.getItem("al-pu-oc-days");
-      return [0, 7, 30, 90].includes(v) ? v : 0;
-    } catch {
-      return 0;
-    }
-  });
-  const [d, setD] = useState(null),
-    [err, setErr] = useState(false);
-  const [busy, setBusy] = useState(false),
-    [msg, setMsg] = useState("");
-  const [badF, setBadF] = useState(""),
-    [allBad, setAllBad] = useState(false),
-    [allT, setAllT] = useState(false);
-  const load = () => apiFetch(`/api/admin/pulse/outcomes?days=${days}${puMe(withMe)}`).then(x => {
-    setD(x);
-    setErr(false);
-  }).catch(() => setErr(true));
-  useEffect(() => {
-    setD(null);
-    load();
-  }, [days, withMe]); // eslint-disable-line
-  const pick = v => {
-    setDays(v);
-    try {
-      localStorage.setItem("al-pu-oc-days", String(v));
-    } catch {}
-  };
-  const relabel = () => {
-    setBusy(true);
-    setMsg("");
-    apiFetch("/api/admin/pulse/outcomes/label", {
-      method: "POST"
-    }).then(r => {
-      setMsg(r.started ? `Разметка запущена: ${puNum(r.pending)} ${plural(r.pending, "запрос", "запроса", "запросов")} — обычно несколько минут, затем обновите вкладку.` : "Разметка уже идёт.");
-    }).catch(() => setMsg("Не запустилось — попробуйте ещё раз.")).finally(() => setBusy(false));
-  };
-  const bar = /*#__PURE__*/React.createElement("div", {
-    className: "oc-bar"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "seg",
-    role: "group",
-    "aria-label": "\u041F\u0435\u0440\u0438\u043E\u0434 \u0438\u0442\u043E\u0433\u043E\u0432"
-  }, OC_PER.map(([v, l]) => /*#__PURE__*/React.createElement("button", {
-    key: v,
-    className: "seg-btn" + (days === v ? " on" : ""),
-    "aria-pressed": days === v,
-    onClick: () => pick(v)
-  }, l))), /*#__PURE__*/React.createElement("span", {
-    className: "sp"
-  }), /*#__PURE__*/React.createElement("a", {
-    className: "btn btn-ghost btn-sm",
-    href: `/api/admin/pulse/outcomes.xlsx?days=${days}${puMe(withMe)}`,
-    download: true
-  }, "\u0421\u043A\u0430\u0447\u0430\u0442\u044C Excel"), isOwner && /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    className: "btn btn-ghost btn-sm",
-    disabled: busy,
-    onClick: relabel,
-    title: "\u0440\u0430\u0437\u043C\u0435\u0442\u0438\u0442\u044C \u043D\u043E\u0432\u044B\u0435 \u0437\u0430\u043F\u0440\u043E\u0441\u044B \u0441\u0435\u0439\u0447\u0430\u0441, \u043D\u0435 \u0434\u043E\u0436\u0438\u0434\u0430\u044F\u0441\u044C \u043D\u043E\u0447\u0438"
-  }, busy ? "Запускаю…" : "Разметить новые"));
-  if (err && !d) return /*#__PURE__*/React.createElement(React.Fragment, null, bar, /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-empty"
-  }, "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u043E\u0441\u0447\u0438\u0442\u0430\u0442\u044C \u0438\u0442\u043E\u0433\u0438. ", /*#__PURE__*/React.createElement("button", {
-    className: "pu-link",
-    onClick: load
-  }, "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C"))));
-  if (!d) return /*#__PURE__*/React.createElement(React.Fragment, null, bar, /*#__PURE__*/React.createElement("div", {
-    className: "pu-tiles pu-tiles4"
-  }, [0, 1, 2, 3].map(i => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    className: "pu-tile"
-  }, /*#__PURE__*/React.createElement(Skel, {
-    h: 54
-  })))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement(Skel, {
-    h: 260
-  })));
-  const f = d.funnel,
-    qa = d.quality.ai,
-    qv = d.quality.vuln,
-    pv = d.prev || {},
-    perL = days ? `за ${days} дн` : "за всё время";
-  const items = f.case_reports + f.case_reviews + f.case_documents;
-  const maxAi = Math.max(...d.dirs.map(x => x.ai), 1);
-  const lab = d.labels || {},
-    lr = lab.last_run;
-  const bad = d.bad_examples.filter(b => !badF || b.quality === badF);
-  const badN = Object.fromEntries(OC_BAD.map(k => [k, d.bad_examples.filter(b => b.quality === k).length]));
-  const tk = d.tickets,
-    src = d.sources;
-  const revTip = p => [p.case && `жалобы в аудит-делах — ${p.case}`, p.view && `смотрели продукт — ${p.view}`, p.export && `выгрузки в Excel — ${p.export}`, p.sub && `подписки — ${p.sub}`].filter(Boolean).join(" · ") || undefined;
-  const qBlock = (name, q) => /*#__PURE__*/React.createElement("div", {
-    className: "oc-sec"
-  }, /*#__PURE__*/React.createElement("h4", null, name, /*#__PURE__*/React.createElement("span", null, puNum(q.total), " ", plural(q.total, "запрос", "запроса", "запросов"))), /*#__PURE__*/React.createElement("div", {
-    className: "oc-stack",
-    role: "img",
-    "aria-label": `${name}: годные ${puPct(q.good_share)}, не дают результата ${puPct(q.bad_share)}`
-  }, OC_Q.filter(([k]) => q.counts[k]).map(([k, l, c]) => /*#__PURE__*/React.createElement("i", {
-    key: k,
-    style: {
-      width: q.counts[k] / q.total * 100 + "%",
-      background: c
-    },
-    "data-tip": `${l}: ${q.counts[k]}`
-  }))), /*#__PURE__*/React.createElement("div", {
-    className: "oc-leg"
-  }, OC_Q.filter(([k]) => q.counts[k]).map(([k, l, c]) => /*#__PURE__*/React.createElement(React.Fragment, {
-    key: k
-  }, /*#__PURE__*/React.createElement("span", {
-    className: OC_BAD.includes(k) ? "bad" : ""
-  }, /*#__PURE__*/React.createElement("i", {
-    className: "sw",
-    style: {
-      background: c
-    }
-  }), l), /*#__PURE__*/React.createElement("span", {
-    className: "n"
-  }, puNum(q.counts[k])), /*#__PURE__*/React.createElement("span", {
-    className: "p"
-  }, puPct(q.counts[k] / q.total))))));
-  return /*#__PURE__*/React.createElement(React.Fragment, null, bar, /*#__PURE__*/React.createElement("div", {
-    className: "pu-tiles pu-tiles4"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, "\u0412\u043E\u043F\u0440\u043E\u0441\u044B \u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u0443"), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, puNum(f.questions)), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, puNum(f.askers), " \u0447\u0435\u043B. \xB7 ", perL, ocDelta(f.questions, pv.questions, days))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, "\u0417\u0430\u043F\u0440\u043E\u0441\u044B \u0432 \xAB\u0410\u0443\u0434\u0438\u0442\u0435 \u0443\u044F\u0437\u0432\u0438\u043C\u043E\u0441\u0442\u0435\u0439\xBB"), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, puNum(f.vuln_queries)), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, puNum(f.vuln_users), " \u0447\u0435\u043B. \xB7 \u0447\u0430\u0442 \u0438 \u043F\u043E\u0438\u0441\u043A \u0441\u0445\u0435\u043C", ocDelta(f.vuln_queries, pv.vuln_queries, days))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, "\u0413\u043E\u0434\u043D\u044B\u0435 \u0432\u043E\u043F\u0440\u043E\u0441\u044B \u0418\u0418"), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, puPct(qa.good_share)), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, "\u043D\u0435 \u0434\u0430\u044E\u0442 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u0430 \u2014 ", puPct(qa.bad_share), ocDelta(qa.good_share, pv.good_share, days, true))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, "\u0410\u0443\u0434\u0438\u0442-\u0434\u0435\u043B\u0430"), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, puNum(f.cases)), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, puNum(f.case_owners), " ", plural(f.case_owners, "аудитор", "аудитора", "аудиторов"), " \xB7 ", puNum(items), " \u043C\u0430\u0442\u0435\u0440\u0438\u0430\u043B\u043E\u0432", ocDelta(f.cases, pv.cases, days)))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0417\u0430\u043F\u0440\u043E\u0441\u044B \u043F\u043E \u043D\u0430\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0438\u044F\u043C \u0430\u0443\u0434\u0438\u0442\u0430 \xB7 ", perL), /*#__PURE__*/React.createElement("span", null, "\u0447\u0438\u0441\u043B\u043E \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \xB7 \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u0447\u0435\u043B\u043E\u0432\u0435\u043A")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tblwrap"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "pu-tbl oc-tbl"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u041D\u0430\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0438\u0435"), /*#__PURE__*/React.createElement("th", {
-    className: "oc-ai"
-  }, "\u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A"), /*#__PURE__*/React.createElement("th", null, "\u0410\u0443\u0434\u0438\u0442 \u043E\u0442\u0437\u044B\u0432\u043E\u0432"), /*#__PURE__*/React.createElement("th", null, "\u0410\u0443\u0434\u0438\u0442 \u0443\u044F\u0437\u0432\u0438\u043C\u043E\u0441\u0442\u0435\u0439"), /*#__PURE__*/React.createElement("th", null, "\u0410\u0443\u0434\u0438\u0442-\u0434\u0435\u043B\u0430"))), /*#__PURE__*/React.createElement("tbody", null, d.dirs.map(x => /*#__PURE__*/React.createElement("tr", {
-    key: x.code,
-    className: x.code === "other" ? "oc-oth" : ""
-  }, /*#__PURE__*/React.createElement("td", {
-    title: x.name
-  }, x.name), /*#__PURE__*/React.createElement("td", {
-    className: "oc-ai"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "pu-rb"
-  }, /*#__PURE__*/React.createElement("i", {
-    style: {
-      width: Math.round(x.ai / maxAi * 100) + "%"
-    }
-  })), x.ai ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, puNum(x.ai)), /*#__PURE__*/React.createElement("span", {
-    className: "oc-u"
-  }, x.ai_users, " \u0447\u0435\u043B.")) : /*#__PURE__*/React.createElement("span", {
-    className: "z"
-  }, "0")), /*#__PURE__*/React.createElement("td", {
-    className: x.rev ? "" : "z",
-    "data-tip": revTip(x.rev_parts)
-  }, x.rev ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, puNum(x.rev)), /*#__PURE__*/React.createElement("span", {
-    className: "oc-u"
-  }, x.rev_users, " \u0447\u0435\u043B.")) : "0"), /*#__PURE__*/React.createElement("td", {
-    className: x.vuln ? "" : "z"
-  }, x.vuln ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, puNum(x.vuln)), /*#__PURE__*/React.createElement("span", {
-    className: "oc-u"
-  }, x.vuln_users, " \u0447\u0435\u043B.")) : "0"), /*#__PURE__*/React.createElement("td", {
-    className: x.cases ? "" : "z"
-  }, x.cases ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, x.cases), /*#__PURE__*/React.createElement("span", {
-    className: "oc-u"
-  }, x.cases_users, " \u0447\u0435\u043B.")) : "0")))))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-note"
-  }, "\u041D\u0430\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0438\u0435 \u0437\u0430\u043F\u0440\u043E\u0441\u0430 \u043E\u043F\u0440\u0435\u0434\u0435\u043B\u044F\u0435\u0442 \u043C\u043E\u0434\u0435\u043B\u044C \u043F\u043E \u0442\u0435\u043A\u0441\u0442\u0443; \u043E\u0434\u0438\u043D \u0437\u0430\u043F\u0440\u043E\u0441 \u043C\u043E\u0436\u0435\u0442 \u043E\u0442\u043D\u043E\u0441\u0438\u0442\u044C\u0441\u044F \u043A \u043D\u0435\u0441\u043A\u043E\u043B\u044C\u043A\u0438\u043C \u043D\u0430\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0438\u044F\u043C. \xAB\u0410\u0443\u0434\u0438\u0442 \u043E\u0442\u0437\u044B\u0432\u043E\u0432\xBB \u2014 \u0436\u0430\u043B\u043E\u0431\u044B, \u0434\u043E\u0431\u0430\u0432\u043B\u0435\u043D\u043D\u044B\u0435 \u0432 \u0430\u0443\u0434\u0438\u0442-\u0434\u0435\u043B\u0430 (\u043D\u0430\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0438\u0435 \u2014 \u043F\u043E \u0442\u0435\u043C\u0435 \u0434\u0435\u043B\u0430), \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u0438 \u0432 Excel \u0438 \u043F\u043E\u0434\u043F\u0438\u0441\u043A\u0438 \u043D\u0430 \u0441\u0438\u0433\u043D\u0430\u043B\u044B \u0441 \u0443\u043A\u0430\u0437\u0430\u043D\u043D\u044B\u043C \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u043E\u043C", d.review_view_since ? /*#__PURE__*/React.createElement(React.Fragment, null, ", \u0430 \u0441 ", ocDate(d.review_view_since), " \u2014 \u0438 \u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440\u044B \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0430 \u0432 \u0444\u0438\u043B\u044C\u0442\u0440\u0435 \u0432\u043A\u043B\u0430\u0434\u043A\u0438 (\u043E\u0434\u0438\u043D \u0447\u0435\u043B\u043E\u0432\u0435\u043A \u0438 \u043F\u0440\u043E\u0434\u0443\u043A\u0442 \u2014 \u043E\u0434\u0438\u043D \u0440\u0430\u0437 \u0432 \u0434\u0435\u043D\u044C)") : /*#__PURE__*/React.createElement(React.Fragment, null, "; \u043A\u0430\u043A\u043E\u0439 \u043F\u0440\u043E\u0434\u0443\u043A\u0442 \u0441\u043C\u043E\u0442\u0440\u044F\u0442 \u0432 \u0444\u0438\u043B\u044C\u0442\u0440\u0435 \u0432\u043A\u043B\u0430\u0434\u043A\u0438, \u0437\u0430\u043F\u0438\u0441\u044B\u0432\u0430\u0435\u0442\u0441\u044F \u0441 20.10 \u2014 \u043F\u043E\u044F\u0432\u0438\u0442\u0441\u044F \u0437\u0434\u0435\u0441\u044C \u0441 \u043F\u0435\u0440\u0432\u044B\u043C\u0438 \u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440\u0430\u043C\u0438"), ". \u041D\u0430\u0432\u0435\u0434\u0438\u0442\u0435 \u043D\u0430 \u0447\u0438\u0441\u043B\u043E \u2014 \u0438\u0437 \u0447\u0435\u0433\u043E \u043E\u043D\u043E \u0441\u043A\u043B\u0430\u0434\u044B\u0432\u0430\u0435\u0442\u0441\u044F.", " ", "\xAB\u0410\u0443\u0434\u0438\u0442-\u0434\u0435\u043B\u0430\xBB \u2014 \u0434\u0435\u043B\u0430 \u043F\u043E \u0442\u0435\u043C\u0435 \u043D\u0430\u0437\u0432\u0430\u043D\u0438\u044F.")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-grid2 top pu-sec"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041A\u0430\u0447\u0435\u0441\u0442\u0432\u043E \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \xB7 ", perL), /*#__PURE__*/React.createElement("span", null, "\u0434\u0430\u0441\u0442 \u043B\u0438 \u0437\u0430\u043F\u0440\u043E\u0441 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442")), qBlock("ИИ-помощник", qa), qBlock("Аудит уязвимостей", qv), /*#__PURE__*/React.createElement("div", {
-    className: "pu-note"
-  }, "\u0413\u043E\u0434\u043D\u044B\u0435 \u2014 \u043F\u043E\u043D\u044F\u0442\u043D\u044B \u043F\u0440\u0435\u0434\u043C\u0435\u0442 \u0438 \u0446\u0435\u043B\u044C, \u043E\u0442\u0432\u0435\u0442 \u0435\u0441\u0442\u044C \u0432 \u043E\u0442\u043A\u0440\u044B\u0442\u044B\u0445 \u0434\u0430\u043D\u043D\u044B\u0445; \u0443\u0442\u043E\u0447\u043D\u0435\u043D\u0438\u044F \u2014 \u043E\u0442\u0432\u0435\u0442 \u043D\u0430 \u0432\u043E\u043F\u0440\u043E\u0441 \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u0430. \u041D\u0435 \u0434\u0430\u044E\u0442 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u0430 \u2014 \u0441\u043B\u0438\u0448\u043A\u043E\u043C \u043E\u0431\u0449\u0438\u0435, \u043D\u0443\u0436\u043D\u044B \u0437\u0430\u043A\u0440\u044B\u0442\u044B\u0435 \u0434\u0430\u043D\u043D\u044B\u0435 \u0431\u0430\u043D\u043A\u0430, \u043F\u0435\u0440\u0441\u043E\u043D\u0430\u043B\u044C\u043D\u044B\u0435 \u0434\u0430\u043D\u043D\u044B\u0435, \u0432\u043D\u0435 \u0442\u0435\u043C\u044B, \u0442\u0435\u0441\u0442. \u0421\u043F\u043E\u0440\u043D\u044B\u0435 \u0441\u043B\u0443\u0447\u0430\u0438 \u043F\u0435\u0440\u0435\u043F\u0440\u043E\u0432\u0435\u0440\u044F\u0435\u0442 \u0432\u0442\u043E\u0440\u0430\u044F \u043C\u043E\u0434\u0435\u043B\u044C.")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-card oc-fun"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0442 \u0437\u0430\u043F\u0440\u043E\u0441\u0430 \u043A \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u0443 \xB7 ", perL)), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0412\u043E\u043F\u0440\u043E\u0441\u044B \u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u0443", /*#__PURE__*/React.createElement("span", {
-    className: "sub"
-  }, puNum(f.askers), " \u0447\u0435\u043B. \xB7 \u0437\u0430\u043A\u0430\u0437\u043E\u0432 \u0433\u043B\u0443\u0431\u043E\u043A\u043E\u0433\u043E \u043E\u0442\u0447\u0451\u0442\u0430 \u2014 ", puNum(f.deep))), /*#__PURE__*/React.createElement("b", null, puNum(f.questions))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0442\u0432\u0435\u0442 \u043F\u043E\u043B\u0443\u0447\u0435\u043D", /*#__PURE__*/React.createElement("span", {
-    className: "sub"
-  }, "\u0443\u0447\u0451\u0442 \u0441 05.10 \xB7 \u043E\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u043B\u0438 \u0441\u0430\u043C\u0438 \u2014 ", f.runs_stopped, ", \u0441\u0431\u043E\u0435\u0432 \u2014 ", f.runs_failed)), /*#__PURE__*/React.createElement("b", null, f.runs_ok + f.runs_failed + f.runs_stopped ? puPct(f.runs_ok / (f.runs_ok + f.runs_failed + f.runs_stopped)) : "—")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0421\u043E\u0445\u0440\u0430\u043D\u0435\u043D\u043E \u043E\u0442\u0447\u0451\u0442\u043E\u0432", /*#__PURE__*/React.createElement("span", {
-    className: "sub"
-  }, puNum(f.report_users), " \u0447\u0435\u043B.")), /*#__PURE__*/React.createElement("b", null, puNum(f.reports))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0412\u0435\u0440\u043D\u0443\u043B\u0438\u0441\u044C \u043A \u043E\u0442\u0447\u0451\u0442\u0443", /*#__PURE__*/React.createElement("span", {
-    className: "sub"
-  }, "\u043E\u0442\u043A\u0440\u044B\u0432\u0430\u043B\u0438 \u0441\u043E\u0445\u0440\u0430\u043D\u0451\u043D\u043D\u044B\u0439 \u043E\u0442\u0447\u0451\u0442 \u0435\u0449\u0451 \u0440\u0430\u0437")), /*#__PURE__*/React.createElement("b", null, puNum(f.reopened))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u0435\u0440\u0435\u0441\u043B\u0430\u043B\u0438 \u043A\u043E\u043B\u043B\u0435\u0433\u0430\u043C", /*#__PURE__*/React.createElement("span", {
-    className: "sub"
-  }, puNum(f.shares), " ", plural(f.shares, "пересылка", "пересылки", "пересылок"))), /*#__PURE__*/React.createElement("b", null, puNum(f.shared))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041C\u0430\u0442\u0435\u0440\u0438\u0430\u043B\u044B \u0432 \u0430\u0443\u0434\u0438\u0442-\u0434\u0435\u043B\u0430\u0445", /*#__PURE__*/React.createElement("span", {
-    className: "sub"
-  }, "\u043E\u0442\u0447\u0451\u0442\u044B \u0418\u0418 \u2014 ", f.case_reports, ", \u0436\u0430\u043B\u043E\u0431\u044B \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432 \u2014 ", f.case_reviews, ", \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442\u044B \u2014 ", f.case_documents)), /*#__PURE__*/React.createElement("b", null, puNum(items))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0410\u0443\u0434\u0438\u0442-\u0434\u0435\u043B\u0430", /*#__PURE__*/React.createElement("span", {
-    className: "sub"
-  }, "\u0441\u0431\u043E\u0440 \u043C\u0430\u0442\u0435\u0440\u0438\u0430\u043B\u043E\u0432 \u2014 ", f.cases_collect, ", \u0432 \u0440\u0430\u0431\u043E\u0442\u0435 \u2014 ", f.cases_work, ", \u0441 \u0438\u0442\u043E\u0433\u043E\u0432\u044B\u043C \u0430\u043D\u0430\u043B\u0438\u0437\u043E\u043C \u2014 ", f.cases_analysed, ", \u043F\u0443\u0441\u0442\u044B\u0445 \u2014 ", f.cases_empty)), /*#__PURE__*/React.createElement("b", null, puNum(f.cases))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0412\u044B\u0433\u0440\u0443\u0437\u043A\u0438 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u0432 Excel", /*#__PURE__*/React.createElement("span", {
-    className: "sub"
-  }, puNum(f.export_users), " \u0447\u0435\u043B. \xB7 \u043F\u043E\u0434\u043F\u0438\u0441\u043E\u043A \u043D\u0430 \u0441\u0438\u0433\u043D\u0430\u043B\u044B \u2014 ", f.subs)), /*#__PURE__*/React.createElement("b", null, puNum(f.exports))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0442\u043C\u0435\u0442\u043A\u0438 \u044D\u043A\u0441\u043F\u0435\u0440\u0442\u043E\u0432 \u043F\u043E \u0441\u0445\u0435\u043C\u0430\u043C", /*#__PURE__*/React.createElement("span", {
-    className: "sub"
-  }, "\xAB\u0410\u0443\u0434\u0438\u0442 \u0443\u044F\u0437\u0432\u0438\u043C\u043E\u0441\u0442\u0435\u0439\xBB \xB7 \u0432\u044B\u0433\u0440\u0443\u0437\u043E\u043A \u2014 ", f.vuln_exports)), /*#__PURE__*/React.createElement("b", null, puNum(f.verdicts))), d.case_topics.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "pu-note"
-  }, "\u0422\u0435\u043C\u044B \u0434\u0435\u043B \u0441 \u043C\u0430\u0442\u0435\u0440\u0438\u0430\u043B\u0430\u043C\u0438: ", d.case_topics.map(c => `${c.title} (${c.items})`).join(" · "), "."), f.cases > 0 && f.cases_collect / f.cases > .8 && /*#__PURE__*/React.createElement("div", {
-    className: "pu-note"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "acc"
-  }, "\u2726"), " \u041F\u043E\u0447\u0442\u0438 \u0432\u0441\u0435 \u0434\u0435\u043B\u0430 \u0432 \u0441\u0442\u0430\u0442\u0443\u0441\u0435 \xAB\u0441\u0431\u043E\u0440 \u043C\u0430\u0442\u0435\u0440\u0438\u0430\u043B\u043E\u0432\xBB: \u0438\u0442\u043E\u0433 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 (\xAB\u0437\u0430\u043C\u0435\u0447\u0430\u043D\u0438\u0435\xBB, \xAB\u0440\u0438\u0441\u043A \u043F\u0440\u0438\u043D\u044F\u0442\xBB, \xAB\u043D\u0435 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u043B\u043E\u0441\u044C\xBB) \u0432 \u0434\u0435\u043B\u0435 \u043F\u043E\u043A\u0430 \u043D\u0435 \u0444\u0438\u043A\u0441\u0438\u0440\u0443\u0435\u0442\u0441\u044F \u2014 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442 \u043F\u043E \u0434\u0435\u043B\u0443 \u043E\u0442\u0441\u044E\u0434\u0430 \u043D\u0435 \u0432\u0438\u0434\u0435\u043D."))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-card pu-sec"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0417\u0430\u043F\u0440\u043E\u0441\u044B, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u043D\u0435 \u0434\u0430\u0434\u0443\u0442 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u0430 \xB7 ", perL), /*#__PURE__*/React.createElement("div", {
-    className: "oc-flt"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "seg",
-    role: "group",
-    "aria-label": "\u041A\u0430\u0442\u0435\u0433\u043E\u0440\u0438\u044F"
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "seg-btn" + (!badF ? " on" : ""),
-    "aria-pressed": !badF,
-    onClick: () => setBadF("")
-  }, "\u0412\u0441\u0435 ", d.bad_examples.length), OC_BAD.filter(k => badN[k]).map(k => /*#__PURE__*/React.createElement("button", {
-    key: k,
-    className: "seg-btn" + (badF === k ? " on" : ""),
-    "aria-pressed": badF === k,
-    onClick: () => setBadF(k)
-  }, OC_QL[k], " ", badN[k]))))), bad.length ? /*#__PURE__*/React.createElement("div", {
-    className: "pu-tblwrap"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "pu-tbl oc-bad"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u0414\u0430\u0442\u0430"), /*#__PURE__*/React.createElement("th", null, "\u0420\u0430\u0437\u0434\u0435\u043B"), /*#__PURE__*/React.createElement("th", null, "\u041A\u0430\u0442\u0435\u0433\u043E\u0440\u0438\u044F"), /*#__PURE__*/React.createElement("th", null, "\u0417\u0430\u043F\u0440\u043E\u0441"), /*#__PURE__*/React.createElement("th", null, "\u041F\u043E\u0447\u0435\u043C\u0443"))), /*#__PURE__*/React.createElement("tbody", null, (allBad ? bad : bad.slice(0, 15)).map((b, i) => /*#__PURE__*/React.createElement("tr", {
-    key: i
-  }, /*#__PURE__*/React.createElement("td", {
-    className: "c tnum"
-  }, ocDate(b.d)), /*#__PURE__*/React.createElement("td", {
-    className: "c"
-  }, b.section), /*#__PURE__*/React.createElement("td", {
-    className: "c"
-  }, OC_QL[b.quality]), /*#__PURE__*/React.createElement("td", {
-    className: "q"
-  }, b.text, b.n > 1 && /*#__PURE__*/React.createElement("span", {
-    className: "oc-u"
-  }, "\xD7", b.n)), /*#__PURE__*/React.createElement("td", {
-    className: "w"
-  }, b.why || "")))))) : /*#__PURE__*/React.createElement("div", {
-    className: "pu-empty"
-  }, "\u0417\u0430 \u043F\u0435\u0440\u0438\u043E\u0434 \u0442\u0430\u043A\u0438\u0445 \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \u043D\u0435\u0442."), bad.length > 15 && /*#__PURE__*/React.createElement("button", {
-    className: "pu-link strong",
-    style: {
-      marginTop: 10
-    },
-    onClick: () => setAllBad(!allBad)
-  }, allBad ? "Свернуть" : `Показать все ${bad.length}`), /*#__PURE__*/React.createElement("div", {
-    className: "pu-note"
-  }, "\u041E\u0434\u0438\u043D\u0430\u043A\u043E\u0432\u044B\u0435 \u0437\u0430\u043F\u0440\u043E\u0441\u044B \u2014 \u043E\u0434\u043D\u043E\u0439 \u0441\u0442\u0440\u043E\u043A\u043E\u0439 (\xD7N), \u043F\u043E\u044D\u0442\u043E\u043C\u0443 \u0441\u0442\u0440\u043E\u043A \u043C\u0435\u043D\u044C\u0448\u0435, \u0447\u0435\u043C \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \u0432 \xAB\u041A\u0430\u0447\u0435\u0441\u0442\u0432\u0435 \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432\xBB. \u0418\u043C\u0435\u043D\u0430 \u0430\u0432\u0442\u043E\u0440\u043E\u0432 \u0437\u0434\u0435\u0441\u044C \u043D\u0435 \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u044E\u0442\u0441\u044F. \u0421\u0430\u043C\u043E\u0435 \u0447\u0430\u0441\u0442\u043E\u0435 \u2014 \u0441\u043B\u0438\u0448\u043A\u043E\u043C \u043E\u0431\u0449\u0438\u0439 \u0437\u0430\u043F\u0440\u043E\u0441: \u043F\u043E\u043C\u043E\u0433\u0430\u044E\u0442 \u0448\u0430\u0431\u043B\u043E\u043D\u044B \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \u043F\u043E \u043D\u0430\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0438\u044F\u043C \u0438 \u043F\u0430\u043C\u044F\u0442\u043A\u0430 \xAB\u043A\u0430\u043A \u0441\u043F\u0440\u043E\u0441\u0438\u0442\u044C\xBB.")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-grid2 top pu-sec"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u0438\u044F \u043F\u043E \u0434\u043E\u0440\u0430\u0431\u043E\u0442\u043A\u0430\u043C"), /*#__PURE__*/React.createElement("span", null, "\u043E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u044F \u0447\u0435\u0440\u0435\u0437 \xAB\u041E\u0431\u0440\u0430\u0442\u043D\u0443\u044E \u0441\u0432\u044F\u0437\u044C\xBB")), /*#__PURE__*/React.createElement("div", {
-    className: "oc-kpis"
-  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, tk.total), "\u0432\u0441\u0435\u0433\u043E"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, tk.done), "\u0441\u0434\u0435\u043B\u0430\u043D\u043E"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, tk.counts["ждёт ответа"] || 0), "\u0436\u0434\u0443\u0442 \u043E\u0442\u0432\u0435\u0442\u0430"), days ? /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, tk.new_in_period), "\u043D\u043E\u0432\u044B\u0445 ", perL) : null), /*#__PURE__*/React.createElement("div", {
-    className: "oc-list"
-  }, (allT ? tk.items : tk.items.slice(0, 6)).map(t => /*#__PURE__*/React.createElement("div", {
-    className: "oc-li",
-    key: t.id
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "dt"
-  }, ocDate(t.d)), /*#__PURE__*/React.createElement("span", {
-    className: "tx"
-  }, t.body, /*#__PURE__*/React.createElement("small", null, t.section)), /*#__PURE__*/React.createElement("span", {
-    className: "oc-st" + (t.done ? " ok" : t.status === "ждёт ответа" ? " wait" : "")
-  }, t.status)))), tk.items.length > 6 && /*#__PURE__*/React.createElement("button", {
-    className: "pu-link strong",
-    style: {
-      marginTop: 8
-    },
-    onClick: () => setAllT(!allT)
-  }, allT ? "Свернуть" : `Все ${tk.items.length}`)), /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u0438\u044F \u043F\u043E \u043D\u043E\u0432\u044B\u043C \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430\u043C"), /*#__PURE__*/React.createElement("span", null, "\u0444\u043E\u0440\u043C\u0430 \xAB\u041F\u0440\u0435\u0434\u043B\u043E\u0436\u0438\u0442\u044C \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\xBB")), /*#__PURE__*/React.createElement("div", {
-    className: "oc-kpis"
-  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, src.total), "\u0432\u0441\u0435\u0433\u043E"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, src.approved), "\u043E\u0434\u043E\u0431\u0440\u0435\u043D\u043E"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, src.pending), "\u0436\u0434\u0443\u0442 \u0440\u0435\u0448\u0435\u043D\u0438\u044F"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, src.rejected), "\u043E\u0442\u043A\u043B\u043E\u043D\u0435\u043D\u043E")), /*#__PURE__*/React.createElement("div", {
-    className: "oc-list"
-  }, src.items.map(x => /*#__PURE__*/React.createElement("div", {
-    className: "oc-li",
-    key: x.id
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "dt"
-  }, ocDate(x.d)), /*#__PURE__*/React.createElement("span", {
-    className: "tx"
-  }, x.title || x.domain, /*#__PURE__*/React.createElement("small", null, x.domain, " \xB7 ", x.purpose)), /*#__PURE__*/React.createElement("span", {
-    className: "oc-st" + (x.status === "одобрен" ? " ok" : " wait")
-  }, x.status)))), src.pending > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "pu-note"
-  }, "\u0420\u0435\u0448\u0435\u043D\u0438\u0435 \u043F\u043E \u0437\u0430\u044F\u0432\u043A\u0435 \u2014 \u0432\u043E \u0432\u043A\u043B\u0430\u0434\u043A\u0435 \xAB\u0414\u0430\u043D\u043D\u044B\u0435\xBB \u2192 \xAB\u041F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u043D\u044B\u0435 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438\xBB."))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-note",
-    style: {
-      marginTop: 16
-    }
-  }, "\u041A\u0430\u043A \u043E\u0431\u043D\u043E\u0432\u043B\u044F\u0435\u0442\u0441\u044F: \u0446\u0438\u0444\u0440\u044B \u043F\u0435\u0440\u0435\u0441\u0447\u0438\u0442\u044B\u0432\u0430\u044E\u0442\u0441\u044F \u043F\u0440\u0438 \u043A\u0430\u0436\u0434\u043E\u043C \u043E\u0442\u043A\u0440\u044B\u0442\u0438\u0438 \u0432\u043A\u043B\u0430\u0434\u043A\u0438. \u041D\u0430\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0438\u0435 \u0438 \u043F\u0440\u0438\u0433\u043E\u0434\u043D\u043E\u0441\u0442\u044C \u0437\u0430\u043F\u0440\u043E\u0441\u0430 \u043E\u043F\u0440\u0435\u0434\u0435\u043B\u044F\u0435\u0442 \u043C\u043E\u0434\u0435\u043B\u044C \u2014 \u043D\u043E\u0432\u044B\u0435 \u0437\u0430\u043F\u0440\u043E\u0441\u044B \u043E\u043D\u0430 \u0440\u0430\u0437\u043C\u0435\u0447\u0430\u0435\u0442 \u043A\u0430\u0436\u0434\u0443\u044E \u043D\u043E\u0447\u044C \u0432 ", String(lab.hour_msk ?? 3).padStart(2, "0"), ":40 \u041C\u0421\u041A", lr ? /*#__PURE__*/React.createElement(React.Fragment, null, " (\u043F\u043E\u0441\u043B\u0435\u0434\u043D\u044F\u044F \u0440\u0430\u0437\u043C\u0435\u0442\u043A\u0430 \u2014 ", new Date(lr.finished_at).toLocaleString("ru", {
+const puSection = k => PU_ALIAS[String(k || "")] || "overview";
+// службы ленты состояния — в этом порядке и в «Сводке», и в «Системах»
+const PU_SYS = [["server", "Сайт и сервер"], ["digest", "Ежедневный выпуск"], ["reviews", "Площадки отзывов"], ["news", "Новостной поток"], ["slices", "Разметка жалоб"], ["rsearch", "Поиск по жалобам"], ["web", "Веб-поиск"], ["ingest", "Индексация и база знаний"]];
+const PU_RIB_RU = {
+  o: "в норме",
+  w: "были сбои",
+  b: "не работало",
+  n: "нет данных"
+};
+const PU_LV_RU = {
+  bad: "не работает",
+  warn: "есть сбои",
+  ok: "в норме",
+  idle: "нет данных"
+};
+const puSysLv = s => s === "b" ? "bad" : s === "w" ? "warn" : s === "o" ? "ok" : "idle";
+
+// ══ Общее: форматтеры ════════════════════════════════════════════════════════
+// Числа — toLocaleString('ru') (тонкий неразрывный пробел в тысячах), дни и время — по МСК.
+const puNum = n => (+n || 0).toLocaleString("ru");
+const puDec = (n, d = 1) => n == null || isNaN(+n) ? "—" : (+n).toLocaleString("ru", {
+  maximumFractionDigits: d
+});
+const puRub = n => n == null ? "—" : Math.round(+n).toLocaleString("ru") + " ₽";
+const puPct = (x, d = 0) => x == null ? "—" : (Math.round(x * 100 * 10 ** d) / 10 ** d).toLocaleString("ru") + "%";
+const puCap = s => s ? String(s)[0].toUpperCase() + String(s).slice(1) : "";
+// числа прописью до пяти — для брифа: «Три сбоя и четыре дела ждут вас»
+const PU_W_M = ["ноль", "один", "два", "три", "четыре", "пять"],
+  PU_W_N = ["ноль", "одно", "два", "три", "четыре", "пять"];
+const puWord = (n, g) => n >= 0 && n <= 5 ? (g === "n" ? PU_W_N : PU_W_M)[n] : puNum(n);
+// 'YYYY-MM-DD' — день МСК (полдень, чтобы не съехать на соседние сутки), иначе ISO-время
+function puDate(iso) {
+  if (!iso) return null;
+  const s = String(iso);
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(s + "T12:00:00+03:00") : new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+function puFmt(d, o) {
+  try {
+    return d.toLocaleString("ru", {
+      ...o,
+      timeZone: "Europe/Moscow"
+    });
+  } catch {
+    return d.toLocaleString("ru", o);
+  }
+}
+const puDay = iso => {
+  const d = puDate(iso);
+  return d ? puFmt(d, {
     day: "numeric",
-    month: "long",
+    month: "long"
+  }) : "";
+}; // «5 ноября»
+const puWd = iso => {
+  const d = puDate(iso);
+  return d ? puFmt(d, {
+    weekday: "short"
+  }) : "";
+}; // «чт»
+const puTime = iso => {
+  const d = puDate(iso);
+  return d ? puFmt(d, {
     hour: "2-digit",
     minute: "2-digit"
-  }), lr.labeled != null ? `, ${puNum(lr.labeled)} ${plural(lr.labeled, "запрос", "запроса", "запросов")}` : "", ")") : null, lab.pending ? /*#__PURE__*/React.createElement(React.Fragment, null, "; \u0436\u0434\u0443\u0442 \u0440\u0430\u0437\u043C\u0435\u0442\u043A\u0438 \u2014 ", puNum(lab.pending), ", \u0432 \u0442\u0430\u0431\u043B\u0438\u0446\u0430\u0445 \u0438\u0445 \u043F\u043E\u043A\u0430 \u043D\u0435\u0442") : null, ".", " ", "\u041D\u0435\u0434\u0435\u043B\u044F \u043A \u043D\u0435\u0434\u0435\u043B\u0435 \u2014 \u0432\u044B\u0431\u0435\u0440\u0438\u0442\u0435 \xAB7 \u0434\u043D\xBB: \u043F\u043E\u0434 \u0447\u0438\u0441\u043B\u0430\u043C\u0438 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0435 \u043A \u043F\u0440\u0435\u0434\u044B\u0434\u0443\u0449\u0438\u043C 7 \u0434\u043D\u044F\u043C. \xAB\u0421\u043A\u0430\u0447\u0430\u0442\u044C Excel\xBB \u2014 \u0442\u0430 \u0436\u0435 \u0441\u0432\u043E\u0434\u043A\u0430 \u0444\u0430\u0439\u043B\u043E\u043C \u0434\u043B\u044F \u043F\u0438\u0441\u044C\u043C\u0430. \u0421\u043B\u0443\u0436\u0435\u0431\u043D\u044B\u0435 \u0443\u0447\u0451\u0442\u043A\u0438 \u043D\u0435 \u0441\u0447\u0438\u0442\u0430\u044E\u0442\u0441\u044F.", msg && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 6
-    }
-  }, msg)));
+  }) : "";
+}; // «09:41»
+const puDayKey = d => {
+  try {
+    return d.toLocaleDateString("sv", {
+      timeZone: "Europe/Moscow"
+    });
+  } catch {
+    return d.toISOString().slice(0, 10);
+  }
+};
+// «только что», «12 мин назад», «сегодня, 09:41», «вчера, 14:22», «3 ноября», «3 ноября 2025»
+function puAgo(iso) {
+  const d = puDate(iso);
+  if (!d) return "";
+  const s = (Date.now() - d.getTime()) / 1000;
+  if (s >= 0 && s < 60) return "только что";
+  if (s >= 0 && s < 3600) return `${Math.floor(s / 60)} мин назад`;
+  const k = puDayKey(d),
+    today = mskToday();
+  const yest = puDayKey(new Date(Date.now() - 864e5));
+  const timeful = !/^\d{4}-\d{2}-\d{2}$/.test(String(iso));
+  if (k === today) return timeful ? `сегодня, ${puTime(iso)}` : "сегодня";
+  if (k === yest) return timeful ? `вчера, ${puTime(iso)}` : "вчера";
+  return k.slice(0, 4) === String(today).slice(0, 4) ? puDay(iso) : `${puDay(iso)} ${k.slice(0, 4)}`;
 }
-function PuTurbCtl() {
-  const [st, setSt] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  useEffect(() => {
-    apiFetch("/api/admin/banner").then(setSt).catch(() => {});
-  }, []);
-  const save = (active, days) => {
-    setBusy(true);
-    setErr("");
-    apiFetch("/api/admin/banner", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        active,
-        days
-      })
-    }).then(setSt).catch(() => setErr("не сохранилось — попробуйте ещё раз")).finally(() => setBusy(false));
+// ось 14 дней МСК (старые → сегодня) и нерабочие дни: от сервера (health, dau.off),
+// иначе — субботы и воскресенья
+function puDays14(m) {
+  const h = m && m.health;
+  if (h && Array.isArray(h.days) && h.days.length === 14) return {
+    days: h.days,
+    off: new Set(h.off || [])
   };
-  if (!st) return null;
-  const until = st.until ? new Date(st.until).toLocaleString("ru", {
-    day: "numeric",
-    month: "long",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "Europe/Moscow"
-  }) : null;
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pu-turb" + (st.active ? " on" : "")
-  }, /*#__PURE__*/React.createElement(TurbCloud, {
-    s: 18
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "pu-turb-t"
-  }, /*#__PURE__*/React.createElement("b", null, "\u041F\u043B\u0430\u0448\u043A\u0430 \xAB\u0412 \u043E\u0431\u043B\u0430\u043A\u0430\u0445 \u0442\u0443\u0440\u0431\u0443\u043B\u0435\u043D\u0442\u043D\u043E\u0441\u0442\u044C\xBB"), " — ", st.active ? until ? `видят все до ${until}` : "видят все, пока вы её не выключите" : st.on && st.until ? "срок вышел, плашка скрыта" : "выключена"), /*#__PURE__*/React.createElement("div", {
-    className: "pu-turb-b"
-  }, st.active ? /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    className: "btn btn-sm",
-    disabled: busy,
-    onClick: () => save(false, null)
-  }, "\u0412\u044B\u043A\u043B\u044E\u0447\u0438\u0442\u044C") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    className: "btn btn-sm",
-    disabled: busy,
-    onClick: () => save(true, 3)
-  }, "\u0412\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u043D\u0430 3 \u0434\u043D\u044F"), /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    className: "btn btn-sm",
-    disabled: busy,
-    onClick: () => save(true, 7)
-  }, "\u043D\u0430 \u043D\u0435\u0434\u0435\u043B\u044E"), /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    className: "btn btn-sm",
-    disabled: busy,
-    onClick: () => save(true, null)
-  }, "\u043F\u043E\u043A\u0430 \u043D\u0435 \u0432\u044B\u043A\u043B\u044E\u0447\u0443"))), err && /*#__PURE__*/React.createElement("span", {
-    className: "pu-turb-e",
-    role: "alert"
-  }, err));
+  const base = new Date((mskToday() || new Date().toISOString().slice(0, 10)) + "T12:00:00Z"),
+    days = [];
+  for (let i = 13; i >= 0; i--) days.push(new Date(base.getTime() - i * 864e5).toISOString().slice(0, 10));
+  const off = new Set(),
+    dau = m && m.dau || [];
+  const known = dau.some(x => x && typeof x.off === "boolean");
+  days.forEach((d, i) => {
+    const r = dau.find(x => x && x.d === d);
+    if (known ? r && r.off : [0, 6].includes(new Date(d + "T12:00:00Z").getUTCDay())) off.add(i);
+  });
+  return {
+    days,
+    off
+  };
 }
+
+// ══ Общее: данные ════════════════════════════════════════════════════════════
+// Кэш на уровне модуля по адресу: переключение разделов не перезапрашивает свежее,
+// при ошибке прежние данные остаются на экране, один запрос на адрес за раз.
+const _puCache = new Map();
+function puEntry(url) {
+  let e = _puCache.get(url);
+  if (!e) {
+    e = {
+      d: undefined,
+      t: 0,
+      err: null,
+      p: null,
+      subs: new Set()
+    };
+    _puCache.set(url, e);
+  }
+  return e;
+}
+function puFetch(url, force) {
+  const e = puEntry(url);
+  if (e.p && !force) return e.p;
+  const p = fetch(url, {
+    credentials: "same-origin"
+  }).then(r => {
+    if (!r.ok) {
+      const er = new Error(`${r.status} ${r.statusText}`);
+      er.status = r.status;
+      throw er;
+    }
+    return r.json();
+  }).then(d => {
+    if (e.p === p) {
+      e.d = d;
+      e.t = Date.now();
+      e.err = null;
+    }
+  }, er => {
+    if (e.p === p) {
+      e.err = er || new Error("ошибка");
+    }
+  }).finally(() => {
+    if (e.p === p) e.p = null;
+    e.subs.forEach(f => f());
+  });
+  e.p = p;
+  e.subs.forEach(f => f());
+  return p;
+}
+// пометить устаревшими все адреса с префиксом; видимые сразу перезапрашиваются
+function puInvalidate(prefix) {
+  _puCache.forEach((e, url) => {
+    if (!prefix || url.startsWith(prefix)) {
+      e.t = 0;
+      if (e.subs.size) puFetch(url, true);
+    }
+  });
+}
+// {d, err, loading, busy, reload}: loading — показать нечего и ошибки нет;
+// busy — запрос в пути; err.status — код ответа (403 — блок скрыть)
+function usePuData(url, {
+  ttl = 60000,
+  enabled = true
+} = {}) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!url) return;
+    const e = puEntry(url),
+      f = () => tick(x => x + 1);
+    e.subs.add(f);
+    return () => {
+      e.subs.delete(f);
+    };
+  }, [url]);
+  useEffect(() => {
+    if (!url || !enabled) return;
+    const e = puEntry(url);
+    if (!e.p && (e.d === undefined || Date.now() - e.t > ttl)) puFetch(url);
+  }, [url, enabled, ttl]);
+  const reload = useCallback(() => url ? puFetch(url, true) : Promise.resolve(), [url]);
+  const e = url ? _puCache.get(url) : null;
+  const d = e ? e.d : undefined,
+    err = e ? e.err : null;
+  return {
+    d,
+    err,
+    loading: !!url && enabled && d === undefined && !err,
+    busy: !!(e && e.p),
+    reload
+  };
+}
+// «Пульс» виден: вкладка браузера не скрыта И страница не спрятана keptPages (display:none)
+function usePuVisible(rootRef) {
+  const [vis, setVis] = useState(false);
+  const check = useCallback(() => {
+    const el = rootRef.current;
+    const v = !document.hidden && !!el && el.isConnected && el.getClientRects().length > 0;
+    setVis(p => p === v ? p : v);
+  }, [rootRef]);
+  useEffect(() => {
+    check();
+  });
+  useEffect(() => {
+    document.addEventListener("visibilitychange", check);
+    let mo = null;
+    try {
+      const host = rootRef.current && rootRef.current.closest("[data-page]");
+      if (host && window.MutationObserver) {
+        mo = new MutationObserver(check);
+        mo.observe(host, {
+          attributes: true,
+          attributeFilter: ["style", "aria-hidden"]
+        });
+      }
+    } catch {}
+    return () => {
+      document.removeEventListener("visibilitychange", check);
+      if (mo) mo.disconnect();
+    };
+  }, [check, rootRef]);
+  return vis;
+}
+const PuCtx = createContext(null);
+function usePu() {
+  return useContext(PuCtx) || {};
+}
+const puSmooth = () => {
+  try {
+    return matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+  } catch {
+    return "auto";
+  }
+};
+// прокрутить к блоку и коротко подсветить его (без анимации при reduced-motion)
+function puReveal(el) {
+  if (!el) return;
+  try {
+    el.scrollIntoView({
+      block: "start",
+      behavior: puSmooth()
+    });
+  } catch {
+    el.scrollIntoView();
+  }
+  el.classList.remove("pu2-flash");
+  void el.offsetWidth;
+  el.classList.add("pu2-flash");
+  setTimeout(() => el.classList.remove("pu2-flash"), 1300);
+}
+
+// ══ Общее: стили ═════════════════════════════════════════════════════════════
+// Только pu2-* и глобальные .btn/.seg/.chip/.rv-tabs. Цвета — токены и color-mix.
+// У каждого интерактивного класса — графитовое кольцо фокуса (иначе глобальное
+// правило даст красное), у каждой анимации — свой reduced-motion.
+const PU2_CSS = `
+.pu2{max-width:1320px;margin:0 auto;min-width:0}
+.pu2 :where(button,a,summary,[tabindex]):focus-visible,[class*="pu2-"]:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.pu2 [id^="pu2-"]{scroll-margin-top:calc(var(--topbar) + 72px)}
+.pu2-ic{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.pu2-ic.sm{width:14px;height:14px}
+.pu2-muted{color:var(--ink-3)}
+.pu2-neg{color:var(--accent-ink)}
+.pu2-tnum{font-variant-numeric:tabular-nums}
+
+/* бриф */
+.pu2-hero{margin:0 0 22px}
+.pu2-eb{display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-3);margin-bottom:12px}
+.pu2-eb b{font-weight:600;color:var(--ink)}
+.pu2-eb-live{display:inline-flex;align-items:center;gap:7px}
+.pu2 h1.pu2-brief{font-family:'Source Serif 4',Georgia,serif;font-weight:500;font-size:clamp(24px,2.4vw,32px);line-height:1.2;
+  letter-spacing:-.018em;margin:0;text-wrap:balance;max-width:820px;font-variation-settings:"opsz" 48}
+.pu2-brief-q{color:var(--ink-3)}
+.pu2-nw{white-space:nowrap}
+.pu2-brief-sub{margin:12px 0 0;color:var(--ink-2);font-size:14px;max-width:72ch;text-wrap:pretty}
+
+/* полоса разделов: .rv-tabs + инструменты справа */
+.pu2-band .rv-tabs-r{gap:8px}
+.pu2-cnt{font-size:11px;font-weight:600;min-width:18px;height:18px;padding:0 5px;border-radius:9px;display:inline-grid;place-items:center;
+  background:var(--ink);color:var(--paper);font-variant-numeric:tabular-nums;line-height:1}
+.pu2-find{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 8px 0 10px;border:1px solid var(--hair-2);border-radius:var(--r);
+  background:var(--surface);color:var(--ink-3);font:inherit;font-size:13px;min-width:210px;cursor:pointer;text-align:left;
+  transition:border-color var(--dur-quick) var(--ease-out),color var(--dur-quick) var(--ease-out)}
+.pu2-find:hover{border-color:var(--ink-4);color:var(--ink-2)}
+.pu2-find-l{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.pu2-find-k{margin-left:auto;display:inline-flex;gap:3px}
+.pu2-kbd{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-3);border:1px solid var(--hair-2);border-bottom-width:2px;
+  border-radius:4px;padding:0 4px;line-height:15px;background:var(--paper)}
+.pu2-band .rv-menu-pop{white-space:normal;width:300px;max-width:calc(100vw - 32px)}
+.pu2-mi{display:flex;flex-direction:column;min-width:0;text-align:left}
+.pu2-mi small{font-size:12px;color:var(--ink-3);margin-top:1px}
+.pu2-tgl{width:30px;height:18px;border-radius:9px;background:var(--hair-2);position:relative;flex:none;display:inline-block;
+  transition:background-color var(--dur-quick) var(--ease-out)}
+.pu2-tgl::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--surface);
+  box-shadow:var(--shadow-1);transition:transform var(--dur-quick) var(--ease-spring)}
+.pu2-tgl.on{background:var(--ink)}.pu2-tgl.on::after{transform:translateX(12px)}
+.pu2-foot{margin-top:40px;padding-top:16px;border-top:1px solid var(--hair);display:flex;gap:6px 18px;flex-wrap:wrap;font-size:12px;color:var(--ink-3)}
+
+/* сетка и карточка */
+.pu2-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px}
+.pu2-grid+.pu2-grid{margin-top:16px}
+.pu2-c3{grid-column:span 3}.pu2-c4{grid-column:span 4}.pu2-c5{grid-column:span 5}.pu2-c6{grid-column:span 6}
+.pu2-c7{grid-column:span 7}.pu2-c8{grid-column:span 8}.pu2-c12{grid-column:1/-1}
+.pu2-card{background:var(--surface);border:1px solid var(--hair);border-radius:var(--r-lg);padding:18px 20px;min-width:0;box-shadow:var(--shadow-1)}
+.pu2-card.pu2-flush{padding:0}
+.pu2-ch{display:flex;align-items:baseline;justify-content:space-between;gap:6px 16px;flex-wrap:wrap;margin-bottom:14px}
+.pu2 .pu2-ch-t,.pu2-ch-t{margin:0;font-size:15px;font-weight:600;line-height:1.3;letter-spacing:-.005em;text-wrap:balance}
+.pu2-ch-meta{font-size:12.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.pu2-ch-r{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap}
+.pu2-flush>.pu2-ch{padding:18px 20px 0}
+.pu2-flush>.pu2-ch.pu2-ruled{padding-bottom:14px;border-bottom:1px solid var(--hair);margin-bottom:0}
+.pu2-pad{padding:0 20px 18px}
+.pu2-note{font-size:12.5px;color:var(--ink-3);margin:12px 0 0;text-wrap:pretty}
+.pu2-subh{font-size:13px;font-weight:600;margin:20px 0 6px;color:var(--ink-2)}
+.pu2-lnk{display:inline-flex;align-items:center;gap:4px;font:inherit;font-size:13px;color:var(--ink-2);font-weight:500;border:0;background:none;padding:0;
+  cursor:pointer;border-radius:var(--r-sm);text-decoration:none}
+.pu2-lnk:hover{color:var(--ink)}
+.pu2-lnk .pu2-ic{width:14px;height:14px;transition:transform var(--dur-quick) var(--ease-out)}
+.pu2-lnk:hover .pu2-ic{transform:translateX(2px)}
+
+/* плитка */
+.pu2-kpi{display:flex;flex-direction:column;gap:2px;text-align:left;font:inherit;color:inherit;
+  transition:border-color var(--dur-quick) var(--ease-out),box-shadow var(--dur-quick) var(--ease-out)}
+button.pu2-kpi{cursor:pointer;width:100%}
+button.pu2-kpi:hover{border-color:var(--hair-2);box-shadow:var(--shadow-2)}
+button.pu2-kpi:active{transform:scale(.985)}
+.pu2-kpi.pu2-bare{border:0;padding:0;box-shadow:none;background:none}
+.pu2-kl{font-size:13px;color:var(--ink-2);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.pu2-kl .pu2-ic{color:var(--ink-4)}
+.pu2-kv{font-family:'Source Serif 4',Georgia,serif;font-size:38px;line-height:1.1;font-weight:500;letter-spacing:-.02em;margin-top:6px;
+  font-variant-numeric:tabular-nums lining-nums;white-space:nowrap}
+.pu2-kv small{font-family:'Geist','Inter',system-ui,sans-serif;font-size:14px;font-weight:400;color:var(--ink-3);letter-spacing:0;margin-left:7px}
+.pu2-kv-na{font-family:'Geist','Inter',system-ui,sans-serif;font-size:15px;font-weight:400;color:var(--ink-3);letter-spacing:0}
+.pu2-ks{font-size:12.5px;color:var(--ink-3);display:flex;align-items:center;gap:4px 6px;flex-wrap:wrap;min-height:20px}
+.pu2-kviz{display:block;margin-top:auto;padding-top:14px}
+.pu2-delta{display:inline-flex;align-items:center;gap:2px;font-size:12.5px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--ink-2)}
+.pu2-delta.pu2-up{color:var(--pos)}
+.pu2-delta .pu2-ic{width:12px;height:12px;stroke-width:2}
+
+/* точка статуса и бейдж */
+.pu2-dot{width:7px;height:7px;border-radius:50%;background:var(--ink-4);flex:none;display:inline-block}
+.pu2-dot.ok{background:var(--pos)}.pu2-dot.warn{background:var(--warn)}.pu2-dot.bad{background:var(--neg)}
+.pu2-dot.idle{background:var(--hair-2)}.pu2-dot.viz{background:var(--viz)}
+.pu2-dot.pulse{position:relative}
+.pu2-dot.pulse::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:1.5px solid var(--pos);opacity:0;
+  animation:pu2-ping 2.4s var(--ease-out) infinite}
+@keyframes pu2-ping{0%{transform:scale(.5);opacity:.7}80%,100%{transform:scale(1.5);opacity:0}}
+@media (prefers-reduced-motion:reduce){.pu2-dot.pulse::after{animation:none}}
+.pu2-badge{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:999px;font-size:11.5px;font-weight:500;line-height:1;
+  background:var(--paper-2);color:var(--ink-2);border:1px solid var(--hair);white-space:nowrap;font-variant-numeric:tabular-nums}
+.pu2-badge .pu2-ic{width:12px;height:12px}
+.pu2-badge.ok{color:var(--pos);background:color-mix(in oklab,var(--pos),transparent 90%);border-color:color-mix(in oklab,var(--pos),transparent 78%)}
+.pu2-badge.warn{color:var(--warn-ink);background:color-mix(in oklab,var(--warn),transparent 88%);border-color:color-mix(in oklab,var(--warn),transparent 72%)}
+.pu2-badge.bad{color:var(--accent-ink);background:color-mix(in oklab,var(--neg),transparent 90%);border-color:color-mix(in oklab,var(--neg),transparent 76%)}
+.pu2-badge.new{color:var(--paper);background:var(--ink);border-color:var(--ink);height:17px;font-size:10.5px;padding:0 6px}
+
+/* лента состояния (14 дней) и полоса активности */
+.pu2-rib{display:inline-flex;gap:2px;align-items:stretch;height:24px;flex:none}
+.pu2-rib i{width:5px;border-radius:1.5px;background:color-mix(in oklab,var(--pos),transparent 35%)}
+.pu2-rib i.w{background:var(--warn)}.pu2-rib i.b{background:var(--neg)}.pu2-rib i.n{background:var(--hair-2)}
+.pu2-rib i.t{box-shadow:0 0 0 1.5px var(--surface),0 0 0 2.5px var(--ink-4)}
+.pu2-rib.lg{height:28px}.pu2-rib.lg i{width:6px}
+.pu2-strip{display:inline-flex;gap:2px;vertical-align:middle}
+.pu2-strip i{width:8px;height:16px;border-radius:2px;background:var(--paper-2);box-shadow:inset 0 0 0 1px var(--hair)}
+.pu2-strip i.l1{background:var(--viz-3);box-shadow:none}.pu2-strip i.l2{background:var(--viz-2);box-shadow:none}
+.pu2-strip i.l3{background:var(--viz);box-shadow:none}.pu2-strip i.we{opacity:.5}
+
+/* спарклайн, столбики, линейка лимита */
+.pu2-spw{position:relative;display:block;height:40px}
+.pu2-spark{display:block;width:100%;height:40px;overflow:visible}
+.pu2-spark .ln{fill:none;stroke:var(--viz);stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
+.pu2-spark .ar{fill:var(--viz-soft)}
+.pu2-spark .b{fill:var(--viz-3)}.pu2-spark .b.on{fill:var(--viz)}
+.pu2-spd{position:absolute;width:7px;height:7px;border-radius:50%;background:var(--viz);box-shadow:0 0 0 2px var(--surface);transform:translate(-50%,-50%)}
+.pu2-spe{display:flex;align-items:flex-end;height:100%;font-size:12px;color:var(--ink-4)}
+.pu2-bullet{position:relative;display:block;height:12px;border-radius:3px;background:var(--paper-2);border:1px solid var(--hair)}
+.pu2-bullet-z{position:absolute;top:0;bottom:0;right:0;width:10%;background:color-mix(in oklab,var(--warn),transparent 82%);border-radius:0 2px 2px 0}
+.pu2-bullet-f{position:absolute;top:2px;bottom:2px;left:2px;border-radius:2px;background:var(--viz)}
+.pu2-bullet-f.over{background:var(--neg)}
+.pu2-bullet-fc{position:absolute;top:-5px;bottom:-5px;width:2px;margin-left:-1px;border-radius:1px;background:var(--ink-2)}
+.pu2-bullet-fc::before{content:"";position:absolute;inset:0 -6px}
+.pu2-bullet-leg{display:flex;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--ink-3);margin-top:7px;font-variant-numeric:tabular-nums}
+
+/* горизонтальная полоса */
+.pu2-hbar{display:grid;grid-template-columns:minmax(0,150px) minmax(0,1fr) auto;gap:12px;align-items:center;padding:6px 0;font-size:13px}
+.pu2-hbar-l{color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pu2-tr{display:block;height:8px;border-radius:4px;background:var(--paper-2);overflow:hidden}
+.pu2-tr i{display:block;height:100%;border-radius:4px;background:var(--viz)}
+.pu2-tr i.ok{background:var(--pos)}.pu2-tr i.warn{background:var(--warn)}.pu2-tr i.bad{background:var(--neg)}
+.pu2-hbar-v{font-size:12.5px;color:var(--ink-3);font-variant-numeric:tabular-nums;min-width:40px;text-align:right;white-space:nowrap}
+.pu2-hbar-v b{color:var(--ink);font-weight:500}
+
+/* таблица: базовые thead/tbody приложения (прописные, липкая шапка, подсветка строк) здесь не нужны */
+.pu2-tw{overflow-x:auto;min-width:0;-webkit-overflow-scrolling:touch}
+.pu2-tw .pu2-tbl,.pu2-tbl{display:table;width:100%;border-collapse:collapse;font-size:13px}
+.pu2-tbl thead th{font-size:12px;font-weight:500;color:var(--ink-3);text-align:right;padding:10px 12px;border-bottom:1px solid var(--hair);
+  white-space:nowrap;text-transform:none;letter-spacing:0;position:static;background:none}
+.pu2-tbl tbody td{padding:10px 12px;border-bottom:1px solid var(--hair);text-align:right;font-variant-numeric:tabular-nums;vertical-align:middle;font-size:13px}
+.pu2-tbl tbody tr:hover{background:none}
+.pu2-tbl tr:last-child td{border-bottom:0}
+.pu2-tbl th.pu2-l,.pu2-tbl td.pu2-l{text-align:left}
+.pu2-tbl th:first-child,.pu2-tbl td:first-child{padding-left:0}
+.pu2-tbl th:last-child,.pu2-tbl td:last-child{padding-right:0}
+.pu2-flush .pu2-tw .pu2-tbl th:first-child,.pu2-flush .pu2-tw .pu2-tbl td:first-child{padding-left:20px}
+.pu2-flush .pu2-tw .pu2-tbl th:last-child,.pu2-flush .pu2-tw .pu2-tbl td:last-child{padding-right:20px}
+.pu2-tbl tbody tr.pu2-click{cursor:pointer;transition:background-color var(--dur-quick) var(--ease-out)}
+.pu2-tbl tbody tr.pu2-click:hover{background:var(--paper-2)}
+.pu2-tbl tbody tr.pu2-click:focus-visible{outline:2px solid var(--select);outline-offset:-2px}
+.pu2-tbl tr.pu2-dim td{color:var(--ink-3)}
+
+/* ряд статов */
+.pu2-statrow{display:grid;grid-template-columns:repeat(var(--n,4),minmax(0,1fr));gap:16px}
+.pu2-statrow>div{min-width:0;padding-left:16px;border-left:1px solid var(--hair)}
+.pu2-statrow>div:first-child{padding-left:0;border-left:0}
+.pu2-statrow b{display:block;font-family:'Source Serif 4',Georgia,serif;font-weight:500;font-size:26px;line-height:1.15;
+  font-variant-numeric:tabular-nums lining-nums;white-space:nowrap}
+.pu2-statrow span{display:block;font-size:13px;color:var(--ink-2)}
+.pu2-statrow small{display:block;font-size:12px;color:var(--ink-3);margin-top:2px;text-wrap:pretty}
+
+/* человек */
+.pu2-person{display:inline-flex;align-items:center;gap:10px;min-width:0;max-width:100%;font:inherit;color:inherit;background:none;border:0;padding:0;text-align:left}
+button.pu2-person{cursor:pointer;border-radius:var(--r-sm)}
+button.pu2-person:hover b{text-decoration:underline;text-decoration-color:var(--ink-4);text-underline-offset:3px}
+.pu2-person>span:last-child{min-width:0}
+.pu2-person b{display:block;font-weight:500;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pu2-person small{display:block;font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pu2-av{width:28px;height:28px;border-radius:50%;display:inline-grid;place-items:center;font-size:11px;font-weight:600;letter-spacing:.02em;
+  background:var(--paper-2);color:var(--ink-2);border:1px solid var(--hair);flex:none}
+.pu2-av.lg{width:52px;height:52px;font-size:17px}.pu2-av.xs{width:22px;height:22px;font-size:9.5px}
+
+/* пустое и ошибка загрузки */
+.pu2-empty{font-size:13px;color:var(--ink-3);padding:6px 0;margin:0;text-wrap:pretty}
+.pu2-err{display:flex;align-items:center;gap:8px 10px;flex-wrap:wrap;font-size:13px;color:var(--ink-2);padding:6px 0}
+.pu2-err>.pu2-ic{color:var(--accent-ink)}
+
+/* вспышка блока после перехода из очереди */
+.pu2-flash{animation:pu2-flash 1.2s var(--ease-out)}
+@keyframes pu2-flash{0%,35%{outline:2px solid var(--select);outline-offset:3px}100%{outline:2px solid transparent;outline-offset:3px}}
+@media (prefers-reduced-motion:reduce){.pu2-flash{animation:none;outline:2px solid var(--select);outline-offset:3px}}
+
+/* поиск Ctrl+K — окно RvModal без шапки */
+.rv-ovl-card:has(>.pu2-pal){width:min(620px,100%);align-self:flex-start;margin-top:12vh;max-height:76vh}
+.pu2-pal{display:flex;flex-direction:column;min-height:0;max-height:76vh}
+.pu2-pal-s{position:relative;display:flex;align-items:center;flex:none}
+.pu2-pal-s>.pu2-ic{position:absolute;left:18px;color:var(--ink-4);pointer-events:none}
+.pu2-pal-in{width:100%;height:54px;border:0;border-bottom:1px solid var(--hair);padding:0 18px 0 46px;font:inherit;font-size:16px;
+  background:transparent;color:var(--ink);border-radius:0}
+.pu2-pal-in:focus,.pu2-pal-in:focus-visible{outline:none;border-bottom-color:var(--select)}
+.pu2-pal-x{display:none;position:absolute;right:8px;width:36px;height:36px;place-items:center;border:0;background:none;border-radius:var(--r);
+  color:var(--ink-3);cursor:pointer}
+.pu2-pal-x:hover{background:var(--paper-2);color:var(--ink)}
+.pu2-pal-l{overflow-y:auto;padding:6px;flex:1 1 auto;min-height:0;max-height:min(420px,56vh);overscroll-behavior:contain}
+.pu2-pal-g{font-size:12px;font-weight:600;color:var(--ink-3);padding:10px 12px 4px}
+.pu2-pal-e{font-size:13px;color:var(--ink-3);padding:14px 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.pu2-pal-i{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:9px 12px;border-radius:8px;font:inherit;font-size:14px;
+  color:var(--ink);background:none;border:0;cursor:pointer}
+.pu2-pal-i>.pu2-ic{color:var(--ink-3)}
+.pu2-pal-i>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pu2-pal-i>small{margin-left:auto;padding-left:8px;font-size:12px;color:var(--ink-3);white-space:nowrap}
+.pu2-pal-i:hover{background:var(--paper-2)}
+.pu2-pal-i[aria-selected="true"]{background:var(--select-soft)}
+.pu2-pal-f{display:flex;gap:14px;flex-wrap:wrap;padding:9px 14px;border-top:1px solid var(--hair);font-size:12px;color:var(--ink-3);flex:none}
+
+/* ширины: меню приложения сворачивается на 960 (это делает оболочка) */
+@media (max-width:1280px){
+  .pu2-c7,.pu2-c5,.pu2-c8,.pu2-c4{grid-column:1/-1}
+  .pu2-c3{grid-column:span 6}
+  .pu2-find{min-width:0}.pu2-find-l,.pu2-find-k{display:none}
+  .pu2-statrow.m{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .pu2-statrow.m>div:nth-child(3n+1){padding-left:0;border-left:0}
+}
+@media (max-width:760px){
+  .pu2 [id^="pu2-"]{scroll-margin-top:calc(var(--topbar) + 104px)}
+  .pu2-band{flex-wrap:wrap}
+  .pu2-band .rv-tabs-r{order:-1;width:100%;padding:2px 0 4px}
+  .pu2-band .rv-tabs-l{width:100%}
+  .pu2-band .pu2-find{flex:1 1 auto;min-width:0}.pu2-band .pu2-find-l{display:inline}
+  .pu2-c6{grid-column:1/-1}
+  .pu2-grid{gap:12px}
+  .pu2-card{padding:16px}
+  .pu2-flush>.pu2-ch{padding:16px 16px 0}
+  .pu2-pad{padding:0 16px 16px}
+  .pu2-flush .pu2-tw .pu2-tbl th:first-child,.pu2-flush .pu2-tw .pu2-tbl td:first-child{padding-left:16px}
+  .pu2-flush .pu2-tw .pu2-tbl th:last-child,.pu2-flush .pu2-tw .pu2-tbl td:last-child{padding-right:16px}
+  .pu2-kv{font-size:30px}
+  .pu2-statrow,.pu2-statrow.m{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .pu2-statrow>div,.pu2-statrow.m>div{padding-left:0;border-left:0}
+  .pu2-hbar{grid-template-columns:minmax(0,108px) minmax(0,1fr) auto}
+  .pu2-hide-s{display:none}
+}
+@media (max-width:520px){
+  .rv-ovl-card:has(>.pu2-pal){margin-top:0;max-height:100vh;height:100vh}
+  .pu2-pal{max-height:100vh;height:100%}.pu2-pal-l{max-height:none}.pu2-pal-f{display:none}
+  .pu2-pal-x{display:inline-grid}.pu2-pal-in{padding-right:52px}
+}
+@media (max-width:420px){.pu2-c3{grid-column:1/-1}}
+@media (prefers-reduced-motion:reduce){
+  .pu2-find,.pu2-tgl,.pu2-tgl::after,.pu2-lnk .pu2-ic,.pu2-kpi,.pu2-tbl tbody tr.pu2-click{transition:none}
+  button.pu2-kpi:active{transform:none}
+}
+`;
+
+// ══ Общее: значки и примитивы ════════════════════════════════════════════════
+// Набор значков макета: 16×16, штрих 1.5, цвет — currentColor.
+const PU_IC = {
+  alert: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
+    d: "M8 2.2 14.5 13.5h-13z"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M8 6.5v3.2M8 11.6v.1"
+  })),
+  stop: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
+    d: "M5.5 1.8h5l3.7 3.7v5l-3.7 3.7h-5l-3.7-3.7v-5z"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M8 5v3.6M8 10.8v.1"
+  })),
+  check: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("circle", {
+    cx: "8",
+    cy: "8",
+    r: "6.2"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "m5.4 8.2 1.8 1.8 3.4-3.6"
+  })),
+  inbox: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
+    d: "M2 9.5 3.6 3.2h8.8L14 9.5V13H2z"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M2 9.5h3.4l.9 1.6h3.4l.9-1.6H14"
+  })),
+  user: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("circle", {
+    cx: "8",
+    cy: "5.5",
+    r: "2.7"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M2.8 13.6c.8-2.4 2.8-3.7 5.2-3.7s4.4 1.3 5.2 3.7"
+  })),
+  users: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("circle", {
+    cx: "6",
+    cy: "5.6",
+    r: "2.4"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M1.6 13.3c.6-2.2 2.3-3.4 4.4-3.4s3.8 1.2 4.4 3.4"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M10.6 3.4a2.3 2.3 0 0 1 0 4.4M12.3 9.9c1.1.5 1.8 1.6 2.1 3.2"
+  })),
+  search: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("circle", {
+    cx: "7.2",
+    cy: "7.2",
+    r: "4.6"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "m10.6 10.6 3.2 3.2"
+  })),
+  more: /*#__PURE__*/React.createElement("path", {
+    d: "M3.5 8h.01M8 8h.01M12.5 8h.01",
+    strokeWidth: "2.4"
+  }),
+  right: /*#__PURE__*/React.createElement("path", {
+    d: "m6 3.5 4.5 4.5L6 12.5"
+  }),
+  up: /*#__PURE__*/React.createElement("path", {
+    d: "M8 13V3.5M4 7.5l4-4 4 4"
+  }),
+  down: /*#__PURE__*/React.createElement("path", {
+    d: "M8 3v9.5M4 8.5l4 4 4-4"
+  }),
+  like: /*#__PURE__*/React.createElement("path", {
+    d: "M5 7.2 7.6 2c1 0 1.7.8 1.5 1.8l-.5 2.4h3.6c.9 0 1.5.8 1.3 1.6l-1.1 4.6c-.2.7-.8 1.1-1.5 1.1H5zM2 7.2h3v6.4H2z"
+  }),
+  dislike: /*#__PURE__*/React.createElement("path", {
+    d: "M11 8.8 8.4 14c-1 0-1.7-.8-1.5-1.8l.5-2.4H3.8c-.9 0-1.5-.8-1.3-1.6l1.1-4.6c.2-.7.8-1.1 1.5-1.1H11zM14 8.8h-3V2.4h3z"
+  }),
+  doc: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
+    d: "M4 1.8h5.5L12.5 5v9.2H4z"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M9.3 1.8V5.2h3.2M6 8.2h4.4M6 10.8h4.4"
+  })),
+  spark: /*#__PURE__*/React.createElement("path", {
+    d: "M8 1.8 9.4 6.6l4.8 1.4-4.8 1.4L8 14.2 6.6 9.4 1.8 8l4.8-1.4z"
+  }),
+  shield: /*#__PURE__*/React.createElement("path", {
+    d: "M8 1.8 13.2 3.8v4c0 3.2-2.2 5.4-5.2 6.4-3-1-5.2-3.2-5.2-6.4v-4z"
+  }),
+  news: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("rect", {
+    x: "2",
+    y: "2.6",
+    width: "12",
+    height: "10.8",
+    rx: "1.4"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M4.6 5.6h6.8M4.6 8h6.8M4.6 10.4h4"
+  })),
+  msg: /*#__PURE__*/React.createElement("path", {
+    d: "M2.3 3.3h11.4v7.6H8.5L5 13.6v-2.7H2.3z"
+  }),
+  db: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("ellipse", {
+    cx: "8",
+    cy: "3.8",
+    rx: "5.4",
+    ry: "1.9"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M2.6 3.8v8.4c0 1 2.4 1.9 5.4 1.9s5.4-.9 5.4-1.9V3.8M2.6 8c0 1 2.4 1.9 5.4 1.9s5.4-.9 5.4-1.9"
+  })),
+  bank: /*#__PURE__*/React.createElement("path", {
+    d: "M2 6.2 8 2.6l6 3.6M3.5 6.6v5.6M6.5 6.6v5.6M9.5 6.6v5.6M12.5 6.6v5.6M2 13.4h12"
+  }),
+  pulse: /*#__PURE__*/React.createElement("path", {
+    d: "M1.6 8.4h3l1.6-4 3.2 8 1.6-4h3.4"
+  }),
+  copy: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("rect", {
+    x: "5.2",
+    y: "5.2",
+    width: "8.6",
+    height: "8.6",
+    rx: "1.4"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M10.8 5.2V3.6c0-.8-.6-1.4-1.4-1.4H3.6c-.8 0-1.4.6-1.4 1.4v5.8c0 .8.6 1.4 1.4 1.4h1.6"
+  })),
+  close: /*#__PURE__*/React.createElement("path", {
+    d: "m4 4 8 8M12 4l-8 8"
+  }),
+  download: /*#__PURE__*/React.createElement("path", {
+    d: "M8 2.2v8.2M4.6 7.2 8 10.6l3.4-3.4M2.6 13.6h10.8"
+  }),
+  menu: /*#__PURE__*/React.createElement("path", {
+    d: "M2.5 4.5h11M2.5 8h11M2.5 11.5h11"
+  }),
+  play: /*#__PURE__*/React.createElement("path", {
+    d: "M5 3.2v9.6L12.6 8z"
+  }),
+  cloud: /*#__PURE__*/React.createElement("path", {
+    d: "M4.6 12.6h7a2.9 2.9 0 0 0 .4-5.8 4.1 4.1 0 0 0-7.9 1.1 2.4 2.4 0 0 0 .5 4.7z"
+  }),
+  case: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("rect", {
+    x: "2",
+    y: "4.6",
+    width: "12",
+    height: "8.6",
+    rx: "1.4"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M5.8 4.6V3.2c0-.5.4-.9.9-.9h2.6c.5 0 .9.4.9.9v1.4"
+  }))
+};
+// n — имя значка; label — подпись для экранного диктора (без неё значок скрыт от него)
+function PuIcon({
+  n,
+  s,
+  sm,
+  label,
+  className
+}) {
+  const d = PU_IC[n];
+  if (!d) return null;
+  return /*#__PURE__*/React.createElement("svg", {
+    className: "pu2-ic" + (sm ? " sm" : "") + (className ? " " + className : ""),
+    viewBox: "0 0 16 16",
+    width: s || undefined,
+    height: s || undefined,
+    focusable: "false",
+    "aria-hidden": label ? undefined : "true",
+    role: label ? "img" : undefined,
+    "aria-label": label || undefined
+  }, d);
+}
+// Карточка: section.pu2-card, заголовок h2 обычным регистром, справа — подпись и действия.
+// span — ширина в колонках сетки 12 (3/4/5/6/7/8/12); flush — без внутренних отступов
+// (таблицы и списки до края; тело — в .pu2-pad); ruled — линия под заголовком.
+function PuCard({
+  id,
+  title,
+  meta,
+  actions,
+  flush,
+  ruled,
+  span = 12,
+  className,
+  children,
+  tip
+}) {
+  const hid = id ? id + "-t" : undefined;
+  return /*#__PURE__*/React.createElement("section", {
+    id: id,
+    className: "pu2-card pu2-c" + span + (flush ? " pu2-flush" : "") + (className ? " " + className : ""),
+    "aria-labelledby": title ? hid : undefined
+  }, (title || meta || actions) && /*#__PURE__*/React.createElement("div", {
+    className: "pu2-ch" + (ruled ? " pu2-ruled" : "")
+  }, title && /*#__PURE__*/React.createElement("h2", {
+    className: "pu2-ch-t",
+    id: hid,
+    "data-tip": tip || undefined
+  }, title), (meta || actions) && /*#__PURE__*/React.createElement("div", {
+    className: "pu2-ch-r"
+  }, meta && /*#__PURE__*/React.createElement("span", {
+    className: "pu2-ch-meta"
+  }, meta), actions)), children);
+}
+// Плитка: подпись со значком, крупное число с единицей, строка сравнения, мини-график.
+// С onClick — кнопка (переход в раздел), иначе — блок.
+function PuKpi({
+  label,
+  icon,
+  value,
+  unit,
+  sub,
+  viz,
+  onClick,
+  span = 3,
+  className,
+  tip
+}) {
+  const body = /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    className: "pu2-kl",
+    "data-tip": tip || undefined
+  }, label, icon && /*#__PURE__*/React.createElement(PuIcon, {
+    n: icon
+  })), /*#__PURE__*/React.createElement("span", {
+    className: "pu2-kv"
+  }, value == null ? /*#__PURE__*/React.createElement("span", {
+    className: "pu2-kv-na"
+  }, "\u043D\u0435\u0442 \u0434\u0430\u043D\u043D\u044B\u0445") : value, unit && value != null && /*#__PURE__*/React.createElement("small", null, unit)), sub != null && /*#__PURE__*/React.createElement("span", {
+    className: "pu2-ks"
+  }, sub), viz && /*#__PURE__*/React.createElement("span", {
+    className: "pu2-kviz"
+  }, viz));
+  const cls = "pu2-card pu2-kpi pu2-c" + span + (className ? " " + className : "");
+  return onClick ? /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: cls,
+    onClick: onClick
+  }, body) : /*#__PURE__*/React.createElement("div", {
+    className: cls
+  }, body);
+}
+// Переключатель на глобальном .seg (+ .seg-btn.on и aria-pressed — так его подхватывает
+// скользящая подложка useSlidingSegments)
+function PuSeg({
+  value,
+  options,
+  onChange,
+  label
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    className: "seg",
+    role: "group",
+    "aria-label": label
+  }, options.map(([v, l]) => /*#__PURE__*/React.createElement("button", {
+    key: String(v),
+    type: "button",
+    className: "seg-btn" + (v === value ? " on" : ""),
+    "aria-pressed": v === value,
+    onClick: () => onChange(v)
+  }, l)));
+}
+// Линия с заливкой и точкой на последнем значении; zero — шкала от нуля
+function PuSpark({
+  vals,
+  label,
+  zero
+}) {
+  const v = (vals || []).map(x => +x || 0);
+  if (v.length < 2) return /*#__PURE__*/React.createElement("span", {
+    className: "pu2-spw"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "pu2-spe"
+  }, "\u043D\u0435\u0442 \u0434\u0430\u043D\u043D\u044B\u0445"));
+  const w = 240,
+    h = 40,
+    p = 4,
+    mx = Math.max(...v),
+    mn = zero ? 0 : Math.min(...v);
+  const x = i => p + i * (w - 2 * p) / (v.length - 1),
+    y = val => h - p - (val - mn) / (mx - mn || 1) * (h - 2 * p);
+  const pts = v.map((val, i) => [x(i), y(val)]);
+  const ln = "M" + pts.map(q => q[0].toFixed(1) + "," + q[1].toFixed(1)).join("L");
+  const e = pts[pts.length - 1];
+  return /*#__PURE__*/React.createElement("span", {
+    className: "pu2-spw"
+  }, /*#__PURE__*/React.createElement("svg", {
+    className: "pu2-spark",
+    viewBox: `0 0 ${w} ${h}`,
+    preserveAspectRatio: "none",
+    role: "img",
+    "aria-label": label
+  }, /*#__PURE__*/React.createElement("path", {
+    className: "ar",
+    d: `${ln}L${e[0].toFixed(1)},${h}L${p},${h}Z`
+  }), /*#__PURE__*/React.createElement("path", {
+    className: "ln",
+    d: ln,
+    vectorEffect: "non-scaling-stroke"
+  })), /*#__PURE__*/React.createElement("i", {
+    className: "pu2-spd",
+    style: {
+      left: (e[0] / w * 100).toFixed(2) + "%",
+      top: (e[1] / h * 100).toFixed(2) + "%"
+    }
+  }));
+}
+// Столбики по дням; off — индексы нерабочих дней (Set или массив) — бледнее; tips — подсказки
+function PuBarSpark({
+  vals,
+  off,
+  label,
+  tips
+}) {
+  const v = (vals || []).map(x => +x || 0);
+  if (!v.length) return /*#__PURE__*/React.createElement("span", {
+    className: "pu2-spw"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "pu2-spe"
+  }, "\u043D\u0435\u0442 \u0434\u0430\u043D\u043D\u044B\u0445"));
+  const o = off instanceof Set ? off : new Set(off || []);
+  const w = 240,
+    h = 40,
+    n = v.length,
+    g = n > 20 ? 2 : 3,
+    bw = (w - g * (n - 1)) / n,
+    mx = Math.max(...v, 1);
+  return /*#__PURE__*/React.createElement("span", {
+    className: "pu2-spw"
+  }, /*#__PURE__*/React.createElement("svg", {
+    className: "pu2-spark",
+    viewBox: `0 0 ${w} ${h}`,
+    preserveAspectRatio: "none",
+    role: "img",
+    "aria-label": label
+  }, v.map((val, i) => {
+    const bh = Math.max(2, val / mx * h);
+    return /*#__PURE__*/React.createElement("rect", {
+      key: i,
+      className: "b" + (o.has(i) ? "" : " on"),
+      x: (i * (bw + g)).toFixed(1),
+      y: (h - bh).toFixed(1),
+      width: bw.toFixed(1),
+      height: bh.toFixed(1),
+      rx: "1.5",
+      "data-tip": tips && tips[i] || undefined
+    });
+  })));
+}
+// Лента состояния: ячейка на день, s — 'o' в норме · 'w' были сбои · 'b' не работало · 'n' нет данных;
+// последняя ячейка — сегодня (обведена)
+function PuRibbon({
+  cells,
+  lg,
+  label
+}) {
+  const c = cells || [],
+    cnt = {
+      o: 0,
+      w: 0,
+      b: 0,
+      n: 0
+    };
+  c.forEach(x => {
+    cnt[x.s] = (cnt[x.s] || 0) + 1;
+  });
+  const sum = [["o", "в норме"], ["w", "со сбоями"], ["b", "не работало"], ["n", "нет данных"]].filter(([k]) => cnt[k]).map(([k, l]) => `${l} — ${cnt[k]}`).join(", ");
+  return /*#__PURE__*/React.createElement("span", {
+    className: "pu2-rib" + (lg ? " lg" : ""),
+    role: "img",
+    "aria-label": label || `Состояние за ${c.length} ${plural(c.length, "день", "дня", "дней")}: ${sum}`
+  }, c.map((x, i) => /*#__PURE__*/React.createElement("i", {
+    key: i,
+    className: (x.s === "o" ? "" : x.s) + (i === c.length - 1 ? " t" : ""),
+    "data-tip": x.tip || undefined
+  })));
+}
+const PU_ACT_RU = ["не заходил(а)", "заглядывал(а)", "работал(а)", "много работал(а)"];
+// Полоса активности человека: уровни 0–3 по дням; off — нерабочие дни (бледнее)
+function PuStrip({
+  levels,
+  tips,
+  off,
+  label
+}) {
+  const lv = (levels || []).map(x => Math.max(0, Math.min(3, +x || 0)));
+  const o = off instanceof Set ? off : new Set(off || []);
+  const nd = lv.filter(Boolean).length;
+  return /*#__PURE__*/React.createElement("span", {
+    className: "pu2-strip",
+    role: "img",
+    "aria-label": label || `Активность: ${nd} ${plural(nd, "день", "дня", "дней")} из ${lv.length}`
+  }, lv.map((x, i) => /*#__PURE__*/React.createElement("i", {
+    key: i,
+    className: (x ? "l" + x : "") + (o.has(i) ? " we" : ""),
+    "data-tip": tips && tips[i] || PU_ACT_RU[x]
+  })));
+}
+// Линейка лимита: потрачено (заливка), зона последних 10% лимита, отметка прогноза
+function PuBullet({
+  value,
+  limit,
+  forecast
+}) {
+  if (!limit || value == null) return /*#__PURE__*/React.createElement("span", {
+    className: "pu2-muted",
+    style: {
+      fontSize: 12
+    }
+  }, "\u043D\u0435\u0442 \u0434\u0430\u043D\u043D\u044B\u0445");
+  const u = Math.max(0, value / limit * 100),
+    f = forecast != null ? Math.max(0, forecast / limit * 100) : null;
+  return /*#__PURE__*/React.createElement("span", {
+    className: "pu2-bullet",
+    role: "img",
+    "aria-label": `Потрачено ${Math.round(u)}% лимита` + (f != null ? `, прогноз на конец месяца ${Math.round(f)}%` : "")
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "pu2-bullet-z"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "pu2-bullet-f" + (u >= 100 ? " over" : ""),
+    style: {
+      width: `max(0px,calc(${Math.min(100, u).toFixed(1)}% - 4px))`
+    }
+  }), f != null && /*#__PURE__*/React.createElement("span", {
+    className: "pu2-bullet-fc",
+    style: {
+      left: Math.min(100, f).toFixed(1) + "%"
+    },
+    "data-tip": `Прогноз на конец месяца по темпу трат: ${puRub(forecast)}`
+  }));
+}
+// Изменение к прошлому периоду: стрелка-значок и модуль числа. good — рост это хорошо
+// (по умолчанию да); зелёным — только изменение в хорошую сторону, иначе нейтрально.
+function PuDelta({
+  v,
+  unit,
+  good = true,
+  d = 1
+}) {
+  if (v == null || isNaN(+v)) return null;
+  const n = +v;
+  if (!n) return /*#__PURE__*/React.createElement("span", {
+    className: "pu2-delta"
+  }, "\u0431\u0435\u0437 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0439");
+  const up = n > 0,
+    fine = good ? up : !up;
+  return /*#__PURE__*/React.createElement("span", {
+    className: "pu2-delta" + (fine ? " pu2-up" : "")
+  }, /*#__PURE__*/React.createElement(PuIcon, {
+    n: up ? "up" : "down"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "vh"
+  }, up ? "больше на " : "меньше на "), puDec(Math.abs(n), d), unit ? " " + unit : "");
+}
+// Точка статуса: ok — в норме, warn — внимание, bad — сбой, idle — нет данных, viz — нейтрально.
+// Цвет всегда дублируется словом рядом или подписью label.
+function PuDot({
+  lv,
+  pulse,
+  label
+}) {
+  return /*#__PURE__*/React.createElement("span", {
+    className: "pu2-dot" + (lv ? " " + lv : "") + (pulse ? " pulse" : ""),
+    role: label ? "img" : undefined,
+    "aria-label": label || undefined,
+    "aria-hidden": label ? undefined : "true"
+  });
+}
+function PuBadge({
+  lv,
+  children,
+  tip
+}) {
+  return /*#__PURE__*/React.createElement("span", {
+    className: "pu2-badge" + (lv ? " " + lv : ""),
+    "data-tip": tip || undefined
+  }, children);
+}
+// Горизонтальная полоса: подпись, дорожка (value/max), справа — right или число
+function PuHBar({
+  label,
+  value,
+  max,
+  right,
+  lv,
+  tip
+}) {
+  const p = max > 0 ? Math.max(0, Math.min(100, (+value || 0) / max * 100)) : 0;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "pu2-hbar",
+    "data-tip": tip || undefined
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "pu2-hbar-l"
+  }, label), /*#__PURE__*/React.createElement("span", {
+    className: "pu2-tr"
+  }, /*#__PURE__*/React.createElement("i", {
+    className: lv || undefined,
+    style: {
+      width: p.toFixed(1) + "%"
+    }
+  })), /*#__PURE__*/React.createElement("span", {
+    className: "pu2-hbar-v"
+  }, right != null ? right : /*#__PURE__*/React.createElement("b", null, puNum(value))));
+}
+// Ряд статов: [{v — число, l — подпись, s — пояснение, tip}]
+function PuStatRow({
+  items
+}) {
+  const it = (items || []).filter(Boolean);
+  return /*#__PURE__*/React.createElement("div", {
+    className: "pu2-statrow" + (it.length > 3 ? " m" : ""),
+    style: {
+      "--n": Math.max(1, it.length)
+    }
+  }, it.map((x, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    "data-tip": x.tip || undefined
+  }, /*#__PURE__*/React.createElement("b", null, x.v == null ? /*#__PURE__*/React.createElement("span", {
+    className: "pu2-muted"
+  }, "\u2014") : x.v), /*#__PURE__*/React.createElement("span", null, x.l), x.s && /*#__PURE__*/React.createElement("small", null, x.s))));
+}
+const PuAv = ({
+  name,
+  size
+}) => /*#__PURE__*/React.createElement("span", {
+  className: "pu2-av" + (size ? " " + size : ""),
+  "aria-hidden": "true"
+}, initials(name));
+// Человек: аватар с инициалами, имя, подпись; по нажатию — лист человека
+function PuPerson({
+  login,
+  name,
+  sub,
+  size,
+  noAv
+}) {
+  const c = usePu();
+  const inner = /*#__PURE__*/React.createElement(React.Fragment, null, !noAv && /*#__PURE__*/React.createElement(PuAv, {
+    name: name || login,
+    size: size
+  }), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, name || login || "—"), sub && /*#__PURE__*/React.createElement("small", null, sub)));
+  if (!login || !c.openPerson) return /*#__PURE__*/React.createElement("span", {
+    className: "pu2-person"
+  }, inner);
+  return /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "pu2-person",
+    onClick: e => {
+      e.stopPropagation();
+      c.openPerson(login);
+    }
+  }, inner);
+}
+// «нет данных» ≠ ошибка: у ошибки загрузки — «Повторить»
+function PuEmpty({
+  children
+}) {
+  return /*#__PURE__*/React.createElement("p", {
+    className: "pu2-empty"
+  }, children || "Нет данных за период");
+}
+function PuLoadErr({
+  onRetry,
+  children
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    className: "pu2-err",
+    role: "alert"
+  }, /*#__PURE__*/React.createElement(PuIcon, {
+    n: "alert"
+  }), /*#__PURE__*/React.createElement("span", null, children || "Не удалось загрузить."), onRetry && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-sm",
+    onClick: onRetry
+  }, "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C"));
+}
+// Ошибка отрисовки раздела не роняет весь «Пульс»: записывается в журнал, раздел — «Повторить»
+class PuBoundary extends React.Component {
+  constructor(p) {
+    super(p);
+    this.state = {
+      err: null
+    };
+  }
+  static getDerivedStateFromError(e) {
+    return {
+      err: e
+    };
+  }
+  componentDidCatch(e, info) {
+    try {
+      journalRenderError(e, info, "pulse:" + (this.props.name || ""));
+    } catch {}
+  }
+  render() {
+    if (this.state.err) return /*#__PURE__*/React.createElement("div", {
+      className: "pu2-card"
+    }, /*#__PURE__*/React.createElement(PuLoadErr, {
+      onRetry: () => this.setState({
+        err: null
+      })
+    }, "\u0411\u043B\u043E\u043A \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u043B\u0441\u044F \u0438\u0437-\u0437\u0430 \u043E\u0448\u0438\u0431\u043A\u0438. \u041E\u0448\u0438\u0431\u043A\u0430 \u0437\u0430\u043F\u0438\u0441\u0430\u043D\u0430."));
+    return this.props.children;
+  }
+}
+
+// ══ Сигналы: очередь «Требует внимания» и состояние систем ═══════════════════
+// Все правила прежнего сторожа (puGuardItems) — ни одно не потеряно — разложены на
+// incidents (сломано или деградирует; lv bad|warn) и todo (ждёт решения владельца;
+// lv info|warn). Пункт: {key, lv, title, meta, act, ic, sys, to:{section, anchor} | href}.
+// sys[key] — состояние службы СЕГОДНЯ по тем же правилам ('o'|'w'|'b'; 'n' — блока нет
+// в ответе): одна логика для очереди и для последней ячейки ленты.
+function puSignals(m, extra) {
+  m = m || {};
+  const days = extra && extra.days || m.days || 14;
+  const t = m.today || {},
+    ing = (m.ingest || {}).queue || {};
+  const dg = Array.isArray(m.digest) ? m.digest : [];
+  const fb = m.ai_feedback || {},
+    f = m.features || {},
+    ev = m.eval || {};
+  const rsrc = m.review_sources || {},
+    rs = rsrc.sources || [];
+  const nq = m.news_quality || {},
+    gw = (m.search || {}).gateway || {},
+    pr = m.proposals || {};
+  const rp = m.reviews_pipeline || {},
+    rsh = m.reviews_search || {};
+  const dn = n => plural(n, "день", "дня", "дней");
+  const incidents = [],
+    todo = [];
+  const inc = (key, lv, sys, title, meta, act, anchor, section) => incidents.push({
+    key,
+    lv,
+    sys,
+    title,
+    meta: meta || "",
+    act: act || "Подробнее",
+    ic: lv === "bad" ? "stop" : "alert",
+    to: {
+      section: section || "systems",
+      anchor: anchor === undefined ? sys ? "pu2-sys-" + sys : null : anchor
+    }
+  });
+  const job = (key, lv, ic, title, meta, act, to, href) => todo.push({
+    key,
+    lv,
+    ic,
+    title,
+    meta: meta || "",
+    act,
+    sys: null,
+    to: to || null,
+    href: href || null
+  });
+
+  // ── сайт и сервер
+  if ((t.errors || 0) > 0) {
+    const last = (m.errors_recent || [])[0],
+      dd = ddmm(mskToday());
+    inc("errors", "warn", "server", `${puNum(t.errors)} ${plural(t.errors, "ошибка", "ошибки", "ошибок")} сегодня`, last && last.ts && String(last.ts).slice(0, 5) === dd ? `Последняя — в ${String(last.ts).slice(6)}.` : "", "Журнал");
+  }
+  // ── индексация
+  if ((ing.dropped || 0) > 0) inc("ingest_dropped", "bad", "ingest", "Очередь индексации переполнялась", `${puNum(ing.dropped)} ${plural(ing.dropped, "задание отброшено", "задания отброшены", "заданий отброшено")} с последнего перезапуска.`);
+  if (ing.workers === 0) inc("ingest_workers", "bad", "ingest", "Индексация остановлена: воркеры не запущены", "Новые документы не попадают в базу знаний.");
+  // ── ежедневный выпуск
+  const failed = dg.filter(x => x.status && x.status !== "ok");
+  if (failed.length) {
+    const names = failed.map(x => `«${puCap(DG_SECTION_RU[x.section] || x.section)}»`).join(", ");
+    inc("digest_failed", "bad", "digest", `Выпуск вышел без ${failed.length === 1 ? "раздела" : "разделов"} ${names}`, `Готовы ${dg.length - failed.length} из ${dg.length} ${plural(dg.length, "раздела", "разделов", "разделов")}.`);
+  }
+  const dgDate = (dg[0] || {}).d;
+  if (dgDate && dgDate < mskToday() && mskHour() >= 8) inc("digest_missing", "bad", "digest", "Сегодняшнего выпуска нет", `Последний — за ${puDay(dgDate)}.`);
+  // ── площадки отзывов
+  const down = rs.filter(x => x.status === "встал" || x.status === "просел");
+  if (down.length) {
+    const x = down[0];
+    const title = down.length === 1 ? `${x.label} ${x.status}: ${puNum(x.week)} ${plural(+x.week || 0, "отзыв", "отзыва", "отзывов")} за неделю при норме ${puNum(x.norm)}` : `Площадки отзывов: ${down.map(y => `${y.label} ${y.status}`).join(", ")}`;
+    const meta = [x.last_run_status && x.last_run_status !== "ok" && x.last_run ? `Сбор ${puDay(x.last_run)} завершился с ошибкой.` : "", x.last_item ? `Свежий отзыв${down.length > 1 ? ` (${x.label})` : ""} — от ${puDay(x.last_item)}.` : ""].filter(Boolean).join(" ");
+    inc("reviews_down", "bad", "reviews", title, meta);
+  }
+  const surge = rs.filter(x => x.status === "всплеск" && x.norm > 0);
+  if (surge.length) inc("reviews_surge", "warn", "reviews", `Всплеск отзывов: ${surge.map(x => {
+    const k = Math.round(x.week / x.norm);
+    return `${x.label} — в ${k} ${plural(k, "раз", "раза", "раз")} больше нормы`;
+  }).join(", ")}`, "Наплыв жалоб или догрузка архива.");
+  // ── веб-поиск
+  if (gw.breaker_open) inc("search_breaker", "bad", "web", "Поисковый шлюз отключён", "Веб-поиск идёт через запасной канал." + (gw.breaker_reason ? ` Причина: ${gw.breaker_reason}.` : ""));
+  // ── проверочный набор ИИ (не служба ленты — переход в «Качество ИИ»)
+  [["hermes", "быстрого ответа"], ["deep", "отчёта"]].forEach(([k, nm]) => {
+    const e = ev[k];
+    if (!e || e.score == null) return;
+    if (e.delta != null && e.delta <= -5) inc("eval_drop_" + k, "warn", null, `Проверочный набор ${nm}: ${puDec(e.score)} из 100`, `На ${puDec(-e.delta)} ниже прошлого прогона.`, "Подробнее", "pu2-eval", "quality");else if (e.score < 75) inc("eval_low_" + k, "warn", null, `Проверочный набор ${nm}: ${puDec(e.score)} из 100`, "Ниже порога в 75 баллов.", "Подробнее", "pu2-eval", "quality");
+    if (k === "hermes" && e.age_days > 8) inc("eval_age", "warn", null, `Проверочный набор не прогонялся ${e.age_days} ${dn(e.age_days)}`, "Обычно прогоняется раз в неделю.", "Подробнее", "pu2-eval", "quality");
+  });
+  // ── новостной поток
+  const nerr = ((nq.stream || {}).sources || []).filter(x => x.last_error);
+  if (nerr.length) inc("news_feeds", "warn", "news", nerr.length === 1 ? `Лента «${nerr[0].label || nerr[0].source}» не загружается` : `${nerr.length} ${plural(nerr.length, "лента", "ленты", "лент")} новостей не загружаются`, nerr.length > 1 ? nerr.map(x => x.label || x.source).join(", ") + "." : "");
+  // ── конвейер «Аудита отзывов»: разметка, срезы, склейка копий, сюжеты, канарейка, поиск
+  if ((rp.pending_old || 0) > 50) inc("slices_lag", "bad", "slices", "Разметка жалоб отстаёт", `${puNum(rp.pending_old)} ${plural(rp.pending_old, "жалоба ждёт", "жалобы ждут", "жалоб ждут")} дольше 6 часов.`);
+  if ((rp.slices_not_ready || []).length) inc("slices_not_ready", "warn", "slices", "Срезы на доразметке скрыты в фильтре", rp.slices_not_ready.map(x => `${x.label} — ${Math.round((+x.share || 0) * 100)}%`).join(", ") + ".");
+  if (rp.dedup_age_h != null && rp.dedup_age_h > 30) inc("dedup_age", "warn", "slices", `Склейка копий отзывов не проходила ${Math.round(rp.dedup_age_h)} ч`, "Обычно проходит каждые сутки.");
+  if (rp.stories_age_h != null && rp.stories_age_h > 50) inc("stories_age", "warn", "slices", `«Сюжеты» не пересчитывались ${Math.round(rp.stories_age_h)} ч`);
+  const sc = (m.slice_canary || [])[0];
+  if (rp.canary_age_days != null && rp.canary_age_days > 9) {
+    const n = Math.floor(rp.canary_age_days);
+    inc("canary_age", "warn", "slices", `Канарейка срезов не запускалась ${n} ${dn(n)}`, "Должна запускаться раз в неделю.");
+  }
+  if (sc && sc.alert) inc("canary_alert", "bad", "slices", `Канарейка срезов ${puDay(sc.run_at)} подняла тревогу`, (sc.reasons || []).join("; "));
+  if ((rsh.failed || 0) > 0) inc("rsearch_failed", "warn", "rsearch", `Поиск по жалобам не отработал ${puNum(rsh.failed)} ${plural(rsh.failed, "раз", "раза", "раз")}`, `За ${days} ${dn(days)}.`);
+
+  // ── ждёт решения владельца
+  const ib = m.inbox || {};
+  if ((ib.unread || 0) > 0) job("inbox", "info", "inbox", `${puNum(ib.unread)} ${plural(ib.unread, "обращение ждёт", "обращения ждут", "обращений ждут")} ответа`, ib.oldest_new_days ? `Старейшему ${ib.oldest_new_days} ${dn(ib.oldest_new_days)}.` : "", "Ответить", {
+    section: "inbox",
+    anchor: null
+  });
+  if ((fb.dislikes || 0) > 0) {
+    const lastBad = (fb.items || []).find(x => x.verdict < 0),
+      top = (fb.reasons || [])[0];
+    job("complaints", "info", "dislike", `${puNum(fb.dislikes)} ${plural(fb.dislikes, "жалоба", "жалобы", "жалоб")} на ответы ИИ за ${days} ${dn(days)}`, [top && top.label ? `Чаще всего — «${top.label}».` : "", lastBad && lastBad.created_at ? `Последняя — ${puAgo(lastBad.created_at)}.` : ""].filter(Boolean).join(" "), "Разобрать", {
+      section: "quality",
+      anchor: "pu2-complaints"
+    });
+  }
+  const risk = (m.retention || {}).at_risk || [];
+  if (risk.length) job("at_risk", "info", "user", `${puNum(risk.length)} ${plural(risk.length, "человек", "человека", "человек")} из постоянных ${risk.length === 1 ? "перестал" : "перестали"} заходить`, risk.slice(0, 2).map(x => `${x.name || x.username} — ${x.gap_days} ${dn(x.gap_days)}`).join(", ") + (risk.length > 2 ? " и другие." : "."), "Написать", {
+    section: "people",
+    anchor: "pu2-risk"
+  });
+  if ((pr.pending || 0) > 0) {
+    const doms = [...new Set((pr.items || []).map(x => x.domain).filter(Boolean))].slice(0, 3);
+    job("proposals", "info", "db", `${puNum(pr.pending)} ${plural(pr.pending, "заявка", "заявки", "заявок")} на новые источники`, (pr.oldest_days ? `Старейшей ${pr.oldest_days} ${dn(pr.oldest_days)}` : "Старейшей меньше дня") + (doms.length ? `: ${doms.join(", ")}.` : "."), "Рассмотреть", null, "#sources");
+  }
+  if ((rp.flags_open || 0) > 0 && (rp.flags_oldest_days || 0) >= 3) {
+    const n = Math.floor(rp.flags_oldest_days);
+    job("slice_flags", "warn", "msg", `${puNum(rp.flags_open)} ${plural(rp.flags_open, "отметка", "отметки", "отметок")} «не относится к срезу» ${rp.flags_open === 1 ? "ждёт" : "ждут"} решения`, `Старейшей ${n} ${dn(n)}.`, "Разобрать", {
+      section: "inbox",
+      anchor: "pu2-flags"
+    });
+  }
+  // блока features нет в ответе — это «нет данных», а не «оценок не ставили»
+  const rl = (f.ratings_last || [])[0],
+    ageR = rl ? rl.age_days : null;
+  if (m.features && (ageR == null || ageR >= 14)) job("ratings", "warn", "like", ageR == null ? "Ответам ИИ ещё не ставили оценок" : `Оценок ответам ИИ не ставили ${ageR} ${dn(ageR)}`, "Без оценок «жалоб нет» ничего не значит.", "Посмотреть", {
+    section: "quality",
+    anchor: "pu2-ratings"
+  });
+  incidents.sort((a, b) => (a.lv === "bad" ? 0 : 1) - (b.lv === "bad" ? 0 : 1));
+  // состояние служб сегодня: худший пункт службы; блока нет в ответе — «нет данных»
+  const have = {
+    server: !!m.today,
+    digest: dg.length > 0,
+    reviews: !!m.review_sources && !rsrc.error && rs.length > 0,
+    news: !!m.news_quality,
+    slices: !!m.reviews_pipeline,
+    rsearch: !!m.reviews_search && !rsh.error,
+    web: !!m.search,
+    ingest: Object.keys(ing).length > 0
+  };
+  const sys = {};
+  PU_SYS.forEach(([k]) => {
+    const its = incidents.filter(x => x.sys === k);
+    sys[k] = its.some(x => x.lv === "bad") ? "b" : its.length ? "w" : have[k] ? "o" : "n";
+  });
+  return {
+    incidents,
+    todo,
+    sys
+  };
+}
+// 14 ячеек ленты службы: прошлые 13 дней — из m.health (нет истории — «нет данных»),
+// сегодня — из puSignals (то же правило, что у очереди)
+function puSysCells(m, sig, key) {
+  const {
+      days
+    } = puDays14(m),
+    h = m && m.health && m.health[key] || [];
+  return days.map((d, i) => {
+    const s = i === days.length - 1 ? sig && sig.sys && sig.sys[key] || "n" : h.length === days.length && /^[owbn]$/.test(h[i]) ? h[i] : "n";
+    return {
+      s,
+      d,
+      tip: `${puWd(d)}, ${puDay(d)}: ${PU_RIB_RU[s]}`
+    };
+  });
+}
+
+// ══ Разделы ══════════════════════════════════════════════════════════════════
+// Каждый раздел — в своём блоке между маркерами ⟦pu2:…⟧. Агент раздела меняет только
+// свой блок; строки между блоками не трогать — по ним сливаются параллельные правки.
+// Раздел читает всё нужное из PuCtx (usePu()): m, days, withMe, isOwner, go, open*.
+
+// ⟦pu2:overview⟧ начало — раздел «Сводка»; правит только агент раздела
+const PU2_CSS_OVERVIEW = ``;
+function PuOverview() {
+  return /*#__PURE__*/React.createElement(PuEmpty, null, "\u0420\u0430\u0437\u0434\u0435\u043B \u0432 \u0440\u0430\u0431\u043E\u0442\u0435");
+}
+// ⟦pu2:overview⟧ конец
+
+// ── граница: выше «Сводка», ниже «Люди» ──────────────────────────────────────
+// Эти строки не меняются: они отделяют блоки разделов друг от друга,
+// чтобы правки соседних разделов не конфликтовали при слиянии.
+
+// ⟦pu2:people⟧ начало — раздел «Люди»; правит только агент раздела
+const PU2_CSS_PEOPLE = ``;
+function PuPeopleSec() {
+  return /*#__PURE__*/React.createElement(PuEmpty, null, "\u0420\u0430\u0437\u0434\u0435\u043B \u0432 \u0440\u0430\u0431\u043E\u0442\u0435");
+}
+// ⟦pu2:people⟧ конец
+
+// ── граница: выше «Люди», ниже «Качество ИИ» ─────────────────────────────────
+// Неизменяемый разделитель блоков «Люди» и «Качество ИИ»: правки
+// одного раздела не должны задевать строки соседнего.
+
+// ⟦pu2:quality⟧ начало — раздел «Качество ИИ»; правит только агент раздела
+const PU2_CSS_QUALITY = ``;
+function PuQualitySec() {
+  return /*#__PURE__*/React.createElement(PuEmpty, null, "\u0420\u0430\u0437\u0434\u0435\u043B \u0432 \u0440\u0430\u0431\u043E\u0442\u0435");
+}
+// ⟦pu2:quality⟧ конец
+
+// ── граница: выше «Качество ИИ», ниже «Обращения» ────────────────────────────
+// Неизменяемый разделитель блоков «Качество ИИ» и «Обращения»:
+// контекст для слияния параллельных правок, содержимого здесь нет.
+
+// ⟦pu2:inbox⟧ начало — раздел «Обращения»; правит только агент раздела
+const PU2_CSS_INBOX = ``;
+function PuInboxSec() {
+  return /*#__PURE__*/React.createElement(PuEmpty, null, "\u0420\u0430\u0437\u0434\u0435\u043B \u0432 \u0440\u0430\u0431\u043E\u0442\u0435");
+}
+// ⟦pu2:inbox⟧ конец
+
+// ── граница: выше «Обращения», ниже «Системы» ────────────────────────────────
+// Неизменяемый разделитель блоков «Обращения» и «Системы»:
+// новые функции раздела пишутся внутри его маркеров, не здесь.
+
+// ⟦pu2:systems⟧ начало — раздел «Системы»; правит только агент раздела
+const PU2_CSS_SYSTEMS = ``;
+function PuSystemsSec() {
+  return /*#__PURE__*/React.createElement(PuEmpty, null, "\u0420\u0430\u0437\u0434\u0435\u043B \u0432 \u0440\u0430\u0431\u043E\u0442\u0435");
+}
+// ⟦pu2:systems⟧ конец
+
+// ── граница: выше «Системы», ниже «Итоги» ────────────────────────────────────
+// Неизменяемый разделитель блоков «Системы» и «Итоги»: строки
+// остаются как есть при любых правках разделов.
+
+// ⟦pu2:results⟧ начало — раздел «Итоги»; правит только агент раздела
+const PU2_CSS_RESULTS = ``;
+function PuResultsSec() {
+  return /*#__PURE__*/React.createElement(PuEmpty, null, "\u0420\u0430\u0437\u0434\u0435\u043B \u0432 \u0440\u0430\u0431\u043E\u0442\u0435");
+}
+// ⟦pu2:results⟧ конец
+
+// ── граница: выше «Итоги», ниже слои (лист человека, отчёта, диалога) ─────────
+// Неизменяемый разделитель блоков «Итоги» и слоёв: последний блок
+// разделов, дальше — оболочка страницы и поиск (фундамент).
+
+// ⟦pu2:layers⟧ начало — слои: лист человека, отчёта и диалога; правит только агент раздела
+const PU2_CSS_LAYERS = ``;
+function PuPersonSheet({
+  login,
+  onClose
+}) {
+  return /*#__PURE__*/React.createElement(RvModal, {
+    side: "right",
+    title: login ? `@${login}` : "Человек",
+    onClose: onClose
+  }, /*#__PURE__*/React.createElement(PuEmpty, null, "\u041A\u0430\u0440\u0442\u043E\u0447\u043A\u0430 \u0447\u0435\u043B\u043E\u0432\u0435\u043A\u0430 \u0432 \u0440\u0430\u0431\u043E\u0442\u0435"));
+}
+function PuReportSheet({
+  id,
+  onClose
+}) {
+  return /*#__PURE__*/React.createElement(RvModal, {
+    side: "right",
+    title: `Отчёт № ${id}`,
+    onClose: onClose
+  }, /*#__PURE__*/React.createElement(PuEmpty, null, "\u041F\u0440\u043E\u0441\u043C\u043E\u0442\u0440 \u043E\u0442\u0447\u0451\u0442\u0430 \u0432 \u0440\u0430\u0431\u043E\u0442\u0435"));
+}
+function PuSessionSheet({
+  id,
+  onClose
+}) {
+  return /*#__PURE__*/React.createElement(RvModal, {
+    side: "right",
+    title: "\u0414\u0438\u0430\u043B\u043E\u0433 \u0441 \u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u043E\u043C",
+    onClose: onClose
+  }, /*#__PURE__*/React.createElement(PuEmpty, null, "\u041F\u0440\u043E\u0441\u043C\u043E\u0442\u0440 \u0434\u0438\u0430\u043B\u043E\u0433\u0430 \u0432 \u0440\u0430\u0431\u043E\u0442\u0435"));
+}
+// ⟦pu2:layers⟧ конец
+
+// ── граница: выше слои, ниже оболочка «Пульса» (фундамент) ────────────────────
+// Неизменяемый разделитель: ниже — поиск Ctrl+K и PulsePage,
+// их правит только фундамент.
+
+// ══ Оболочка: поиск Ctrl+K ═══════════════════════════════════════════════════
+// Люди, обращения, отчёты и разделы. Списки загружаются при первом открытии и
+// живут в общем кэше. Фокус остаётся в поле: стрелки выбирают, Enter открывает,
+// Esc закрывает (Esc и ловушку фокуса держит RvModal). Действие выполняется после
+// закрытия окна — чтобы возврат фокуса не увёл его из следующего слоя.
+const puLine = (s, n = 90) => {
+  const t = String(s || "").replace(/\s+/g, " ").trim();
+  return t.length > n ? t.slice(0, n - 1) + "…" : t;
+};
+function PuPalette({
+  onClose,
+  onPick
+}) {
+  const c = usePu();
+  const U = usePuData("/api/admin/users?days=30" + puMe(c.withMe), {
+    ttl: 300000
+  });
+  const T = usePuData("/api/admin/inbox?status=all", {
+    ttl: 120000
+  });
+  const R = usePuData("/api/admin/reports?days=30&limit=300" + puMe(c.withMe), {
+    ttl: 300000
+  });
+  const [q, setQ] = useState(""),
+    [sel, setSel] = useState(0);
+  const pending = useRef(null),
+    closeRef = useRef(null),
+    listRef = useRef(null);
+  const all = useMemo(() => [...PU2_SECTIONS.map(([k, l]) => ({
+    g: "Разделы «Пульса»",
+    t: l,
+    s: "",
+    ic: "pulse",
+    go: k
+  })), ...((U.d || {}).users || []).map(u => ({
+    g: "Люди",
+    t: u.name || u.username,
+    s: "@" + u.username,
+    ic: "user",
+    person: u.username
+  })), ...((T.d || {}).tickets || []).map(x => ({
+    g: "Обращения",
+    t: puLine(x.body) || `Обращение № ${x.ticket_id}`,
+    s: `№ ${x.ticket_id}${x.name ? " · " + puShort(x.name) : ""}`,
+    ic: "inbox",
+    ticket: x.ticket_id
+  })), ...((R.d || {}).reports || []).map(r => ({
+    g: "Отчёты",
+    t: puLine(r.title || r.question) || `Отчёт № ${r.report_id}`,
+    s: puShort(r.name || r.username || ""),
+    ic: "doc",
+    report: r.report_id
+  }))], [U.d, T.d, R.d]);
+  const qq = q.trim().toLowerCase();
+  const items = useMemo(() => {
+    if (!qq) {
+      const per = {};
+      return all.filter(it => it.go || (per[it.g] = (per[it.g] || 0) + 1) <= 4);
+    }
+    return all.filter(it => (it.t + " " + it.s).toLowerCase().includes(qq)).slice(0, 40);
+  }, [all, qq]);
+  useEffect(() => {
+    setSel(0);
+  }, [qq]);
+  const cur = Math.min(sel, Math.max(0, items.length - 1));
+  useEffect(() => {
+    const el = listRef.current && listRef.current.querySelector('[aria-selected="true"]');
+    if (el && el.scrollIntoView) el.scrollIntoView({
+      block: "nearest"
+    });
+  }, [cur, items]);
+  const pick = it => {
+    if (!it) return;
+    pending.current = it;
+    if (closeRef.current) closeRef.current();
+  };
+  const onKey = e => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!items.length) return;
+      setSel((cur + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      pick(items[cur]);
+    }
+  };
+  const lists = [[U, "людей"], [T, "обращения"], [R, "отчёты"]];
+  const failed = lists.filter(([x]) => x.err && x.d === undefined),
+    busy = lists.some(([x]) => x.loading);
+  let g = "";
+  return /*#__PURE__*/React.createElement(RvModal, {
+    bare: true,
+    title: "\u041F\u043E\u0438\u0441\u043A \u043F\u043E \xAB\u041F\u0443\u043B\u044C\u0441\u0443\xBB",
+    onClose: () => {
+      const it = pending.current;
+      pending.current = null;
+      onClose();
+      if (it && onPick) setTimeout(() => onPick(it), 0);
+    }
+  }, close => {
+    closeRef.current = close;
+    return /*#__PURE__*/React.createElement("div", {
+      className: "pu2-pal"
+    }, /*#__PURE__*/React.createElement("label", {
+      className: "pu2-pal-s"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "vh"
+    }, "\u041D\u0430\u0439\u0442\u0438 \u0432 \xAB\u041F\u0443\u043B\u044C\u0441\u0435\xBB"), /*#__PURE__*/React.createElement(PuIcon, {
+      n: "search"
+    }), /*#__PURE__*/React.createElement("input", {
+      className: "pu2-pal-in",
+      value: q,
+      onChange: e => setQ(e.target.value),
+      onKeyDown: onKey,
+      autoFocus: true,
+      placeholder: "\u0427\u0435\u043B\u043E\u0432\u0435\u043A, \u043E\u0442\u0447\u0451\u0442, \u043E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u0435, \u0440\u0430\u0437\u0434\u0435\u043B",
+      autoComplete: "off",
+      spellCheck: false,
+      role: "combobox",
+      "aria-expanded": "true",
+      "aria-controls": "pu2-pal-list",
+      "aria-autocomplete": "list",
+      "aria-activedescendant": items.length ? "pu2-pal-o" + cur : undefined
+    }), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "pu2-pal-x",
+      onClick: close,
+      "aria-label": "\u0417\u0430\u043A\u0440\u044B\u0442\u044C \u043F\u043E\u0438\u0441\u043A"
+    }, /*#__PURE__*/React.createElement(PuIcon, {
+      n: "close"
+    }))), /*#__PURE__*/React.createElement("div", {
+      className: "pu2-pal-l",
+      id: "pu2-pal-list",
+      role: "listbox",
+      "aria-label": "\u0420\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u044B",
+      ref: listRef
+    }, items.map((it, k) => {
+      const head = it.g !== g ? /*#__PURE__*/React.createElement("div", {
+        className: "pu2-pal-g",
+        role: "presentation"
+      }, it.g) : null;
+      g = it.g;
+      return /*#__PURE__*/React.createElement(React.Fragment, {
+        key: it.g + k
+      }, head, /*#__PURE__*/React.createElement("button", {
+        type: "button",
+        className: "pu2-pal-i",
+        role: "option",
+        id: "pu2-pal-o" + k,
+        tabIndex: -1,
+        "aria-selected": k === cur,
+        onMouseMove: () => {
+          if (k !== cur) setSel(k);
+        },
+        onClick: () => pick(it)
+      }, /*#__PURE__*/React.createElement(PuIcon, {
+        n: it.ic
+      }), /*#__PURE__*/React.createElement("span", null, it.t), it.s && /*#__PURE__*/React.createElement("small", null, it.s)));
+    }), qq && !items.length && !busy && /*#__PURE__*/React.createElement("div", {
+      className: "pu2-pal-e"
+    }, "\u041D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u043D\u0430\u0448\u043B\u043E\u0441\u044C. \u041F\u043E\u043F\u0440\u043E\u0431\u0443\u0439\u0442\u0435 \u0444\u0430\u043C\u0438\u043B\u0438\u044E, \u043B\u043E\u0433\u0438\u043D \u0438\u043B\u0438 \u043D\u043E\u043C\u0435\u0440 \u043E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u044F."), busy && /*#__PURE__*/React.createElement("div", {
+      className: "pu2-pal-e",
+      role: "status"
+    }, "\u0417\u0430\u0433\u0440\u0443\u0436\u0430\u0435\u043C \u043B\u044E\u0434\u0435\u0439, \u043E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u044F \u0438 \u043E\u0442\u0447\u0451\u0442\u044B\u2026"), failed.length > 0 && /*#__PURE__*/React.createElement("div", {
+      className: "pu2-pal-e",
+      role: "alert"
+    }, /*#__PURE__*/React.createElement("span", null, "\u041D\u0435 \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u043B\u0438\u0441\u044C ", failed.map(([, l]) => l).join(", "), "."), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "btn btn-sm",
+      onClick: () => failed.forEach(([x]) => x.reload())
+    }, "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C"))), /*#__PURE__*/React.createElement("div", {
+      className: "pu2-pal-f",
+      "aria-hidden": "true"
+    }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("kbd", {
+      className: "pu2-kbd"
+    }, "\u2191"), " ", /*#__PURE__*/React.createElement("kbd", {
+      className: "pu2-kbd"
+    }, "\u2193"), " \u0432\u044B\u0431\u0440\u0430\u0442\u044C"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("kbd", {
+      className: "pu2-kbd"
+    }, "Enter"), " \u043E\u0442\u043A\u0440\u044B\u0442\u044C"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("kbd", {
+      className: "pu2-kbd"
+    }, "Esc"), " \u0437\u0430\u043A\u0440\u044B\u0442\u044C")));
+  });
+}
+
+// ══ Оболочка: бриф ═══════════════════════════════════════════════════════════
+// Шаблон по числам, без модели: «23 человека сегодня, 41 вопрос ИИ-помощнику.
+// Три сбоя и четыре дела ждут вас». Ниже — только то, что есть в данных.
+function PuBrief({
+  m,
+  sig,
+  ts,
+  err,
+  onRetry
+}) {
+  const t = m.today || {},
+    ni = sig.incidents.length,
+    nt = sig.todo.length;
+  const tail = ni && nt ? `${puCap(puWord(ni, "m"))} ${plural(ni, "сбой", "сбоя", "сбоев")} и ${puWord(nt, "n")} ${plural(nt, "дело", "дела", "дел")} ждут вас.` : ni ? `${puCap(puWord(ni, "m"))} ${plural(ni, "сбой", "сбоя", "сбоев")}.` : nt ? `${puCap(puWord(nt, "n"))} ${plural(nt, "дело ждёт", "дела ждут", "дел ждут")} вас.` : "Всё спокойно.";
+  const rt = m.retention || {},
+    ev = (m.eval || {}).hermes,
+    sub = [];
+  if (rt.active_7d != null) {
+    const a = +rt.active_7d,
+      p = rt.active_prev_7d;
+    let s = `За неделю ${a === 1 ? "активен" : "активны"} ${puNum(a)} ${plural(a, "человек", "человека", "человек")}`;
+    if (p != null) {
+      const d = a - +p;
+      s += d > 0 ? ` — на ${puNum(d)} больше, чем неделей раньше` : d < 0 ? ` — на ${puNum(-d)} меньше, чем неделей раньше` : " — столько же, сколько неделей раньше";
+    }
+    sub.push(s + ".");
+  }
+  if (ev && ev.score != null) sub.push(`Проверочный набор ИИ — ${puDec(ev.score)} из 100.`);
+  const day = puFmt(new Date(), {
+    weekday: "long",
+    day: "numeric",
+    month: "long"
+  });
+  const hm = ts ? puFmt(ts, {
+    hour: "2-digit",
+    minute: "2-digit"
+  }) : "";
+  return /*#__PURE__*/React.createElement("header", {
+    className: "pu2-hero"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pu2-eb"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "pu2-eb-live"
+  }, /*#__PURE__*/React.createElement(PuDot, {
+    lv: err ? "warn" : "ok",
+    pulse: !err
+  }), /*#__PURE__*/React.createElement("b", null, "\u041F\u0443\u043B\u044C\u0441")), /*#__PURE__*/React.createElement("span", null, day), err ? /*#__PURE__*/React.createElement("span", {
+    role: "status"
+  }, "\u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435 \u043D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u2014 \u043F\u043E\u043A\u0430\u0437\u0430\u043D\u044B \u0434\u0430\u043D\u043D\u044B\u0435 \u043D\u0430 ", hm, " ", /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "pu2-lnk",
+    onClick: onRetry
+  }, "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C")) : /*#__PURE__*/React.createElement("span", {
+    "data-tip": "\u0421\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u043E\u0431\u043D\u043E\u0432\u043B\u044F\u0435\u0442\u0441\u044F \u0440\u0430\u0437 \u0432 \u043C\u0438\u043D\u0443\u0442\u0443, \u043F\u043E\u043A\u0430 \u043E\u0442\u043A\u0440\u044B\u0442\u0430",
+    tabIndex: 0
+  }, "\u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u043E \u0432 ", hm)), /*#__PURE__*/React.createElement("h1", {
+    className: "pu2-brief"
+  }, t.active == null ? "Сегодня данных пока нет." : /*#__PURE__*/React.createElement(React.Fragment, null, puNum(t.active), " ", plural(+t.active, "человек", "человека", "человек"), " \u0441\u0435\u0433\u043E\u0434\u043D\u044F, ", puNum(t.ai), " ", plural(+t.ai || 0, "вопрос", "вопроса", "вопросов"), " ", /*#__PURE__*/React.createElement("span", {
+    className: "pu2-nw"
+  }, "\u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u0443.")), " ", /*#__PURE__*/React.createElement("span", {
+    className: "pu2-brief-q"
+  }, tail)), sub.length > 0 && /*#__PURE__*/React.createElement("p", {
+    className: "pu2-brief-sub"
+  }, sub.join(" ")));
+}
+
+// ══ Оболочка: страница «Пульс» ═══════════════════════════════════════════════
+// Остаётся смонтированной, когда скрыта (keptPages): опрос, клавиши и запись адреса —
+// только пока видна. Адрес — #pulse?tab=<раздел>[&ticket=N][&person=логин].
+const PU_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || "");
 function PulsePage({
   params
 }) {
   const me = useMe();
-  const [days, setDays] = useState(14);
-  // вкладка живёт в состоянии страницы: load() раз в 60 с меняет только m,
-  // поэтому переключатель не сбрасывается под руками
-  const [tab, setTab] = useState(() => {
-    const pt = params && params.tab;
-    if (PU_TABS.some(x => x[0] === pt)) return pt;
+  const rootRef = useRef(null);
+  const visible = usePuVisible(rootRef);
+  const isOwner = !!(me && me.is_admin);
+  const allowed = !me || me.is_admin || me.can_pulse;
+  const [days, setDaysS] = useState(() => {
     try {
-      const t = localStorage.getItem("al-pulse-tab");
-      return PU_TABS.some(x => x[0] === t) ? t : "people";
+      const v = +localStorage.getItem("al-pulse-days");
+      return [7, 14, 30].includes(v) ? v : 14;
     } catch {
-      return "people";
+      return 14;
     }
   });
-  // переход из колокольчика, когда «Пульс» уже открыт: вкладка и обращение из адреса
-  const openTicket = params && +params.ticket || null;
-  useEffect(() => {
-    const pt = params && params.tab;
-    if (PU_TABS.some(x => x[0] === pt)) setTab(pt);
-  }, [params && params.tab, params && params.ticket]); // eslint-disable-line
   // себя владелец по умолчанию не считает: 70% просмотров были его проверками
   const [withMe, setWithMe] = useState(() => {
     try {
@@ -24419,593 +22460,455 @@ function PulsePage({
       return null;
     }
   });
-  const [rev, setRev] = useState(0); // служебная учётка помечена → пересчитать всё
-  const [m, setM] = useState(null);
-  const [err, setErr] = useState(false);
-  const [ts, setTs] = useState(null);
-  // карточка человека и просмотр отчёта — поверх страницы, чтобы не терять
-  // контекст разбора: пришёл из жалобы → открыл отчёт → вернулся в список
-  const [card, setCard] = useState(null);
-  const [rep, setRep] = useState(null);
-  const [sess, setSess] = useState(null);
-  const lastLoad = useRef(0);
+  const [section, setSection] = useState(() => {
+    const pt = params && params.tab;
+    if (pt) return puSection(pt);
+    try {
+      const t = localStorage.getItem("al-pulse-tab");
+      if (t) return puSection(t);
+    } catch {}
+    return "overview";
+  });
+  const [m, setM] = useState(null),
+    [err, setErr] = useState(false),
+    [ts, setTs] = useState(null);
+  const [rev, setRev] = useState(0);
+  // слои поверх страницы: контекст разбора не теряется (жалоба → отчёт → обратно)
+  const [person, setPerson] = useState(null),
+    [report, setReport] = useState(null),
+    [session, setSession] = useState(null);
+  const [pal, setPal] = useState(false);
+  const [ticket, setTicket] = useState(null); // обращение, открытое в разделе «Обращения»
+  const [target, setTarget] = useState(null); // последний якорь перехода {id, n}
+
+  // ── данные: /api/admin/pulse раз в 60 с, только пока страница видна
+  const url = "/api/admin/pulse?days=" + days + puMe(withMe);
+  const seq = useRef(0),
+    lastLoad = useRef(0),
+    loadedKey = useRef("");
   const load = useCallback(() => {
+    const my = ++seq.current;
     lastLoad.current = Date.now();
-    apiFetch("/api/admin/pulse?days=" + days + puMe(withMe)).then(d => {
+    loadedKey.current = url + "#" + rev;
+    apiFetch(url).then(d => {
+      if (my !== seq.current) return;
       setM(d);
       setErr(false);
       setTs(new Date());
-    }).catch(() => setErr(true));
-  }, [days, withMe, rev]); // eslint-disable-line
-  // автообновление — только пока вкладка браузера видна: опрос свёрнутой
-  // вкладки держал владельца «онлайн» и был самым частым запросом к серверу
+    }).catch(() => {
+      if (my === seq.current) setErr(true);
+    });
+  }, [url, rev]);
   useEffect(() => {
-    load();
+    if (!visible || !allowed) return;
+    if (loadedKey.current !== url + "#" + rev || Date.now() - lastLoad.current > 30000) load();
     const t = setInterval(() => {
       if (!document.hidden) load();
     }, 60000);
-    const onVis = () => {
-      if (!document.hidden && Date.now() - lastLoad.current > 30000) load();
-    };
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      clearInterval(t);
-      document.removeEventListener("visibilitychange", onVis);
-    };
-  }, [load]);
-  const selTab = k => {
-    setTab(k);
+    return () => clearInterval(t);
+  }, [visible, allowed, load]); // eslint-disable-line
+
+  // ── переходы
+  const store = (k, v) => {
     try {
-      localStorage.setItem("al-pulse-tab", k);
+      localStorage.setItem(k, v);
     } catch {}
   };
-  const setMeOn = v => {
-    setWithMe(v);
-    try {
-      localStorage.setItem("al-pulse-me", v ? "1" : "0");
-    } catch {}
-  };
-  // переход из сторожа: вкладка → блок, блок коротко подсвечивается
-  const goTo = (k, id) => {
-    selTab(k);
-    setTimeout(() => {
-      const el = id && document.getElementById(id);
-      if (!el) return;
-      el.scrollIntoView({
-        block: "start",
-        behavior: "smooth"
-      });
-      el.classList.remove("pu-flash");
-      void el.offsetWidth;
-      el.classList.add("pu-flash");
-    }, 80);
-  };
-  if (me && !me.is_admin && !me.can_pulse) return /*#__PURE__*/React.createElement("div", {
-    className: "fade-in"
+  const goT = useRef(null);
+  const go = useCallback((sec, anchor) => {
+    const s = puSection(sec);
+    setSection(s);
+    store("al-pulse-tab", s);
+    setTarget(anchor ? {
+      id: anchor,
+      n: Date.now()
+    } : null);
+    if (goT.current) clearTimeout(goT.current);
+    const t0 = Date.now();
+    const step = () => {
+      const root = rootRef.current;
+      if (!root) return;
+      if (anchor) {
+        const el = document.getElementById(anchor);
+        if (el && root.contains(el)) {
+          puReveal(el);
+          return;
+        }
+        // блоки со своей загрузкой появляются позже — ждём якорь до 1,5 с
+        if (Date.now() - t0 < 1500) {
+          goT.current = setTimeout(step, 60);
+          return;
+        }
+      }
+      const panel = document.getElementById("pu2-panel"),
+        band = root.querySelector(".pu2-band");
+      if (panel && band && panel.getBoundingClientRect().top < band.getBoundingClientRect().bottom - 1) {
+        try {
+          panel.scrollIntoView({
+            block: "start",
+            behavior: puSmooth()
+          });
+        } catch {}
+      }
+    };
+    goT.current = setTimeout(step, 30);
+  }, []);
+  useEffect(() => () => {
+    if (goT.current) clearTimeout(goT.current);
+  }, []);
+  const openTicket = useCallback(id => {
+    setTicket(id == null ? null : +id);
+    go("inbox", "pu2-ticket");
+  }, [go]);
+  const openPerson = useCallback(login => setPerson(login ? String(login) : null), []);
+  const openReport = useCallback(id => setReport(id == null ? null : id), []);
+  const openSession = useCallback(id => setSession(id == null ? null : id), []);
+  const setDays = useCallback(d => {
+    if (![7, 14, 30].includes(+d)) return;
+    setDaysS(+d);
+    store("al-pulse-days", String(+d));
+  }, []);
+  // служебная учётка помечена или снята — все разрезы по людям пересчитываются
+  const bump = useCallback(() => {
+    puInvalidate("/api/admin/");
+    setRev(r => r + 1);
+  }, []);
+
+  // ── адрес: ссылка из колокольчика или письма, в том числе когда «Пульс» уже открыт
+  const seenP = useRef(null);
+  useEffect(() => {
+    if (!params || params === seenP.current) return;
+    seenP.current = params;
+    if (params.tab) {
+      const s = puSection(params.tab);
+      setSection(s);
+      store("al-pulse-tab", s);
+    }
+    if (/^\d+$/.test(params.ticket || "")) {
+      setTicket(+params.ticket);
+      if (!params.tab) {
+        setSection("inbox");
+        store("al-pulse-tab", "inbox");
+      }
+    }
+    if (params.person) setPerson(String(params.person));
+  }, [params]);
+  // выбранный раздел — в адресе (ссылку можно переслать); пишем только пока «Пульс» на экране
+  useEffect(() => {
+    if (!visible) return;
+    const cur = (location.hash || "").slice(1).split("?")[0];
+    const want = "#pulse?tab=" + section;
+    if (cur === "pulse" && location.hash !== want) {
+      try {
+        history.replaceState(null, "", want);
+      } catch {}
+    }
+  }, [section, visible]);
+  // на узком экране вкладки прокручиваются вбок: выбранная (в том числе из поиска) — в поле зрения
+  useEffect(() => {
+    const b = document.getElementById("pu2-tab-" + section),
+      l = b && b.parentElement;
+    if (!l || l.scrollWidth <= l.clientWidth) return;
+    if (b.offsetLeft < l.scrollLeft || b.offsetLeft + b.offsetWidth > l.scrollLeft + l.clientWidth) {
+      try {
+        l.scrollTo({
+          left: Math.max(0, b.offsetLeft - 16),
+          behavior: puSmooth()
+        });
+      } catch {
+        l.scrollLeft = Math.max(0, b.offsetLeft - 16);
+      }
+    }
+  }, [section, !!m]); // eslint-disable-line
+  // страницу спрятали (ушли в другой раздел) — слои не остаются висеть поверх чужой страницы
+  useEffect(() => {
+    if (visible) return;
+    const el = rootRef.current;
+    if (el && el.getClientRects().length === 0) {
+      setPerson(null);
+      setReport(null);
+      setSession(null);
+      setPal(false);
+    }
+  }, [visible]);
+  // Ctrl/⌘+K (и «л» в русской раскладке) — поиск «Пульса», только пока страница видна.
+  // Захват и stopImmediatePropagation: иначе откроется и палитра ИИ-помощника.
+  useEffect(() => {
+    if (!visible || !allowed) return;
+    const h = e => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      if (e.code === "KeyK" || /^[kKлЛ]$/.test(e.key || "")) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setPal(true);
+      }
+    };
+    window.addEventListener("keydown", h, true);
+    return () => window.removeEventListener("keydown", h, true);
+  }, [visible, allowed]);
+  const sig = useMemo(() => puSignals(m || {}, {
+    days
+  }), [m, days]);
+  const meOn = withMe != null ? withMe : !!(m && m.with_me !== false);
+  const hiddenN = m ? m.hidden_n != null ? m.hidden_n : Math.max(0, (m.excluded || 0) - (meOn ? 0 : 1)) : 0;
+  const reload = load;
+  const ctx = useMemo(() => ({
+    m,
+    sig,
+    days,
+    setDays,
+    withMe,
+    meOn,
+    hiddenN,
+    isOwner,
+    me,
+    section,
+    go,
+    target,
+    openPerson,
+    openReport,
+    openSession,
+    openTicket,
+    ticket,
+    setTicket,
+    reload,
+    bump,
+    rev,
+    visible,
+    ts,
+    err
+  }), [m, sig, days, setDays, withMe, meOn, hiddenN, isOwner, me, section, go, target, openPerson, openReport, openSession, openTicket, ticket, reload, bump, rev, visible, ts, err]);
+  const css = /*#__PURE__*/React.createElement("style", null, PU2_CSS + PU2_CSS_OVERVIEW + PU2_CSS_PEOPLE + PU2_CSS_QUALITY + PU2_CSS_INBOX + PU2_CSS_SYSTEMS + PU2_CSS_RESULTS + PU2_CSS_LAYERS);
+  if (!allowed) return /*#__PURE__*/React.createElement("div", {
+    className: "fade-in pu2",
+    ref: rootRef
   }, /*#__PURE__*/React.createElement(ErrState, {
     msg: "\u0420\u0430\u0437\u0434\u0435\u043B \u043E\u0442\u043A\u0440\u044B\u0442 \u0432\u043B\u0430\u0434\u0435\u043B\u044C\u0446\u0443 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0430 \u0438 \u0442\u0435\u043C, \u043A\u043E\u043C\u0443 \u043E\u043D \u0434\u0430\u043B \u0434\u043E\u0441\u0442\u0443\u043F."
   }));
-  if (err && !m) return /*#__PURE__*/React.createElement("div", {
-    className: "fade-in"
-  }, /*#__PURE__*/React.createElement(ErrState, {
-    msg: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u043C\u0435\u0442\u0440\u0438\u043A\u0438."
-  }));
-  if (!m) return /*#__PURE__*/React.createElement(LoadingPage, null);
-  const t = m.today || {},
-    f = m.features || {},
-    sg = m.segments || {};
-  const maxPage = Math.max(...(m.pages || []).map(x => x.views || 0), 1);
-  const errs = m.errors_recent || [];
-  const nErr = m.errors_total != null ? m.errors_total : errs.length;
-  const tokSum = (m.tokens || []).reduce((a, x) => a + (+x.tin || 0) + (+x.tout || 0), 0);
-  const dg = Array.isArray(m.digest) ? m.digest : [];
-  const meOn = withMe != null ? withMe : m.with_me !== false;
-  const hiddenN = m.hidden_n != null ? m.hidden_n : Math.max(0, (m.excluded || 0) - (meOn ? 0 : 1));
-  const viewsSum = (m.dau || []).reduce((a, x) => a + (+x.views || 0), 0);
-  const actDays = (m.dau || []).reduce((a, x) => a + (+x.users || 0), 0);
-  const newN = (m.new_users || []).reduce((a, x) => a + (+x.n || 0), 0);
-  const rl = (f.ratings_last || []).find(x => x.kind === "ai_answer");
+  if (!m) return /*#__PURE__*/React.createElement("div", {
+    className: "fade-in pu2",
+    ref: rootRef
+  }, css, err ? /*#__PURE__*/React.createElement("div", {
+    className: "pu2-card",
+    style: {
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement(PuLoadErr, {
+    onRetry: load
+  }, "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044C \xAB\u041F\u0443\u043B\u044C\u0441\xBB.")) : /*#__PURE__*/React.createElement("div", {
+    role: "status",
+    "aria-label": "\u0417\u0430\u0433\u0440\u0443\u0436\u0430\u0435\u043C \xAB\u041F\u0443\u043B\u044C\u0441\xBB",
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 14,
+      paddingTop: 4
+    }
+  }, /*#__PURE__*/React.createElement(Skel, {
+    h: 14,
+    w: "30%"
+  }), /*#__PURE__*/React.createElement(Skel, {
+    h: 34,
+    w: "70%"
+  }), /*#__PURE__*/React.createElement(Skel, {
+    h: 16,
+    w: "50%"
+  }), /*#__PURE__*/React.createElement(Skel, {
+    h: 40,
+    style: {
+      marginTop: 10
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "pu2-grid"
+  }, /*#__PURE__*/React.createElement(Skel, {
+    h: 260,
+    style: {
+      gridColumn: "span 7"
+    }
+  }), /*#__PURE__*/React.createElement(Skel, {
+    h: 260,
+    style: {
+      gridColumn: "span 5"
+    }
+  }))));
   const tabKey = (e, k) => {
-    const i = PU_TABS.findIndex(x => x[0] === k);
+    const i = PU2_SECTIONS.findIndex(x => x[0] === k);
     const n = {
       ArrowRight: i + 1,
       ArrowLeft: i - 1,
       Home: 0,
-      End: PU_TABS.length - 1
+      End: PU2_SECTIONS.length - 1
     }[e.key];
     if (n == null) return;
     e.preventDefault();
-    const nk = PU_TABS[(n + PU_TABS.length) % PU_TABS.length][0];
-    selTab(nk);
+    const nk = PU2_SECTIONS[(n + PU2_SECTIONS.length) % PU2_SECTIONS.length][0];
+    go(nk);
     setTimeout(() => {
-      const b = document.getElementById("pu-tab-" + nk);
-      b && b.focus();
+      const b = document.getElementById("pu2-tab-" + nk);
+      if (b) b.focus();
     }, 0);
   };
-  const errText = e => e.msg === "Script error." ? "ошибка во внешнем скрипте — браузер не раскрывает текст" : e.msg || "";
-  const feedText = e => {
-    const pg = AD_PAGE_RU[e.page] || e.page || "";
-    return e.kind === "page_view" ? "→ " + pg : e.kind === "ai_query" ? e.deep ? "заказ отчёта" : "вопрос ИИ-помощнику" : e.kind === "share" ? "отправка отчёта коллеге" : e.kind === "report_open" ? "открытие сохранённого отчёта" : e.kind === "client_error" ? "⚠ ошибка в браузере · " + pg : "⚠ ошибка сервера · " + (e.page || "") + (e.status ? " · " + e.status : "");
+  const unread = +(m.inbox || {}).unread || 0;
+  const toggleMe = () => {
+    const v = !meOn;
+    setWithMe(v);
+    store("al-pulse-me", v ? "1" : "0");
+    fbToast(v ? "Ваши действия считаются" : "Ваши действия не считаются");
+  };
+  const xlsx = () => {
+    let d = 0;
+    try {
+      const v = +localStorage.getItem("al-pu-oc-days");
+      if ([0, 7, 14, 30, 90].includes(v)) d = v;
+    } catch {}
+    const a = document.createElement("a");
+    a.href = "/api/admin/pulse/outcomes.xlsx?days=" + d + puMe(withMe);
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+  const menu = [{
+    t: /*#__PURE__*/React.createElement("span", {
+      className: "pu2-mi"
+    }, "\u0421\u0447\u0438\u0442\u0430\u0442\u044C \u043C\u043E\u0438 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F", /*#__PURE__*/React.createElement("small", null, meOn ? "Считаются все, включая вас" : "Сейчас считаются коллеги, без вас")),
+    ic: /*#__PURE__*/React.createElement("span", {
+      className: "pu2-tgl" + (meOn ? " on" : ""),
+      "aria-hidden": "true"
+    }),
+    on: toggleMe
+  }, isOwner && {
+    t: /*#__PURE__*/React.createElement("span", {
+      className: "pu2-mi"
+    }, "\u041F\u043B\u0430\u0448\u043A\u0430 \xAB\u0422\u0443\u0440\u0431\u0443\u043B\u0435\u043D\u0442\u043D\u043E\u0441\u0442\u044C\xBB", /*#__PURE__*/React.createElement("small", null, "\u0432\u043A\u043B\u044E\u0447\u0430\u0435\u0442\u0441\u044F \u0432 \u0440\u0430\u0437\u0434\u0435\u043B\u0435 \xAB\u0421\u0438\u0441\u0442\u0435\u043C\u044B\xBB")),
+    ic: /*#__PURE__*/React.createElement(PuIcon, {
+      n: "cloud"
+    }),
+    on: () => go("systems", "pu2-banner")
+  }, {
+    t: /*#__PURE__*/React.createElement("span", {
+      className: "pu2-mi"
+    }, "\u0421\u043A\u0430\u0447\u0430\u0442\u044C \u0438\u0442\u043E\u0433\u0438 \u0432 Excel", /*#__PURE__*/React.createElement("small", null, "\u0441\u0432\u043E\u0434\u043A\u0430 \u0440\u0430\u0437\u0434\u0435\u043B\u0430 \xAB\u0418\u0442\u043E\u0433\u0438\xBB \u0444\u0430\u0439\u043B\u043E\u043C")),
+    ic: /*#__PURE__*/React.createElement(PuIcon, {
+      n: "download"
+    }),
+    on: xlsx
+  }, {
+    t: /*#__PURE__*/React.createElement("span", {
+      className: "pu2-mi"
+    }, "\u0421\u043B\u0443\u0436\u0435\u0431\u043D\u044B\u0435 \u0443\u0447\u0451\u0442\u043A\u0438: ", puNum(hiddenN), /*#__PURE__*/React.createElement("small", null, "\u043D\u0435 \u0432\u0445\u043E\u0434\u044F\u0442 \u0432 \u0438\u0442\u043E\u0433\u0438 \xB7 \u043F\u043E\u043C\u0435\u0447\u0430\u044E\u0442\u0441\u044F \u0432 \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0435 \u0447\u0435\u043B\u043E\u0432\u0435\u043A\u0430")),
+    ic: /*#__PURE__*/React.createElement(PuIcon, {
+      n: "user"
+    }),
+    on: () => fbToast("Служебные учётки помечаются в карточке человека")
+  }];
+  const hidTxt = `${hiddenN} ${plural(hiddenN, "служебной учётки", "служебных учёток", "служебных учёток")}`;
+  const countNote = meOn ? hiddenN > 0 ? `Считаются все, включая вас, кроме ${hidTxt}` : "Считаются все, включая вас" : hiddenN > 0 ? `Считаются коллеги: без вас и без ${hidTxt}` : "Считаются коллеги: без вас";
+  const Sec = {
+    overview: PuOverview,
+    people: PuPeopleSec,
+    quality: PuQualitySec,
+    inbox: PuInboxSec,
+    systems: PuSystemsSec,
+    results: PuResultsSec
+  }[section] || PuOverview;
+  const palPick = it => {
+    if (it.go) go(it.go);else if (it.person) openPerson(it.person);else if (it.ticket) openTicket(it.ticket);else if (it.report) openReport(it.report);
   };
   return /*#__PURE__*/React.createElement("div", {
-    className: "fade-in"
-  }, /*#__PURE__*/React.createElement("style", null, AD_CSS), /*#__PURE__*/React.createElement("header", {
-    style: {
-      marginBottom: 4
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "eyebrow-row"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "eyebrow"
-  }, "\u041F\u0443\u043B\u044C\u0441 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0430 \xB7 \u0434\u043E\u0441\u0442\u0443\u043F: \u0432\u043B\u0430\u0434\u0435\u043B\u0435\u0446 \xB7 ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--accent)"
-    }
-  }, "\u0430\u0432\u0442\u043E\u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435 \u0440\u0430\u0437 \u0432 \u043C\u0438\u043D\u0443\u0442\u0443")), ts && /*#__PURE__*/React.createElement("span", {
-    className: "bf-stamp",
-    title: err ? "последнее обновление не удалось — показаны прежние данные" : "время последнего обновления"
-  }, err ? "⚠ " : "", ts.toLocaleTimeString("ru", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit"
-  }))), /*#__PURE__*/React.createElement("h1", {
-    className: "t-display",
-    style: {
-      maxWidth: "26ch",
-      marginBottom: 6
-    }
-  }, "\u041A\u0430\u043A ", /*#__PURE__*/React.createElement("em", {
-    style: {
-      fontStyle: "italic",
-      color: "var(--accent)"
-    }
-  }, "\u0436\u0438\u0432\u0451\u0442"), " AuditLens"), /*#__PURE__*/React.createElement("p", {
-    className: "lede"
-  }, "\u041B\u044E\u0434\u0438, \u043E\u0442\u0447\u0451\u0442\u044B, \u043A\u0430\u0447\u0435\u0441\u0442\u0432\u043E \u0418\u0418, \u043E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u044F, \u0434\u0430\u043D\u043D\u044B\u0435 \u0438 \u0442\u0435\u0445\u043D\u0438\u043A\u0430 \u2014 \u043F\u043E \u0432\u043A\u043B\u0430\u0434\u043A\u0430\u043C \u043D\u0438\u0436\u0435."), /*#__PURE__*/React.createElement("p", {
-    className: "t-cap",
-    style: {
-      margin: "4px 0 0"
-    }
-  }, meOn ? "Считаются все, включая вас" : "Считаются коллеги: без вас", hiddenN > 0 ? `${meOn ? ", кроме" : " и"} ${hiddenN} ${plural(hiddenN, "служебной учётки", "служебных учёток", "служебных учёток")}` : "", ".", " ", "\u041E\u0448\u0438\u0431\u043A\u0438, \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u044C \u0438 \u0441\u0431\u043E\u0440 \u0434\u0430\u043D\u043D\u044B\u0445 \u2014 \u043F\u043E \u0432\u0441\u0435\u043C.")), me && me.is_admin && /*#__PURE__*/React.createElement(PuTurbCtl, null), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tiles"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "pu-live"
-  }), "\u041E\u043D\u043B\u0430\u0439\u043D \u0441\u0435\u0439\u0447\u0430\u0441"), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, t.online || 0), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, "\u0437\u0430 15 \u043C\u0438\u043D\u0443\u0442")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, "\u0417\u0430\u0445\u043E\u0434\u0438\u043B\u0438 \u0441\u0435\u0433\u043E\u0434\u043D\u044F"), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, t.active || 0), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, "\u0438\u0437 ", t.users_total || 0)), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, "\u041F\u0440\u043E\u0441\u043C\u043E\u0442\u0440\u043E\u0432 \u0441\u0435\u0433\u043E\u0434\u043D\u044F"), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, t.views || 0), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, "\u043E\u0442\u043A\u0440\u044B\u0442\u0438\u0439 \u0440\u0430\u0437\u0434\u0435\u043B\u043E\u0432")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, "\u0418\u0418-\u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \u0441\u0435\u0433\u043E\u0434\u043D\u044F"), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, t.ai || 0), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, "\u043E\u0442\u0432\u0435\u0442\u044B \u0438 \u043E\u0442\u0447\u0451\u0442\u044B")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-tile" + (t.errors > 0 ? " neg" : "")
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "l"
-  }, "\u041E\u0448\u0438\u0431\u043E\u043A \u0441\u0435\u0433\u043E\u0434\u043D\u044F"), /*#__PURE__*/React.createElement("div", {
-    className: "v tnum"
-  }, t.errors || 0), /*#__PURE__*/React.createElement("div", {
-    className: "s"
-  }, t.errors > 0 ? "вкладка «Техника»" : "чисто ✓"))), /*#__PURE__*/React.createElement(PuGuard, {
+    className: "fade-in pu2",
+    ref: rootRef
+  }, css, /*#__PURE__*/React.createElement(PuCtx.Provider, {
+    value: ctx
+  }, /*#__PURE__*/React.createElement(PuBrief, {
     m: m,
-    onGo: goTo
+    sig: sig,
+    ts: ts,
+    err: err,
+    onRetry: load
   }), /*#__PURE__*/React.createElement("div", {
-    className: "rv-tabs"
+    className: "rv-tabs pu2-band"
   }, /*#__PURE__*/React.createElement("div", {
     className: "rv-tabs-l",
     role: "tablist",
     "aria-label": "\u0420\u0430\u0437\u0434\u0435\u043B\u044B \xAB\u041F\u0443\u043B\u044C\u0441\u0430\xBB"
-  }, PU_TABS.map(([k, l]) => /*#__PURE__*/React.createElement("button", {
+  }, PU2_SECTIONS.map(([k, l]) => /*#__PURE__*/React.createElement("button", {
     key: k,
-    id: "pu-tab-" + k,
+    type: "button",
+    id: "pu2-tab-" + k,
     role: "tab",
-    "aria-selected": tab === k,
-    "aria-controls": "pu-panel",
-    tabIndex: tab === k ? 0 : -1,
-    className: "rv-tab" + (tab === k ? " on" : ""),
-    onClick: () => selTab(k),
+    "aria-selected": section === k,
+    "aria-controls": "pu2-panel",
+    tabIndex: section === k ? 0 : -1,
+    className: "rv-tab" + (section === k ? " on" : ""),
+    onClick: () => go(k),
     onKeyDown: e => tabKey(e, k)
-  }, l, k === "inbox" && (m.inbox || {}).unread > 0 && /*#__PURE__*/React.createElement("span", {
-    className: "rv-tab-n"
-  }, m.inbox.unread)))), /*#__PURE__*/React.createElement("span", {
+  }, l, k === "inbox" && unread > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    className: "pu2-cnt",
+    "aria-hidden": "true"
+  }, unread), /*#__PURE__*/React.createElement("span", {
+    className: "vh"
+  }, ", \u0436\u0434\u0443\u0442 \u043E\u0442\u0432\u0435\u0442\u0430: ", unread))))), /*#__PURE__*/React.createElement("div", {
     className: "rv-tabs-r"
-  }, /*#__PURE__*/React.createElement("label", {
-    className: "pu-me",
-    title: "\u0441\u0447\u0438\u0442\u0430\u0442\u044C \u043B\u0438 \u0432\u0430\u0448\u0438 \u0441\u043E\u0431\u0441\u0442\u0432\u0435\u043D\u043D\u044B\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u0432 \u043C\u0435\u0442\u0440\u0438\u043A\u0430\u0445 \u043F\u0440\u043E \u043B\u044E\u0434\u0435\u0439"
-  }, /*#__PURE__*/React.createElement("input", {
-    type: "checkbox",
-    checked: meOn,
-    onChange: e => setMeOn(e.target.checked)
-  }), "\u0441\u043E \u043C\u043D\u043E\u0439"), tab !== "outcomes" && /*#__PURE__*/React.createElement("div", {
-    className: "seg",
-    role: "group",
-    "aria-label": "\u041F\u0435\u0440\u0438\u043E\u0434"
-  }, [7, 14, 30].map(d => /*#__PURE__*/React.createElement("button", {
-    key: d,
-    className: "seg-btn" + (days === d ? " on" : ""),
-    "aria-pressed": days === d,
-    onClick: () => setDays(d)
-  }, d, " \u0434\u043D"))))), /*#__PURE__*/React.createElement("div", {
-    id: "pu-panel",
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "pu2-find",
+    onClick: () => setPal(true),
+    "aria-label": "\u041D\u0430\u0439\u0442\u0438 \u0447\u0435\u043B\u043E\u0432\u0435\u043A\u0430, \u043E\u0442\u0447\u0451\u0442 \u0438\u043B\u0438 \u043E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u0435",
+    "aria-keyshortcuts": PU_MAC ? "Meta+K" : "Control+K"
+  }, /*#__PURE__*/React.createElement(PuIcon, {
+    n: "search"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "pu2-find-l"
+  }, "\u0427\u0435\u043B\u043E\u0432\u0435\u043A, \u043E\u0442\u0447\u0451\u0442, \u043E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u0435"), /*#__PURE__*/React.createElement("span", {
+    className: "pu2-find-k",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("kbd", {
+    className: "pu2-kbd"
+  }, PU_MAC ? "⌘" : "Ctrl"), /*#__PURE__*/React.createElement("kbd", {
+    className: "pu2-kbd"
+  }, "K"))), (section === "people" || section === "quality") && /*#__PURE__*/React.createElement(PuSeg, {
+    label: "\u041F\u0435\u0440\u0438\u043E\u0434",
+    value: days,
+    onChange: setDays,
+    options: [[7, "7 дн"], [14, "14 дн"], [30, "30 дн"]]
+  }), /*#__PURE__*/React.createElement(RvMenu, {
+    items: menu
+  }))), /*#__PURE__*/React.createElement("div", {
+    id: "pu2-panel",
     role: "tabpanel",
-    "aria-labelledby": "pu-tab-" + tab,
-    key: tab,
-    className: "rv-panel"
-  }, tab === "people" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(PuRetention, {
-    rt: m.retention,
-    onOpenUser: setCard
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0410\u0443\u0434\u0438\u0442\u043E\u0440\u0438\u044F \xB7 \u0447\u0435\u043B\u043E\u0432\u0435\u043A \u0432 \u0434\u0435\u043D\u044C"), /*#__PURE__*/React.createElement("span", null, "\u043D\u043E\u0432\u044B\u0445 \u0437\u0430 ", m.days, " \u0434\u043D: ", newN)), /*#__PURE__*/React.createElement(AdArea, {
-    data: m.dau
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "pu-note"
-  }, "\u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440\u043E\u0432 \u0437\u0430 \u043F\u0435\u0440\u0438\u043E\u0434: ", puNum(viewsSum), actDays ? /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 \u0432 \u0441\u0440\u0435\u0434\u043D\u0435\u043C ", Math.round(viewsSum / actDays), " \u043D\u0430 \u0447\u0435\u043B\u043E\u0432\u0435\u043A\u0430 \u0432 \u0434\u0435\u043D\u044C") : null, " \xB7 \u043D\u0430\u0432\u0435\u0434\u0438\u0442\u0435 \u043D\u0430 \u0442\u043E\u0447\u043A\u0443 \u2014 \u0447\u0438\u0441\u043B\u043E \u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440\u043E\u0432 \u0437\u0430 \u0434\u0435\u043D\u044C")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-grid2 pu-sec"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041A\u0442\u043E \u043D\u0430\u0448\u0430 \u0430\u0443\u0434\u0438\u0442\u043E\u0440\u0438\u044F \xB7 ", m.days, " \u0434\u043D")), /*#__PURE__*/React.createElement(AdDonut, {
-    center: String(sg.active || 0),
-    sub: "\u0437\u0430\u0445\u043E\u0434\u0438\u043B\u0438",
-    parts: [{
-      label: "задают вопросы ИИ",
-      value: sg.researchers || 0,
-      color: "var(--accent)"
-    }, {
-      label: "только читают новости",
-      value: sg.readers || 0,
-      color: "var(--warn)"
-    }, {
-      label: "смотрят разделы без ИИ",
-      value: sg.casual || 0,
-      color: "var(--ink-3)"
-    }, {
-      label: "молчат за период",
-      value: sg.sleepers || 0,
-      color: "var(--hair-2)"
-    }]
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "pu-note"
-  }, sg.readers > 0 ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
-    className: "acc"
-  }, "\u2726"), " ", sg.readers, " ", plural(sg.readers, "человек заходит", "человека заходят", "человек заходят"), " \u0442\u043E\u043B\u044C\u043A\u043E \u043F\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u043D\u043E\u0432\u043E\u0441\u0442\u0438 (\xAB\u041D\u043E\u0432\u043E\u0441\u0442\u043D\u044B\u0435 \u043E\u0431\u0437\u043E\u0440\u044B\xBB \u0438 \xAB\u0414\u043B\u044F \u0432\u0430\u0441\xBB) \u2014 \u0442\u043E\u0447\u043A\u0430 \u0440\u043E\u0441\u0442\u0430 \u0434\u043B\u044F \u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u0430") : "«только читают новости» — от 60% просмотров в «Новостных обзорах» без единого вопроса ИИ")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0412\u043E\u043F\u0440\u043E\u0441\u044B \u0438 \u043E\u0442\u0447\u0451\u0442\u044B \xB7 \u043F\u043E \u0434\u043D\u044F\u043C"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--accent)"
-    }
-  }, "\u25A0"), " \u0432\u043E\u043F\u0440\u043E\u0441\u044B \u0418\u0418 \xB7 ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--ink-3)"
-    }
-  }, "\u25A0"), " \u043E\u0442\u0447\u0451\u0442\u044B")), /*#__PURE__*/React.createElement(AdCols, {
-    axis: m.dau,
-    a: m.ai_per_day,
-    b: m.reports_per_day
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "pu-note"
-  }, "\u0437\u0430 \u043F\u0435\u0440\u0438\u043E\u0434: ", f.ai_total || 0, " ", plural(f.ai_total || 0, "вопрос", "вопроса", "вопросов"), " \u0418\u0418", f.ai_deep ? /*#__PURE__*/React.createElement(React.Fragment, null, " (\u0438\u0437 \u043D\u0438\u0445 ", f.ai_deep, " \u2014 \u0437\u0430\u043A\u0430\u0437 \u043E\u0442\u0447\u0451\u0442\u0430)") : null, " \xB7 ", f.reports || 0, " ", plural(f.reports || 0, "отчёт", "отчёта", "отчётов"), " ", "\xB7 ", f.quick_saved || 0, " ", plural(f.quick_saved || 0, "быстрый ответ сохранён", "быстрых ответа сохранено", "быстрых ответов сохранено")))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-grid2 top pu-sec"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0420\u0430\u0437\u0434\u0435\u043B\u044B \xB7 ", m.days, " \u0434\u043D"), /*#__PURE__*/React.createElement("span", null, "\u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440\u044B \xB7 \u0432\u0440\u0435\u043C\u044F")), (m.pages || []).length === 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: "var(--ink-3)",
-      fontSize: 12
-    }
-  }, "\u0417\u0430 \u043F\u0435\u0440\u0438\u043E\u0434 \u043D\u0438\u043A\u0442\u043E \u043D\u0435 \u0437\u0430\u0445\u043E\u0434\u0438\u043B."), (m.pages || []).map(pg => /*#__PURE__*/React.createElement("div", {
-    key: pg.page,
-    className: "pu-bar-row"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "lb"
-  }, AD_PAGE_RU[pg.page] || pg.page), /*#__PURE__*/React.createElement("span", {
-    className: "tr"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "fl",
-    style: {
-      width: Math.max(3, pg.views / maxPage * 100) + "%"
-    }
-  })), /*#__PURE__*/React.createElement("span", {
-    className: "vv tnum"
-  }, pg.views, " \xB7 ", adFmtS(pg.total_s))))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0424\u0443\u043D\u043A\u0446\u0438\u0438 \xB7 ", m.days, " \u0434\u043D")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0412\u043E\u043F\u0440\u043E\u0441\u044B \u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u0443", f.ai_deep ? /*#__PURE__*/React.createElement("span", {
-    className: "sub"
-  }, "\u0438\u0437 \u043D\u0438\u0445 \u0437\u0430\u043A\u0430\u0437 \u043E\u0442\u0447\u0451\u0442\u0430 \u2014 ", f.ai_deep) : null), /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, f.ai_total || 0)), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0442\u0447\u0451\u0442\u044B"), /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, f.reports || 0)), f.runs_ok || f.runs_failed || f.runs_stopped ? /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u0440\u043E\u0433\u043E\u043D\u044B \u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u0430", /*#__PURE__*/React.createElement("span", {
-    className: "sub"
-  }, [f.quick_p50_s != null ? `быстрый ответ — медиана ${puDur(f.quick_p50_s)}` : null, f.deep_p50_s != null ? `отчёт — медиана ${puDur(f.deep_p50_s)}, 95% — до ${puDur(f.deep_p95_s)}` : f.deep_failed ? `отчёты: готово ${f.deep_ok || 0}, сорвалось ${f.deep_failed}` : null].filter(Boolean).join(" · ") || "время появится после первых прогонов")), /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, f.runs_ok || 0, " \u0433\u043E\u0442\u043E\u0432\u043E", f.runs_failed ? /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--neg)"
-    }
-  }, " \xB7 ", f.runs_failed, " \u0441\u043E\u0440\u0432\u0430\u043B\u043E\u0441\u044C") : null, f.runs_stopped ? /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--ink-3)"
-    }
-  }, " \xB7 ", f.runs_stopped, " \u043E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043E") : null)) : null, /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0411\u044B\u0441\u0442\u0440\u044B\u0435 \u043E\u0442\u0432\u0435\u0442\u044B \u0441\u043E\u0445\u0440\u0430\u043D\u0435\u043D\u043E"), /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, f.quick_saved || 0)), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0442\u043A\u0440\u044B\u0442\u0438\u0439 \u0441\u043E\u0445\u0440\u0430\u043D\u0451\u043D\u043D\u044B\u0445 \u043E\u0442\u0447\u0451\u0442\u043E\u0432"), /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, f.report_opens || 0)), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E \u043A\u043E\u043B\u043B\u0435\u0433\u0430\u043C"), /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, f.shares || 0)), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0446\u0435\u043D\u043A\u0438 \u043D\u043E\u0432\u043E\u0441\u0442\u0435\u0439 \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043E\u043A \uD83D\uDC4D/\uD83D\uDC4E"), /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--pos)"
-    }
-  }, f.fb_likes || 0), " / ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--neg)"
-    }
-  }, f.fb_dislikes || 0))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0446\u0435\u043D\u043A\u0438 \u043E\u0442\u0432\u0435\u0442\u043E\u0432 \u0418\u0418 \uD83D\uDC4D/\uD83D\uDC4E"), /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--pos)"
-    }
-  }, f.ai_likes || 0), " / ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--neg)"
-    }
-  }, f.ai_dislikes || 0))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-kv"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u0440\u043E\u0444\u0438\u043B\u0435\u0439 \u0441 \u043E\u043F\u0438\u0441\u0430\u043D\u0438\u0435\u043C \xB7 \u0437\u0430 \u0432\u0441\u0451 \u0432\u0440\u0435\u043C\u044F"), /*#__PURE__*/React.createElement("b", {
-    className: "tnum"
-  }, f.profiles || 0, " \u0438\u0437 ", t.users_total || 0)))), /*#__PURE__*/React.createElement(PuMail, {
-    ml: m.mail,
-    days: m.days,
-    onOpenUser: setCard
-  }), /*#__PURE__*/React.createElement(PuPeople, {
-    days: days,
-    withMe: withMe,
-    rev: rev,
-    onOpenUser: setCard
-  }), /*#__PURE__*/React.createElement(PuComplaints, {
-    days: days,
-    withMe: withMe,
-    rev: rev,
-    onOpenReport: setRep,
-    onOpenUser: setCard,
-    onOpenSession: setSess
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "pu-card pu-sec"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041A\u043E\u0433\u0434\u0430 \u043F\u043E\u043B\u044C\u0437\u0443\u044E\u0442\u0441\u044F \xB7 \u043E\u0442\u043A\u0440\u044B\u0442\u0438\u044F \u0440\u0430\u0437\u0434\u0435\u043B\u043E\u0432 \u043F\u043E \u0447\u0430\u0441\u0430\u043C (\u041C\u0421\u041A)"), /*#__PURE__*/React.createElement("span", null, m.days, " \u0434\u043D")), /*#__PURE__*/React.createElement(AdHeat, {
-    cells: m.heatmap
-  })), /*#__PURE__*/React.createElement(PuPersonalization, {
-    pz: m.personalization || {},
-    days: m.days,
-    onOpenUser: setCard
-  })), tab === "inbox" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(PuSliceFlags, {
-    onOpenUser: setCard
-  }), /*#__PURE__*/React.createElement(PuInbox, {
-    key: openTicket || 0,
-    openTicket: openTicket,
-    rev: rev,
-    onOpenUser: setCard,
-    onChanged: load
-  })), tab === "outcomes" && /*#__PURE__*/React.createElement(PuOutcomes, {
-    isOwner: !!(me && me.is_admin),
-    withMe: withMe
-  }), tab === "reach" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(PuReach, {
-    isOwner: !!(me && me.is_admin),
-    withMe: withMe
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      height: 16
-    }
-  }), /*#__PURE__*/React.createElement(PuCosts, null)), tab === "reports" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(PuTopics, {
-    t: m.topics,
-    days: m.days
-  }), /*#__PURE__*/React.createElement(PuReports, {
-    days: days,
-    withMe: withMe,
-    rev: rev,
-    onOpenReport: setRep,
-    onOpenUser: setCard
-  })), tab === "ai" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(PuAgentEval, null), /*#__PURE__*/React.createElement(PuAiFeedback, {
-    fb: m.ai_feedback || {},
-    days: m.days,
-    lastAt: rl && rl.d,
-    onOpenReport: setRep,
-    onOpenUser: setCard
-  }), /*#__PURE__*/React.createElement(PuPersona, {
-    p: m.persona || {}
-  })), tab === "data" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(PuProposals, {
-    p: m.proposals
-  }), /*#__PURE__*/React.createElement(PuReviewSources, {
-    r: m.review_sources || {}
-  }), /*#__PURE__*/React.createElement(PuSlices, null), /*#__PURE__*/React.createElement(PuSignalJournal, {
-    j: m.signal_journal
-  }), /*#__PURE__*/React.createElement(PuNewsQuality, {
-    q: m.news_quality || {},
-    days: m.days
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "pu-sec"
-  }, /*#__PURE__*/React.createElement(PuReviewSearch, {
-    r: m.reviews_search
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "pu-sec"
-  }, /*#__PURE__*/React.createElement(PuSearch, {
-    s: m.search || {}
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "pu-grid2 top pu-sec"
-  }, /*#__PURE__*/React.createElement(PuIngest, {
-    ing: m.ingest || {}
-  }), /*#__PURE__*/React.createElement(PuCollect, {
-    c: m.collect || {}
-  }))), tab === "tech" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "pu-grid2 top"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0421\u043A\u043E\u0440\u043E\u0441\u0442\u044C \u043E\u0442\u0432\u0435\u0442\u043E\u0432 \u0441\u0435\u0440\u0432\u0435\u0440\u0430 \xB7 7 \u0434\u043D"), /*#__PURE__*/React.createElement("span", null, "\u043C\u0441")), (m.latency || []).length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: "var(--ink-3)",
-      fontSize: 12
-    }
-  }, "\u041D\u0430\u043A\u0430\u043F\u043B\u0438\u0432\u0430\u0435\u0442\u0441\u044F.") : /*#__PURE__*/React.createElement("div", {
-    className: "pu-x-scroll"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "pu-tbl"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u0430\u0434\u0440\u0435\u0441"), /*#__PURE__*/React.createElement("th", null, "\u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432"), /*#__PURE__*/React.createElement("th", null, "p50"), /*#__PURE__*/React.createElement("th", null, "p95"), /*#__PURE__*/React.createElement("th", null, "5xx"))), /*#__PURE__*/React.createElement("tbody", null, (m.latency || []).map((r, i) => /*#__PURE__*/React.createElement("tr", {
-    key: i
-  }, /*#__PURE__*/React.createElement("td", {
-    title: r.path
-  }, (r.path || "").replace("/api/", "")), /*#__PURE__*/React.createElement("td", null, r.n), /*#__PURE__*/React.createElement("td", null, r.p50), /*#__PURE__*/React.createElement("td", {
-    style: r.p95 > 3000 ? {
-      color: "var(--warn)"
-    } : null
-  }, r.p95), /*#__PURE__*/React.createElement("td", {
-    style: r.errs > 0 ? {
-      color: "var(--neg)"
-    } : null
-  }, r.errs || 0)))))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-note"
-  }, "\u0441\u043B\u0443\u0436\u0435\u0431\u043D\u044B\u0435 \u0430\u0434\u0440\u0435\u0441\u0430 \xAB\u041F\u0443\u043B\u044C\u0441\u0430\xBB \u043D\u0435 \u0443\u0447\u0438\u0442\u044B\u0432\u0430\u044E\u0442\u0441\u044F: \u044D\u0442\u043E \u0430\u0432\u0442\u043E\u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0435 \u044D\u0442\u043E\u0439 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B")), /*#__PURE__*/React.createElement("div", {
-    className: "pu-card",
-    id: "pu-errors"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0448\u0438\u0431\u043A\u0438 \xB7 ", m.days, " \u0434\u043D"), /*#__PURE__*/React.createElement("span", {
-    className: "pu-chip " + (nErr ? "bad" : "ok")
-  }, nErr ? nErr + " за период" : "чисто ✓")), errs.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: "var(--ink-3)",
-      fontSize: 12
-    }
-  }, "\u0417\u0430 \u043F\u0435\u0440\u0438\u043E\u0434 \u043D\u0438 \u043E\u0434\u043D\u043E\u0439 \u043E\u0448\u0438\u0431\u043A\u0438.") : errs.slice(0, 12).map((e, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    className: "pu-err"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "t"
-  }, e.ts), /*#__PURE__*/React.createElement("span", {
-    className: "k"
-  }, e.kind === "client_error" ? "браузер" : "сервер"), /*#__PURE__*/React.createElement("span", {
-    className: "m",
-    title: e.msg || ""
-  }, AD_PAGE_RU[e.page] || e.page || "—", e.status ? " · " + e.status : "", errText(e) ? " · " + errText(e) : ""), +e.n > 1 && /*#__PURE__*/React.createElement("span", {
-    className: "n",
-    title: `${e.n} раз, у ${e.users} ${plural(+e.users || 0, "человека", "человек", "человек")}`
-  }, "\xD7", e.n))))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-grid2 top pu-sec"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "pu-card",
-    id: "pu-digest"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0415\u0436\u0435\u0434\u043D\u0435\u0432\u043D\u044B\u0439 \u0432\u044B\u043F\u0443\u0441\u043A", dg[0] && dg[0].d ? " · " + rvDate(dg[0].d) : ""), /*#__PURE__*/React.createElement("span", {
-    title: "\u0440\u0430\u0441\u0445\u043E\u0434 \u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u0430 \u043D\u0438\u0433\u0434\u0435 \u043D\u0435 \u043F\u0438\u0448\u0435\u0442\u0441\u044F \u2014 \u0437\u0434\u0435\u0441\u044C \u0442\u043E\u043B\u044C\u043A\u043E \u0432\u044B\u043F\u0443\u0441\u043A"
-  }, "\u0442\u043E\u043A\u0435\u043D\u044B \u0432\u044B\u043F\u0443\u0441\u043A\u0430 \u0437\u0430 ", m.days, " \u0434\u043D: ", puNum(tokSum))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 7,
-      flexWrap: "wrap"
-    }
-  }, dg.map(s => /*#__PURE__*/React.createElement("span", {
-    key: s.section,
-    className: "pu-chip " + (s.status === "ok" ? "ok" : s.status === "failed" ? "bad" : ""),
-    title: (s.error || "") + (s.gen_ms ? " · собран за " + String(Math.round(s.gen_ms / 100) / 10).replace(".", ",") + " с" : "")
-  }, DG_SECTION_RU[s.section] || s.section, " \xB7 ", s.status === "ok" ? "готов" : s.status, s.at ? " · " + s.at : "")))), /*#__PURE__*/React.createElement("div", {
-    className: "pu-card"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0416\u0438\u0432\u0430\u044F \u043B\u0435\u043D\u0442\u0430"), /*#__PURE__*/React.createElement("span", null, "\u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u043A\u043E\u043B\u043B\u0435\u0433")), (m.feed || []).length === 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: "var(--ink-3)",
-      fontSize: 12
-    }
-  }, "\u041F\u043E\u043A\u0430 \u0442\u0438\u0445\u043E."), (m.feed || []).map((e, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    className: "pu-feed-row"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "t",
-    style: {
-      width: "auto",
-      minWidth: 34
-    }
-  }, e.ts), /*#__PURE__*/React.createElement("span", {
-    className: "w"
-  }, /*#__PURE__*/React.createElement("b", null, puShort(e.name || e.username || "?")), " ", feedText(e)))))))), card && ReactDOM.createPortal(/*#__PURE__*/React.createElement(PuUserCard, {
-    username: card,
-    days: days,
-    onClose: () => setCard(null),
-    onOpenReport: setRep,
-    onOpenSession: setSess,
-    onHidden: () => setRev(x => x + 1)
-  }), document.body), rep && ReactDOM.createPortal(/*#__PURE__*/React.createElement(PuReportView, {
-    rid: rep,
-    onClose: () => setRep(null)
-  }), document.body), sess && ReactDOM.createPortal(/*#__PURE__*/React.createElement(PuSessionView, {
-    sid: sess,
-    onClose: () => setSess(null)
-  }), document.body), /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 26,
-      paddingTop: 12,
-      borderTop: "1px solid var(--hair)",
-      fontSize: 11,
-      color: "var(--ink-3)"
-    }
-  }, "\u0442\u0435\u043B\u0435\u043C\u0435\u0442\u0440\u0438\u044F: \u043E\u0442\u043A\u0440\u044B\u0442\u0438\u044F \u0440\u0430\u0437\u0434\u0435\u043B\u043E\u0432 \u0438 \u0432\u0440\u0435\u043C\u044F \u043D\u0430 \u043D\u0438\u0445 \u2014 \u0441 \u0444\u0440\u043E\u043D\u0442\u0430 \xB7 \u0437\u0430\u043F\u0440\u043E\u0441\u044B \u0438 \u043E\u0448\u0438\u0431\u043A\u0438 API \u2014 \u0441 \u0441\u0435\u0440\u0432\u0435\u0440\u0430 \xB7 \u0434\u043E\u0441\u0442\u0443\u043F \u2014 env ADMIN_USERS (\u0432\u043B\u0430\u0434\u0435\u043B\u0435\u0446) \u0438 PULSE_USERS \xB7 \u0441\u043B\u0443\u0436\u0435\u0431\u043D\u044B\u0435 \u0443\u0447\u0451\u0442\u043A\u0438 \u043F\u043E\u043C\u0435\u0447\u0430\u044E\u0442\u0441\u044F \u0432 \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0435 \u0447\u0435\u043B\u043E\u0432\u0435\u043A\u0430 \xB7 \u043E\u0442\u043A\u0440\u044B\u0442\u0438\u0435 \u0447\u0443\u0436\u043E\u0433\u043E \u043E\u0442\u0447\u0451\u0442\u0430 \u043F\u0438\u0448\u0435\u0442\u0441\u044F \u0432 \u0436\u0443\u0440\u043D\u0430\u043B (admin_report_open)"));
+    "aria-labelledby": "pu2-tab-" + section,
+    className: "rv-panel pu2-panel",
+    key: section
+  }, /*#__PURE__*/React.createElement(PuBoundary, {
+    name: section
+  }, /*#__PURE__*/React.createElement(Sec, null))), /*#__PURE__*/React.createElement("footer", {
+    className: "pu2-foot"
+  }, /*#__PURE__*/React.createElement("span", null, countNote), /*#__PURE__*/React.createElement("span", null, "\u041E\u0448\u0438\u0431\u043A\u0438, \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u044C \u0438 \u0441\u0431\u043E\u0440 \u0434\u0430\u043D\u043D\u044B\u0445 \u2014 \u043F\u043E \u0432\u0441\u0435\u043C \u0443\u0447\u0451\u0442\u043A\u0430\u043C"), /*#__PURE__*/React.createElement("span", null, "\u041E\u0442\u043A\u0440\u044B\u0442\u0438\u0435 \u0447\u0443\u0436\u043E\u0433\u043E \u043E\u0442\u0447\u0451\u0442\u0430 \u043F\u0438\u0448\u0435\u0442\u0441\u044F \u0432 \u0436\u0443\u0440\u043D\u0430\u043B")), person && /*#__PURE__*/React.createElement(OverlayBoundary, {
+    name: "pulse-person",
+    onClose: () => setPerson(null)
+  }, /*#__PURE__*/React.createElement(PuPersonSheet, {
+    login: person,
+    onClose: () => setPerson(null)
+  })), report != null && /*#__PURE__*/React.createElement(OverlayBoundary, {
+    name: "pulse-report",
+    onClose: () => setReport(null)
+  }, /*#__PURE__*/React.createElement(PuReportSheet, {
+    id: report,
+    onClose: () => setReport(null)
+  })), session != null && /*#__PURE__*/React.createElement(OverlayBoundary, {
+    name: "pulse-session",
+    onClose: () => setSession(null)
+  }, /*#__PURE__*/React.createElement(PuSessionSheet, {
+    id: session,
+    onClose: () => setSession(null)
+  })), pal && /*#__PURE__*/React.createElement(OverlayBoundary, {
+    name: "pulse-search",
+    onClose: () => setPal(false)
+  }, /*#__PURE__*/React.createElement(PuPalette, {
+    onClose: () => setPal(false),
+    onPick: palPick
+  }))));
 }
 
 // Названия разделов (переименованы 01.10.2026 по просьбе коллег). В тексте их
@@ -27863,7 +25766,22 @@ function Shell() {
     setBellToast(null);
     setNavOpen(false);
     loadBell();
-    const [k, id, sub, msg] = String(it.link || "").split(":");
+    const link = String(it.link || "");
+    // «#pulse?tab=inbox&ticket=17» — уведомления команды: раздел «Пульса» и обращение.
+    // Параметры — новым объектом: «Пульс» отрабатывает и повторный переход по той же ссылке.
+    if (link.startsWith("#pulse")) {
+      const qi = link.indexOf("?");
+      let prm = {};
+      if (qi >= 0) {
+        try {
+          prm = Object.fromEntries(new URLSearchParams(link.slice(qi + 1)).entries());
+        } catch {}
+      }
+      setPageParams(prm);
+      setPage("pulse");
+      return;
+    }
+    const [k, id, sub, msg] = link.split(":");
     if (k === "case") openCases(+id, sub ? {
       tab: sub,
       msg: msg ? +msg : null
@@ -28476,7 +26394,10 @@ function Shell() {
       if (page === "overview") contentRef.current?.scrollTo({
         top: 0,
         behavior: "smooth"
-      });else setPage("overview");
+      });else {
+        setPage("overview");
+        setPageParams({});
+      }
     }
   }, /*#__PURE__*/React.createElement("svg", {
     className: "rail-mark",
@@ -28541,6 +26462,7 @@ function Shell() {
         className: `nav-item ${active ? "active" : ""}`,
         onClick: () => {
           setPage(n.id);
+          setPageParams({});
           setNavOpen(false);
         }
       }, /*#__PURE__*/React.createElement("span", {
