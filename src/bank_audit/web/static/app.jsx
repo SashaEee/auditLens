@@ -11346,7 +11346,7 @@ function VProgress({p}){
   const rv=p.reviews||{},cd=p.cards||{},ys=p.yandex_search||{};
   const pct=(a,b)=>b?Math.min(100,Math.round(a/b*100)):0;
   const read=pct(p.screened,p.with_text),cards=pct(p.carded,p.relevant);
-  const done=ys.finished&&read>=98&&cards>=98;
+  const done=ys.finished&&read>=97&&cards>=97;
   if(done)return null;
   const bar=(v,l)=><span className="vprog-b" role="progressbar" aria-valuenow={v} aria-valuemin={0} aria-valuemax={100} aria-label={l}><i style={{width:`${v}%`}}/></span>;
   return <section className="vprog" aria-label="Ход сбора и чтения">
@@ -11386,7 +11386,7 @@ function VspPage(){
   const setF=x=>setFState(s=>({...s,...x}));
   const openPoint=p=>{setEvRid(null);if(!vHashPoint()){scrollY.current=window.scrollY;pushed.current=true;}location.hash="vsp?point="+encodeURIComponent(p);};
   const closePoint=()=>{if(pushed.current){pushed.current=false;history.back();}else location.hash="vsp";};
-  const goTab=t=>{setScheme(null);setTabS(t);vLSset("vsp_tab",t);if(vHashPoint()){pushed.current=false;location.hash="vsp";}try{window.scrollTo({top:0});}catch(e){}};
+  const goTab=t=>{setScheme(null);setTabS(t);vLSset("vsp_tab",t);scrollY.current=0;if(vHashPoint()){pushed.current=false;location.hash="vsp";}try{window.scrollTo({top:0});}catch(e){}};
   const goFilter=x=>{setF({...x});goTab("branches");};
   const TABS=[["branches","Отделения"],["stories","Истории"],["people","Люди"],["schemes","Схемы"],["trends","Динамика"]];
   const SHOW={branches:{action:1,fmt:1,toggles:1},stories:{action:1,fmt:1,toggles:1,story:1},people:{},trends:{action:1}};

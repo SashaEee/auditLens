@@ -28,7 +28,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
-from sqlalchemy import and_, create_engine, event, func, select
+from sqlalchemy import and_, create_engine, event, func, or_, select
 
 from ..vsp.regions import BY_CODE, subject_name
 from ..vsp.signals.risks import BY_KEY as RISK, TYPES as RISK_TYPES
@@ -996,8 +996,13 @@ def _progress() -> dict:
         v["reviews"] = {s: n for s, n in c.execute(select(reviews.c.source, func.count()).group_by(reviews.c.source))}
         v["cards"] = {s: n for s, n in c.execute(select(source_branches.c.source, func.count())
                                                   .group_by(source_branches.c.source))}
+        # знаменатель — как отбор модели: текст от 60 знаков, без массовых аккаунтов-рассыльщиков
+        from ..vsp.signals.llm_read import MIN_CHARS, SPAM_AUTHOR_MIN
+        spam = select(reviews.c.author_ref).where(reviews.c.author_ref.isnot(None), reviews.c.review_text.isnot(None)) \
+            .group_by(reviews.c.author_ref).having(func.count() >= SPAM_AUTHOR_MIN)
         v["with_text"] = c.execute(select(func.count()).select_from(reviews).where(
-            func.length(reviews.c.review_text) >= 60)).scalar() or 0
+            func.length(func.trim(reviews.c.review_text)) >= MIN_CHARS,
+            or_(reviews.c.author_ref.is_(None), reviews.c.author_ref.notin_(spam)))).scalar() or 0
         try:
             from ..vsp.signals.llm_read import PROMPT_VERSION, SCREEN_VERSION, review_llm
             byv = {s: n for s, n in c.execute(select(review_llm.c.prompt_version, func.count())
@@ -1454,7 +1459,7 @@ def evidence(rid: str, user: CurrentUser = Depends(get_current_user)):
     if data:
         model = {"what": data.get("episode") or (card or {}).get("summary"), "scheme": data.get("scheme_free"),
                  "actions": [ACTIONS[a]["label"] for a in (data.get("actions") or []) if a in ACTIONS],
-                 "products": data.get("products") or [], "severity": SEVERITY.get(int(data.get("severity") or 0), ""),
+                 "products": data.get("products") or [], "severity": SEVERITY.get(int(data["severity"]) if str(data.get("severity") or "").isdigit() else 0, ""),
                  "fault": data.get("fault"), "employee": emp or None, "money": data.get("money_rub"),
                  "vulnerable": bool(data.get("vulnerability")), "relevant": bool(data.get("relevant")),
                  "other_vsp": data.get("other_vsp") or None, "model": (card or {}).get("model")}

@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 c6655fb83e25800733d8bc9a9d39c738d42ceacce6b07698a2ca1b85fbce4fba): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 703dfe63ddc7d461447dbb05e943e9c5d2e37886078bc76e091407392fb46d52): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -23013,7 +23013,7 @@ function VProgress({
   const pct = (a, b) => b ? Math.min(100, Math.round(a / b * 100)) : 0;
   const read = pct(p.screened, p.with_text),
     cards = pct(p.carded, p.relevant);
-  const done = ys.finished && read >= 98 && cards >= 98;
+  const done = ys.finished && read >= 97 && cards >= 97;
   if (done) return null;
   const bar = (v, l) => /*#__PURE__*/React.createElement("span", {
     className: "vprog-b",
@@ -23112,6 +23112,7 @@ function VspPage() {
     setScheme(null);
     setTabS(t);
     vLSset("vsp_tab", t);
+    scrollY.current = 0;
     if (vHashPoint()) {
       pushed.current = false;
       location.hash = "vsp";
