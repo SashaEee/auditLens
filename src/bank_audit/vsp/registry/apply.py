@@ -6,9 +6,12 @@
 1. ключ адреса (город|улица|дом) совпал ровно с одним отделением справочника —
    привязка auto (match_method=registry_address);
    совпал с несколькими (два ВСП по одному адресу) — conflict, без привязки;
-2. иначе — через карточку другого источника, уже привязанную и стоящую в том же
+2. иначе — по офису с сайта банка: ближайший стационарный офис с кодом ВСП не дальше
+   SITE_GEO_M и без соседа-другого ВСП рядом — auto (site_geo). Контроль 05.11 на уже
+   привязанных карточках 2ГИС: при расстоянии до 60 м тот же ВСП в 3 244 из 3 258 (99,6 %);
+3. иначе — через карточку другого источника, уже привязанную и стоящую в том же
    здании (registry/match.match_sources, взаимно-лучшая пара) — auto (cross_source);
-3. иначе — без привязки (match_status=none): попадает в отчёт на разбор.
+4. иначе — без привязки (match_status=none): попадает в отчёт на разбор.
 Отделение справочника получает координаты привязанной карточки (у ЦБ их нет).
 """
 from __future__ import annotations
@@ -22,6 +25,7 @@ from sqlalchemy import select, update
 
 from ..models import utcnow
 from ..storage import Store, branches, source_branches
+from .banksite import vsp_key
 from .cbr import RegistryRow
 from .match import GEO_STRONG_M, Item, address_key, haversine_m, match_sources, norm_city
 
@@ -29,6 +33,9 @@ log = logging.getLogger(__name__)
 
 
 WRITE_CHUNK = 500   # карточек на транзакцию записи привязки
+SITE_GEO_M = 60.0   # офис сайта банка не дальше — та же точка обслуживания
+SITE_GEO_STRICT_M = 30.0   # для карточек с конфликтом по адресу — только совсем рядом
+SITE_GEO_GAP_M = 30.0      # другой ВСП рядом: второй офис должен быть дальше на столько и вдвое
 CLOSE_GUARD = 0.9   # закрываем пропавшие, только если выгрузка не меньше 90 % прежней
 
 
@@ -54,8 +61,11 @@ def import_registry(store: Store, rows: list[RegistryRow], source: str = "cbr") 
         elif open_now:
             log.warning("реестр: выгрузка %d строк при %d открытых — закрытие пропущено", len(refs), len(open_now))
         for r in rows:
+            key = vsp_key(r.name)
             vals = dict(region=r.region, city=r.city, name=r.name, address=r.address, address_key=r.akey,
                         registry_num=(r.number or "").strip() or None,
+                        gosb=key.split("/")[0] if key else None, open_date=r.open_date,
+                        parent_name=(r.parent or "").strip() or None,
                         status="active" if r.kind == "office" else r.kind, updated_at=utcnow())
             if r.ref in have:
                 c.execute(update(branches).where(branches.c.branch_id == have[r.ref]).values(**vals))
@@ -65,6 +75,43 @@ def import_registry(store: Store, rows: list[RegistryRow], source: str = "cbr") 
                                                    created_at=utcnow(), **vals))
                 st["new"] += 1
     return st
+
+
+class _Offices:
+    """Стационарные офисы сайта банка, привязанные к ВСП, — в сетке для поиска ближайшего."""
+
+    def __init__(self, rows):
+        self.grid: dict[tuple[int, int], list] = defaultdict(list)
+        for bid, lat, lon in rows:
+            self.grid[(round(lat * 100), round(lon * 50))].append((bid, lat, lon))
+
+    def nearest(self, lat, lon, limit_m: float):
+        """(branch_id, метры) ближайшего офиса не дальше limit_m; "ambiguous" — рядом другой
+        ВСП почти так же близко (два офиса в одном торговом центре); None — ничего рядом."""
+        if lat is None or lon is None:
+            return None
+        ci, cj = round(lat * 100), round(lon * 50)
+        cand = sorted((haversine_m(lat, lon, la, lo), bid)
+                      for i in (ci - 1, ci, ci + 1) for j in (cj - 1, cj, cj + 1)
+                      for bid, la, lo in self.grid.get((i, j), ()))
+        if not cand or cand[0][0] > limit_m:
+            return None
+        d, bid = cand[0]
+        other = next((dd for dd, b in cand[1:] if b != bid), None)
+        if other is not None and other < max(2 * d, d + SITE_GEO_GAP_M):
+            return "ambiguous"
+        return bid, d
+
+
+def _site_offices(store: Store) -> _Offices:
+    from ..storage import branch_profiles as bp
+    rows = []
+    with store.engine.connect() as c:
+        for bid, lat, lon, fm in c.execute(select(bp.c.branch_id, bp.c.lat, bp.c.lon, bp.c.formats).where(
+                bp.c.branch_id.isnot(None), bp.c.status == "active", bp.c.lat.isnot(None))):
+            if "mobile" not in json.loads(fm or "[]"):
+                rows.append((bid, lat, lon))
+    return _Offices(rows)
 
 
 CHILD_FORMATS = ("sber_first", "private")
@@ -123,6 +170,22 @@ def match_all(store: Store) -> dict:
             assign[(x["source"], x["source_branch_id"])] = (ids[0], "registry_address", "auto", 1.0)
         elif len(ids) > 1:
             assign[(x["source"], x["source_branch_id"])] = (None, "registry_address", "conflict", None)
+    # по офисам сайта банка: точные координаты и код ВСП в названии
+    offices = _site_offices(store)
+    for x in cards:
+        key = (x["source"], x["source_branch_id"])
+        cur = assign.get(key)
+        if x["match_status"] == "confirmed" or is_child(x) or (cur and cur[0]):
+            continue
+        if cur and cur[1] == "registry_code":      # номер ЦБ указал на передвижной пункт / другой город
+            continue
+        hit = offices.nearest(x["lat"], x["lon"], SITE_GEO_STRICT_M if cur else SITE_GEO_M)
+        if hit == "ambiguous":
+            st["site_geo_ambiguous"] += 1
+        elif hit:
+            bid, d = hit
+            assign[key] = (bid, "site_geo", "auto", round(1 - d / (2 * SITE_GEO_M), 3))
+            st["site_geo"] += 1
     # перекрёстно: непривязанные карточки — через привязанные другого источника в том же здании.
     # Дочерние карточки особых форматов (СберПервый, Private Banking в 2ГИС) в пары не идут:
     # иначе карточка Яндекса могла бы сойтись с ними, а не с основной карточкой ВСП
@@ -231,7 +294,6 @@ def link_profiles(store: Store) -> dict:
     без повторного обхода сайта. Остановки передвижных офисов к ВСП не привязываются
     (в реестре передвижной пункт записан по госномеру машины) и считаются отдельно."""
     from ..storage import branch_profiles as bp
-    from .banksite import vsp_key
     st = {"linked": 0, "unlinked": 0, "ambiguous": 0, "mobile_stops": 0, "mobile_routes": 0}
     routes: set[str] = set()
     with store.engine.connect() as c:

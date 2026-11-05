@@ -30,6 +30,7 @@ from .config import Settings
 from .http import SourceHttp, set_source_rps
 from .models import CollectorError, NotFound, SourceBlocked, utcnow
 from .registry.apply import apply_formats, import_registry, link_profiles, match_all
+from .registry.enrich import enrich_branches
 from .registry.cbr import fetch_registry
 from .registry.match import haversine_m
 from .storage import Store, branches, reviews, source_branches, sync_state
@@ -72,6 +73,7 @@ async def refresh_registry(store: Store, settings: Settings) -> dict:
     finally:
         await http.close()
     st = await asyncio.to_thread(import_registry, store, rows)
+    st["regions"] = await asyncio.to_thread(enrich_branches, store)
     st["rows"] = len(rows)
     store.kv_set("registry:last", st)
     store.kv_set("registry:at", utcnow().isoformat())
@@ -221,6 +223,8 @@ async def refresh_banksite(store: Store, settings: Settings, *, force: bool = Fa
         raise CollectorError("сайт банка: обход не вернул ни одного офиса — не засчитан")
     st = await asyncio.to_thread(store.save_profiles, offices, crawled_tiles=set(tiles))
     st["linked"] = await asyncio.to_thread(link_profiles, store)
+    m = await asyncio.to_thread(match_all, store)        # новые офисы сайта привязывают карточки (site_geo)
+    st["match"] = {k: v for k, v in m.items() if k in ("site_geo", "site_geo_ambiguous", "rows_changed")}
     st["formats"] = await asyncio.to_thread(apply_formats, store)
     st.update(tiles=len(tiles), offices=len(offices), requests=br.requests)
     store.kv_set("banksite:last", st)
@@ -454,6 +458,12 @@ async def daemon(store: Store, settings: Settings,
         # паспорт ВСП с сайта банка — когда есть точки (после обхода 2ГИС), раз в месяц
         if settings.bank_site and (store.kv_get("discover:2gis") or {}).get("finished"):
             await step("banksite", lambda: refresh_banksite(store, settings), retry_h=24)
+        # сигналы вкладки — раз в сутки ночью (01–06 МСК) или сразу, если ещё не считались
+        night = now.hour >= 22 or now.hour < 3
+        if (store.kv_get("discover:2gis") or {}).get("finished") and (
+                store.kv_get("signals:at") is None
+                or (night and _older(store, "signals:at", hours=sch.signals_every_h - 2, now=now))):
+            await step("signals", lambda: _signals(store), retry_h=6)
         return False
 
     def src_loop(source: str):
@@ -489,9 +499,19 @@ async def daemon(store: Store, settings: Settings,
                          *(_forever(s, src_loop(s), sch.sleep_s) for s in SOURCES))
 
 
+async def _signals(store: Store) -> dict:
+    from .signals.run import run as signals_run
+    res = await asyncio.to_thread(signals_run, store)    # счёт в потоке: сборщики не ждут
+    store.kv_set("signals:at", utcnow().isoformat())
+    store.kv_set("signals:last", res)
+    return res
+
+
 async def _match(store: Store) -> dict:
+    profiles = await asyncio.to_thread(link_profiles, store)     # до привязки карточек: нужны офисы сайта
     res = await asyncio.to_thread(match_all, store)
-    res["profiles"] = await asyncio.to_thread(link_profiles, store)
+    res["profiles"] = profiles
+    res["regions"] = await asyncio.to_thread(enrich_branches, store)
     res["formats"] = await asyncio.to_thread(apply_formats, store)
     store.kv_set("match:at", utcnow().isoformat())
     store.kv_set("match:last", res)

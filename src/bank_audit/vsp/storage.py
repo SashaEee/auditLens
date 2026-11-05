@@ -41,6 +41,11 @@ branches = Table(
     Column("registry_num", String(40), index=True),    # номер подразделения по ЦБ (FILIAL_NUM)
     Column("status", String(20), default="active"),    # active | mobile | remote | cash_center | closed
     Column("formats", Text),       # JSON {формат: [источники]}: mass, sber_first, private, legal, business, … (apply_formats)
+    Column("gosb", String(8), index=True),     # головное отделение: «9038» из кода ВСП «№ 9038/01008»
+    Column("open_date", String(10)),           # дата открытия по реестру ЦБ (ГГГГ-ММ-ДД)
+    Column("parent_name", Text),               # филиал по реестру ЦБ (FILIAL_PARENT_NAME)
+    Column("subject", String(4), index=True),  # субъект РФ, код из regions.SUBJECTS (registry/enrich.py)
+    Column("utc_offset", Integer),             # часовой пояс субъекта, часы от UTC
     Column("created_at", DateTime(timezone=True), default=utcnow),
     Column("updated_at", DateTime(timezone=True), default=utcnow),
 )
@@ -145,6 +150,72 @@ profile_changes = Table(
     Column("site_id", String(40), index=True),
     Column("at", DateTime(timezone=True)),
     Column("field", String(40)), Column("old", Text), Column("new", Text),
+)
+
+# ── сигналы (signals/): результаты ночного расчёта, по прогонам; вкладка читает последний ──
+signal_runs = Table(
+    "vsp_signal_run", meta,
+    Column("run_id", Integer, primary_key=True, autoincrement=True),
+    Column("version", String(20)),                        # версия правил (signals.VERSION)
+    Column("started_at", DateTime(timezone=True)), Column("finished_at", DateTime(timezone=True)),
+    Column("status", String(20)),                         # running | done | failed
+    Column("params_json", Text), Column("stats_json", Text),
+)
+
+episodes = Table(
+    "vsp_episode", meta,                                  # эпизод «похоже на кампанию отзывов»
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("run_id", Integer, index=True),
+    Column("level", String(10)),                          # branch | gosb
+    Column("point", String(160), index=True),             # branch_id или «карточка» без привязки
+    Column("branch_id", Integer, index=True),
+    Column("gosb", String(8)), Column("subject", String(4)),
+    Column("source", String(20)),
+    Column("start", DateTime(timezone=True)), Column("end", DateTime(timezone=True)),
+    Column("n", Integer), Column("expected", Float), Column("ratio", Float), Column("p_log10", Float),
+    Column("score", Float), Column("strength", String(10)),   # сильный | средний | слабый
+    Column("features_json", Text),                        # факты для карточки сигнала (числа + нормы)
+    Column("review_ids_json", Text),                      # отзывы-основания
+)
+
+authors = Table(
+    "vsp_author", meta,                                   # автор = хэш псевдонима внутри источника
+    Column("run_id", Integer, primary_key=True),
+    Column("source", String(20), primary_key=True),
+    Column("author_ref", String(40), primary_key=True),
+    Column("n", Integer), Column("points", Integer), Column("gosbs", Integer),
+    Column("n5", Integer), Column("n12", Integer),
+    Column("first_at", DateTime(timezone=True)), Column("last_at", DateTime(timezone=True)),
+    Column("total_reviews", Integer),                     # всего отзывов автора на площадке (2ГИС)
+    Column("kind", String(30)),                           # тип по шкале автора (signals/authors.py)
+    Column("score", Float),
+    Column("detail_json", Text),
+)
+
+author_groups = Table(
+    "vsp_author_group", meta,                             # кольца авторов и одинаковые тексты в разных ВСП
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("run_id", Integer, index=True),
+    Column("kind", String(20)),                           # ring | same_text
+    Column("n_authors", Integer), Column("n_points", Integer), Column("n_reviews", Integer),
+    Column("score", Float),
+    Column("detail_json", Text),
+)
+
+branch_stats = Table(
+    "vsp_branch_stat", meta,                              # витрина ВСП для вкладки: факты, сигналы, балл
+    Column("run_id", Integer, primary_key=True),
+    Column("point", String(160), primary_key=True),
+    Column("branch_id", Integer, index=True),
+    Column("score", Float), Column("data_state", String(10)),  # ok | few (мало данных)
+    Column("detail_json", Text),
+)
+
+network = Table(
+    "vsp_network", meta,                                  # находки уровня сети: календарь, ответы, нормы
+    Column("run_id", Integer, primary_key=True),
+    Column("key", String(60), primary_key=True),
+    Column("value_json", Text),
 )
 
 kv = Table(

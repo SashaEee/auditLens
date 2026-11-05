@@ -137,6 +137,7 @@ def main(argv: list[str] | None = None) -> int:
     dm = sub.add_parser("daemon")
     dm.add_argument("--i-know-this-is-mass", action="store_true")
     sub.add_parser("status")
+    sub.add_parser("signals")
     a = p.parse_args(argv)
 
     settings = Settings.from_env()
@@ -151,12 +152,18 @@ def main(argv: list[str] | None = None) -> int:
         out = asyncio.run(pilot_run(store, settings, a.out, from_step=a.from_step))
     elif a.cmd == "match":
         from .registry.apply import apply_formats, link_profiles, match_all
+        from .registry.enrich import enrich_branches
+        profiles = link_profiles(store)
         out = match_all(store)
-        out["profiles"] = link_profiles(store)
+        out["profiles"] = profiles
+        out["regions"] = enrich_branches(store)
         out["formats"] = apply_formats(store)
     elif a.cmd == "report":
         from .report import completeness_report
         out = completeness_report(store, source=a.source, out=a.out)
+    elif a.cmd == "signals":
+        from .mass import _signals
+        out = asyncio.run(_signals(store))          # с отметкой signals:at — демон не повторит
     elif a.cmd == "registry":
         from .mass import refresh_registry
         out = asyncio.run(refresh_registry(store, settings))

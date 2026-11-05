@@ -53,6 +53,7 @@ class Schedule:
     discover_every_d: float = field(default_factory=lambda: _f("VSP_DISCOVER_EVERY_D", 30))
     match_every_h: float = field(default_factory=lambda: _f("VSP_MATCH_EVERY_H", 6))
     banksite_every_d: float = field(default_factory=lambda: _f("VSP_BANK_SITE_EVERY_D", 30))
+    signals_every_h: float = field(default_factory=lambda: _f("VSP_SIGNALS_EVERY_H", 24))   # ночной расчёт сигналов
     pause_on_block_h: float = field(default_factory=lambda: _f("VSP_PAUSE_ON_BLOCK_H", 3))
     backoff_factor: float = field(default_factory=lambda: _f("VSP_BACKOFF_FACTOR", 0.7))
     min_rps: float = field(default_factory=lambda: _f("VSP_MIN_RPS", 0.1))

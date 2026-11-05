@@ -170,3 +170,27 @@ def test_refresh_banksite_end_to_end(db_url, monkeypatch):
 
 def test_verify_tls_without_bundle_is_reported_not_silent():
     assert bs.verify_tls("https://bank.example", None) is False
+
+
+def test_site_geo_links_cards_by_bank_site_office(db_url):
+    """Карточка 2ГИС без совпадения адреса привязывается к ВСП через офис сайта банка рядом;
+    два разных ВСП почти рядом — без привязки; карточка с конфликтом номера ЦБ — не трогаем."""
+    st = Store(db_url)
+    import_registry(st, [_cbr("1", "№ 9038/01008", "119048, Г. МОСКВА, УЛ. НЕТ ТАКОЙ, Д. 1"),
+                         _cbr("2", "№ 9038/01009", "119048, Г. МОСКВА, УЛ. ДРУГАЯ, Д. 2"),
+                         _cbr("3", "№ 9038/01010", "119048, Г. МОСКВА, УЛ. ТРЕТЬЯ, Д. 3")])
+    st.save_profiles({"1": bs.parse_office(feat(1, "Доп.офис №9038/01008", lat=55.70, lon=37.50)),
+                      "2": bs.parse_office(feat(2, "Доп.офис №9038/01009", lat=55.80, lon=37.60)),
+                      "3": bs.parse_office(feat(3, "Доп.офис №9038/01010", lat=55.80015, lon=37.6))})  # ~17 м от «2»
+    link_profiles(st)
+    st.upsert_source_branch(SourceBranch("2gis", "near", address="ТЦ Ромашка", city="Москва",
+                                         lat=55.70025, lon=37.50))                     # ~28 м от офиса «1»
+    st.upsert_source_branch(SourceBranch("2gis", "mall", address="ТЦ Лютик", city="Москва",
+                                         lat=55.80005, lon=37.6))                      # между «2» и «3»
+    st.upsert_source_branch(SourceBranch("2gis", "far", address="Поле", city="Москва", lat=55.75, lon=37.55))
+    res = match_all(st)
+    with st.engine.connect() as c:
+        got = {r.source_branch_id: (r.branch_id, r.match_method) for r in c.execute(select(source_branches))}
+        bid1 = c.execute(select(branches.c.branch_id).where(branches.c.registry_ref == "1")).scalar()
+    assert got["near"] == (bid1, "site_geo") and got["mall"][0] is None and got["far"][0] is None
+    assert res["site_geo"] == 1 and res["site_geo_ambiguous"] == 1
