@@ -23,10 +23,13 @@ References по делу — почтовые программы складыв�
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import smtplib
 import ssl
+import time
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
 
@@ -91,6 +94,61 @@ def build(to: str, mail: dict, *, bulk: bool = False) -> EmailMessage:
     return m
 
 
+# ── закреплённый сертификат почтового сервера ─────────────────────────────────
+# 03.11.2026 у сертификата почтового сервера истёк срок (не сработало автопродление), и с тех пор
+# ни одно письмо не уходило: проверка TLS падала. Пока администратор сервера его не продлит,
+# владелец разрешил (05.11) принимать ровно этот сертификат по отпечатку SHA-256. Порядок:
+# сначала всегда обычная проверка; закреплённый отпечаток — только если она не прошла, и сверяется
+# ДО отправки пароля. Подменить такой сертификат без закрытого ключа сервера нельзя. Отпечаток —
+# в базе (app_setting, ключ smtp_tls_pin: {"host", "sha256"}), а не в коде и не в переменных.
+_PIN: dict = {"at": -1e9, "v": None}
+
+
+def _pinned(host: str) -> str | None:
+    now = time.monotonic()
+    if now - _PIN["at"] > 60:
+        v = None
+        try:
+            from sqlalchemy import text
+            from .. import db
+            with db.session() as s:
+                v = s.execute(text("SELECT value FROM app_setting WHERE key = 'smtp_tls_pin'")).scalar()
+        except Exception:  # noqa: BLE001 — нет таблицы или базы: закрепления нет
+            v = None
+        _PIN.update(at=now, v=v)
+    v = _PIN["v"]
+    if isinstance(v, str):
+        try:
+            v = json.loads(v)
+        except ValueError:
+            return None
+    if not isinstance(v, dict) or str(v.get("host") or "").lower() != (host or "").lower():
+        return None
+    pin = str(v.get("sha256") or "").replace(":", "").strip().lower()
+    return pin if len(pin) == 64 else None
+
+
+def _check_pin(sock, pin: str) -> None:
+    der = sock.getpeercert(binary_form=True) if sock is not None else None
+    if not der or hashlib.sha256(der).hexdigest() != pin:
+        raise MailError("сертификат почтового сервера не проходит проверку и не совпал с закреплённым")
+
+
+def _smtp(host: str, port: int, msg: EmailMessage, ctx: ssl.SSLContext, pin: str | None = None):
+    if port == 465:
+        with smtplib.SMTP_SSL(host, port, timeout=20, context=ctx) as s:
+            if pin:
+                _check_pin(s.sock, pin)
+            s.login(_env("SMTP_USER"), _env("SMTP_PASSWORD"))
+            return s.send_message(msg)
+    with smtplib.SMTP(host, port, timeout=20) as s:
+        s.starttls(context=ctx)
+        if pin:
+            _check_pin(s.sock, pin)
+        s.login(_env("SMTP_USER"), _env("SMTP_PASSWORD"))
+        return s.send_message(msg)
+
+
 def send(to: str, mail: dict, *, bulk: bool = False, consented: bool = False) -> str:
     """Отправить письмо. Возвращает Message-ID; при отказе — MailError.
     consented — адрес человек указал сам (подтверждён или подтверждается)."""
@@ -110,17 +168,20 @@ def send(to: str, mail: dict, *, bulk: bool = False, consented: bool = False) ->
         log.info("[mail] (в папку) → %s: %s", to, mail["subject"][:80])
         return msg["Message-ID"]
     host, port = _env("SMTP_HOST"), int(_env("SMTP_PORT", "465") or 465)
-    ctx = ssl.create_default_context()
     try:
-        if port == 465:
-            with smtplib.SMTP_SSL(host, port, timeout=20, context=ctx) as s:
-                s.login(_env("SMTP_USER"), _env("SMTP_PASSWORD"))
-                refused = s.send_message(msg)
-        else:
-            with smtplib.SMTP(host, port, timeout=20) as s:
-                s.starttls(context=ctx)
-                s.login(_env("SMTP_USER"), _env("SMTP_PASSWORD"))
-                refused = s.send_message(msg)
+        try:
+            refused = _smtp(host, port, msg, ssl.create_default_context())
+        except ssl.SSLCertVerificationError:
+            pin = _pinned(host)
+            if not pin:
+                raise
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE          # проверка — сверкой отпечатка в _check_pin
+            refused = _smtp(host, port, msg, ctx, pin)
+            log.info("[mail] сертификат %s не проходит проверку — принят по закреплённому отпечатку", host)
+    except MailError:
+        raise
     except smtplib.SMTPAuthenticationError as e:
         raise MailError("почтовый сервер не принял пароль приложения") from e
     except (smtplib.SMTPException, OSError) as e:
