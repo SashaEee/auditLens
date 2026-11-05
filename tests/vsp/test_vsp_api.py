@@ -94,3 +94,29 @@ def test_exports(client):
     assert r.status_code == 200 and r.content[:2] == b"PK"
     r = client.get("/api/vsp/export/reviews.xlsx", params={"flag": "episode"})
     assert r.status_code == 200 and r.content[:2] == b"PK"
+
+
+def test_home_dossier_schemes_search_feedback_exports(client, monkeypatch):
+    from bank_audit.web import telemetry
+    monkeypatch.setattr(telemetry, "track_batch", lambda *a, **k: 1)
+    h = client.get("/api/vsp/home").json()
+    b6 = f"b{client.ids['6']}"
+    assert h["source"] == "слова" and h["tiles"] and any(x["point"] == b6 for x in h["list"])
+    row = next(x for x in h["list"] if x["point"] == b6)
+    assert row["why"] and row["quote"]["text"] and row["confidence"]["level"]
+    assert client.get("/api/vsp/home", params={"subject": "KGD"}).json()["list"] == []
+    d = client.get(f"/api/vsp/dossier/{b6}").json()
+    assert d["risk"]["request"] and d["risk"]["check"] and len(d["bars"]) == 24 and d["stories"]
+    sc = client.get("/api/vsp/schemes").json()
+    assert sc["kind"] == "действия" and sc["all"]
+    card = client.get(f"/api/vsp/schemes/{sc['all'][0]['id']}").json()
+    assert card["examples"] and card["examples"][0]["place"]["city"]
+    s = client.get("/api/vsp/search", params={"q": "навязала"}).json()
+    assert s["reviews"] and s["reviews"][0]["snippet"]
+    assert client.get("/api/vsp/search", params={"q": "Москва"}).json()["places"]
+    assert client.post("/api/vsp/feedback", json={"target": b6, "verdict": "полезно"}).json() == {"ok": True}
+    assert client.post("/api/vsp/feedback", json={"target": b6, "verdict": "ерунда"}).status_code == 400
+    r = client.get("/api/vsp/export/justification.xlsx", params={"points": b6})
+    assert r.status_code == 200 and r.content[:2] == b"PK"
+    r = client.get("/api/vsp/export/visit.docx", params={"point": b6})
+    assert r.status_code == 200 and r.content[:2] == b"PK"

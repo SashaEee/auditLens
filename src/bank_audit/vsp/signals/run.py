@@ -22,6 +22,7 @@ from .campaign import (episode_features, find_bursts, score, series_flags, stren
 from .data import Rec, load
 from .network import calendar, events, norms, replies
 from .people import analyze as analyze_people
+from . import risk as rk
 from .risks import BY_KEY as RISK, match as risk_match
 
 log = logging.getLogger(__name__)
@@ -41,6 +42,24 @@ def _write(store: Store, table, rows: list[dict]) -> None:
     for k in range(0, len(rows), CHUNK):
         with store.engine.begin() as c:
             c.execute(insert(table), rows[k:k + CHUNK])
+
+
+def _llm_cards(store: Store) -> dict[str, dict]:
+    """Карточки модели (llm_read, этап 2): review_id → поля. Пусто, если прогона ещё не было."""
+    try:
+        from .llm_read import PROMPT_VERSION, review_llm
+        with store.engine.connect() as c:
+            rows = c.execute(select(review_llm.c.review_id, review_llm.c.data_json).where(
+                review_llm.c.prompt_version == PROMPT_VERSION, review_llm.c.relevant == 1))
+            out = {}
+            for rid, dj in rows:
+                try:
+                    out[rid] = json.loads(dj or "{}")
+                except ValueError:
+                    pass
+            return out
+    except Exception:  # noqa: BLE001 — таблицы ещё нет
+        return {}
 
 
 def _pl(n: int, one: str, few: str, many: str) -> str:
@@ -164,6 +183,12 @@ def compute(store: Store, *, now=None) -> dict:
                               "branch_id": r.branch_id, "gosb": r.gosb, "subject": r.subject, "source": r.source,
                               "rating": r.rating, "at": r.at, "quote": q[:700]})
     ppl = analyze_people(recs, risk_by_rid)
+    # истории клиентов: карточки модели (llm_read), пока их нет — слова-правила
+    llm = _llm_cards(store)
+    spam = {a for a, n in Counter(r.author for r in recs if r.author).items() if n >= 40}
+    stories, story_source = rk.stories_from([r for r in recs if r.author not in spam], llm, case_rows)
+    st["stories"] = len(stories)
+    st["story_source"] = story_source
     st["cases"] = len(case_rows)
     st["cases_by_type"] = dict(Counter(c["type"] for c in case_rows))
     st["persons"] = dict(Counter(x["kind"] for x in ppl))
@@ -334,12 +359,36 @@ def compute(store: Store, *, now=None) -> dict:
             out[k] = {**dict(c), "share": round(c["focus"] / c["points"], 3) if c["points"] else 0.0,
                       "above": z >= 2.58, "few": c["few"] >= 0.5 * c["points"]}
         return out
+    # «Где стоит проверить»: признаки отделения, карта, полоса «Требует реакции», схемы
+    pts_ref = {r["point"]: {"gosb": r["detail"].get("gosb"), "subject": r["detail"].get("subject")} for r in rows
+               if r["detail"].get("status") in (None, "active") and not r["detail"].get("data_error")}
+    assessed = rk.assess(pts_ref, stories, recs, ppl, now=now, source=story_source)
+    st["risk_listed"] = sum(1 for a in assessed.values() if a["include"])
+    sto_by_point: dict[str, list[dict]] = defaultdict(list)
+    for x in stories:
+        sto_by_point[x["point"]].append(x)
+    for r in rows:
+        a = assessed.get(r["point"])
+        if a:
+            r["detail"]["risk"] = a
+        ss = sorted(sto_by_point.get(r["point"], []), key=lambda x: (x["at"]), reverse=True)[:40]
+        if ss:
+            r["detail"]["stories"] = [{"rid": x["rid"], "date": x["at"].strftime("%d.%m.%Y"), "at": x["at"].isoformat(),
+                                       "severity": x["severity"], "actions": [rk.ACTIONS.get(a_, rk.ACTIONS["другое"])["label"]
+                                                                              for a_ in x["actions"]],
+                                       "quote": x["quote"], "episode": x.get("episode"), "employee": x.get("employee"),
+                                       "vulnerable": x.get("vulnerable"), "source": x.get("source"),
+                                       "fault": x.get("fault"), "money": x.get("money")} for x in ss]
     cal = calendar(recs)
     net = {
         "calendar": cal, "events": events(cal), "replies": replies(recs), "norms": nrm,
         "subjects": summarize(agg), "gosbs": summarize(gagg),
         "tile_grid": {k: list(v) for k, v in tile_grid(centroids(store)).items()},
         "network_focus_share": round(net_focus, 4),
+        "risk_map": rk.map_tiles(pts_ref, assessed, recs, now=now),
+        "risk_react": rk.react_list(stories, now=now),
+        "schemes_fallback": rk.schemes_fallback(stories, pts_ref, now=now),
+        "story_source": story_source,
         "summary": st,
     }
     return {"stats": st, "episodes": eps_b + eps_g, "authors": au, "branch_rows": rows, "network": net,

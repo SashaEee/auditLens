@@ -10553,21 +10553,15 @@ function KnowledgePage({params}){
 }
 
 
-// ─── «Аудит сети ВСП» (раздел vsp): только VSP_USERS, по умолчанию — владелец ───
-// Данные — из базы сборщика ВСП (ночной расчёт сигналов), API /api/vsp/*. Свой язык
-// раздела на общих токенах (стили .vsp в index.html перенесены из макета).
-const VSP_TABS=[["home","Главное"],["cases","Случаи"],["branches","Отделения"],["people","Сотрудники"],["collusion","Сговор и накрутка"],["reviews","Отзывы"],["method","Как это работает"]];
-
+// ─── «Аудит сети ВСП» (раздел vsp): какие отделения проверить и почему ──────────
+// Только VSP_USERS (по умолчанию — владелец). Истории клиентов читает модель (llm_read),
+// числа считает код, балла на экране нет. Концепция — VSP_вкладка/исследование/4_концепция_вкладки.md.
 const vN=n=>n==null?"—":Number(n).toLocaleString("ru");
 const vP=(x,d=0)=>x==null?"—":(x*100).toFixed(d).replace(".",",")+"%";
-const vR=x=>x==null?"—":Number(x).toFixed(2).replace(".",",");
 const vD=s=>{if(!s)return"—";try{return new Date(s).toLocaleDateString("ru",{day:"numeric",month:"short",year:"numeric"});}catch(e){return s;}};
-const vDs=s=>{if(!s)return"—";try{return new Date(s).toLocaleDateString("ru",{day:"numeric",month:"short"});}catch(e){return s;}};
 const vMon=ym=>{const[y,m]=ym.split("-");return["янв","фев","мар","апр","май","июн","июл","авг","сен","окт","ноя","дек"][+m-1]+" "+y.slice(2);};
-const VSP_FMT={mass:"массовый",sber_first:"СберПервый",private:"Private Banking",legal:"юрлица",business:"малый бизнес",
-  corporate:"корпоративные",islamic:"исламский формат",zone24:"круглосуточная зона",head:"головной офис",mobile:"передвижной",cash_center:"КИЦ"};
-const VSP_SRC={"2gis":"2ГИС",yandex:"Яндекс"};
-const vStars=r=>r==null?"":"★".repeat(Math.round(r))+"☆".repeat(5-Math.round(r));
+const vPl=(n,a,b,c)=>{const m=Math.abs(n)%100;return m>=11&&m<=14?c:m%10===1?a:m%10>=2&&m%10<=4?b:c;};
+const vQS=o=>{const p=new URLSearchParams();Object.entries(o).forEach(([k,v])=>{if(v!==""&&v!=null&&v!==false)p.set(k,v);});return p.toString();};
 // адрес ЦБ «100000, КРАСНОДАРСКИЙ КРАЙ, Г. КРАСНОДАР, УЛ. ЛЕНИНА, Д. 5» → «ул. Ленина, д. 5»
 const vAddr=a=>{if(!a)return"";const parts=a.split("#")[0].split(",").map(x=>x.trim()).filter(x=>x&&!/^\d{6}$/.test(x));
   const st=parts.findIndex(x=>/^(УЛ|ПР-?Т|ПР-Д|ПРОСП|Ш|ПЕР|Б-Р|БУЛЬВАР|НАБ|ПЛ|МКР|МИКРОРАЙОН|КВ-Л|ТУПИК|ПРОЕЗД|ТРАКТ|АЛЛЕЯ|ЛИН|ТЕР)\b/i.test(x));
@@ -10576,626 +10570,278 @@ const vAddr=a=>{if(!a)return"";const parts=a.split("#")[0].split(",").map(x=>x.t
   const ABBR=new Set(["пр-т","пр-д","б-р","кв-л","мкр","стр","корп","лит","пом","влд","зд"]);
   return t.toLowerCase().split(" ").map(w=>{const m=w.match(/^([а-яё][а-яё-]*)(,?)$/);
     return m&&m[1].length>=3&&!ABBR.has(m[1])?w[0].toUpperCase()+w.slice(1):w;}).join(" ");};
-const vChip=r=>/сотрудник|нарушени|знакомств|без согласия|деньги|утечк/.test(r)?"chip risk":/хвалят|волна|те же люди/.test(r)?"chip scheme":"chip";
-
-const vQS=o=>{const p=new URLSearchParams();Object.entries(o).forEach(([k,v])=>{if(v!==""&&v!=null&&v!==false)p.set(k,v);});return p.toString();};
-function vFmtWhy(w){
-  const v=w.value;
-  if(v==null)return"—";
-  if((w.fmt||"").includes("%"))return vP(v);
-  if((w.fmt||"").startsWith("×"))return "×"+vN(Math.round(v));
-  return vN(v);
-}
-function vStrengthCls(s){return s==="сильный"?"risk":s==="средний"?"risk":"";}
-function VConf({s}){const n=s>=60?3:s>=40?2:1;return <span className="conf" aria-label={`уверенность ${n} из 3`}>{[1,2,3].map(i=><i key={i} className={i<=n?"on":""}/>)}</span>;}
-
-function VSeg({value,onChange,items,label}){
-  return <div className="seg" role="group" aria-label={label}>{items.map(([v,l])=>
-    <button key={v} aria-pressed={value===v} onClick={()=>onChange(v)}
-      style={value===v?{background:"var(--surface)",boxShadow:"var(--shadow-1),inset 0 0 0 1px var(--hair)"}:null}>{l}</button>)}</div>;
-}
-
-function VSearch({value,onChange,placeholder}){
-  const[v,setV]=useState(value||"");
-  useEffect(()=>{const t=setTimeout(()=>{if(v!==(value||""))onChange(v);},350);return()=>clearTimeout(t);},[v]);
-  return <label className="vin"><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeWidth="1.5"/><path d="m11 11 3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-    <input value={v} onChange={e=>setV(e.target.value)} placeholder={placeholder} aria-label={placeholder}/></label>;
-}
+const vPlace=p=>p?[p.city,vAddr(p.address)].filter(Boolean).join(", ")||p.name||"Отделение":"Отделение";
+const vCode=p=>p&&p.name?String(p.name).replace(/^№\s*/,"ВСП "):"";
 
 function VMark({text,q}){
   if(!text)return null;
   if(!q)return text;
   const i=text.toLowerCase().indexOf(q.toLowerCase());
   if(i<0)return text;
-  return <>{text.slice(0,i)}<span className="mark">{text.slice(i,i+q.length)}</span><VMark text={text.slice(i+q.length)} q={q}/></>;
+  return <>{text.slice(0,i)}<span className="mark">{text.slice(i,i+q.length)}</span>{text.slice(i+q.length)}</>;
 }
+function VDot({on}){return on?<span className="vdot" aria-label="тяжёлая история"/>:null;}
 
-function VRev({r,q,showPlace,onPlace}){
-  return <div className="rev">
-    <div className="rm"><span className="stars" aria-label={`оценка ${r.rating}`}>{vStars(r.rating)}</span>
-      <span>{vD(r.date)}</span><span>{VSP_SRC[r.source]||r.source}</span>
-      {(r.case_types||[]).map(t=><span key={t} className="flag risk">{t}</span>)}
-      {r.author_total===1&&<span className="flag">новый аккаунт</span>}
-      {r.in_episode&&<span className="flag scheme">из волны пятёрок</span>}
-      {r.hidden&&<span className="flag scheme" title={r.hidden}>площадка пометила</span>}
-      {r.gone&&<span className="flag">удалён с площадки</span>}
-      {r.reply&&<span className="flag">банк ответил</span>}
-      {showPlace&&r.place&&(r.place.city||r.place.name)&&<button className="vmore" onClick={()=>onPlace&&onPlace(r.point)}>{[r.place.city,vAddr(r.place.address)||r.place.name].filter(Boolean).join(", ")}</button>}
-    </div>
-    <div style={{whiteSpace:"pre-wrap"}}>{r.text?<VMark text={r.text} q={q}/>:<span className="muted">без текста</span>}</div>
-  </div>;
-}
-
-function VCalendar({cal,events}){
-  const rows=cal.slice(-36);
-  if(!rows.length)return <div className="vempty">Нет данных</div>;
-  const W=720,H=210,pad=28,bw=(W-pad)/rows.length;
-  const tot=r=>r.conf5+r.u5_oneoff+r.u5_other+r.rest;
-  const mx=Math.max(...rows.map(tot),1);
-  const y=v=>H-22-(v/mx)*(H-40);
-  const ev=new Map((events||[]).map((e,i)=>[e.month,i+1]));
-  const parts=[["rest","var(--hair-2)"],["conf5","var(--ink-2)"],["u5_other","color-mix(in oklch,var(--accent) 45%,var(--surface))"],["u5_oneoff","var(--accent)"]];
-  return <svg viewBox={`0 0 ${W} ${H}`} className="vstrip" role="img" aria-label="Отзывы 2ГИС о ВСП по месяцам">
-    {rows.map((r,i)=>{let acc=0;const x=pad+i*bw;return <g key={r.month}>
-      {parts.map(([k,c])=>{const h=(r[k]/mx)*(H-40);const el=<rect key={k} x={x+1} width={Math.max(1,bw-2)} y={y(acc+r[k])} height={Math.max(0,h)} fill={c} rx="1.5"><title>{`${vMon(r.month)}: ${k==="conf5"?"подтверждённые пятёрки":k==="u5_oneoff"?"пятёрки от авторов без других отзывов":k==="u5_other"?"прочие неподтверждённые пятёрки":"1–4★"} — ${vN(r[k])}`}</title></rect>;acc+=r[k];return el;})}
-      {ev.has(r.month)&&<g><line x1={x+bw/2} x2={x+bw/2} y1={14} y2={H-22} stroke="var(--ink)" strokeDasharray="2 3" strokeWidth="1"/>
-        <circle cx={x+bw/2} cy={12} r="8" fill="var(--ink)"/><text x={x+bw/2} y={15.5} textAnchor="middle" fontSize="10" fill="var(--paper)" fontWeight="600">{ev.get(r.month)}</text></g>}
-      {(i%6===0)&&<text x={x} y={H-6} fontSize="10" fill="var(--ink-3)">{vMon(r.month)}</text>}
-    </g>;})}
-    <text x={0} y={y(mx)+4} fontSize="10" fill="var(--ink-3)">{vN(mx)}</text>
-  </svg>;
-}
-
-function VStrip({series,norm,start,end}){
-  if(!series||!series.length)return null;
-  const W=720,H=120,n=series.length,bw=W/n;
-  const mx=Math.max(...series.map(d=>d.u5+d.conf5),norm*3,1);
-  const y=v=>H-16-(v/mx)*(H-28);
-  const s0=series.findIndex(d=>d.day>=(start||"").slice(0,10));
-  const s1=series.findIndex(d=>d.day>(end||"").slice(0,10));
-  return <svg viewBox={`0 0 ${W} ${H}`} className="vstrip" role="img" aria-label="Пятёрки по дням и ожидание">
-    {s0>=0&&<rect x={s0*bw} width={((s1<0?n:s1)-s0)*bw} y={0} height={H-16} fill="var(--accent-soft)"/>}
-    {series.map((d,i)=><g key={d.day}>
-      <rect x={i*bw+0.5} width={Math.max(1,bw-1)} y={y(d.u5)} height={H-16-y(d.u5)} fill="var(--accent)"><title>{`${vDs(d.day)}: неподтверждённых пятёрок ${d.u5}, подтверждённых ${d.conf5}, жалоб ${d.neg}`}</title></rect>
-      {d.conf5>0&&<rect x={i*bw+0.5} width={Math.max(1,bw-1)} y={y(d.u5+d.conf5)} height={y(d.u5)-y(d.u5+d.conf5)} fill="var(--ink-2)"/>}
-      {d.neg>0&&<circle cx={i*bw+bw/2} cy={H-8} r={Math.min(4,1.5+d.neg)} fill="var(--ink)"><title>{`жалоб: ${d.neg}`}</title></circle>}
-    </g>)}
-    <line x1="0" x2={W} y1={y(norm)} y2={y(norm)} stroke="var(--ink)" strokeDasharray="4 3" strokeWidth="1"/>
-    <text x={W-4} y={y(norm)-4} textAnchor="end" fontSize="10" fill="var(--ink-2)">ожидание {String(norm).replace(".",",")} в день</text>
-  </svg>;
-}
-
-function VTimeline({rows}){
-  const data=(rows||[]).slice(-48);
-  if(!data.length)return <div className="vempty">Нет отзывов</div>;
-  const W=720,H=160,bw=W/data.length;
-  const g=(r,k)=>(r["2gis:"+k]||0)+(r["yandex:"+k]||0);
-  const mx=Math.max(...data.map(r=>g(r,"u5")+g(r,"conf5")+g(r,"neg")+g(r,"other")),1);
-  const parts=[["other","var(--hair-2)"],["neg","var(--ink)"],["conf5","var(--ink-3)"],["u5","var(--accent)"]];
-  return <svg viewBox={`0 0 ${W} ${H}`} className="vstrip" role="img" aria-label="Отзывы ВСП по месяцам">
-    {data.map((r,i)=>{let acc=0;return <g key={r.month}>{parts.map(([k,c])=>{const v=g(r,k);const h=v/mx*(H-26);const el=<rect key={k} x={i*bw+1} width={Math.max(1,bw-2)} y={H-18-acc-h} height={h} fill={c} rx="1"><title>{`${vMon(r.month)}: ${{u5:"неподтверждённые пятёрки",conf5:"подтверждённые пятёрки",neg:"1–2★",other:"3–4★"}[k]} — ${v}`}</title></rect>;acc+=h;return el;})}
-      {i%6===0&&<text x={i*bw} y={H-4} fontSize="10" fill="var(--ink-3)">{vMon(r.month)}</text>}</g>;})}
-  </svg>;
-}
-
-function VTileMap({tiles,net,picked,onPick}){
-  const[tip,setTip]=useState(null);
-  const ref=useRef(null);
+// ── карта регионов: основной фильтр ──────────────────────────────────────────
+function VMap({tiles,picked,onPick,value,legend,hint}){
+  const[tip,setTip]=useState(null);const ref=useRef(null);
   if(!tiles||!tiles.length)return <div className="vempty">Карта появится после расчёта</div>;
   const cols=Math.max(...tiles.map(t=>t.col))+1;
-  const a=t=>{if(!t.points)return 0;const r=(t.share||0)/Math.max(net||0.01,0.005);return Math.max(0.05,Math.min(0.9,(r-0.4)*0.32));};
   return <div className="map-wrap" ref={ref} onMouseLeave={()=>setTip(null)}>
     <div className="tiles" style={{gridTemplateColumns:`repeat(${cols},minmax(0,1fr))`}}>
-      {tiles.map(t=>{const al=a(t);return <button key={t.code} className={"tile"+(t.above?" sig":"")+(t.few?" few":"")}
-        style={{gridColumn:t.col+1,gridRow:t.row+1,...(t.few?{}:{background:`color-mix(in oklch,var(--accent) ${Math.round(al*100)}%,var(--surface))`,color:al>0.5?"oklch(99% 0 0)":undefined})}}
-        aria-pressed={picked===t.code} aria-label={`${t.name}: в фокусе ${t.focus||0} из ${t.points||0} отделений`}
+      {tiles.map(t=>{const v=value(t);const a=v==null?0:v;return <button key={t.code}
+        className={"tile"+(t.above?" sig":"")+(t.few&&v==null?" few":"")}
+        style={{gridColumn:t.col+1,gridRow:t.row+1,...(v==null?{}:{background:`color-mix(in oklch,var(--accent) ${Math.round(a*100)}%,var(--surface))`,color:a>0.55?"oklch(99% 0 0)":undefined})}}
+        aria-pressed={picked===t.code} aria-label={hint(t)}
         onClick={()=>onPick(picked===t.code?"":t.code)}
-        onMouseMove={e=>{const b=ref.current.getBoundingClientRect();setTip({t,x:Math.min(e.clientX-b.left+12,b.width-230),y:e.clientY-b.top+12});}}>{t.label}</button>;})}
+        onMouseMove={e=>{const b=ref.current.getBoundingClientRect();setTip({t,x:Math.min(e.clientX-b.left+12,b.width-240),y:e.clientY-b.top+12});}}>{t.label}</button>;})}
     </div>
-    {tip&&<div className="tip on" style={{left:tip.x,top:tip.y}}><b>{tip.t.name}</b>
-      <div className="r"><span>отделений</span><span className="num">{vN(tip.t.points)}</span></div>
-      <div className="r"><span>в фокусе</span><span className="num">{vN(tip.t.focus)} · {vP(tip.t.share)}</span></div>
-      <div className="r"><span>отзывов за год</span><span className="num">{vN(tip.t.n_12m)}</span></div>
-      {tip.t.above&&<div className="r" style={{color:"var(--accent-ink)"}}>значимо выше сети</div>}
-      {tip.t.few&&<div className="r">мало данных</div>}</div>}
-    <div className="legend">
-      <span>Доля отделений в фокусе (по сети {vP(net,1)}):</span>
-      <span className="ramp">{[0.1,0.3,0.5,0.7,0.9].map(x=><i key={x} style={{background:`color-mix(in oklch,var(--accent) ${x*100}%,var(--surface))`}}/>)}</span>
-      <span><span className="sw" style={{boxShadow:"inset 0 0 0 1.5px var(--ink)"}}/>значимо выше сети</span>
-      <span><span className="sw" style={{background:"repeating-linear-gradient(135deg,var(--surface) 0 3px,var(--paper-2) 3px 6px)",boxShadow:"inset 0 0 0 1px var(--hair)"}}/>мало данных</span>
-    </div>
+    {tip&&<div className="tip on" style={{left:tip.x,top:tip.y}}><b>{tip.t.name}</b>{hint(tip.t)}</div>}
+    {legend&&<div className="legend">{legend}</div>}
   </div>;
 }
 
-// ── обзор ────────────────────────────────────────────────────────────────────
-function VspSignalCard({id,go,openPoint}){
-  const[d,setD]=useState(null);const[all,setAll]=useState(false);
-  useEffect(()=>{setD(null);setAll(false);apiFetch(`/api/vsp/signals/${id}`).then(setD).catch(()=>setD({err:1}));},[id]);
-  if(!d)return <div className="card"><Skel h={22} w="60%"/><Skel h={200} style={{marginTop:14}}/></div>;
-  if(d.err)return <div className="card"><ErrState msg="Сигнал не найден — возможно, расчёт обновился"/></div>;
-  const pros=(d.features.why||[]).filter(w=>!w.against),cons=(d.features.why||[]).filter(w=>w.against);
-  const nrm=d.features.norms||{};
-  const p=d.place||{};
-  const ids=(d.reviews||[]).map(r=>r.id).join(",");
-  const gosb=d.level==="gosb";
-  return <article className="card detail view">
-    <div className="d-h"><span className={"tag "+vStrengthCls(d.strength)}>{gosb?"Волна пятёрок сразу во многих отделениях ГОСБ":"Массовая волна пятёрок"}</span>
-      <VConf s={d.score}/><span>{d.strength} · балл {Math.round(d.score)}</span></div>
-    <h2 className="d-title">{gosb?`ГОСБ ${d.gosb} · ${d.subject_name||""}`:`${p.city||"ВСП"}${p.address?`, ${vAddr(p.address)}`:""}`}</h2>
-    <p className="d-sub">{gosb?`${vN(d.points)} из ${vN(d.points_total)} ВСП ГОСБ получили волну пятёрок одновременно`:(p.name||"")}
-      {!gosb&&p.gosb?` · ГОСБ ${p.gosb}`:""} · {vD(d.start)} — {vD(d.end)}</p>
-    <div className="sec"><h3>Что видно</h3><ul className="facts">
-      <li><span>{vN(d.n)} пятёрок за {Math.max(1,Math.round((new Date(d.end)-new Date(d.start))/864e5))} дн. — обычно здесь за такой срок около {String(Math.round(d.expected*10)/10).replace(".",",")} (в {vN(Math.round(d.ratio))} раз больше)</span></li>
-      {pros.filter(w=>w.key!=="ratio").map(w=><li key={w.key}><span>{w.label}: <b>{vFmtWhy(w)}</b>{w.norm!=null?<span className="muted"> · по сети {vFmtWhy({...w,value:w.norm})}</span>:null}</span></li>)}
-    </ul></div>
-    <div className="sec"><h3>По дням</h3>
-      <div className="strip"><VStrip series={d.series} norm={d.norm_per_day} start={d.start} end={d.end}/></div>
-      <div className="legend" style={{borderTop:0,padding:"6px 0 0"}}><span><span className="sw" style={{background:"var(--accent)"}}/>пятёрки</span>
-        <span><span className="sw" style={{background:"var(--ink-2)"}}/>оставлены после операции</span><span>● жалобы 1–2★</span><span>пунктир — ожидание</span></div>
-      {[["oneoff_share","Новые аккаунты"],["series_share","Пачки до 10 минут"],["month_end_share","Последние 3 дня месяца"],["confirmed_share","Оставлены после операции"]].map(([k,l])=>{
-        const v=d.features[k];if(v==null)return null;const n=nrm[k];
-        return <div className="normrow" key={k}><span>{l}</span><span className="normbar"><i style={{width:`${Math.min(100,v*100)}%`,background:k==="confirmed_share"?"var(--ink-3)":"var(--accent)"}}/>
-          {n!=null&&<i style={{width:2,left:`${Math.min(100,n*100)}%`,background:"var(--ink)"}}/>}</span><span className="num">{vP(v)}</span></div>;})}
-      <p className="note">Черта — как обычно в отделениях сети за {new Date(d.start).getFullYear()} год.</p>
+// ── строка списка «Где стоит проверить» ─────────────────────────────────────
+function VRow({x,sel,onSel,onOpen}){
+  return <div className="vrow" role="button" tabIndex={0} onClick={()=>onOpen(x.point)} onKeyDown={e=>{if(e.key==="Enter")onOpen(x.point);}}>
+    <input type="checkbox" checked={sel} onClick={e=>e.stopPropagation()} onChange={()=>onSel(x.point)} aria-label="Отметить для выгрузки"/>
+    <div>
+      <div className="vrow-h"><VDot on={x.red}/><b>{vPlace(x)}</b><span className="note">{vCode(x)}{x.gosb?` · ГОСБ ${x.gosb}`:""}</span>
+        {x.formats&&(x.formats.sber_first||x.formats.private)&&<span className="chip">{x.formats.private?"Private Banking":"СберПервый"}</span>}</div>
+      {x.why.slice(0,2).map((w,i)=><div key={i} className="vrow-why">{w}</div>)}
+      {x.quote&&x.quote.text&&<div className="vrow-q">«{x.quote.text}» <span className="note">· {x.quote.date}</span></div>}
+      <div className="note">Уверенность {x.confidence.level} — {x.confidence.reason}{x.benign&&x.benign.text?` · может быть безобидно: ${x.benign.text}`:""}</div>
     </div>
-    <div className="sec two">
-      <div className="box"><b>Похоже на заказ</b><ul className="facts" style={{marginTop:6}}>{pros.map(w=><li key={w.key} style={{fontSize:13.5}}>{w.label}</li>)}</ul></div>
-      <div className="box"><b>Может быть и честно</b><ul className="facts" style={{marginTop:6}}>
-        {cons.map(w=><li key={w.key} style={{fontSize:13.5}}><span>{w.label}: {vFmtWhy(w)}</span></li>)}
-        {(d.guide.benign||[]).map((b,i)=><li key={i} style={{fontSize:13.5}}>{b}</li>)}</ul></div>
-    </div>
-    <div className="sec"><h3>Что проверить</h3><div className="check">
-      {d.guide.check.map((c,i)=><label key={i}><input type="checkbox"/><span>{c.text}</span><span className="where">{c.where}</span></label>)}</div></div>
-    <div className="sec"><h3>Отзывы волны · {vN(d.reviews.length)}</h3>
-      <div style={{display:"grid",gap:8}}>{(all?d.reviews:d.reviews.slice(0,8)).map(r=><VRev key={r.id} r={r} showPlace={gosb} onPlace={openPoint}/>)}</div>
-      {d.reviews.length>8&&<button className="vmore" style={{marginTop:8}} onClick={()=>setAll(!all)}>{all?"Свернуть":`Показать все ${d.reviews.length}`}</button>}
-    </div>
-    <div className="sec"><h3>Ограничения данных</h3><ul className="facts">{d.guide.limits.map((l,i)=><li key={i} style={{fontSize:13.5,color:"var(--ink-2)"}}>{l}</li>)}</ul></div>
-    <div className="actions">
-      {!gosb&&<button className="btn btn-ink" onClick={()=>openPoint(d.point)}>Профиль ВСП</button>}
-      <a className="btn btn-ghost" href={`/api/vsp/export/reviews.xlsx?ids=${encodeURIComponent(ids)}`} download>Скачать отзывы волны</a>
-      {!gosb&&<button className="btn btn-ghost" onClick={()=>go("reviews",{rq:{point:d.point}})}>Все отзывы ВСП</button>}
-    </div>
+    <span className="vrow-go" aria-hidden="true">→</span>
+  </div>;
+}
+
+function VReact({items,onOpen}){
+  const[open,setOpen]=useState(false);
+  if(!items||!items.length)return null;
+  const first=items[0];
+  return <section className="vreact">
+    <div className="row"><VDot on/><b>Требует реакции · {items.length} {items.length===1?"новая очень тяжёлая история":"новые очень тяжёлые истории"} за 2 недели</b>
+      <span className="sp"/>{items.length>1&&<button className="vmore" onClick={()=>setOpen(!open)}>{open?"Свернуть":"Все"}</button>}</div>
+    {(open?items:[first]).map(x=><button key={x.rid} className="vreact-it" onClick={()=>onOpen(x.point)}>
+      <span><b>{vPlace(x.place)}</b> — «{x.quote}» <span className="note">· {x.date} · {x.action}</span></span><span className="vrow-go">→</span></button>)}
+  </section>;
+}
+
+function VspHome2({go,openPoint,f,setF}){
+  const[d,setD]=useState(null);const[sel,setSel]=useState(()=>new Set());const[lim,setLim]=useState(30);
+  useEffect(()=>{setD(null);apiFetch("/api/vsp/home?"+vQS({subject:f.subject,gosb:f.gosb})).then(setD).catch(e=>setD({err:String(e)}));},[f.subject,f.gosb]);
+  if(!d)return <Skel h={500}/>;
+  if(d.err)return <ErrState msg={d.err.includes("404")?"Расчёт ещё не готов — он идёт ночью.":"Не удалось загрузить"}/>;
+  const tog=p=>setSel(s=>{const n=new Set(s);n.has(p)?n.delete(p):n.add(p);return n;});
+  const subj=f.subject?(d.tiles.find(t=>t.code===f.subject)||{}).name:null;
+  const val=t=>t.few&&!t.n?null:(t.share==null?null:Math.min(1,0.08+t.share*4.5));
+  return <div className="view" style={{display:"grid",gap:16}}>
+    {d.source==="слова"&&<div className="box" style={{fontSize:13.5}}>Предварительно: истории пока найдены по словам. Модель читает все отзывы — к утру список станет точнее.</div>}
+    <VReact items={d.react} onOpen={openPoint}/>
+    <section className="card">
+      <div className="map-head"><div><div className="eyebrow">Карта</div>
+        <h2 className="vh2">Где клиенты описывают нарушения в отделениях</h2></div><span className="sp"/>
+        <div className="vcrumb"><button className="vmore" onClick={()=>setF({subject:"",gosb:""})}>Вся сеть</button>
+          {subj&&<> ▸ <b>{subj}</b> <button className="vx" aria-label="Снять фильтр" onClick={()=>setF({subject:"",gosb:""})}>✕</button></>}</div></div>
+      <VMap tiles={d.tiles} picked={f.subject} onPick={c=>setF({subject:c,gosb:""})} value={val}
+        hint={t=>t.n?` · в списке ${t.listed} · клиенты описали нарушение в ${t.hit} из ${t.n} отделений с данными (${vP(t.share)})`:" · мало данных"}
+        legend={<><span>Доля отделений, где клиенты описали нарушение (по сети {vP(d.network_share)}):</span>
+          <span className="ramp">{[0.15,0.35,0.55,0.75].map(x=><i key={x} style={{background:`color-mix(in oklch,var(--accent) ${x*100}%,var(--surface))`}}/>)}</span>
+          <span><span className="sw" style={{boxShadow:"inset 0 0 0 1.5px var(--ink)"}}/>выше сети с учётом объёма</span>
+          <span><span className="sw" style={{background:"repeating-linear-gradient(135deg,var(--surface) 0 3px,var(--paper-2) 3px 6px)",boxShadow:"inset 0 0 0 1px var(--hair)"}}/>мало данных</span>
+          <span className="note">Карта показывает, где искать, а не где хуже.</span></>}/>
+    </section>
+    <section className="card" style={{padding:"18px 18px 10px"}}>
+      <div className="row"><div><div className="eyebrow">Главный список</div>
+        <h2 className="vh2">Где стоит проверить · {vN(d.list.length)} {vPl(d.list.length,"отделение","отделения","отделений")}{subj?` в регионе (по сети ${vN(d.total)})`:""}</h2>
+        <p className="note">Сначала — где тяжелее и где сошлось больше независимых признаков.</p></div><span className="sp"/>
+        <a className="btn btn-ghost" href={"/api/vsp/export/justification.xlsx?"+vQS({subject:f.subject})} download>Скачать обоснование</a></div>
+      {f.subject&&d.gosbs.length>1&&<div className="chips" style={{margin:"8px 0"}}>
+        <button className={"chip"+(!f.gosb?" on":"")} onClick={()=>setF({gosb:""})}>Все ГОСБ</button>
+        {d.gosbs.map(g=><button key={g.gosb} className={"chip"+(f.gosb===g.gosb?" on":"")} onClick={()=>setF({gosb:g.gosb})}>ГОСБ {g.gosb} · {g.n}</button>)}</div>}
+      {d.list.length?<div className="vlist">{d.list.slice(0,lim).map(x=><VRow key={x.point} x={x} sel={sel.has(x.point)} onSel={tog} onOpen={openPoint}/>)}</div>
+        :<div className="vempty">Здесь отделений со сходящимися признаками нет. Это не значит «всё в порядке» — см. «Как это работает».</div>}
+      {d.list.length>lim&&<div style={{textAlign:"center",margin:"10px 0"}}><button className="btn btn-ghost" onClick={()=>setLim(lim+30)}>Показать ещё</button></div>}
+      <p className="note" style={{margin:"10px 0 4px"}}>Отзывы за год есть у {vP(d.with_data/Math.max(1,d.points))} отделений — об остальных вкладка молчит, это не значит «всё в порядке».</p>
+    </section>
+    {sel.size>0&&<div className="bulk vbulk"><span>Выбрано: {sel.size}</span><span className="sp"/>
+      <a className="btn" href={"/api/vsp/export/justification.xlsx?points="+encodeURIComponent([...sel].join(","))} download>Скачать обоснование</a>
+      <button className="btn" onClick={()=>setSel(new Set())}>Снять выбор</button></div>}
+  </div>;
+}
+
+// ── досье отделения ──────────────────────────────────────────────────────────
+function VBars({bars,stories}){
+  if(!bars)return null;
+  const heavy=new Set((stories||[]).filter(s=>s.severity>=2).map(s=>(s.at||"").slice(0,7)));
+  const mx=Math.max(1,...bars.map(b=>b.neg));
+  return <div className="vbars" aria-label="Жалобы по месяцам за 2 года, точками — тяжёлые истории">
+    {bars.map(b=><div key={b.month} className="vbar" title={`${vMon(b.month)}: жалоб ${b.neg}${heavy.has(b.month)?" · есть тяжёлая история":""}`}>
+      <i style={{height:`${Math.max(2,b.neg/mx*22)}px`}}/>{heavy.has(b.month)&&<span className="vdot sm"/>}</div>)}
+  </div>;
+}
+
+function VspDossier({point,onBack,openPoint}){
+  const[d,setD]=useState(null);const[allQ,setAllQ]=useState(false);const[fb,setFb]=useState(null);
+  useEffect(()=>{setD(null);apiFetch(`/api/vsp/dossier/${encodeURIComponent(point)}`).then(setD).catch(()=>setD({err:1}));try{window.scrollTo({top:0});}catch(e){}},[point]);
+  const send=v=>fetch("/api/vsp/feedback",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({target:point,verdict:v})}).then(()=>setFb(v));
+  if(!d)return <Skel h={500}/>;
+  if(d.err)return <ErrState msg="Досье не загрузилось"/>;
+  const a=d.risk||{};const stories=d.stories||[];
+  const heavy=stories.filter(s=>s.severity>=2);
+  return <article className="view vdos">
+    <button className="vmore" onClick={onBack}>← Где стоит проверить</button>
+    <header className="vdos-h">
+      <h1 className="vh1">{vPlace(d)}</h1>
+      <div className="note">{vCode(d)}{d.gosb?` · ГОСБ ${d.gosb}`:""}{d.subject_name?` · ${d.subject_name}`:""}{d.formats&&d.formats.sber_first?" · есть СберПервый":""}</div>
+      <div className="note">{d.vol_2y!=null?`${vN(d.vol_2y)} отзывов за 2 года`:""}{heavy.length?` · тяжёлых историй ${heavy.length}`:""}</div>
+      <div className="row" style={{marginTop:10}}>
+        <a className="btn btn-ink" href={`/api/vsp/export/visit.docx?point=${encodeURIComponent(point)}`} download>Лист выезда</a>
+        <a className="btn btn-ghost" href={`/api/vsp/export/justification.xlsx?points=${encodeURIComponent(point)}`} download>Обоснование (Excel)</a></div>
+    </header>
+    {d.source==="слова"&&<div className="box" style={{fontSize:13.5}}>Предварительно: истории найдены по словам, модель ещё читает отзывы.</div>}
+    <section className="sec"><h3>Почему в списке</h3>
+      {a.why&&a.why.length?<ul className="facts">{a.why.map((w,i)=><li key={i}><span>{w}</span></li>)}</ul>:<p className="note">Отделение не в списке: независимые признаки не сошлись.</p>}
+      {a.confidence&&<p className="note" style={{marginTop:6}}>Уверенность {a.confidence.level} — {a.confidence.reason}</p>}
+      {a.benign&&<div className="box" style={{marginTop:8,fontSize:14}}><b>Может быть безобидно:</b> {a.benign.text}. <b>Снимет вопрос:</b> {a.benign.resolve}.</div>}
+      {(a.context||[]).map((c,i)=><p key={i} className="note">○ {c} (контекст, не отдельная причина)</p>)}
+    </section>
+    {(a.request||[]).length>0&&<section className="sec"><h3>Что запросить заранее</h3><div className="check">
+      {a.request.map((r,i)=><label key={i}><input type="checkbox"/><span>{r.text}</span><span className="where">{r.where}</span></label>)}</div></section>}
+    {(a.check||[]).length>0&&<section className="sec"><h3>Что проверить на месте</h3><div className="check">
+      {a.check.map((t,i)=><label key={i}><input type="checkbox"/><span>{t}</span><span/></label>)}</div></section>}
+    <section className="sec"><h3>Люди</h3>
+      {(a.people||[]).length?<ul className="facts">{a.people.map((x,i)=><li key={i}><span><b>{x.name}</b> — {x.clients>1?`называют ${x.clients} разных клиента`:"назван в одной истории"}</span></li>)}</ul>
+        :<p className="note">Имена в тяжёлых историях не названы.</p>}
+      <p className="note">Имена — как написали клиенты, только внутри этого отделения; с другими ВСП не сопоставляются.</p></section>
+    <section className="sec"><div className="row"><h3 style={{margin:0}}>Истории клиентов · {stories.length}</h3><span className="sp"/><VBars bars={d.bars} stories={stories}/></div>
+      <div style={{display:"grid",gap:8,marginTop:10}}>{(allQ?stories:stories.slice(0,8)).map(s=><div key={s.rid} className="rev">
+        <div className="rm"><VDot on={s.severity>=3||s.vulnerable}/><span>{s.date}</span><span>{s.actions.join(", ")}</span>
+          {s.employee&&<span className="flag">{s.employee}</span>}{s.vulnerable&&<span className="flag risk">пожилой или уязвимый клиент</span>}</div>
+        <div>«{s.quote}»</div>
+        {s.episode&&<div className="note">Пересказ ИИ · проверьте по цитате: {s.episode}</div>}
+      </div>)}</div>
+      {stories.length>8&&<button className="vmore" style={{marginTop:8}} onClick={()=>setAllQ(!allQ)}>{allQ?"Свернуть":`Все истории (${stories.length})`}</button>}
+    </section>
+    {(d.nearby||[]).length>0&&<section className="sec"><h3>Рядом</h3><p className="note">В том же ГОСБ похожие истории ещё в {d.nearby.length} {d.nearby.length===1?"отделении":"отделениях"}:</p>
+      <div className="chips">{d.nearby.map(p=><button key={p.point} className="chip" onClick={()=>openPoint(p.point)}>{vPlace(p)}</button>)}</div></section>}
+    <section className="sec"><h3>Чего мы не видим</h3><ul className="facts">{d.limits.map((l,i)=><li key={i}><span>{l}</span></li>)}</ul></section>
+    <div className="actions">{fb?<span className="note">Отмечено: {fb}. Спасибо — порядок списка учится на отметках.</span>:<>
+      <button className="btn btn-ghost" onClick={()=>send("полезно")}>Полезно</button>
+      <button className="btn btn-ghost" onClick={()=>send("неинтересно")}>Неинтересно</button>
+      <button className="btn btn-ghost" onClick={()=>send("ошибка данных")}>Ошибка данных</button></>}</div>
   </article>;
 }
 
-function VspSignals({go,openPoint,f,sig,setSig,level0}){
-  const[level,setLevel]=useState(level0||"branch");const[period,setPeriod]=useState("12m");
-  const[strength,setStrength]=useState("");const[q,setQ]=useState("");const[d,setD]=useState(null);
-  useEffect(()=>{setD(null);apiFetch("/api/vsp/signals?"+vQS({level,period,strength,q,subject:f.subject,gosb:f.gosb,fmt:f.fmt,limit:200}))
-    .then(x=>{setD(x);if(x.items.length&&!x.items.some(i=>i.id===sig))setSig(x.items[0].id);}).catch(()=>setD({err:1}));},[level,period,strength,q,f.subject,f.gosb,f.fmt]);
-  return <div className="view" style={{display:"grid",gap:14}}>
-    <div className="row">
-      <VSeg label="Уровень" value={level} onChange={setLevel} items={[["branch","Отделения"],["gosb","Весь ГОСБ"]]}/>
-      <VSeg label="Период" value={period} onChange={setPeriod} items={[["12m","Год"],["24m","2 года"],["all","Вся история"]]}/>
-      <VSeg label="Сила" value={strength} onChange={setStrength} items={[["","Любая"],["сильный","Сильные"],["средний","Средние"],["слабый","Слабые"]]}/>
-      <span className="sp"/><VSearch value={q} onChange={setQ} placeholder="Город, адрес, ГОСБ"/>
-    </div>
-    {!d?<Skel h={300}/>:d.err?<ErrState msg="Не удалось загрузить сигналы"/>:!d.items.length?<div className="card vempty">Волн пятёрок за этот период нет.</div>:
-    <div className="sig-layout">
-      <div className="sig-list">
-        <div className="note">{vN(d.total)} {level==="gosb"?"волн по ГОСБ":"волн"} · сначала самые явные</div>
-        {d.items.map(e=><button key={e.id} className={"si "+vStrengthCls(e.strength)} aria-current={sig===e.id} onClick={()=>setSig(e.id)}>
-          <div className="h"><VConf s={e.score}/><span>{e.strength}</span><span>·</span><span>{vDs(e.start)}–{vD(e.end)}</span></div>
-          <div className="t">{level==="gosb"?`ГОСБ ${e.gosb} · ${e.subject_name||""}`:`${(e.place&&e.place.city)||""}${e.place&&e.place.address?", "+vAddr(e.place.address):""}`}</div>
-          <div className="m">{vN(e.n)} пятёрок — в {vN(Math.round(e.ratio))} раз больше обычного{level==="gosb"?` · ${e.points} из ${e.points_total} отделений`:e.oneoff_share!=null?` · новых аккаунтов ${vP(e.oneoff_share)}`:""}</div>
-        </button>)}
-      </div>
-      {sig?<VspSignalCard id={sig} go={go} openPoint={openPoint}/>:<div/>}
-    </div>}
-  </div>;
+// ── схемы ────────────────────────────────────────────────────────────────────
+function VspSchemeCard({id,onBack,openPoint,tiles}){
+  const[d,setD]=useState(null);const[fb,setFb]=useState(null);
+  useEffect(()=>{apiFetch(`/api/vsp/schemes/${encodeURIComponent(id)}`).then(setD).catch(()=>setD({err:1}));try{window.scrollTo({top:0});}catch(e){}},[id]);
+  if(!d)return <Skel h={400}/>;
+  if(d.err)return <ErrState msg="Схема не найдена"/>;
+  const mx=Math.max(1,...Object.values(d.by_subject||{}));
+  return <article className="view vdos">
+    <button className="vmore" onClick={onBack}>← Все схемы</button>
+    <h1 className="vh1">{d.name}</h1>
+    <p className="note">{vN(d.stories)} {vPl(d.stories,"история","истории","историй")} · {vN(d.points)} {vPl(d.points,"отделение","отделения","отделений")} · {vN(d.gosbs)} ГОСБ{d.kind==="модель"?" · похоже на схему · ИИ":""}</p>
+    {d.description&&<p style={{maxWidth:"80ch"}}>{d.description}</p>}
+    {d.network_wide&&<div className="box" style={{fontSize:14}}>Встречается в трёх и больше ГОСБ — похоже на практику сети, а не одного отделения.</div>}
+    {tiles&&<section className="sec"><h3>Где встречается</h3><VMap tiles={tiles} picked="" onPick={()=>{}} value={t=>d.by_subject[t.code]?0.15+0.7*d.by_subject[t.code]/mx:null}
+      hint={t=>d.by_subject[t.code]?` · историй ${d.by_subject[t.code]}`:" · не встречается"}/></section>}
+    <section className="sec"><h3>Что пишут клиенты</h3><div style={{display:"grid",gap:8}}>
+      {d.examples.map(e=><button key={e.rid} className="rev" style={{textAlign:"left"}} onClick={()=>openPoint(e.point)}>
+        <div className="rm"><b>{vPlace(e.place)}</b><span>{e.date}</span></div><div>«{e.quote}»</div></button>)}</div></section>
+    {(d.check||[]).length>0&&<section className="sec"><h3>Что проверить по теме</h3><div className="check">{d.check.map((t,i)=><label key={i}><input type="checkbox"/><span>{t}</span><span/></label>)}</div></section>}
+    {d.benign&&<div className="box" style={{fontSize:14}}><b>Может быть безобидно:</b> {d.benign}{d.resolve?`. Снимет вопрос: ${d.resolve}.`:""}</div>}
+    <div className="actions">{fb?<span className="note">Отмечено: {fb}.</span>:<>
+      <button className="btn btn-ghost" onClick={()=>fetch("/api/vsp/feedback",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({target:"scheme:"+id,verdict:"не схема"})}).then(()=>setFb("не схема"))}>Не схема</button>
+      <button className="btn btn-ghost" onClick={()=>fetch("/api/vsp/feedback",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({target:"scheme:"+id,verdict:"полезно"})}).then(()=>setFb("полезно"))}>Полезно</button></>}</div>
+  </article>;
 }
 
-// ── ВСП: таблица и профиль ──────────────────────────────────────────────────
-function VspBranches({ov,go,openPoint,f,setF,focus0}){
-  const[q,setQ]=useState("");const[sort,setSort]=useState("score");const[focus,setFocus]=useState(!!focus0);const[few,setFew]=useState(false);
-  const[d,setD]=useState(null);const[lim,setLim]=useState(50);
-  useEffect(()=>{setD(null);apiFetch("/api/vsp/branches?"+vQS({q,sort,focus:focus?1:"",state:few?"few":"",subject:f.subject,gosb:f.gosb,fmt:f.fmt,limit:lim}))
-    .then(setD).catch(()=>setD({err:1}));},[q,sort,focus,few,f.subject,f.gosb,f.fmt,lim]);
-  const subjects=[...(ov.tiles||[])].sort((a,b)=>(a.name||"").localeCompare(b.name||"","ru"));
-  return <div className="view" style={{display:"grid",gap:14}}>
-    <details className="card" style={{padding:"12px 16px"}}><summary style={{cursor:"pointer",fontWeight:500}}>Карта: где больше отделений в фокусе</summary>
-      <div style={{marginTop:12}}><VTileMap tiles={ov.tiles} net={ov.network_focus_share} picked={f.subject} onPick={c=>setF({subject:c})}/></div></details>
-    <div className="row">
-      <VSearch value={q} onChange={setQ} placeholder="Город, адрес, ГОСБ"/>
-      <select className="vsel" value={f.subject} onChange={e=>setF({subject:e.target.value})} aria-label="Субъект">
-        <option value="">Все регионы</option>{subjects.map(s=><option key={s.code} value={s.code}>{s.name}</option>)}</select>
-      <VSeg label="Формат" value={f.fmt} onChange={v=>setF({fmt:v})} items={[["","Все форматы"],["mass","Массовые"],["premium","СберПервый и Private"],["business","Для бизнеса"]]}/>
-      <label className="vchk"><input type="checkbox" checked={focus} onChange={e=>setFocus(e.target.checked)}/>только в фокусе (балл от 40)</label>
-      <label className="vchk"><input type="checkbox" checked={few} onChange={e=>setFew(e.target.checked)}/>мало отзывов</label>
-      <span className="sp"/>
-      <select className="vsel" value={sort} onChange={e=>setSort(e.target.value)} aria-label="Сортировка">
-        <option value="score">Сначала самые странные</option><option value="neg">По жалобам за год</option><option value="gap">По завышенному рейтингу</option><option value="n">По числу отзывов</option></select>
-    </div>
-    {!d?<Skel h={400}/>:d.err?<ErrState msg="Не удалось загрузить список"/>:<section className="card" style={{padding:"8px 8px 14px"}}>
-      <div className="note" style={{padding:"6px 10px"}}>{vN(d.total)} отделений</div>
-      <div className="tbl-wrap"><table>
-        <thead><tr><th>Балл</th><th>Отделение</th><th className="hide-sm">ГОСБ</th><th>Отзывов за год</th><th className="hide-sm">Жалоб за год</th><th>Что настораживает</th></tr></thead>
-        <tbody>{d.items.map(p=><tr key={p.point} className="click" onClick={()=>openPoint(p.point)}>
-          <td><div className="prio"><span className="num" style={{fontWeight:600,minWidth:24}}>{Math.round(p.score)}</span><span className="b"><i style={{width:`${p.score}%`}}/></span></div></td>
-          <td><div style={{fontWeight:500}}>{p.city||"—"}</div><div className="note">{vAddr(p.address)||p.name}</div>
-            {p.formats&&(p.formats.sber_first||p.formats.private)&&<div className="note"><span className="fmt-dot"/>{p.formats.private?"Private Banking":"СберПервый"}</div>}</td>
-          <td className="hide-sm num">{p.gosb||"—"}</td>
-          <td className="num">{vN(p.n_12m)}{p.state==="few"&&<div className="note">мало данных</div>}</td>
-          <td className="hide-sm num">{vN(p.neg_12m)}</td>
-          <td><div className="chips">{(p.reasons||[]).map(r=><span key={r} className={vChip(r)}>{r}</span>)}</div></td>
-        </tr>)}</tbody></table></div>
-      {d.total>d.items.length&&<div style={{textAlign:"center",marginTop:10}}><button className="btn btn-ghost" onClick={()=>setLim(lim+100)}>Показать ещё</button></div>}
-    </section>}
-  </div>;
-}
-
-function VspProfile({point,onClose,go}){
-  const[d,setD]=useState(null);const[on,setOn]=useState(false);
-  useEffect(()=>{setD(null);apiFetch(`/api/vsp/branches/${encodeURIComponent(point)}`).then(setD).catch(()=>setD({err:1}));},[point]);
-  useEffect(()=>{const t=requestAnimationFrame(()=>setOn(true));const k=e=>{if(e.key==="Escape")onClose();};window.addEventListener("keydown",k);
-    return()=>{cancelAnimationFrame(t);window.removeEventListener("keydown",k);};},[]);
-  const fm=d&&d.formats?Object.entries(d.formats):[];
-  const shown=d&&((d.declared_rating||{})["2gis"]||d.rating_all);
-  return ReactDOM.createPortal(<div className="vsp">
-    <div className={"scrim"+(on?" on":"")} onClick={onClose}/>
-    <aside className={"sheet"+(on?" on":"")} role="dialog" aria-modal="true" aria-label="Профиль ВСП">
-      {!d?<div style={{padding:22}}><Skel h={26} w="60%"/><Skel h={300} style={{marginTop:14}}/></div>:d.err?<div style={{padding:22}}><ErrState msg="Профиль не загрузился"/></div>:<>
-      <div className="sh-head">
-        <div className="row"><span className="eyebrow">ВСП{d.gosb?` · ГОСБ ${d.gosb}`:""}{d.subject_name?` · ${d.subject_name}`:""}</span><span className="sp"/>
-          <button className="btn btn-ghost" onClick={onClose} aria-label="Закрыть">Закрыть</button></div>
-        <h2 style={{font:"600 24px/1.2 var(--f-serif)"}}>{d.city||d.name}{d.address?`, ${vAddr(d.address)}`:""}</h2>
-        <div className="note">{d.name?`ВСП ${d.name}`:""}{d.open_date?` · открыто ${vD(d.open_date)}`:""}{d.status&&d.status!=="active"?` · ${d.status==="closed"?"закрыто по реестру ЦБ":d.status}`:""}</div>
-        <div className="chips">{fm.map(([k,src])=><span key={k} className="chip" title={`источник: ${(src||[]).join(", ")}`}>{VSP_FMT[k]||k}</span>)}
-          {(d.reasons||[]).map(r=><span key={r} className={vChip(r)}>{r}</span>)}<span className="chip">балл {Math.round(d.score)}</span></div>
-      </div>
-      <div className="sh-body">
-        <VProfileCases point={point} onPerson={go}/>
-        {(d.people||[]).length>0&&<div className="sec"><h3>Сотрудники в отзывах</h3><ul className="facts">{d.people.map((x,i)=><li key={i} style={{fontSize:14}}><span>
-          <b>{x.name}</b> — {x.kind==="complaints"?`в жалобах ${x.authors} разных клиентов`:`хвалят новые аккаунты: ${x.n} отзывов подряд`}</span></li>)}</ul>
-          <button className="vmore" onClick={()=>{onClose();go("people");}}>Все сотрудники</button></div>}
-        <div className="sec"><h3>Оценки</h3><div className="ratingcmp">
-          <div><div className="big num">{vR(shown)}</div><div className="note">как видит клиент{(d.declared_rating||{})["2gis"]?" (2ГИС)":""}</div></div>
-          <div><div className={"big num"+((shown-(d.rating_wo_episodes||shown))>0.2?" lo":"")}>{vR(d.rating_wo_episodes)}</div><div className="note">без массовых волн пятёрок</div></div>
-          <div><div className="big num">{vR(d.rating_12m)}</div><div className="note">средняя за год</div></div></div></div>
-        <div className="srcs">{(d.cards_full||[]).map(c=><div className="src" key={c.source+c.id}>
-          <div className="note">{VSP_SRC[c.source]||c.source}{c.format?` · ${VSP_FMT[c.format]||c.format}`:""}</div>
-          <div className="v num">{vR(c.declared_rating)} <span className="note">· {vN(c.declared_reviews)} отзывов</span></div>
-          <div className="note">{c.completeness==="complete"?"история полная":c.completeness||"—"}{c.oldest?` · с ${vD(c.oldest)}`:""}{c.url?<> · <a href={c.url} target="_blank" rel="noopener noreferrer">карточка</a></>:null}</div></div>)}</div>
-        <div className="sec"><h3>Отзывы за год</h3><div className="kpis" style={{gridTemplateColumns:"repeat(4,minmax(0,1fr))"}}>
-          {[["отзывов",vN(d.n_12m)],["пятёрок",vP(d.five_share_12m)],["оставлено после операции",vN(d.confirmed_12m)],["жалоб 1–2★",vN(d.neg_12m)],
-            ["с ответом банка",vP(d.reply_12m,1)],["удалены с площадки",vN(d.gone)],["помечены площадкой как подозрительные",vN(d.hidden)],["аккаунтов, хвалящих много отделений",vN(d.praisers)]].map(([l,v])=>
-            <div className="kpi" key={l} style={{cursor:"default"}}><span className="v num" style={{fontSize:22}}>{v}</span><span className="l">{l}</span></div>)}</div></div>
-        <div className="sec tl"><h3>Хронология по месяцам</h3><VTimeline rows={d.timeline}/>
-          <div className="legend" style={{borderTop:0,padding:"4px 0 0"}}><span><span className="sw" style={{background:"var(--accent)"}}/>неподтверждённые пятёрки</span>
-            <span><span className="sw" style={{background:"var(--ink-3)"}}/>подтверждённые</span><span><span className="sw" style={{background:"var(--ink)"}}/>1–2★</span><span><span className="sw" style={{background:"var(--hair-2)"}}/>3–4★</span></div></div>
-        {d.episodes_full.length>0&&<div className="sec"><h3>Массовые волны пятёрок · {d.episodes_full.length}</h3><div className="sig-list">
-          {d.episodes_full.map(e=><button key={e.id} className={"si "+vStrengthCls(e.strength)} onClick={()=>{onClose();go("collusion",{sig:e.id,part:"waves"});}}>
-            <div className="h"><VConf s={e.score}/><span>{e.strength}</span><span>·</span><span>{vD(e.start)} — {vD(e.end)}</span></div>
-            <div className="m">{vN(e.n)} пятёрок — в {vN(Math.round(e.ratio))} раз больше обычного · новых аккаунтов {vP(e.oneoff_share)}</div></button>)}</div></div>}
-        {d.gosb_episodes.length>0&&<div className="sec"><h3>Волны пятёрок во всём ГОСБ</h3><ul className="facts">{d.gosb_episodes.map(e=><li key={e.id} style={{fontSize:13.5}}><span>
-          {vD(e.start)} — {vD(e.end)}: {e.points} из {e.points_total} отделений, ×{vN(Math.round(e.ratio))} · {e.strength}</span></li>)}</ul></div>}
-        {(d.praisers_list.length>0||d.groups.length>0)&&<div className="sec"><h3>Одни и те же люди</h3><ul className="facts">
-          {d.praisers_list.map(a=><li key={a.author} style={{fontSize:13.5}}><span>Аккаунт {a.author} хвалит {a.points} отделений, всего {a.n} отзывов</span></li>)}
-          {d.groups.map(g=><li key={g.id} style={{fontSize:13.5}}><span>{g.kind==="ring"?`Группа: ${g.n_authors} аккаунтов, ${g.n_points} общих отделений`:`Один текст в ${g.n_points} отделениях, ${g.n_reviews} отзывов`}</span></li>)}</ul>
-          <button className="vmore" onClick={()=>{onClose();go("collusion");}}>Открыть «Сговор и накрутка»</button></div>}
-        <div className="sec"><h3>Последние отзывы</h3><div style={{display:"grid",gap:8}}>{d.recent.slice(0,10).map(r=><VRev key={r.id} r={r}/>)}</div></div>
-        <div className="actions">
-          <button className="btn btn-ink" onClick={()=>{onClose();go("reviews",{rq:{point}});}}>Все отзывы отделения</button>
-          <a className="btn btn-ghost" href={`/api/vsp/export/reviews.xlsx?point=${encodeURIComponent(point)}`} download>Скачать отзывы (Excel)</a>
-        </div>
-      </div></>}
-    </aside></div>,document.body);
-}
-
-// ── связи ────────────────────────────────────────────────────────────────────
-function VGroupModal({id,onClose,openPoint}){
+function VspSchemes({openScheme}){
   const[d,setD]=useState(null);
-  useEffect(()=>{apiFetch(`/api/vsp/groups/${id}`).then(setD).catch(()=>setD({err:1}));const k=e=>{if(e.key==="Escape")onClose();};
-    window.addEventListener("keydown",k);return()=>window.removeEventListener("keydown",k);},[id]);
-  return ReactDOM.createPortal(<div className="vsp"><div className="vpanel" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-    <div role="dialog" aria-modal="true">{!d?<Skel h={200}/>:d.err?<ErrState msg="Группа не найдена"/>:<>
-      <div className="row"><div><div className="eyebrow">{d.kind==="ring"?"Одни и те же люди":"Один текст в разных отделениях"}</div>
-        <h2 style={{font:"600 20px/1.3 var(--f-serif)",marginTop:4}}>{d.kind==="ring"?`${d.n_authors} аккаунтов · ${d.n_points} общих отделений`:`${d.n_points} отделений · ${d.reviews.length} отзывов`}</h2></div>
-        <span className="sp"/><button className="btn btn-ghost" onClick={onClose}>Закрыть</button></div>
-      <p className="note" style={{margin:"6px 0 12px"}}>{d.kind==="ring"?"Каждая пара аккаунтов поставила пятёрки как минимум трём одним и тем же отделениям с разницей до месяца. Это повод посмотреть, а не вывод.":"Одинаковый текст (8+ слов) в отзывах о разных отделениях."}</p>
-      <div style={{display:"grid",gap:8}}>{d.reviews.map(r=><VRev key={r.id} r={r} showPlace onPlace={p=>{onClose();openPoint(p);}}/>)}</div>
-      <div className="actions"><a className="btn btn-ghost" href={`/api/vsp/export/reviews.xlsx?ids=${encodeURIComponent(d.reviews.map(r=>r.id).join(","))}`} download>Скачать отзывы группы</a></div>
-    </>}</div></div></div>,document.body);
-}
-
-function VspCollusion({openPoint,go,f,sig,setSig,part0}){
-  const[d,setD]=useState(null);const[g,setG]=useState(null);const[open,setOpen]=useState(null);const[part,setPart]=useState(part0||"people");
-  useEffect(()=>{apiFetch("/api/vsp/links").then(setD).catch(()=>setD({err:1}));},[]);
+  useEffect(()=>{apiFetch("/api/vsp/schemes").then(setD).catch(()=>setD({err:1}));},[]);
   if(!d)return <Skel h={400}/>;
   if(d.err)return <ErrState msg="Не удалось загрузить"/>;
-  const places=ps=><div className="note">{ps.slice(0,4).map(p=>[p.city,vAddr(p.address)||p.name].filter(Boolean).join(", ")).join(" · ")}{ps.length>4?` · ещё ${ps.length-4}`:""}</div>;
-  const praise=d.same_text.filter(t=>t.praise);
-  return <div className="view" style={{display:"grid",gap:14}}>
-    <p className="note" style={{maxWidth:"86ch"}}>Сами по себе пятёрки аудиту не важны. Важно другое: одни и те же люди вокруг одних и тех же отделений или
-      сотрудников — так проявляются сговор, «свои» клиенты и посредники. Автор виден только внутри площадки (по псевдониму, имена не храним);
-      несколько аккаунтов одного человека отсюда не различить.</p>
-    <VSeg label="Что показать" value={part} onChange={setPart} items={[["people","Один человек — много отделений"],["groups","Одни и те же люди"],["texts","Один текст в разных отделениях"],["waves","Массовые волны пятёрок"]]}/>
-    {part==="people"&&<section className="card"><div className="eyebrow">Один человек хвалит много отделений · {d.praisers.length}</div>
-      <p className="note" style={{margin:"4px 0 10px"}}>Только пятёрки, 3 и больше отделений за 2 недели. Естественные авторы (знатоки города с сотнями отзывов) сюда не попадают.</p>
-      <div className="tbl-wrap"><table><thead><tr><th>Аккаунт</th><th>Отделений</th><th>ГОСБ</th><th>Всего отзывов на площадке</th><th>Когда</th><th>Где</th></tr></thead>
-        <tbody>{d.praisers.slice(0,100).map(a=><tr key={a.author} className="click" onClick={()=>setOpen(open===a.author?null:a.author)}>
-          <td className="mono">{a.author}</td><td className="num">{a.points}</td><td className="num">{a.gosbs}</td><td className="num">{vN(a.total)}</td>
-          <td className="num">{vDs(a.first)} — {vD(a.last)}</td>
-          <td>{open===a.author?<div style={{display:"grid",gap:4}}>{a.places.map(p=><button key={p.point} className="vmore" style={{textAlign:"left"}} onClick={e=>{e.stopPropagation();openPoint(p.point);}}>{[p.city,vAddr(p.address)||p.name].filter(Boolean).join(", ")}</button>)}</div>:places(a.places)}</td></tr>)}</tbody></table></div>
-    </section>}
-    {part==="groups"&&<section className="card"><div className="eyebrow">Одни и те же люди хвалят одни и те же отделения · {d.rings.length}</div>
-      <p className="note" style={{margin:"4px 0 10px"}}>Группа из 3 и больше аккаунтов: каждая пара поставила пятёрки как минимум трём одним и тем же отделениям с разницей до месяца.</p>
-      {d.rings.length?d.rings.map(r=><button key={r.id} className="lk" onClick={()=>setG(r.id)}>
-        <div className="t">{r.n_authors} аккаунтов · {r.n_points} отделений · {r.n_reviews} отзывов</div>{places(r.places)}</button>):<div className="vempty">Таких групп нет</div>}</section>}
-    {part==="texts"&&<section className="card"><div className="eyebrow">Один и тот же текст в разных отделениях · {praise.length}</div>
-      <p className="note" style={{margin:"4px 0 10px"}}>Одинаковая похвала (8+ слов) о разных отделениях — признак того, что текст раздали готовым.</p>
-      {praise.slice(0,60).map(t=><button key={t.id} className="lk" onClick={()=>setG(t.id)}>
-        <div className="t">{t.n_points} отделений · {t.n_reviews} отзывов · аккаунтов {t.n_authors}</div>{places(t.places)}</button>)}</section>}
-    {part==="waves"&&<VspSignals go={go} openPoint={openPoint} f={f} sig={sig} setSig={setSig}/>}
-    {g&&<VGroupModal id={g} onClose={()=>setG(null)} openPoint={openPoint}/>}
+  const card=(s,isNew)=><button key={s.id} className={"si"+(isNew?" risk":"")} onClick={()=>openScheme(s.id)}>
+    <div className="h">{isNew&&<span className="tag risk">новое</span>}<span>{vN(s.stories)} {vPl(s.stories,"история","истории","историй")} · {vN(s.points)} {vPl(s.points,"отделение","отделения","отделений")} · {vN(s.gosbs||0)} ГОСБ</span></div>
+    <div className="t">{s.name}</div>{s.description&&<div className="m">{s.description}</div>}</button>;
+  return <div className="view" style={{display:"grid",gap:16}}>
+    <p className="note" style={{maxWidth:"86ch"}}>Схема — история, которая повторяется у разных клиентов. {d.kind==="модель"?"Группы находит модель по смыслу описаний, закрытого списка нет.":"Пока модель не собрала группы по смыслу, схемы сгруппированы по действиям сотрудников из историй."}</p>
+    {d.new.length>0&&<section><div className="eyebrow" style={{marginBottom:8}}>Новое за 3 месяца</div><div className="sig-list">{d.new.map(s=>card(s,true))}</div></section>}
+    <section><div className="eyebrow" style={{marginBottom:8}}>Все схемы · сначала те, что в большем числе отделений</div><div className="sig-list">{d.all.map(s=>card(s,false))}</div></section>
   </div>;
 }
 
-function VspReviews({rq,openPoint}){
-  const[flag,setFlag]=useState((rq&&rq.flag)||"");const[q,setQ]=useState("");const[source,setSource]=useState("");
-  const[d,setD]=useState(null);const[lim,setLim]=useState(50);const[sel,setSel]=useState(()=>new Set());const[cur,setCur]=useState(null);
-  const point=rq&&rq.point;
-  useEffect(()=>{setD(null);apiFetch("/api/vsp/reviews?"+vQS({point,flag,q,source,limit:lim})).then(x=>{setD(x);if(x.items[0]&&!cur)setCur(x.items[0]);}).catch(()=>setD({err:1}));},[point,flag,q,source,lim]);
-  const tog=id=>setSel(s=>{const n=new Set(s);n.has(id)?n.delete(id):n.add(id);return n;});
-  const flags=(d&&d.flags)||{case:"возможное нарушение",names:"назван сотрудник",neg:"оценка 1–2",gone:"удалён с площадки"};
-  const exp="/api/vsp/export/reviews.xlsx?"+vQS({point,flag,q,source});
-  return <div className="view rx-layout">
-    <aside>
-      <div className="facet"><h4>Отзывы</h4>
-        <button className="fc" aria-pressed={!flag} onClick={()=>setFlag("")}><span>Все</span></button>
-        {Object.entries(flags).map(([k,l])=><button key={k} className="fc" aria-pressed={flag===k} onClick={()=>setFlag(k)}><span>{l}</span></button>)}</div>
-      <div className="facet"><h4>Площадка</h4>{[["","Все"],["2gis","2ГИС"],["yandex","Яндекс"]].map(([k,l])=>
-        <button key={k} className="fc" aria-pressed={source===k} onClick={()=>setSource(k)}><span>{l}</span></button>)}</div>
-      {point&&<div className="note" style={{padding:"0 8px"}}>Только одно ВСП. <button className="vmore" onClick={()=>openPoint(point)}>Профиль</button></div>}
-    </aside>
-    <div style={{display:"grid",gap:10,alignContent:"start"}}>
-      <div className="row"><VSearch value={q} onChange={setQ} placeholder="Фраза в тексте"/><span className="sp"/>
-        <a className="btn btn-ghost" href={exp} download>Скачать по фильтру</a></div>
-      {sel.size>0&&<div className="bulk"><span>Выбрано: {sel.size}</span><span className="sp"/>
-        <a className="btn" href={`/api/vsp/export/reviews.xlsx?ids=${encodeURIComponent([...sel].join(","))}`} download>Скачать выбранные</a>
-        <button className="btn" onClick={()=>setSel(new Set())}>Снять выбор</button></div>}
-      {!d?<Skel h={400}/>:d.err?<ErrState msg="Не удалось загрузить отзывы"/>:<>
-        <div className="note">{vN(d.total)} отзывов{flag==="names"?" (среди 20 000 последних)":""}</div>
-        <div className="rx-list">{d.items.map(r=><div key={r.id} className="rx" aria-current={cur&&cur.id===r.id} onClick={()=>setCur(r)} style={{cursor:"pointer"}}>
-          <input type="checkbox" checked={sel.has(r.id)} onChange={()=>tog(r.id)} onClick={e=>e.stopPropagation()} aria-label="Выбрать отзыв"/>
-          <div><div className="rm"><span className="stars">{vStars(r.rating)}</span><span>{vD(r.date)}</span><span>{VSP_SRC[r.source]}</span>
-            {(r.case_types||[]).map(t=><span key={t} className="flag risk">{t}</span>)}{r.author_total===1&&<span className="flag">новый аккаунт</span>}
-            {r.in_episode&&<span className="flag scheme">из волны пятёрок</span>}{r.hidden&&<span className="flag scheme">площадка пометила</span>}
-            <span>{[r.place&&r.place.city,r.place&&vAddr(r.place.address)].filter(Boolean).join(", ")}</span></div>
-            <div className="tx"><VMark text={r.text||"без текста"} q={q}/></div></div></div>)}</div>
-        {d.total>d.items.length&&<div style={{textAlign:"center"}}><button className="btn btn-ghost" onClick={()=>setLim(lim+100)}>Показать ещё</button></div>}
-      </>}
-    </div>
-    <aside className="reader">{cur&&<div className="card" style={{display:"grid",gap:10}}>
-      <div className="eyebrow">Отзыв</div>
-      <VRev r={cur} q={q}/>
-      <div className="note">{[cur.place&&cur.place.city,cur.place&&vAddr(cur.place.address)].filter(Boolean).join(", ")}</div>
-      {cur.hidden&&<div className="box" style={{fontSize:13}}><b>Пометка площадки:</b> {cur.hidden}</div>}
-      <div className="note">Автор {cur.author||"—"}{cur.author_total!=null?` · всего отзывов на площадке: ${cur.author_total}`:""}</div>
-      <div className="row"><button className="btn btn-ink" onClick={()=>openPoint(cur.point)}>Профиль ВСП</button>
-        {cur.url&&<a className="btn btn-ghost" href={cur.url} target="_blank" rel="noopener noreferrer">На площадке</a>}</div>
-    </div>}</aside>
+function VspMethod2(){
+  return <div className="view vdos">
+    <h1 className="vh1">Как это работает</h1>
+    <section className="sec"><h3>Что ищем</h3><p style={{maxWidth:"80ch"}}>Истории клиентов о том, что сделали люди в конкретном отделении: оформили без согласия, выдали один продукт под видом другого,
+      сказали, что без допуслуги не дадут, работали в телефоне клиента, недодали наличные, данные ушли мошенникам, обслуживают по знакомству.
+      Жалобы на банк в целом, тарифы, очереди и приложение сюда не попадают — это «Аудит отзывов».</p></section>
+    <section className="sec"><h3>Кто читает</h3><ul className="facts">
+      <li><span>Каждый отзыв читает модель: сначала отбирает истории, потом пишет карточку — что произошло, действия сотрудника, продукт, тяжесть, чья вина и дословную цитату. Цитату проверяет код.</span></li>
+      <li><span>Модели выбраны замером на 2 137 отзывах, размеченных вручную: на отборе — gpt-oss-120b, на карточке — DeepSeek V4.1 Flash.</span></li>
+      <li><span>Числа, сравнение с похожими отделениями и порядок списка считает код. Балла нет.</span></li></ul></section>
+    <section className="sec"><h3>Когда отделение попадает в список</h3><p style={{maxWidth:"80ch"}}>Когда сходятся независимые наблюдения: тяжёлые истории разных клиентов; повтор одной схемы; один сотрудник у разных клиентов;
+      таких историй заметно больше, чем у похожих отделений ГОСБ; люди вокруг — посредники или одни и те же аккаунты вокруг названного сотрудника.
+      Или есть одна очень тяжёлая история с проверяемыми деталями.</p></section>
+    <section className="sec"><h3>Что отсеиваем</h3><ul className="facts">
+      <li><span>Рассыльщики одного текста по многим отделениям (например, политическая рассылка по 253 ВСП).</span></li>
+      <li><span>Головные офисы, куда пишут жалобы на банк в целом.</span></li>
+      <li><span>Пятёрки и рейтинг сами по себе — только как контекст рядом с жалобами.</span></li></ul></section>
+    <section className="sec"><h3>Чего не видно</h3><ul className="facts">
+      <li><span>Отзывы — слова клиентов, а не установленные факты.</span></li>
+      <li><span>У большинства отделений отзывов мало — о них вкладка молчит.</span></li>
+      <li><span>Один человек с несколькими аккаунтами не отличим от разных людей.</span></li>
+      <li><span>Отзывы, удалённые площадкой до начала сбора, не видны; Яндекс пока собран мало.</span></li></ul></section>
   </div>;
 }
 
-// ── полнота данных и лаборатория ────────────────────────────────────────────
-function VDownload({f}){
-  const[open,setOpen]=useState(false);
+// ── поиск ────────────────────────────────────────────────────────────────────
+function VSearchBox({openPoint}){
+  const[q,setQ]=useState("");const[d,setD]=useState(null);const[open,setOpen]=useState(false);const ref=useRef(null);
+  useEffect(()=>{const k=e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="k"){e.preventDefault();ref.current&&ref.current.focus();}};
+    window.addEventListener("keydown",k);return()=>window.removeEventListener("keydown",k);},[]);
+  useEffect(()=>{if(q.trim().length<2){setD(null);return;}const t=setTimeout(()=>apiFetch("/api/vsp/search?q="+encodeURIComponent(q.trim())).then(setD).catch(()=>{}),300);return()=>clearTimeout(t);},[q]);
+  const pick=p=>{setOpen(false);setQ("");openPoint(p);};
   return <div style={{position:"relative"}}>
-    <button className="btn btn-ghost" onClick={()=>setOpen(!open)} aria-expanded={open}>Скачать</button>
-    {open&&<div className="card" style={{position:"absolute",right:0,top:42,zIndex:20,width:340,padding:10,display:"grid",gap:6}} onMouseLeave={()=>setOpen(false)}>
-      <a className="dl-opt" href={"/api/vsp/export/candidates.xlsx?"+vQS({subject:f.subject,gosb:f.gosb,fmt:f.fmt})} download onClick={()=>setOpen(false)}>
-        <span className="dl-ic">XLSX</span><span><b>Отделения в фокусе</b><p>Балл и что настораживает; отдельные листы — случаи и сотрудники</p></span></a>
-      <a className="dl-opt" href="/api/vsp/export/reviews.xlsx?flag=case" download onClick={()=>setOpen(false)}>
-        <span className="dl-ic">XLSX</span><span><b>Отзывы с возможными нарушениями</b><p>Полные тексты, тип нарушения, отделение — до 5 000 последних</p></span></a>
+    <label className="vin"><input ref={ref} value={q} onChange={e=>{setQ(e.target.value);setOpen(true);}} onFocus={()=>setOpen(true)} placeholder="Найти ВСП, адрес, имя, фразу" aria-label="Поиск"/><span className="kbd">⌘K</span></label>
+    {open&&d&&<div className="card vsearch" onMouseLeave={()=>setOpen(false)}>
+      {d.places.length>0&&<><div className="eyebrow">Отделения</div>{d.places.map(p=><button key={p.point} className="lk" onClick={()=>pick(p.point)}><div className="t">{vPlace(p)}</div><div className="m">{vCode(p)}</div></button>)}</>}
+      {d.people.length>0&&<><div className="eyebrow">Имена в историях</div>{d.people.map((x,i)=><button key={i} className="lk" onClick={()=>pick(x.place.point)}><div className="t">{x.name}</div><div className="m">{vPlace(x.place)}</div></button>)}</>}
+      {d.reviews.length>0&&<><div className="eyebrow">В отзывах</div>{d.reviews.map(r=><button key={r.rid} className="lk" onClick={()=>pick(r.point)}><div className="m"><VMark text={r.snippet} q={q.trim()}/></div><div className="m">{vPlace(r.place)}</div></button>)}</>}
+      {!d.places.length&&!d.people.length&&!d.reviews.length&&<div className="vempty">Ничего не нашлось</div>}
     </div>}
-  </div>;
-}
-
-// ── случаи: отзывы, где клиент описывает возможное нарушение ─────────────────
-const VSP_CASES_REAL={
-  credit_not_mine:[["Ангарск: сотрудница оформила карты и займы на 11 пожилых клиентов","https://irkutskmedia.ru/news/2135231/"],["Екатеринбург: хищение 15 млн, кредиты без ведома клиентов","https://rg.ru/2025/04/18/reg-urfo/v-ekaterinburge-byvshuiu-sotrudnicu-banka-osudili-za-hishchenie-15-mln-rublej.html"]],
-  deposit_vanished:[["Оренбург: подписывали расходные ордера «на новый вклад»","https://oren.aif.ru/incidents/crime/menedzher-banka-v-orenburge-obmanula-pensionerov-na-5-6-mln-rubley"],["Севастополь: менеджер похитила 24 млн у вкладчиков","https://www.vesti.ru/ns/v-sevastopole-menedzher-banka-pokhitila-bolee-24-mln-u-vkladchikov"]],
-  phone_access:[["Красноярск: взяла телефон пожилых клиентов «помочь» и перевела себе 1,35 млн","https://vse42.ru/news/33639773"],["Минск: меняла телефоны в учётных записях клиентов и переводила деньги себе","https://money.onliner.by/2026/11/05/sotrudnica-banka-dva-goda"]],
-  cash:[["Кедровый: в системе проводила больше, клиенту выдавала меньше","https://19rusinfo.ru/ekonomika/118322-menedzher-banka-krala-dengi-so-schetov-pensionerov"]],
-  leak:[["Тольятти: сотрудник продавал данные и остатки клиентов","https://volga.news/article/806564.html"],["Как сотрудники сливают данные мошенникам","https://life.ru/p/1136273"]],
-  inheritance:[["Вклады умерших клиентов","https://life.ru/p/1114629/amp"]],
-  self_interest:[["Прикамье: сотрудница похитила деньги со счёта пенсионерки","https://rg.ru/2026/10/05/reg-pfo/v-prikame-sotrudnica-banka-pohitila-dengi-so-scheta-pensionerki.html"],["Ухта: сотрудница украла у пенсионерки 261 тыс.","https://komiinform.ru/news/301742"]],
-  vulnerable:[["Воронеж: менеджер украла у пенсионеров 10,2 млн","https://riavrn.ru/news/v-voronezhe-menedzher-banka-ukrala-u-pensionerov-102-mln-rublej/"]],
-};
-const vSev=s=>s>=3?"очень серьёзно":s===2?"серьёзно":"процесс";
-
-function VCaseCard({c,onOpen,openPoint,q}){
-  return <button className={"si "+(c.severity>=3?"risk":"")} onClick={()=>onOpen(c)} style={{width:"100%"}}>
-    <div className="h">{c.types.map(t=><span key={t.key} className="tag risk">{t.label}</span>)}<span>· {vD(c.at)}</span><span>· {vStars(c.rating)}</span></div>
-    <div className="t" style={{fontWeight:400,fontSize:14.5,lineHeight:1.45}}>«<VMark text={c.quote} q={q}/>»</div>
-    <div className="m">{c.place&&c.place.city?`${c.place.city}, ${vAddr(c.place.address)}`:""}</div>
-  </button>;
-}
-
-function VCaseReader({c,onClose,openPoint,guide}){
-  useEffect(()=>{const k=e=>{if(e.key==="Escape")onClose();};window.addEventListener("keydown",k);return()=>window.removeEventListener("keydown",k);},[]);
-  return ReactDOM.createPortal(<div className="vsp"><div className="vpanel" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-    <div role="dialog" aria-modal="true">
-      <div className="row"><div className="chips">{c.types.map(t=><span key={t.key} className="chip risk">{t.label}</span>)}</div><span className="sp"/>
-        <button className="btn btn-ghost" onClick={onClose}>Закрыть</button></div>
-      <h2 style={{font:"600 20px/1.3 var(--f-serif)",margin:"10px 0 4px"}}>{c.place&&c.place.city?`${c.place.city}, ${vAddr(c.place.address)}`:"Отделение"}</h2>
-      <div className="note">{vD(c.at)} · {VSP_SRC[c.source]||c.source} · оценка {c.rating} · {vSev(c.severity)}</div>
-      <div className="box" style={{marginTop:12,whiteSpace:"pre-wrap",fontSize:15,lineHeight:1.55,color:"var(--ink)"}}>{c.text||c.quote}</div>
-      {guide&&<div className="sec"><h3>Что проверить</h3><div className="check">{guide.check.map((x,i)=><label key={i}><input type="checkbox"/><span>{x.text}</span><span className="where">{x.where}</span></label>)}</div>
-        <p className="note" style={{marginTop:10}}>{guide.limits.join(" · ")}</p></div>}
-      <div className="actions">{c.place&&c.point&&<button className="btn btn-ink" onClick={()=>{onClose();openPoint(c.point);}}>Профиль отделения</button>}
-        {c.url&&<a className="btn btn-ghost" href={c.url} target="_blank" rel="noopener noreferrer">Отзыв на площадке</a>}</div>
-    </div></div></div>,document.body);
-}
-
-function VspCases({f,openPoint,type0,sev0}){
-  const[type,setType]=useState(type0||"");const[period,setPeriod]=useState("24m");const[sev,setSev]=useState(sev0||0);const[q,setQ]=useState("");
-  const[d,setD]=useState(null);const[lim,setLim]=useState(40);const[cur,setCur]=useState(null);
-  useEffect(()=>{setD(null);apiFetch("/api/vsp/cases?"+vQS({type,period,severity:sev||"",q,subject:f.subject,gosb:f.gosb,limit:lim})).then(setD).catch(()=>setD({err:1}));},[type,period,sev,q,f.subject,f.gosb,lim]);
-  const types=(d&&d.types)||[];
-  const tsel=types.find(t=>t.key===type);
-  return <div className="view rx-layout" style={{gridTemplateColumns:"280px minmax(0,1fr)"}}>
-    <aside>
-      <div className="facet"><h4>Что случилось, по словам клиента</h4>
-        <button className="fc" aria-pressed={!type} onClick={()=>setType("")}><span>Все</span></button>
-        {types.map(t=><button key={t.key} className="fc" aria-pressed={type===t.key} onClick={()=>setType(t.key)} title={t.hint}>
-          <span>{t.label}</span><span className="c">{vN(t.n)}</span></button>)}</div>
-      <p className="note" style={{padding:"0 8px"}}>Найдено по словам клиентов. Это повод проверить, а не установленный факт: читайте цитату и полный текст.</p>
-    </aside>
-    <div style={{display:"grid",gap:10,alignContent:"start"}}>
-      <div className="row"><VSeg label="Период" value={period} onChange={setPeriod} items={[["90d","3 месяца"],["12m","Год"],["24m","2 года"],["all","Вся история"]]}/>
-        <VSeg label="Серьёзность" value={sev} onChange={setSev} items={[[0,"Любые"],[3,"Только очень серьёзные"]]}/>
-        <span className="sp"/><VSearch value={q} onChange={setQ} placeholder="Слово в цитате"/>
-        <a className="btn btn-ghost" href={"/api/vsp/export/reviews.xlsx?flag=case"} download>Скачать</a></div>
-      {tsel&&<div className="box"><b>{tsel.label}.</b> {tsel.hint}
-        {(VSP_CASES_REAL[tsel.key]||[]).length>0&&<div className="note" style={{marginTop:6}}>Так это выглядело в реальных делах: {(VSP_CASES_REAL[tsel.key]||[]).map(([t,u],i)=><span key={u}>{i?" · ":""}<a href={u} target="_blank" rel="noopener noreferrer">{t}</a></span>)}</div>}</div>}
-      {!d?<Skel h={400}/>:d.err?<ErrState msg="Не удалось загрузить"/>:!d.items.length?<div className="card vempty">За этот период таких отзывов нет.</div>:<>
-        <div className="note">{vN(d.total)} отзывов · сначала самые серьёзные и свежие</div>
-        <div className="sig-list">{d.items.map(c=><VCaseCard key={c.id} c={c} q={q} onOpen={setCur} openPoint={openPoint}/>)}</div>
-        {d.total>d.items.length&&<div style={{textAlign:"center"}}><button className="btn btn-ghost" onClick={()=>setLim(lim+60)}>Показать ещё</button></div>}</>}
-    </div>
-    {cur&&<VCaseReader c={cur} guide={d&&d.guide} onClose={()=>setCur(null)} openPoint={openPoint}/>}
-  </div>;
-}
-
-function VProfileCases({point}){
-  const[d,setD]=useState(null);const[cur,setCur]=useState(null);
-  useEffect(()=>{apiFetch("/api/vsp/cases?"+vQS({point,period:"all",limit:20})).then(setD).catch(()=>setD({err:1}));},[point]);
-  if(!d||d.err||!d.items.length)return null;
-  return <div className="sec"><h3>Возможные нарушения · {d.total}</h3><div className="sig-list">{d.items.map(c=><VCaseCard key={c.id} c={c} onOpen={setCur}/>)}</div>
-    {cur&&<VCaseReader c={cur} guide={d.guide} onClose={()=>setCur(null)} openPoint={()=>{}}/>}</div>;
-}
-
-// ── сотрудники ───────────────────────────────────────────────────────────────
-function VPersonModal({id,onClose,openPoint}){
-  const[d,setD]=useState(null);
-  useEffect(()=>{apiFetch(`/api/vsp/people/${id}`).then(setD).catch(()=>setD({err:1}));const k=e=>{if(e.key==="Escape")onClose();};
-    window.addEventListener("keydown",k);return()=>window.removeEventListener("keydown",k);},[id]);
-  return ReactDOM.createPortal(<div className="vsp"><div className="vpanel" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-    <div role="dialog" aria-modal="true">{!d?<Skel h={200}/>:d.err?<ErrState msg="Не найдено"/>:<>
-      <div className="row"><div><div className="eyebrow">{d.kind==="complaints"?"Повторяется в жалобах":"Хвалят новые аккаунты"}</div>
-        <h2 style={{font:"600 22px/1.3 var(--f-serif)",marginTop:4}}>{d.name}</h2>
-        <div className="note">{d.place&&d.place.city?`${d.place.city}, ${vAddr(d.place.address)}`:""}</div></div>
-        <span className="sp"/><button className="btn btn-ghost" onClick={onClose}>Закрыть</button></div>
-      <div style={{display:"grid",gap:8,marginTop:12}}>{d.reviews.map(r=><VRev key={r.id} r={r}/>)}</div>
-      <div className="actions">{d.place&&d.place.point&&<button className="btn btn-ink" onClick={()=>{onClose();openPoint(d.place.point);}}>Профиль отделения</button>}
-        <a className="btn btn-ghost" href={`/api/vsp/export/reviews.xlsx?ids=${encodeURIComponent(d.reviews.map(r=>r.id).join(","))}`} download>Скачать отзывы</a></div>
-    </>}</div></div></div>,document.body);
-}
-
-function VspPeople({f,openPoint}){
-  const[kind,setKind]=useState("complaints");const[d,setD]=useState(null);const[cur,setCur]=useState(null);
-  useEffect(()=>{setD(null);apiFetch("/api/vsp/people?"+vQS({kind,subject:f.subject,limit:200})).then(setD).catch(()=>setD({err:1}));},[kind,f.subject]);
-  return <div className="view" style={{display:"grid",gap:14}}>
-    <div className="row"><VSeg label="Что показать" value={kind} onChange={setKind} items={[["complaints","В жалобах разных клиентов"],["praise_wave","Хвалят новые аккаунты"]]}/></div>
-    <p className="note" style={{maxWidth:"86ch"}}>{kind==="complaints"
-      ?"Одного и того же сотрудника называют в жалобах несколько разных клиентов одного отделения — повторяющееся поведение конкретного человека. Сначала — где жалобы на нарушения, а не на грубость."
-      :"Одного сотрудника хвалят по имени новые аккаунты, пачкой за несколько дней. Само по себе это не нарушение. Но вместе с жалобами «по знакомству» в том же отделении это повод посмотреть на его «своих» клиентов."}
-      {" "}Имена между разными отделениями не сопоставляются.</p>
-    {!d?<Skel h={300}/>:d.err?<ErrState msg="Не удалось загрузить"/>:!d.items.length?<div className="card vempty">Не найдено</div>:
-    <div className="sig-list">{d.items.map(x=><button key={x.id} className={"si "+(kind==="complaints"?"risk":"scheme")} onClick={()=>setCur(x.id)}>
-      <div className="h"><span>{x.place&&x.place.city?`${x.place.city}, ${vAddr(x.place.address)}`:""}</span></div>
-      <div className="t" style={{fontSize:16}}>{x.name}</div>
-      <div className="m">{kind==="complaints"?`в жалобах ${x.authors} разных клиентов · ${vD(x.first)} — ${vD(x.last)}`:`${x.n} отзывов за ${Math.max(1,Math.round((new Date(x.last)-new Date(x.first))/864e5))} дн., из них новых аккаунтов ${x.oneoff}`}</div>
-      {x.types.length>0&&<div className="chips" style={{marginTop:6}}>{x.types.map(t=><span key={t.key} className="chip risk">{t.label}{t.n>1?` · ${t.n}`:""}</span>)}</div>}
-    </button>)}</div>}
-    {cur&&<VPersonModal id={cur} onClose={()=>setCur(null)} openPoint={openPoint}/>}
-  </div>;
-}
-
-// ── главное ──────────────────────────────────────────────────────────────────
-function VspHome({ov,go,openPoint}){
-  const K=ov.kpi2||{};const[cur,setCur]=useState(null);
-  const top=(ov.case_types||[]).filter(t=>t.n>0).sort((a,b)=>b.severity-a.severity||b.n-a.n).slice(0,3);
-  const kpis=[
-    {v:K.severe_12m,l:"Очень серьёзные случаи за год",s:"оформили без согласия, пропали деньги, утечка, касса",on:()=>go("cases",{sev:3})},
-    {v:K.focus,l:"Отделения в фокусе",s:"сразу несколько странностей",on:()=>go("branches",{focus:1})},
-    {v:K.people_complaints,l:"Сотрудник в жалобах разных клиентов",s:"внутри одного отделения",on:()=>go("people")},
-    {v:K.favoritism,l:"Отделения, где «всё по знакомству»",s:"свои без очереди, решают через знакомых",on:()=>go("cases",{type:"favoritism"})},
-  ];
-  return <div className="view" style={{display:"grid",gap:18}}>
-    <p className="vlede">За последние два года клиенты описали в отзывах о Сбере {top.map((t,i)=><span key={t.key}>{i?(i===top.length-1?" и ":", "):""}<b>{t.label.toLowerCase()}</b> ({vN(t.n)})</span>)}.
-      Ниже — самые серьёзные случаи, отделения со множеством странностей и сотрудники, о которых пишут повторно.</p>
-    <div className="kpis" style={{gridTemplateColumns:"repeat(4,minmax(0,1fr))"}}>{kpis.map(k=><button key={k.l} className="kpi risk" onClick={k.on}>
-      <span className="v num">{vN(k.v)}</span><span className="l">{k.l}</span><span className="s">{k.s}</span></button>)}</div>
-    <div className="grid-ov" style={{gridTemplateColumns:"minmax(0,1fr) 400px"}}>
-      <section className="card"><div className="row"><div><div className="eyebrow">Свежие очень серьёзные случаи</div>
-        <h2 style={{font:"600 20px/1.3 var(--f-serif)",marginTop:4}}>Что клиенты пишут об отделениях</h2></div><span className="sp"/>
-        <button className="vmore" onClick={()=>go("cases")}>Все случаи</button></div>
-        <div className="sig-list" style={{marginTop:12}}>{(ov.top_cases||[]).map(c=><VCaseCard key={c.id} c={c} onOpen={setCur} openPoint={openPoint}/>)}</div></section>
-      <div className="stack">
-        <section className="card"><div className="row"><div className="eyebrow">Отделения в фокусе</div><span className="sp"/><button className="vmore" onClick={()=>go("branches",{focus:1})}>Все</button></div>
-          <div style={{display:"grid",gap:2,marginTop:8}}>{ov.candidates.slice(0,8).map(p=><button key={p.point} className="lk" onClick={()=>openPoint(p.point)}>
-            <div className="t">{p.city}, {vAddr(p.address)||p.name} <span className="note">· {Math.round(p.score)}</span></div>
-            <div className="m">{(p.reasons||[]).slice(0,2).join(" · ")}</div></button>)}</div></section>
-        <section className="card"><div className="row"><div className="eyebrow">Сотрудники, о которых пишут повторно</div><span className="sp"/><button className="vmore" onClick={()=>go("people")}>Все</button></div>
-          <div style={{display:"grid",gap:2,marginTop:8}}>{(ov.people_top||[]).slice(0,6).map(x=><button key={x.id} className="lk" onClick={()=>go("people")}>
-            <div className="t">{x.name}</div><div className="m">{x.kind==="complaints"?`в жалобах ${x.authors} разных клиентов`:`хвалят новые аккаунты: ${x.n} отзывов`} · {x.place&&x.place.city}</div></button>)}</div></section>
-      </div>
-    </div>
-    {cur&&<VCaseReader c={cur} onClose={()=>setCur(null)} openPoint={openPoint}/>}
-  </div>;
-}
-
-// ── как это работает ─────────────────────────────────────────────────────────
-function VspMethod({ov}){
-  const[d,setD]=useState(null);
-  useEffect(()=>{apiFetch("/api/vsp/completeness").then(setD).catch(()=>setD({err:1}));},[]);
-  const st=(d&&d.run&&d.run.stats)||{};const reg=(d&&d.registry)||{};
-  return <div className="view" style={{display:"grid",gap:18}}>
-    <section className="card"><div className="eyebrow">Что ищем</div>
-      <p style={{margin:"8px 0 12px",maxWidth:"86ch"}}>Каждый отзыв читается на признаки схем, которые встречались в реальных делах против сотрудников банков.
-        Отзыв, где клиент описывает такое, становится «случаем». Отделение попадает в фокус, когда у него сразу несколько странностей:
-        серьёзные случаи (и их больше, чем у соседей по ГОСБ), один сотрудник в жалобах разных клиентов, «по знакомству», одни и те же люди вокруг отделения.
-        Пятёрки и рейтинг почти не влияют.</p>
-      <div className="lab">{(ov.case_types||[]).map(t=><div className="idea" key={t.key}><div><div className="t">{t.label}</div><p>{t.hint}</p>
-        {(VSP_CASES_REAL[t.key]||[]).length>0&&<div className="k">Реальные дела: {(VSP_CASES_REAL[t.key]||[]).map(([x,u],i)=><span key={u}>{i?" · ":""}<a href={u} target="_blank" rel="noopener noreferrer">{x}</a></span>)}</div>}</div>
-        <span className={"st-pill "+(t.severity>=3?"st-work":t.severity===2?"st-test":"st-idea")}>{vSev(t.severity)} · {vN(t.n)}</span></div>)}</div></section>
-    <section className="card"><div className="eyebrow">Что дальше</div><ul className="facts" style={{marginTop:8}}>
-      <li><span>Каждый найденный отзыв прочитает модель: что произошло, виноват ли сотрудник, продукт, сумма. В интерфейс попадут подтверждённые.</span></li>
-      <li><span>Удалённые с площадки жалобы: сбор идёт каждый день, через ~2 месяца станет видно, какие жалобы исчезают, а похвала — нет.</span></li>
-      <li><span>Посредники: риелторы и брокеры, которые хвалят «своего» менеджера, — признак сговора при ипотеке и кредитах.</span></li></ul></section>
-    {d&&!d.err&&<section className="card"><div className="eyebrow">Данные</div>
-      <div className="vbar-h"><span>Отделений в реестре ЦБ</span><span className="num">{vN(reg.active)}</span></div>
-      <div className="vbar-h"><span>Из них с карточкой на картах</span><span className="num">{vN(d.branches_covered)}</span></div>
-      {Object.entries(d.reviews).map(([s,r])=><div className="vbar-h" key={s}><span>Отзывов {VSP_SRC[s]||s}</span><span className="num">{vN(r.reviews)} · {vD(r.oldest)} — {vD(r.newest)}</span></div>)}
-      <div className="vbar-h"><span>Расчёт</span><span className="num">{vD(d.run.finished_at)} · найдено случаев {vN(st.cases)}</span></div>
-      <ul className="facts" style={{marginTop:10}}>{d.limits.map((l,i)=><li key={i}><span>{l}</span></li>)}</ul></section>}
   </div>;
 }
 
 function VspPage(){
   const me=useMe();
-  const[tab,setTab]=useState("home");
-  const[f,setFState]=useState({subject:"",gosb:"",fmt:""});
-  const[sheet,setSheet]=useState(null);const[sig,setSig]=useState(null);const[rq,setRq]=useState(null);
-  const[opts,setOpts]=useState({});
-  const[ov,setOv]=useState(null);const[err,setErr]=useState(null);
-  useEffect(()=>{apiFetch("/api/vsp/overview").then(setOv).catch(e=>setErr(String(e).includes("404")?"Расчёт ещё не готов: он идёт ночью после загрузки отзывов.":"Не удалось загрузить раздел."));},[]);
+  const[tab,setTab]=useState("branches");
+  const[f,setFState]=useState({subject:"",gosb:""});
+  const[point,setPoint]=useState(null);const[scheme,setScheme]=useState(null);
+  const[tiles,setTiles]=useState(null);const[meta,setMeta]=useState(null);
+  useEffect(()=>{apiFetch("/api/vsp/home").then(x=>{setTiles(x.tiles);setMeta(x.run);}).catch(()=>{});},[]);
   if(me&&!me.can_vsp)return <ErrState msg="Раздел открыт только владельцу инструмента."/>;
   const setF=x=>setFState(s=>({...s,...x}));
-  const go=(t,o={})=>{if(o.sig!==undefined)setSig(o.sig);if(o.rq!==undefined)setRq(o.rq);setOpts(o);setTab(t);
-    if(t!=="reviews"&&o.rq===undefined)setRq(null);try{window.scrollTo({top:0});}catch(e){}};
-  const subjName=c=>{const t=((ov&&ov.tiles)||[]).find(x=>x.code===c);return t?t.name:c;};
-  const chips=[f.subject&&["subject",subjName(f.subject)],f.gosb&&["gosb","ГОСБ "+f.gosb],f.fmt&&["fmt",{mass:"массовые",premium:"СберПервый и Private",business:"для бизнеса"}[f.fmt]||f.fmt]].filter(Boolean);
+  const openPoint=p=>{setPoint(p);};
+  const goTab=t=>{setPoint(null);setScheme(null);setTab(t);try{window.scrollTo({top:0});}catch(e){}};
   return <div className="vsp fade-in">
     <PageHead eyebrow="Анализ · раздел виден только вам" title="Аудит сети ВСП"
-      meta={ov?`Что клиенты пишут об отделениях: возможные нарушения, сотрудники, сговор · расчёт ${vD(ov.run.finished_at)}`:"Что клиенты пишут об отделениях: возможные нарушения, сотрудники, сговор"}
-      actions={<VDownload f={f}/>}/>
-    <div className="vtabs"><div className="tabs" role="tablist">{VSP_TABS.map(([id,l])=><button key={id} className="tab" role="tab" aria-selected={tab===id} onClick={()=>go(id)}>{l}</button>)}</div></div>
-    {chips.length>0&&tab!=="home"&&<div className="chips" style={{marginBottom:12}}>{chips.map(([k,l])=><button key={k} className="chip" onClick={()=>setF({[k]:""})}>{l} ✕</button>)}</div>}
-    {err?<ErrState msg={err}/>:!ov?<LoadingPage/>:<div className="vmain">
-      {tab==="home"&&<VspHome ov={ov} go={go} openPoint={setSheet}/>}
-      {tab==="cases"&&<VspCases key={(opts.type||"")+(opts.sev||"")} type0={opts.type} sev0={opts.sev} f={f} openPoint={setSheet}/>}
-      {tab==="branches"&&<VspBranches key={opts.focus?"f":"a"} focus0={opts.focus} ov={ov} go={go} openPoint={setSheet} f={f} setF={setF}/>}
-      {tab==="people"&&<VspPeople f={f} openPoint={setSheet}/>}
-      {tab==="collusion"&&<VspCollusion key={opts.part||"p"} part0={opts.part} openPoint={setSheet} go={go} f={f} sig={sig} setSig={setSig}/>}
-      {tab==="reviews"&&<VspReviews key={(rq&&rq.point)||"all"} rq={rq} openPoint={setSheet}/>}
-      {tab==="method"&&<VspMethod ov={ov}/>}
-    </div>}
-    {sheet&&<VspProfile key={sheet} point={sheet} onClose={()=>setSheet(null)} go={go}/>}
+      meta={`Какие отделения проверить и почему${meta?` · данные на ${vD(meta.finished_at)}`:""}`}
+      actions={<VSearchBox openPoint={openPoint}/>}/>
+    <div className="vtabs"><div className="tabs" role="tablist">
+      {[["branches","Отделения"],["schemes","Схемы"]].map(([id,l])=><button key={id} className="tab" role="tab" aria-selected={tab===id&&!point} onClick={()=>goTab(id)}>{l}</button>)}
+      <span className="sp"/><button className="tab" role="tab" aria-selected={tab==="method"&&!point} onClick={()=>goTab("method")}>Как это работает</button></div></div>
+    <div className="vmain">
+      {point?<VspDossier key={point} point={point} onBack={()=>setPoint(null)} openPoint={openPoint}/>
+        :tab==="branches"?<VspHome2 openPoint={openPoint} f={f} setF={setF}/>
+        :tab==="schemes"?(scheme?<VspSchemeCard id={scheme} tiles={tiles} onBack={()=>setScheme(null)} openPoint={openPoint}/>:<VspSchemes openScheme={setScheme}/>)
+        :<VspMethod2/>}
+    </div>
   </div>;
 }
 

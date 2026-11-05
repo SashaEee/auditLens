@@ -27,6 +27,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
+from pydantic import BaseModel
 from sqlalchemy import and_, create_engine, event, func, select
 
 from ..vsp.regions import BY_CODE, subject_name
@@ -156,7 +157,11 @@ def _run() -> dict:
     case_by_rid: dict[str, list[str]] = defaultdict(list)
     for c_ in case_rows:
         case_by_rid[c_["review_id"]].append(RISK[c_["type"]].label if c_["type"] in RISK else c_["type"])
-    run = {"id": rid, "version": r["version"], "case_by_rid": case_by_rid, "finished_at": r["finished_at"],
+    review_point = {}
+    for p_ in pts.values():
+        for s_ in p_.get("stories") or []:
+            review_point[s_["rid"]] = p_["point"]
+    run = {"id": rid, "version": r["version"], "case_by_rid": case_by_rid, "review_point": review_point, "finished_at": r["finished_at"],
            "stats": json.loads(r["stats_json"] or "{}"), "points": pts, "episodes": eps, "network": net,
            "groups": groups, "praisers": auth, "ep_rids": ep_rids, "cases": case_rows, "persons": pers}
     _CACHE.update(run=run, at=now)
@@ -757,6 +762,283 @@ def person_card(pid: int, user: CurrentUser = Depends(get_current_user)):
                               .order_by(reviews.c.review_date)).mappings())
     return {"id": pid, "kind": x["kind"], "name": x["name"], "n": x["n"], "authors": x["authors"],
             "place": _pt_brief(run["points"].get(x["point"])), "reviews": [_review_row(r, run) for r in rows]}
+
+
+# ── «Где стоит проверить»: главный экран, досье, схемы, поиск, отметки ─────────
+
+def _place(p: dict | None) -> dict:
+    p = p or {}
+    return {k: p.get(k) for k in ("point", "name", "city", "address", "gosb", "subject", "subject_name", "formats",
+                                  "n_12m", "status")}
+
+
+def _listed(run, subject=None, gosb=None) -> list[dict]:
+    from ..vsp.signals.risk import order_key
+    rows = []
+    for p in run["points"].values():
+        a = p.get("risk")
+        if not a or not a.get("include"):
+            continue
+        if (subject and p.get("subject") != subject) or (gosb and p.get("gosb") != gosb):
+            continue
+        rows.append((order_key(a), p))
+    rows.sort(key=lambda t: t[0])
+    return [{**_place(p), "why": p["risk"]["why"], "quote": p["risk"]["quote"], "confidence": p["risk"]["confidence"],
+             "benign": p["risk"]["benign"], "red": p["risk"]["red"], "severity": p["risk"]["severity"],
+             "signals": len(p["risk"]["signals"]), "action": p["risk"]["action_label"]} for _, p in rows]
+
+
+@router.get("/home")
+def home(subject: Optional[str] = None, gosb: Optional[str] = None, user: CurrentUser = Depends(get_current_user)):
+    _need(user)
+    run = _run()
+    net = run["network"]
+    rmap = net.get("risk_map") or {"subjects": {}, "network_share": 0}
+    tiles = []
+    for code, (col, row) in (net.get("tile_grid") or {}).items():
+        s = rmap["subjects"].get(code, {})
+        tiles.append({"code": code, "col": col, "row": row, "label": BY_CODE[code][2] if code in BY_CODE else code,
+                      "name": subject_name(code), "n": s.get("n", 0), "hit": s.get("hit", 0),
+                      "listed": s.get("listed", 0), "share": s.get("share"), "above": s.get("above", False),
+                      "few": s.get("few", True)})
+    full = _listed(run)
+    lst = _listed(run, subject, gosb)
+    gosbs = Counter(x["gosb"] for x in full if (not subject or x["subject"] == subject) and x["gosb"])
+    react = []
+    for x in net.get("risk_react") or []:
+        react.append({**x, "place": _place(run["points"].get(x["point"]))})
+    pts = run["points"].values()
+    with_data = sum(1 for p in pts if (p.get("n_12m") or 0) > 0)
+    return {"run": {"id": run["id"], "finished_at": _iso(run["finished_at"])},
+            "source": net.get("story_source"), "react": react, "tiles": tiles,
+            "network_share": rmap.get("network_share"), "list": lst, "total": len(full),
+            "gosbs": [{"gosb": g, "n": n} for g, n in gosbs.most_common()],
+            "with_data": with_data, "points": len(run["points"])}
+
+
+def _month_bars(point: str) -> list[dict]:
+    with engine().connect() as c:
+        rows = c.execute(select(reviews.c.review_date, reviews.c.rating).where(
+            _point_filter(point), reviews.c.review_date.isnot(None)))
+        months: Counter = Counter()
+        for d, r in rows:
+            if r is not None and r <= 2:
+                months[d.strftime("%Y-%m")] += 1
+    now = datetime.now(UTC)
+    out = []
+    for i in range(23, -1, -1):
+        y, m = now.year, now.month - i
+        while m <= 0:
+            y, m = y - 1, m + 12
+        k = f"{y}-{m:02d}"
+        out.append({"month": k, "neg": months.get(k, 0)})
+    return out
+
+
+@router.get("/dossier/{point}")
+def dossier(point: str, user: CurrentUser = Depends(get_current_user)):
+    _need(user)
+    run = _run()
+    p = run["points"].get(point)
+    if not p:
+        raise HTTPException(404, "отделение не найдено")
+    a = p.get("risk") or {}
+    stories = p.get("stories") or []
+    nearby = []
+    if a.get("action_label") and p.get("gosb"):
+        for q in run["points"].values():
+            qa = q.get("risk") or {}
+            if q["point"] != point and q.get("gosb") == p.get("gosb") and qa.get("action_label") == a.get("action_label") \
+                    and qa.get("heavy_clients", 0) >= 1:
+                nearby.append(_place(q))
+    return {**_place(p), "vol_2y": a.get("vol_2y"), "open_date": p.get("open_date"),
+            "risk": a, "stories": stories, "bars": _month_bars(point), "nearby": nearby[:5],
+            "source": (run["network"].get("story_source")),
+            "limits": ["Отзывы — слова клиентов, а не установленные факты",
+                       "Пожилые клиенты пишут редко — за них часто пишут родственники",
+                       "Отзывы, удалённые площадкой до начала сбора, не видны",
+                       "Имена сотрудников — как написали клиенты, только внутри этого отделения"],
+            "cards": p.get("cards") or []}
+
+
+def _scheme_rows(run) -> tuple[list[dict], str]:
+    """Схемы: кластеры модели (vsp_scheme, последняя сборка), иначе — по действиям из карточек."""
+    try:
+        from ..vsp.signals.schemes import scheme_member, scheme_t
+        with engine().connect() as c:
+            ver = c.execute(select(func.max(scheme_t.c.version))).scalar()
+            if ver:
+                rows = [dict(r) for r in c.execute(select(scheme_t).where(scheme_t.c.version == ver,
+                                                                           scheme_t.c.relevance >= 2)).mappings()]
+                mem = defaultdict(list)
+                for rid, sid in c.execute(select(scheme_member.c.review_id, scheme_member.c.scheme_id).where(
+                        scheme_member.c.version == ver)):
+                    mem[sid].append(rid)
+                out = []
+                for r in rows:
+                    rids = mem.get(r["id"], [])
+                    pts = {x for x in (run["review_point"].get(i) for i in rids) if x}
+                    out.append({"id": f"k{r['id']}", "name": r["name"], "description": r["description"],
+                                "stories": r["size"], "points": len(pts), "recent": r["recent"],
+                                "novel": bool(r["novel"]), "check": json.loads(r["check"] or "[]"),
+                                "benign": "; ".join(json.loads(r["benign"] or "[]")), "resolve": "",
+                                "rids": rids})
+                return sorted(out, key=lambda x: (-x["points"], -x["stories"])), "модель"
+    except Exception:  # noqa: BLE001 — кластеров ещё нет
+        pass
+    return run["network"].get("schemes_fallback") or [], "действия"
+
+
+@router.get("/schemes")
+def schemes(user: CurrentUser = Depends(get_current_user)):
+    _need(user)
+    run = _run()
+    rows, kind = _scheme_rows(run)
+    brief = [{k: v for k, v in r.items() if k not in ("examples", "rids", "by_subject")} for r in rows]
+    return {"kind": kind, "new": [b for b in brief if b.get("novel")][:8], "all": brief}
+
+
+@router.get("/schemes/{sid}")
+def scheme_card(sid: str, user: CurrentUser = Depends(get_current_user)):
+    _need(user)
+    run = _run()
+    rows, kind = _scheme_rows(run)
+    x = next((r for r in rows if str(r["id"]) == sid), None)
+    if not x:
+        raise HTTPException(404, "схема не найдена")
+    pts = run["points"]
+    examples = x.get("examples")
+    if examples is None:                      # кластер модели: цитаты из историй отделений
+        examples = []
+        want = set(x.get("rids") or [])
+        for p in pts.values():
+            for s_ in p.get("stories") or []:
+                if s_["rid"] in want:
+                    examples.append({"rid": s_["rid"], "point": p["point"], "quote": s_["quote"], "date": s_["date"]})
+    by_subject = Counter((pts.get(e["point"]) or {}).get("subject") for e in examples)
+    gosbs = {(pts.get(e["point"]) or {}).get("gosb") for e in examples} - {None}
+    return {**{k: v for k, v in x.items() if k not in ("rids",)}, "kind": kind,
+            "examples": [{**e, "place": _place(pts.get(e["point"]))} for e in examples[:30]],
+            "by_subject": {k: v for k, v in by_subject.items() if k}, "network_wide": len(gosbs) >= 3,
+            "gosbs": len(gosbs)}
+
+
+@router.get("/search")
+def search(q: str, user: CurrentUser = Depends(get_current_user)):
+    _need(user)
+    run = _run()
+    ql = q.strip().lower()
+    if len(ql) < 2:
+        return {"places": [], "people": [], "reviews": []}
+    places, people = [], []
+    for p in run["points"].values():
+        hay = " ".join(str(p.get(k) or "") for k in ("name", "city", "address", "gosb")).lower()
+        if ql in hay:
+            places.append(_place(p))
+        for x in (p.get("risk") or {}).get("people") or []:
+            if ql in (x.get("name") or "").lower():
+                people.append({"name": x["name"], "clients": x["clients"], "place": _place(p)})
+    with engine().connect() as c:
+        rv = list(c.execute(select(reviews.c.review_id, reviews.c.review_text, reviews.c.branch_id, reviews.c.source,
+                                   reviews.c.source_branch_id, reviews.c.review_date).where(
+            reviews.c.review_text.ilike(f"%{q.strip()}%")).order_by(reviews.c.review_date.desc()).limit(15)))
+    revs = []
+    for r in rv:
+        pt = f"b{r.branch_id}" if r.branch_id else f"{r.source}:{r.source_branch_id}"
+        t = r.review_text or ""
+        i = t.lower().find(ql)
+        revs.append({"rid": r.review_id, "point": pt, "date": _iso(r.review_date),
+                     "snippet": ("…" if i > 60 else "") + t[max(0, i - 60): i + 140] + "…",
+                     "place": _place(run["points"].get(pt))})
+    return {"places": places[:12], "people": people[:12], "reviews": revs}
+
+
+class FeedbackIn(BaseModel):
+    target: str
+    verdict: str          # полезно | неинтересно | ошибка данных | не схема
+
+
+@router.post("/feedback")
+def feedback(body: FeedbackIn, user: CurrentUser = Depends(get_current_user)):
+    _need(user)
+    if body.verdict not in ("полезно", "неинтересно", "ошибка данных", "не схема"):
+        raise HTTPException(400, "неизвестная отметка")
+    telemetry.track_batch(user.username, [{"type": "vsp_feedback", "props": {"target": body.target[:200],
+                                                                              "verdict": body.verdict}}])
+    log.info("vsp: отметка %s → %s (%s)", body.target[:80], body.verdict, user.username)
+    return {"ok": True}
+
+
+@router.get("/export/justification.xlsx")
+def export_justification(points: Optional[str] = None, subject: Optional[str] = None,
+                         user: CurrentUser = Depends(get_current_user)):
+    _need(user)
+    run = _run()
+    want = set((points or "").split(",")) - {""}
+    rows = [x for x in _listed(run, subject) if not want or x["point"] in want]
+    if want:
+        rows += [{**_place(run["points"][p]), "why": [], "quote": None, "confidence": None, "benign": None,
+                  "action": None} for p in want if p in run["points"] and p not in {x["point"] for x in rows}]
+    head = ["Отделение", "Город", "Адрес", "ГОСБ", "Регион", "Почему в списке", "Цитата клиента", "Дата",
+            "Уверенность", "Может быть безобидно", "Что запросить заранее", "Что проверить на месте"]
+    data, st_rows = [], []
+    for x in rows:
+        a = (run["points"][x["point"]].get("risk") or {})
+        b = a.get("benign") or {}
+        data.append([x.get("name"), x.get("city"), x.get("address"), x.get("gosb"), x.get("subject_name"),
+                     "; ".join(a.get("why") or []), (a.get("quote") or {}).get("text"), (a.get("quote") or {}).get("date"),
+                     (f"{a['confidence']['level']} — {a['confidence']['reason']}" if a.get("confidence") else ""),
+                     (f"{b.get('text')}. Снимет вопрос: {b.get('resolve')}" if b else ""),
+                     "; ".join(f"{r['text']} ({r['where']})" for r in a.get("request") or []),
+                     "; ".join(a.get("check") or [])])
+        for s_ in run["points"][x["point"]].get("stories") or []:
+            st_rows.append([x.get("name"), x.get("city"), s_["date"], ", ".join(s_["actions"]),
+                            {3: "очень тяжёлая", 2: "тяжёлая"}.get(s_["severity"], ""), s_.get("episode") or "",
+                            s_["quote"], s_["rid"]])
+    head2 = ["Отделение", "Город", "Дата", "Что произошло (кратко)", "Тяжесть", "Пересказ ИИ", "Слова клиента", "Отзыв"]
+    xb = _xlsx("Аудит сети ВСП · обоснование", [("Где стоит проверить", head, data,
+                                                {"Почему в списке", "Цитата клиента", "Может быть безобидно",
+                                                 "Что запросить заранее", "Что проверить на месте", "Адрес"}),
+                                               ("Истории клиентов", head2, st_rows, {"Пересказ ИИ", "Слова клиента"})])
+    return _xlsx_response(xb, "ВСП_обоснование.xlsx")
+
+
+@router.get("/export/visit.docx")
+def export_visit(point: str, user: CurrentUser = Depends(get_current_user)):
+    _need(user)
+    run = _run()
+    p = run["points"].get(point)
+    if not p:
+        raise HTTPException(404, "отделение не найдено")
+    from .export_brand import WD, docx_bytes, stamp_line
+    a = p.get("risk") or {}
+    title = f"Лист выезда · {p.get('city') or ''}, {p.get('address') or ''}"
+    doc = WD.new(title)
+    WD.header_footer(doc, "Аудит сети ВСП · лист выезда")
+    doc.add_heading(f"{p.get('city') or ''}", level=0)
+    doc.add_paragraph(f"{p.get('address') or ''} · ВСП {p.get('name') or ''} · ГОСБ {p.get('gosb') or '—'}")
+    doc.add_paragraph(f"Черновик — поправьте под проверку. {stamp_line()}")
+    doc.add_heading("Почему в списке", level=1)
+    for w in a.get("why") or ["Отделение открыто вручную — признаков из отзывов нет"]:
+        doc.add_paragraph(w, style="List Bullet")
+    if a.get("confidence"):
+        doc.add_paragraph(f"Уверенность: {a['confidence']['level']} — {a['confidence']['reason']}")
+    if a.get("benign"):
+        doc.add_paragraph(f"Может быть безобидно: {a['benign']['text']}. Снимет вопрос: {a['benign']['resolve']}.")
+    doc.add_heading("Что запросить заранее", level=1)
+    for r in a.get("request") or []:
+        doc.add_paragraph(f"☐ {r['text']} — {r['where']}")
+    doc.add_heading("Что проверить на месте", level=1)
+    for t in a.get("check") or []:
+        doc.add_paragraph(f"☐ {t}")
+    doc.add_heading("Истории клиентов", level=1)
+    for s_ in (p.get("stories") or [])[:15]:
+        doc.add_paragraph(f"{s_['date']} · {', '.join(s_['actions'])}: «{s_['quote']}»", style="List Bullet")
+    doc.add_heading("Чего мы не видим", level=1)
+    doc.add_paragraph("Отзывы — слова клиентов, а не установленные факты. Отзывы, удалённые площадкой до начала "
+                      "сбора, не видны. Имена сотрудников — как написали клиенты.")
+    return Response(docx_bytes(doc), media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('ВСП_лист_выезда.docx')}"})
 
 
 @router.get("/completeness")

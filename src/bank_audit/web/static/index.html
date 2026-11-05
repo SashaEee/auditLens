@@ -4124,6 +4124,36 @@ html.dark .vsp{--shadow-3:0 1px 0 oklch(0% 0 0 / .35),0 16px 48px oklch(0% 0 0 /
 .vsp .btn.btn-ghost{background:transparent;color:var(--ink);box-shadow:inset 0 0 0 1px var(--hair-2)}
 .vsp .btn.btn-ghost:hover{background:var(--paper-2)}
 .vsp a.btn{text-decoration:none}
+/* «Где стоит проверить» (05.11): список, досье, полоса, поиск */
+.vsp .vh1{font:600 26px/1.2 var(--f-serif);letter-spacing:-.01em;margin:6px 0 4px;text-wrap:balance}
+.vsp .vh2{font:600 19px/1.3 var(--f-serif);margin-top:4px}
+.vsp .vdot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);flex:none;margin-right:2px}
+.vsp .vdot.sm{width:5px;height:5px;position:absolute;left:50%;bottom:-7px;transform:translateX(-50%)}
+.vsp .vlist{display:grid}
+.vsp .vrow{display:grid;grid-template-columns:22px minmax(0,1fr) 20px;gap:10px;padding:14px 8px;border-bottom:1px solid var(--hair);cursor:pointer;border-radius:10px;transition:background var(--dur-quick)}
+.vsp .vrow:hover{background:var(--paper-2)}
+.vsp .vrow:last-child{border-bottom:0}
+.vsp .vrow input{margin-top:4px;accent-color:var(--ink)}
+.vsp .vrow-h{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:15px}
+.vsp .vrow-why{font-size:14.5px;color:var(--ink);margin-top:4px;line-height:1.4}
+.vsp .vrow-q{font:400 14px/1.45 var(--f-serif);color:var(--ink-2);margin:6px 0 4px}
+.vsp .vrow-go{color:var(--ink-3);align-self:center}
+.vsp .vreact{padding:12px 16px;border-radius:var(--r-lg);background:var(--accent-soft);box-shadow:inset 0 0 0 1px color-mix(in oklch,var(--accent) 25%,transparent);display:grid;gap:6px}
+.vsp .vreact-it{display:flex;gap:10px;justify-content:space-between;text-align:left;font-size:14px;padding:4px 0}
+.vsp .vcrumb{font-size:14px;display:flex;gap:6px;align-items:center}
+.vsp .vx{width:22px;height:22px;border-radius:50%;box-shadow:inset 0 0 0 1px var(--hair-2);font-size:11px}
+.vsp .chip.on{background:var(--ink);color:var(--paper);box-shadow:none}
+.vsp .vbars{display:flex;gap:2px;align-items:flex-end;height:26px;padding-bottom:8px}
+.vsp .vbar{position:relative;width:7px;height:24px;display:flex;align-items:flex-end}
+.vsp .vbar i{display:block;width:100%;background:var(--ink-4);border-radius:2px}
+.vsp .vdos{display:grid;gap:4px;max-width:900px;justify-items:start}
+.vsp .vdos>*{width:100%}
+.vsp .vdos>.vmore{width:auto}
+.vsp .vdos-h{margin-bottom:6px}
+.vsp .vsearch{position:absolute;right:0;top:42px;z-index:30;width:min(440px,90vw);max-height:60vh;overflow:auto;padding:10px;display:grid;gap:2px}
+.vsp .vin .kbd{font:500 11px/1 var(--f-mono);padding:3px 5px;border-radius:5px;box-shadow:inset 0 0 0 1px var(--hair-2);color:var(--ink-3)}
+.vsp .vbulk{position:sticky;bottom:12px;z-index:5}
+.vsp .tabs .sp{flex:1}
 .vsp button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .vsp button:focus-visible,.vsp a:focus-visible,.vsp [tabindex]:focus-visible{outline:2px solid var(--select);outline-offset:2px;border-radius:var(--r-sm)}
 .vsp .num{font-variant-numeric:tabular-nums}
