@@ -225,6 +225,14 @@ def whoami(user: CurrentUser = Depends(get_current_user)):
             "authenticated": user.authenticated, "email": user.email}
 
 
+def _can_vsp(username: str | None) -> bool:
+    try:
+        from .vsp_api import can_vsp
+        return can_vsp(username)
+    except Exception:  # noqa: BLE001 — модуль ВСП не должен ронять профиль
+        return False
+
+
 @app.get("/api/me")
 def get_me(tz: Optional[str] = None, user: CurrentUser = Depends(get_current_user)):
     """Профиль пользователя (+ upsert app_user, обновление last_seen/TZ)."""
@@ -249,6 +257,7 @@ def get_me(tz: Optional[str] = None, user: CurrentUser = Depends(get_current_use
         "profile_note_at": row.get("profile_note_at"),
         "personalization": userdata.personalization_score(user.username),
         "is_admin": telemetry.is_admin(user.username),
+        "can_vsp": _can_vsp(user.username),
         "can_pulse": telemetry.can_pulse(user.username),
         "can_ingest": _can_run_ingest(user),
         "authenticated": user.authenticated,
@@ -5755,6 +5764,8 @@ if _MCP_ON:
 # ── loophole module (mount router + static) ─────────────────────────────────
 from ..loophole.web import router as loophole_router  # noqa: E402
 app.include_router(loophole_router, prefix="/api/loophole")
+from .vsp_api import router as vsp_router  # noqa: E402
+app.include_router(vsp_router, prefix="/api/vsp")
 LOOPHOLE_STATIC_DIR = Path(__file__).resolve().parent.parent / "loophole" / "static"
 
 

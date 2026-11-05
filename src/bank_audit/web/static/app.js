@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 2eb38a9018b257d47b85a6b4cc118749bad4d7d5683d63b2af5c67e38488a1fb): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 8f0e213930b7a2e5558d707c9c41004a563b3f33f16477e0685ae81d2af2652c): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -20517,6 +20517,2154 @@ function KnowledgePage({
   }[g.kind] || g.kind), /*#__PURE__*/React.createElement("b", null, "\u043D\u043E\u0432\u044B\u0445 ", fmtNum(g.added || 0), " \xB7 \u0431\u0435\u0437 \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u0439 ", fmtNum(g.confirmed || 0), " \xB7 \u043D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C ", fmtNum(g.failed || 0)))), ov && ov.crawl && ov.crawl.enabled && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "\u041F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u043E\u0431\u0445\u043E\u0434 \u0441\u0430\u0439\u0442\u043E\u0432 \u0431\u0430\u043D\u043A\u043E\u0432"), /*#__PURE__*/React.createElement("b", null, ov.crawl.last_run ? formatRelDate(ov.crawl.last_run) : "ещё не было")), /*#__PURE__*/React.createElement("span", null, "\u041F\u043E\u0440\u043E\u0433 \u0434\u043E\u0432\u0435\u0440\u0438\u044F \u0434\u043B\u044F \u043F\u043E\u0438\u0441\u043A\u0430"), /*#__PURE__*/React.createElement("b", null, "0.50"), /*#__PURE__*/React.createElement("span", null, "\u0424\u0440\u0430\u0433\u043C\u0435\u043D\u0442\u043E\u0432 \u0432 \u0438\u043D\u0434\u0435\u043A\u0441\u0435"), /*#__PURE__*/React.createElement("b", null, st.fragments ? fmtNum(st.fragments) : "—"))));
 }
 
+// ─── «Аудит сети ВСП» (раздел vsp): только VSP_USERS, по умолчанию — владелец ───
+// Данные — из базы сборщика ВСП (ночной расчёт сигналов), API /api/vsp/*. Свой язык
+// раздела на общих токенах (стили .vsp в index.html перенесены из макета).
+const VSP_TABS = [["overview", "Обзор"], ["signals", "Сигналы"], ["branches", "ВСП"], ["links", "Связи"], ["reviews", "Отзывы"], ["data", "Полнота данных"], ["lab", "Лаборатория"]];
+const vN = n => n == null ? "—" : Number(n).toLocaleString("ru");
+const vP = (x, d = 0) => x == null ? "—" : (x * 100).toFixed(d).replace(".", ",") + "%";
+const vR = x => x == null ? "—" : Number(x).toFixed(2).replace(".", ",");
+const vD = s => {
+  if (!s) return "—";
+  try {
+    return new Date(s).toLocaleDateString("ru", {
+      day: "numeric",
+      month: "short",
+      year: "numeric"
+    });
+  } catch (e) {
+    return s;
+  }
+};
+const vDs = s => {
+  if (!s) return "—";
+  try {
+    return new Date(s).toLocaleDateString("ru", {
+      day: "numeric",
+      month: "short"
+    });
+  } catch (e) {
+    return s;
+  }
+};
+const vMon = ym => {
+  const [y, m] = ym.split("-");
+  return ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"][+m - 1] + " " + y.slice(2);
+};
+const VSP_FMT = {
+  mass: "массовый",
+  sber_first: "СберПервый",
+  private: "Private Banking",
+  legal: "юрлица",
+  business: "малый бизнес",
+  corporate: "корпоративные",
+  islamic: "исламский формат",
+  zone24: "круглосуточная зона",
+  head: "головной офис",
+  mobile: "передвижной",
+  cash_center: "КИЦ"
+};
+const VSP_SRC = {
+  "2gis": "2ГИС",
+  yandex: "Яндекс"
+};
+const vStars = r => r == null ? "" : "★".repeat(Math.round(r)) + "☆".repeat(5 - Math.round(r));
+// адрес ЦБ «100000, КРАСНОДАРСКИЙ КРАЙ, Г. КРАСНОДАР, УЛ. ЛЕНИНА, Д. 5» → «ул. Ленина, д. 5»
+const vAddr = a => {
+  if (!a) return "";
+  const parts = a.split("#")[0].split(",").map(x => x.trim()).filter(x => x && !/^\d{6}$/.test(x));
+  const st = parts.findIndex(x => /^(УЛ|ПР-?Т|ПР-Д|ПРОСП|Ш|ПЕР|Б-Р|БУЛЬВАР|НАБ|ПЛ|МКР|МИКРОРАЙОН|КВ-Л|ТУПИК|ПРОЕЗД|ТРАКТ|АЛЛЕЯ|ЛИН|ТЕР)\b/i.test(x));
+  const rest = st >= 0 ? parts.slice(st) : parts.slice(-2);
+  const t = rest.join(", ");
+  if (t !== t.toUpperCase()) return t;
+  const ABBR = new Set(["пр-т", "пр-д", "б-р", "кв-л", "мкр", "стр", "корп", "лит", "пом", "влд", "зд"]);
+  return t.toLowerCase().split(" ").map(w => {
+    const m = w.match(/^([а-яё][а-яё-]*)(,?)$/);
+    return m && m[1].length >= 3 && !ABBR.has(m[1]) ? w[0].toUpperCase() + w.slice(1) : w;
+  }).join(" ");
+};
+const vChip = r => /кольц|хвал|текст/.test(r) ? "chip scheme" : "chip risk";
+const vQS = o => {
+  const p = new URLSearchParams();
+  Object.entries(o).forEach(([k, v]) => {
+    if (v !== "" && v != null && v !== false) p.set(k, v);
+  });
+  return p.toString();
+};
+function vFmtWhy(w) {
+  const v = w.value;
+  if (v == null) return "—";
+  if ((w.fmt || "").includes("%")) return vP(v);
+  if ((w.fmt || "").startsWith("×")) return "×" + vN(Math.round(v));
+  return vN(v);
+}
+function vStrengthCls(s) {
+  return s === "сильный" ? "risk" : s === "средний" ? "risk" : "";
+}
+function VConf({
+  s
+}) {
+  const n = s >= 60 ? 3 : s >= 40 ? 2 : 1;
+  return /*#__PURE__*/React.createElement("span", {
+    className: "conf",
+    "aria-label": `уверенность ${n} из 3`
+  }, [1, 2, 3].map(i => /*#__PURE__*/React.createElement("i", {
+    key: i,
+    className: i <= n ? "on" : ""
+  })));
+}
+function VSeg({
+  value,
+  onChange,
+  items,
+  label
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    className: "seg",
+    role: "group",
+    "aria-label": label
+  }, items.map(([v, l]) => /*#__PURE__*/React.createElement("button", {
+    key: v,
+    "aria-pressed": value === v,
+    onClick: () => onChange(v),
+    style: value === v ? {
+      background: "var(--surface)",
+      boxShadow: "var(--shadow-1),inset 0 0 0 1px var(--hair)"
+    } : null
+  }, l)));
+}
+function VSearch({
+  value,
+  onChange,
+  placeholder
+}) {
+  const [v, setV] = useState(value || "");
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (v !== (value || "")) onChange(v);
+    }, 350);
+    return () => clearTimeout(t);
+  }, [v]);
+  return /*#__PURE__*/React.createElement("label", {
+    className: "vin"
+  }, /*#__PURE__*/React.createElement("svg", {
+    width: "14",
+    height: "14",
+    viewBox: "0 0 16 16",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("circle", {
+    cx: "7",
+    cy: "7",
+    r: "5",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "1.5"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "m11 11 3.5 3.5",
+    stroke: "currentColor",
+    strokeWidth: "1.5",
+    strokeLinecap: "round"
+  })), /*#__PURE__*/React.createElement("input", {
+    value: v,
+    onChange: e => setV(e.target.value),
+    placeholder: placeholder,
+    "aria-label": placeholder
+  }));
+}
+function VMark({
+  text,
+  q
+}) {
+  if (!text) return null;
+  if (!q) return text;
+  const i = text.toLowerCase().indexOf(q.toLowerCase());
+  if (i < 0) return text;
+  return /*#__PURE__*/React.createElement(React.Fragment, null, text.slice(0, i), /*#__PURE__*/React.createElement("span", {
+    className: "mark"
+  }, text.slice(i, i + q.length)), /*#__PURE__*/React.createElement(VMark, {
+    text: text.slice(i + q.length),
+    q: q
+  }));
+}
+function VRev({
+  r,
+  q,
+  showPlace,
+  onPlace
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    className: "rev"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rm"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "stars",
+    "aria-label": `оценка ${r.rating}`
+  }, vStars(r.rating)), /*#__PURE__*/React.createElement("span", null, vD(r.date)), /*#__PURE__*/React.createElement("span", null, VSP_SRC[r.source] || r.source), r.confirmed && /*#__PURE__*/React.createElement("span", {
+    className: "flag"
+  }, "\u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043D \u043E\u043F\u0435\u0440\u0430\u0446\u0438\u0435\u0439"), r.author_total === 1 && /*#__PURE__*/React.createElement("span", {
+    className: "flag risk"
+  }, "\u0430\u0432\u0442\u043E\u0440 \u0431\u0435\u0437 \u0434\u0440\u0443\u0433\u0438\u0445 \u043E\u0442\u0437\u044B\u0432\u043E\u0432"), r.in_episode && /*#__PURE__*/React.createElement("span", {
+    className: "flag risk"
+  }, "\u0432 \u044D\u043F\u0438\u0437\u043E\u0434\u0435"), r.hidden && /*#__PURE__*/React.createElement("span", {
+    className: "flag scheme",
+    title: r.hidden
+  }, "\u043F\u043E\u043C\u0435\u0447\u0435\u043D \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u043E\u0439"), r.gone && /*#__PURE__*/React.createElement("span", {
+    className: "flag"
+  }, "\u043F\u0440\u043E\u043F\u0430\u043B \u0438\u0437 \u0432\u044B\u0434\u0430\u0447\u0438"), r.reply && /*#__PURE__*/React.createElement("span", {
+    className: "flag"
+  }, "\u043E\u0442\u0432\u0435\u0442 \u0431\u0430\u043D\u043A\u0430"), showPlace && r.place && (r.place.city || r.place.name) && /*#__PURE__*/React.createElement("button", {
+    className: "vmore",
+    onClick: () => onPlace && onPlace(r.point)
+  }, [r.place.city, vAddr(r.place.address) || r.place.name].filter(Boolean).join(", "))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      whiteSpace: "pre-wrap"
+    }
+  }, r.text ? /*#__PURE__*/React.createElement(VMark, {
+    text: r.text,
+    q: q
+  }) : /*#__PURE__*/React.createElement("span", {
+    className: "muted"
+  }, "\u0431\u0435\u0437 \u0442\u0435\u043A\u0441\u0442\u0430")));
+}
+
+// ── графики ──────────────────────────────────────────────────────────────────
+function VCalendar({
+  cal,
+  events
+}) {
+  const rows = cal.slice(-36);
+  if (!rows.length) return /*#__PURE__*/React.createElement("div", {
+    className: "vempty"
+  }, "\u041D\u0435\u0442 \u0434\u0430\u043D\u043D\u044B\u0445");
+  const W = 720,
+    H = 210,
+    pad = 28,
+    bw = (W - pad) / rows.length;
+  const tot = r => r.conf5 + r.u5_oneoff + r.u5_other + r.rest;
+  const mx = Math.max(...rows.map(tot), 1);
+  const y = v => H - 22 - v / mx * (H - 40);
+  const ev = new Map((events || []).map((e, i) => [e.month, i + 1]));
+  const parts = [["rest", "var(--hair-2)"], ["conf5", "var(--ink-2)"], ["u5_other", "color-mix(in oklch,var(--accent) 45%,var(--surface))"], ["u5_oneoff", "var(--accent)"]];
+  return /*#__PURE__*/React.createElement("svg", {
+    viewBox: `0 0 ${W} ${H}`,
+    className: "vstrip",
+    role: "img",
+    "aria-label": "\u041E\u0442\u0437\u044B\u0432\u044B 2\u0413\u0418\u0421 \u043E \u0412\u0421\u041F \u043F\u043E \u043C\u0435\u0441\u044F\u0446\u0430\u043C"
+  }, rows.map((r, i) => {
+    let acc = 0;
+    const x = pad + i * bw;
+    return /*#__PURE__*/React.createElement("g", {
+      key: r.month
+    }, parts.map(([k, c]) => {
+      const h = r[k] / mx * (H - 40);
+      const el = /*#__PURE__*/React.createElement("rect", {
+        key: k,
+        x: x + 1,
+        width: Math.max(1, bw - 2),
+        y: y(acc + r[k]),
+        height: Math.max(0, h),
+        fill: c,
+        rx: "1.5"
+      }, /*#__PURE__*/React.createElement("title", null, `${vMon(r.month)}: ${k === "conf5" ? "подтверждённые пятёрки" : k === "u5_oneoff" ? "пятёрки от авторов без других отзывов" : k === "u5_other" ? "прочие неподтверждённые пятёрки" : "1–4★"} — ${vN(r[k])}`));
+      acc += r[k];
+      return el;
+    }), ev.has(r.month) && /*#__PURE__*/React.createElement("g", null, /*#__PURE__*/React.createElement("line", {
+      x1: x + bw / 2,
+      x2: x + bw / 2,
+      y1: 14,
+      y2: H - 22,
+      stroke: "var(--ink)",
+      strokeDasharray: "2 3",
+      strokeWidth: "1"
+    }), /*#__PURE__*/React.createElement("circle", {
+      cx: x + bw / 2,
+      cy: 12,
+      r: "8",
+      fill: "var(--ink)"
+    }), /*#__PURE__*/React.createElement("text", {
+      x: x + bw / 2,
+      y: 15.5,
+      textAnchor: "middle",
+      fontSize: "10",
+      fill: "var(--paper)",
+      fontWeight: "600"
+    }, ev.get(r.month))), i % 6 === 0 && /*#__PURE__*/React.createElement("text", {
+      x: x,
+      y: H - 6,
+      fontSize: "10",
+      fill: "var(--ink-3)"
+    }, vMon(r.month)));
+  }), /*#__PURE__*/React.createElement("text", {
+    x: 0,
+    y: y(mx) + 4,
+    fontSize: "10",
+    fill: "var(--ink-3)"
+  }, vN(mx)));
+}
+function VStrip({
+  series,
+  norm,
+  start,
+  end
+}) {
+  if (!series || !series.length) return null;
+  const W = 720,
+    H = 120,
+    n = series.length,
+    bw = W / n;
+  const mx = Math.max(...series.map(d => d.u5 + d.conf5), norm * 3, 1);
+  const y = v => H - 16 - v / mx * (H - 28);
+  const s0 = series.findIndex(d => d.day >= (start || "").slice(0, 10));
+  const s1 = series.findIndex(d => d.day > (end || "").slice(0, 10));
+  return /*#__PURE__*/React.createElement("svg", {
+    viewBox: `0 0 ${W} ${H}`,
+    className: "vstrip",
+    role: "img",
+    "aria-label": "\u041F\u044F\u0442\u0451\u0440\u043A\u0438 \u043F\u043E \u0434\u043D\u044F\u043C \u0438 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435"
+  }, s0 >= 0 && /*#__PURE__*/React.createElement("rect", {
+    x: s0 * bw,
+    width: ((s1 < 0 ? n : s1) - s0) * bw,
+    y: 0,
+    height: H - 16,
+    fill: "var(--accent-soft)"
+  }), series.map((d, i) => /*#__PURE__*/React.createElement("g", {
+    key: d.day
+  }, /*#__PURE__*/React.createElement("rect", {
+    x: i * bw + 0.5,
+    width: Math.max(1, bw - 1),
+    y: y(d.u5),
+    height: H - 16 - y(d.u5),
+    fill: "var(--accent)"
+  }, /*#__PURE__*/React.createElement("title", null, `${vDs(d.day)}: неподтверждённых пятёрок ${d.u5}, подтверждённых ${d.conf5}, жалоб ${d.neg}`)), d.conf5 > 0 && /*#__PURE__*/React.createElement("rect", {
+    x: i * bw + 0.5,
+    width: Math.max(1, bw - 1),
+    y: y(d.u5 + d.conf5),
+    height: y(d.u5) - y(d.u5 + d.conf5),
+    fill: "var(--ink-2)"
+  }), d.neg > 0 && /*#__PURE__*/React.createElement("circle", {
+    cx: i * bw + bw / 2,
+    cy: H - 8,
+    r: Math.min(4, 1.5 + d.neg),
+    fill: "var(--ink)"
+  }, /*#__PURE__*/React.createElement("title", null, `жалоб: ${d.neg}`)))), /*#__PURE__*/React.createElement("line", {
+    x1: "0",
+    x2: W,
+    y1: y(norm),
+    y2: y(norm),
+    stroke: "var(--ink)",
+    strokeDasharray: "4 3",
+    strokeWidth: "1"
+  }), /*#__PURE__*/React.createElement("text", {
+    x: W - 4,
+    y: y(norm) - 4,
+    textAnchor: "end",
+    fontSize: "10",
+    fill: "var(--ink-2)"
+  }, "\u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 ", String(norm).replace(".", ","), " \u0432 \u0434\u0435\u043D\u044C"));
+}
+function VTimeline({
+  rows
+}) {
+  const data = (rows || []).slice(-48);
+  if (!data.length) return /*#__PURE__*/React.createElement("div", {
+    className: "vempty"
+  }, "\u041D\u0435\u0442 \u043E\u0442\u0437\u044B\u0432\u043E\u0432");
+  const W = 720,
+    H = 160,
+    bw = W / data.length;
+  const g = (r, k) => (r["2gis:" + k] || 0) + (r["yandex:" + k] || 0);
+  const mx = Math.max(...data.map(r => g(r, "u5") + g(r, "conf5") + g(r, "neg") + g(r, "other")), 1);
+  const parts = [["other", "var(--hair-2)"], ["neg", "var(--ink)"], ["conf5", "var(--ink-3)"], ["u5", "var(--accent)"]];
+  return /*#__PURE__*/React.createElement("svg", {
+    viewBox: `0 0 ${W} ${H}`,
+    className: "vstrip",
+    role: "img",
+    "aria-label": "\u041E\u0442\u0437\u044B\u0432\u044B \u0412\u0421\u041F \u043F\u043E \u043C\u0435\u0441\u044F\u0446\u0430\u043C"
+  }, data.map((r, i) => {
+    let acc = 0;
+    return /*#__PURE__*/React.createElement("g", {
+      key: r.month
+    }, parts.map(([k, c]) => {
+      const v = g(r, k);
+      const h = v / mx * (H - 26);
+      const el = /*#__PURE__*/React.createElement("rect", {
+        key: k,
+        x: i * bw + 1,
+        width: Math.max(1, bw - 2),
+        y: H - 18 - acc - h,
+        height: h,
+        fill: c,
+        rx: "1"
+      }, /*#__PURE__*/React.createElement("title", null, `${vMon(r.month)}: ${{
+        u5: "неподтверждённые пятёрки",
+        conf5: "подтверждённые пятёрки",
+        neg: "1–2★",
+        other: "3–4★"
+      }[k]} — ${v}`));
+      acc += h;
+      return el;
+    }), i % 6 === 0 && /*#__PURE__*/React.createElement("text", {
+      x: i * bw,
+      y: H - 4,
+      fontSize: "10",
+      fill: "var(--ink-3)"
+    }, vMon(r.month)));
+  }));
+}
+function VTileMap({
+  tiles,
+  net,
+  picked,
+  onPick
+}) {
+  const [tip, setTip] = useState(null);
+  const ref = useRef(null);
+  if (!tiles || !tiles.length) return /*#__PURE__*/React.createElement("div", {
+    className: "vempty"
+  }, "\u041A\u0430\u0440\u0442\u0430 \u043F\u043E\u044F\u0432\u0438\u0442\u0441\u044F \u043F\u043E\u0441\u043B\u0435 \u0440\u0430\u0441\u0447\u0451\u0442\u0430");
+  const cols = Math.max(...tiles.map(t => t.col)) + 1;
+  const a = t => {
+    if (!t.points) return 0;
+    const r = (t.share || 0) / Math.max(net || 0.01, 0.005);
+    return Math.max(0.05, Math.min(0.9, (r - 0.4) * 0.32));
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "map-wrap",
+    ref: ref,
+    onMouseLeave: () => setTip(null)
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "tiles",
+    style: {
+      gridTemplateColumns: `repeat(${cols},minmax(0,1fr))`
+    }
+  }, tiles.map(t => {
+    const al = a(t);
+    return /*#__PURE__*/React.createElement("button", {
+      key: t.code,
+      className: "tile" + (t.above ? " sig" : "") + (t.few ? " few" : ""),
+      style: {
+        gridColumn: t.col + 1,
+        gridRow: t.row + 1,
+        ...(t.few ? {} : {
+          background: `color-mix(in oklch,var(--accent) ${Math.round(al * 100)}%,var(--surface))`,
+          color: al > 0.5 ? "oklch(99% 0 0)" : undefined
+        })
+      },
+      "aria-pressed": picked === t.code,
+      "aria-label": `${t.name}: в фокусе ${t.focus || 0} из ${t.points || 0} точек`,
+      onClick: () => onPick(picked === t.code ? "" : t.code),
+      onMouseMove: e => {
+        const b = ref.current.getBoundingClientRect();
+        setTip({
+          t,
+          x: Math.min(e.clientX - b.left + 12, b.width - 230),
+          y: e.clientY - b.top + 12
+        });
+      }
+    }, t.label);
+  })), tip && /*#__PURE__*/React.createElement("div", {
+    className: "tip on",
+    style: {
+      left: tip.x,
+      top: tip.y
+    }
+  }, /*#__PURE__*/React.createElement("b", null, tip.t.name), /*#__PURE__*/React.createElement("div", {
+    className: "r"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0442\u043E\u0447\u0435\u043A"), /*#__PURE__*/React.createElement("span", {
+    className: "num"
+  }, vN(tip.t.points))), /*#__PURE__*/React.createElement("div", {
+    className: "r"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0432 \u0444\u043E\u043A\u0443\u0441\u0435"), /*#__PURE__*/React.createElement("span", {
+    className: "num"
+  }, vN(tip.t.focus), " \xB7 ", vP(tip.t.share))), /*#__PURE__*/React.createElement("div", {
+    className: "r"
+  }, /*#__PURE__*/React.createElement("span", null, "\u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u0437\u0430 \u0433\u043E\u0434"), /*#__PURE__*/React.createElement("span", {
+    className: "num"
+  }, vN(tip.t.n_12m))), tip.t.above && /*#__PURE__*/React.createElement("div", {
+    className: "r",
+    style: {
+      color: "var(--accent-ink)"
+    }
+  }, "\u0437\u043D\u0430\u0447\u0438\u043C\u043E \u0432\u044B\u0448\u0435 \u0441\u0435\u0442\u0438"), tip.t.few && /*#__PURE__*/React.createElement("div", {
+    className: "r"
+  }, "\u043C\u0430\u043B\u043E \u0434\u0430\u043D\u043D\u044B\u0445")), /*#__PURE__*/React.createElement("div", {
+    className: "legend"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0414\u043E\u043B\u044F \u0412\u0421\u041F \u0432 \u0444\u043E\u043A\u0443\u0441\u0435 \u043A \u0441\u0435\u0442\u0438 (", vP(net, 1), "):"), /*#__PURE__*/React.createElement("span", {
+    className: "ramp"
+  }, [0.1, 0.3, 0.5, 0.7, 0.9].map(x => /*#__PURE__*/React.createElement("i", {
+    key: x,
+    style: {
+      background: `color-mix(in oklch,var(--accent) ${x * 100}%,var(--surface))`
+    }
+  }))), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    className: "sw",
+    style: {
+      boxShadow: "inset 0 0 0 1.5px var(--ink)"
+    }
+  }), "\u0437\u043D\u0430\u0447\u0438\u043C\u043E \u0432\u044B\u0448\u0435 \u0441\u0435\u0442\u0438"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    className: "sw",
+    style: {
+      background: "repeating-linear-gradient(135deg,var(--surface) 0 3px,var(--paper-2) 3px 6px)",
+      boxShadow: "inset 0 0 0 1px var(--hair)"
+    }
+  }), "\u043C\u0430\u043B\u043E \u0434\u0430\u043D\u043D\u044B\u0445")));
+}
+
+// ── обзор ────────────────────────────────────────────────────────────────────
+function VspOverview({
+  ov,
+  go,
+  openPoint,
+  f,
+  setF
+}) {
+  const L = ov.lede,
+    K = ov.kpi,
+    fx = ov.fives_example;
+  const kpis = [{
+    v: K.in_focus,
+    l: "ВСП в фокусе",
+    s: `балл от 40 из ${vN(K.points)} точек`,
+    cls: "risk",
+    on: () => go("branches", {
+      focus: 1
+    })
+  }, {
+    v: K.campaigns_12m,
+    l: "Похоже на кампанию отзывов",
+    s: `за год · сильных ${vN(K.campaigns_strong_12m)}`,
+    cls: "risk",
+    on: () => go("signals")
+  }, {
+    v: K.gosb_12m,
+    l: "Синхронный всплеск в ГОСБ",
+    s: "за год — уровень управления",
+    cls: "risk",
+    on: () => go("signals", {
+      level: "gosb"
+    })
+  }, {
+    v: K.rings + K.praisers,
+    l: "Связки авторов",
+    s: `колец ${vN(K.rings)} · хвалебщиков ${vN(K.praisers)}`,
+    cls: "scheme",
+    on: () => go("links")
+  }, {
+    v: K.few,
+    l: "Мало данных",
+    s: "меньше 10 отзывов за год — сигналы молчат",
+    cls: "",
+    on: () => go("data")
+  }];
+  return /*#__PURE__*/React.createElement("div", {
+    className: "view",
+    style: {
+      display: "grid",
+      gap: 18
+    }
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "vlede"
+  }, "\u0412 ", L.year, " \u0433\u043E\u0434\u0443 ", /*#__PURE__*/React.createElement("b", null, vP(L.five_share)), " \u043E\u0442\u0437\u044B\u0432\u043E\u0432 2\u0413\u0418\u0421 \u043E \u0412\u0421\u041F \u2014 \u043F\u044F\u0442\u0451\u0440\u043A\u0438 (\u0432 ", L.year - 1, " \u2014 ", vP(L.five_share_prev), "). \u041F\u044F\u0442\u0451\u0440\u043E\u043A \u043E\u0442 \u0430\u0432\u0442\u043E\u0440\u043E\u0432 \u0431\u0435\u0437 \u0434\u0440\u0443\u0433\u0438\u0445 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u2014 ", /*#__PURE__*/React.createElement("em", null, vN(L.oneoff5)), " \u043F\u0440\u043E\u0442\u0438\u0432 ", vN(L.oneoff5_prev), " \u0433\u043E\u0434\u043E\u043C \u0440\u0430\u043D\u044C\u0448\u0435, \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043D\u043D\u044B\u0445 \u043E\u043F\u0435\u0440\u0430\u0446\u0438\u0435\u0439 \u0432 \u043C\u043E\u0431\u0438\u043B\u044C\u043D\u043E\u043C \u0431\u0430\u043D\u043A\u0435 \u2014 ", vN(L.conf5), ". \u041D\u0438\u0436\u0435 \u2014 \u0433\u0434\u0435 \u044D\u0442\u043E \u0441\u043E\u0441\u0440\u0435\u0434\u043E\u0442\u043E\u0447\u0435\u043D\u043E \u0438 \u0447\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u044F\u0442\u044C."), /*#__PURE__*/React.createElement("div", {
+    className: "kpis"
+  }, kpis.map(k => /*#__PURE__*/React.createElement("button", {
+    key: k.l,
+    className: "kpi " + k.cls,
+    onClick: k.on
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "v num"
+  }, vN(k.v)), /*#__PURE__*/React.createElement("span", {
+    className: "l"
+  }, k.l), /*#__PURE__*/React.createElement("span", {
+    className: "s"
+  }, k.s)))), /*#__PURE__*/React.createElement("div", {
+    className: "grid-ov"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "stack"
+  }, /*#__PURE__*/React.createElement("section", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "map-head"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "eyebrow"
+  }, "\u041A\u0430\u0440\u0442\u0430 \u0440\u0438\u0441\u043A\u0430"), /*#__PURE__*/React.createElement("h2", {
+    style: {
+      font: "600 20px/1.3 var(--f-serif)",
+      marginTop: 4
+    }
+  }, "\u0413\u0434\u0435 \u0431\u043E\u043B\u044C\u0448\u0435 \u0412\u0421\u041F \u0432 \u0444\u043E\u043A\u0443\u0441\u0435, \u0447\u0435\u043C \u0432 \u0441\u0440\u0435\u0434\u043D\u0435\u043C \u043F\u043E \u0441\u0435\u0442\u0438")), /*#__PURE__*/React.createElement("span", {
+    className: "sp"
+  }), f.subject && /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: () => setF({
+      subject: ""
+    })
+  }, "\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C \u0440\u0435\u0433\u0438\u043E\u043D")), /*#__PURE__*/React.createElement(VTileMap, {
+    tiles: ov.tiles,
+    net: ov.network_focus_share,
+    picked: f.subject,
+    onPick: c => {
+      setF({
+        subject: c
+      });
+      if (c) go("branches", {
+        focus: 1
+      });
+    }
+  }), /*#__PURE__*/React.createElement("p", {
+    className: "note",
+    style: {
+      marginTop: 10
+    }
+  }, "\u041D\u0430\u0436\u043C\u0438\u0442\u0435 \u043D\u0430 \u0440\u0435\u0433\u0438\u043E\u043D \u2014 \u043E\u0442\u043A\u0440\u043E\u0435\u0442\u0441\u044F \u0441\u043F\u0438\u0441\u043E\u043A \u0435\u0433\u043E \u0412\u0421\u041F \u0432 \u0444\u043E\u043A\u0443\u0441\u0435. \u0417\u043D\u0430\u0447\u0438\u043C\u043E\u0441\u0442\u044C \u2014 \u0441\u0440\u0430\u0432\u043D\u0435\u043D\u0438\u0435 \u0434\u043E\u043B\u0438 \u0441 \u0441\u0435\u0442\u044C\u044E (z \u2265 2,58).")), /*#__PURE__*/React.createElement("section", {
+    className: "card cal"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "eyebrow"
+  }, "\u041A\u0430\u043B\u0435\u043D\u0434\u0430\u0440\u044C \u0441\u0435\u0442\u0438"), /*#__PURE__*/React.createElement("h2", {
+    style: {
+      font: "600 20px/1.3 var(--f-serif)",
+      margin: "4px 0 10px"
+    }
+  }, "\u041E\u0442\u0437\u044B\u0432\u044B 2\u0413\u0418\u0421 \u043E \u0412\u0421\u041F \u043F\u043E \u043C\u0435\u0441\u044F\u0446\u0430\u043C"), /*#__PURE__*/React.createElement(VCalendar, {
+    cal: ov.calendar,
+    events: ov.events
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "legend",
+    style: {
+      borderTop: 0,
+      padding: "8px 0 0"
+    }
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    className: "sw",
+    style: {
+      background: "var(--accent)"
+    }
+  }), "\u043F\u044F\u0442\u0451\u0440\u043A\u0438 \u043E\u0442 \u0430\u0432\u0442\u043E\u0440\u043E\u0432 \u0431\u0435\u0437 \u0434\u0440\u0443\u0433\u0438\u0445 \u043E\u0442\u0437\u044B\u0432\u043E\u0432"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    className: "sw",
+    style: {
+      background: "color-mix(in oklch,var(--accent) 45%,var(--surface))"
+    }
+  }), "\u043F\u0440\u043E\u0447\u0438\u0435 \u043D\u0435\u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043D\u043D\u044B\u0435 \u043F\u044F\u0442\u0451\u0440\u043A\u0438"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    className: "sw",
+    style: {
+      background: "var(--ink-2)"
+    }
+  }), "\u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043D\u043D\u044B\u0435 \u043E\u043F\u0435\u0440\u0430\u0446\u0438\u0435\u0439"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    className: "sw",
+    style: {
+      background: "var(--hair-2)"
+    }
+  }), "1\u20134\u2605")), ov.events && ov.events.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "evs"
+  }, ov.events.slice(-6).map((e, i) => /*#__PURE__*/React.createElement("div", {
+    className: "ev",
+    key: i
+  }, /*#__PURE__*/React.createElement("b", null, (ov.events.length > 6 ? ov.events.length - 6 : 0) + i + 1, ". ", vMon(e.month)), e.label))), /*#__PURE__*/React.createElement("p", {
+    className: "note",
+    style: {
+      marginTop: 10
+    }
+  }, "\u0421\u043E\u0431\u044B\u0442\u0438\u044F \u0432\u044B\u0432\u0435\u0434\u0435\u043D\u044B \u0438\u0437 \u0434\u0430\u043D\u043D\u044B\u0445: \u043A\u0430\u043B\u0435\u043D\u0434\u0430\u0440\u044F \u0430\u043A\u0446\u0438\u0439 \u0431\u0430\u043D\u043A\u0430 \u0443 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0430 \u043D\u0435\u0442.")), /*#__PURE__*/React.createElement("section", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "eyebrow"
+  }, "\u041A\u0430\u043A \u0447\u0438\u0442\u0430\u0442\u044C"), /*#__PURE__*/React.createElement("h2", {
+    style: {
+      font: "600 20px/1.3 var(--f-serif)",
+      marginTop: 4
+    }
+  }, ov.fives.title), /*#__PURE__*/React.createElement("div", {
+    className: "five"
+  }, /*#__PURE__*/React.createElement("ul", {
+    className: "mech"
+  }, ov.fives.points.map((p, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "ic"
+  }, i + 1), /*#__PURE__*/React.createElement("span", null, p)))), /*#__PURE__*/React.createElement("div", null, fx && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, "\u041F\u0440\u0438\u043C\u0435\u0440 \u0438\u0437 \u0441\u0435\u0442\u0438 \u2014 \u0412\u0421\u041F, ", fx.city), /*#__PURE__*/React.createElement("div", {
+    className: "ratingcmp"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "big num"
+  }, vR(fx.shown)), /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, "\u043A\u0430\u043A \u0432\u0438\u0434\u0438\u0442 \u043A\u043B\u0438\u0435\u043D\u0442")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "big lo num"
+  }, vR(fx.without)), /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, "\u0431\u0435\u0437 \u044D\u043F\u0438\u0437\u043E\u0434\u043E\u0432 \u043A\u0430\u043C\u043F\u0430\u043D\u0438\u0439"))), /*#__PURE__*/React.createElement("button", {
+    className: "vmore",
+    onClick: () => openPoint(fx.point)
+  }, "\u041E\u0442\u043A\u0440\u044B\u0442\u044C \u043F\u0440\u043E\u0444\u0438\u043B\u044C \u0412\u0421\u041F")), /*#__PURE__*/React.createElement("div", {
+    className: "feedsim",
+    style: {
+      marginTop: 12
+    },
+    "aria-label": "\u0421\u0445\u0435\u043C\u0430 \u0432\u044B\u0434\u0430\u0447\u0438"
+  }, [...Array(6)].map((_, i) => /*#__PURE__*/React.createElement("div", {
+    className: "r",
+    key: i
+  }, /*#__PURE__*/React.createElement("span", null, i * 4 + 1, "\u2013", i * 4 + 4), /*#__PURE__*/React.createElement("i", {
+    style: {
+      width: `${92 - i * 4}%`
+    }
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "r neg"
+  }, /*#__PURE__*/React.createElement("span", null, "25+"), /*#__PURE__*/React.createElement("i", {
+    style: {
+      width: "40%"
+    }
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, "\u0421\u0445\u0435\u043C\u0430: \u043F\u043E\u0441\u043B\u0435 \u0432\u043E\u043B\u043D\u044B \u043F\u044F\u0442\u0451\u0440\u043E\u043A \u043F\u0435\u0440\u0432\u044B\u0435 \u044D\u043A\u0440\u0430\u043D\u044B \u0432\u044B\u0434\u0430\u0447\u0438 \u2014 \u0441\u043F\u043B\u043E\u0448\u044C \u043F\u043E\u0445\u0432\u0430\u043B\u0430, \u0436\u0430\u043B\u043E\u0431\u044B \u043D\u0438\u0436\u0435")))))), /*#__PURE__*/React.createElement("div", {
+    className: "stack"
+  }, /*#__PURE__*/React.createElement("section", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "eyebrow"
+  }, "\u0422\u0440\u0435\u0431\u0443\u0435\u0442 \u0432\u043D\u0438\u043C\u0430\u043D\u0438\u044F"), /*#__PURE__*/React.createElement("h2", {
+    style: {
+      font: "600 18px/1.3 var(--f-serif)",
+      margin: "4px 0 10px"
+    }
+  }, "\u0421\u0432\u0435\u0436\u0438\u0435 \u044D\u043F\u0438\u0437\u043E\u0434\u044B \u043A\u0430\u043C\u043F\u0430\u043D\u0438\u0439"), /*#__PURE__*/React.createElement("div", {
+    className: "feed"
+  }, ov.feed.length ? ov.feed.map(e => /*#__PURE__*/React.createElement("button", {
+    key: e.id,
+    className: "fi risk",
+    onClick: () => go("signals", {
+      sig: e.id
+    })
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "bar"
+  }), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    className: "t"
+  }, e.place && e.place.city || "ВСП", e.place && e.place.address ? `, ${vAddr(e.place.address)}` : ""), /*#__PURE__*/React.createElement("span", {
+    className: "m",
+    style: {
+      display: "block"
+    }
+  }, vDs(e.start), "\u2013", vDs(e.end), " \xB7 ", vN(e.n), " \u043F\u044F\u0442\u0451\u0440\u043E\u043A \u043F\u0440\u0438 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0438 ~", String(Math.round(e.expected * 10) / 10).replace(".", ","), " \xB7 ", e.strength)))) : /*#__PURE__*/React.createElement("div", {
+    className: "vempty"
+  }, "\u0421\u0438\u043B\u044C\u043D\u044B\u0445 \u0438 \u0441\u0440\u0435\u0434\u043D\u0438\u0445 \u044D\u043F\u0438\u0437\u043E\u0434\u043E\u0432 \u043D\u0435\u0442"))), /*#__PURE__*/React.createElement("section", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "eyebrow"
+  }, "\u041A\u0430\u043D\u0434\u0438\u0434\u0430\u0442\u044B \u0432 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0443"), /*#__PURE__*/React.createElement("span", {
+    className: "sp"
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "vmore",
+    onClick: () => go("branches", {
+      focus: 1
+    })
+  }, "\u0412\u0441\u0435")), /*#__PURE__*/React.createElement("div", {
+    className: "tbl-wrap",
+    style: {
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("tbody", null, ov.candidates.slice(0, 12).map(p => /*#__PURE__*/React.createElement("tr", {
+    key: p.point,
+    className: "click",
+    onClick: () => openPoint(p.point)
+  }, /*#__PURE__*/React.createElement("td", {
+    style: {
+      width: 70
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "prio"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "num",
+    style: {
+      fontWeight: 600
+    }
+  }, Math.round(p.score)))), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 500,
+      fontSize: 14
+    }
+  }, p.city || "—"), /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, vAddr(p.address) || p.name), /*#__PURE__*/React.createElement("div", {
+    className: "chips",
+    style: {
+      marginTop: 4
+    }
+  }, (p.reasons || []).slice(0, 2).map(r => /*#__PURE__*/React.createElement("span", {
+    key: r,
+    className: vChip(r)
+  }, r)))))))))))));
+}
+
+// ── сигналы ──────────────────────────────────────────────────────────────────
+function VspSignalCard({
+  id,
+  go,
+  openPoint
+}) {
+  const [d, setD] = useState(null);
+  const [all, setAll] = useState(false);
+  useEffect(() => {
+    setD(null);
+    setAll(false);
+    apiFetch(`/api/vsp/signals/${id}`).then(setD).catch(() => setD({
+      err: 1
+    }));
+  }, [id]);
+  if (!d) return /*#__PURE__*/React.createElement("div", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement(Skel, {
+    h: 22,
+    w: "60%"
+  }), /*#__PURE__*/React.createElement(Skel, {
+    h: 200,
+    style: {
+      marginTop: 14
+    }
+  }));
+  if (d.err) return /*#__PURE__*/React.createElement("div", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement(ErrState, {
+    msg: "\u0421\u0438\u0433\u043D\u0430\u043B \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D \u2014 \u0432\u043E\u0437\u043C\u043E\u0436\u043D\u043E, \u0440\u0430\u0441\u0447\u0451\u0442 \u043E\u0431\u043D\u043E\u0432\u0438\u043B\u0441\u044F"
+  }));
+  const pros = (d.features.why || []).filter(w => !w.against),
+    cons = (d.features.why || []).filter(w => w.against);
+  const nrm = d.features.norms || {};
+  const p = d.place || {};
+  const ids = (d.reviews || []).map(r => r.id).join(",");
+  const gosb = d.level === "gosb";
+  return /*#__PURE__*/React.createElement("article", {
+    className: "card detail view"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "d-h"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "tag " + vStrengthCls(d.strength)
+  }, gosb ? "Синхронный всплеск в ГОСБ" : "Похоже на кампанию отзывов"), /*#__PURE__*/React.createElement(VConf, {
+    s: d.score
+  }), /*#__PURE__*/React.createElement("span", null, d.strength, " \xB7 \u0431\u0430\u043B\u043B ", Math.round(d.score))), /*#__PURE__*/React.createElement("h2", {
+    className: "d-title"
+  }, gosb ? `ГОСБ ${d.gosb} · ${d.subject_name || ""}` : `${p.city || "ВСП"}${p.address ? `, ${vAddr(p.address)}` : ""}`), /*#__PURE__*/React.createElement("p", {
+    className: "d-sub"
+  }, gosb ? `${vN(d.points)} из ${vN(d.points_total)} ВСП ГОСБ получили волну пятёрок одновременно` : p.name || "", !gosb && p.gosb ? ` · ГОСБ ${p.gosb}` : "", " \xB7 ", vD(d.start), " \u2014 ", vD(d.end)), /*#__PURE__*/React.createElement("div", {
+    className: "sec"
+  }, /*#__PURE__*/React.createElement("h3", null, "\u041F\u043E\u0447\u0435\u043C\u0443 \u044D\u0442\u043E \u0441\u0438\u0433\u043D\u0430\u043B"), /*#__PURE__*/React.createElement("ul", {
+    className: "facts"
+  }, /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, vN(d.n), " \u043D\u0435\u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043D\u043D\u044B\u0445 \u043F\u044F\u0442\u0451\u0440\u043E\u043A \u043F\u0440\u0438 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0438 ~", String(d.expected).replace(".", ","), " \u2014 \u0432 ", vN(Math.round(d.ratio)), " \u0440\u0430\u0437 \u0431\u043E\u043B\u044C\u0448\u0435", gosb ? " доли ГОСБ в сети" : " доли этого ВСП в своём ГОСБ")), pros.filter(w => w.key !== "ratio").map(w => /*#__PURE__*/React.createElement("li", {
+    key: w.key
+  }, /*#__PURE__*/React.createElement("span", null, w.label, ": ", /*#__PURE__*/React.createElement("b", null, vFmtWhy(w)), w.norm != null ? /*#__PURE__*/React.createElement("span", {
+    className: "muted"
+  }, " \xB7 \u043F\u043E \u0441\u0435\u0442\u0438 ", vFmtWhy({
+    ...w,
+    value: w.norm
+  })) : null))))), /*#__PURE__*/React.createElement("div", {
+    className: "sec"
+  }, /*#__PURE__*/React.createElement("h3", null, "\u0421\u0440\u0430\u0432\u043D\u0435\u043D\u0438\u0435 \u0441 \u043D\u043E\u0440\u043C\u043E\u0439"), /*#__PURE__*/React.createElement("div", {
+    className: "strip"
+  }, /*#__PURE__*/React.createElement(VStrip, {
+    series: d.series,
+    norm: d.norm_per_day,
+    start: d.start,
+    end: d.end
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "legend",
+    style: {
+      borderTop: 0,
+      padding: "6px 0 0"
+    }
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    className: "sw",
+    style: {
+      background: "var(--accent)"
+    }
+  }), "\u043D\u0435\u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043D\u043D\u044B\u0435 \u043F\u044F\u0442\u0451\u0440\u043A\u0438"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    className: "sw",
+    style: {
+      background: "var(--ink-2)"
+    }
+  }), "\u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043D\u043D\u044B\u0435"), /*#__PURE__*/React.createElement("span", null, "\u25CF \u0436\u0430\u043B\u043E\u0431\u044B 1\u20132\u2605"), /*#__PURE__*/React.createElement("span", null, "\u043F\u0443\u043D\u043A\u0442\u0438\u0440 \u2014 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435")), [["oneoff_share", "Авторы без других отзывов"], ["series_share", "Пачки до 10 минут"], ["month_end_share", "Последние 3 дня месяца"], ["confirmed_share", "Подтверждены операцией"]].map(([k, l]) => {
+    const v = d.features[k];
+    if (v == null) return null;
+    const n = nrm[k];
+    return /*#__PURE__*/React.createElement("div", {
+      className: "normrow",
+      key: k
+    }, /*#__PURE__*/React.createElement("span", null, l), /*#__PURE__*/React.createElement("span", {
+      className: "normbar"
+    }, /*#__PURE__*/React.createElement("i", {
+      style: {
+        width: `${Math.min(100, v * 100)}%`,
+        background: k === "confirmed_share" ? "var(--ink-3)" : "var(--accent)"
+      }
+    }), n != null && /*#__PURE__*/React.createElement("i", {
+      style: {
+        width: 2,
+        left: `${Math.min(100, n * 100)}%`,
+        background: "var(--ink)"
+      }
+    })), /*#__PURE__*/React.createElement("span", {
+      className: "num"
+    }, vP(v)));
+  }), /*#__PURE__*/React.createElement("p", {
+    className: "note"
+  }, "\u0427\u0435\u0440\u0442\u0430 \u043D\u0430 \u043F\u043E\u043B\u043E\u0441\u0435 \u2014 \u043D\u043E\u0440\u043C\u0430 \u0441\u0435\u0442\u0438 \u0437\u0430 ", new Date(d.start).getFullYear(), " \u0433\u043E\u0434 (\u043C\u0435\u0434\u0438\u0430\u043D\u0430 \u043F\u043E \u0412\u0421\u041F, \u0431\u0435\u0437 \u044D\u043F\u0438\u0437\u043E\u0434\u043E\u0432).")), /*#__PURE__*/React.createElement("div", {
+    className: "sec two"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "box"
+  }, /*#__PURE__*/React.createElement("b", null, "\u0417\u0430"), /*#__PURE__*/React.createElement("ul", {
+    className: "facts",
+    style: {
+      marginTop: 6
+    }
+  }, pros.map(w => /*#__PURE__*/React.createElement("li", {
+    key: w.key,
+    style: {
+      fontSize: 13.5
+    }
+  }, w.label)))), /*#__PURE__*/React.createElement("div", {
+    className: "box"
+  }, /*#__PURE__*/React.createElement("b", null, "\u041F\u0440\u043E\u0442\u0438\u0432 \u0438 \u043E\u0433\u043E\u0432\u043E\u0440\u043A\u0438"), /*#__PURE__*/React.createElement("ul", {
+    className: "facts",
+    style: {
+      marginTop: 6
+    }
+  }, cons.map(w => /*#__PURE__*/React.createElement("li", {
+    key: w.key,
+    style: {
+      fontSize: 13.5
+    }
+  }, /*#__PURE__*/React.createElement("span", null, w.label, ": ", vFmtWhy(w)))), (d.guide.benign || []).map((b, i) => /*#__PURE__*/React.createElement("li", {
+    key: i,
+    style: {
+      fontSize: 13.5
+    }
+  }, b))))), /*#__PURE__*/React.createElement("div", {
+    className: "sec"
+  }, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C"), /*#__PURE__*/React.createElement("div", {
+    className: "check"
+  }, d.guide.check.map((c, i) => /*#__PURE__*/React.createElement("label", {
+    key: i
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox"
+  }), /*#__PURE__*/React.createElement("span", null, c.text), /*#__PURE__*/React.createElement("span", {
+    className: "where"
+  }, c.where))))), /*#__PURE__*/React.createElement("div", {
+    className: "sec"
+  }, /*#__PURE__*/React.createElement("h3", null, "\u041E\u0442\u0437\u044B\u0432\u044B-\u043E\u0441\u043D\u043E\u0432\u0430\u043D\u0438\u044F \xB7 ", vN(d.reviews.length)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gap: 8
+    }
+  }, (all ? d.reviews : d.reviews.slice(0, 8)).map(r => /*#__PURE__*/React.createElement(VRev, {
+    key: r.id,
+    r: r,
+    showPlace: gosb,
+    onPlace: openPoint
+  }))), d.reviews.length > 8 && /*#__PURE__*/React.createElement("button", {
+    className: "vmore",
+    style: {
+      marginTop: 8
+    },
+    onClick: () => setAll(!all)
+  }, all ? "Свернуть" : `Показать все ${d.reviews.length}`)), /*#__PURE__*/React.createElement("div", {
+    className: "sec"
+  }, /*#__PURE__*/React.createElement("h3", null, "\u041E\u0433\u0440\u0430\u043D\u0438\u0447\u0435\u043D\u0438\u044F \u0434\u0430\u043D\u043D\u044B\u0445"), /*#__PURE__*/React.createElement("ul", {
+    className: "facts"
+  }, d.guide.limits.map((l, i) => /*#__PURE__*/React.createElement("li", {
+    key: i,
+    style: {
+      fontSize: 13.5,
+      color: "var(--ink-2)"
+    }
+  }, l)))), /*#__PURE__*/React.createElement("div", {
+    className: "actions"
+  }, !gosb && /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ink",
+    onClick: () => openPoint(d.point)
+  }, "\u041F\u0440\u043E\u0444\u0438\u043B\u044C \u0412\u0421\u041F"), /*#__PURE__*/React.createElement("a", {
+    className: "btn btn-ghost",
+    href: `/api/vsp/export/reviews.xlsx?ids=${encodeURIComponent(ids)}`,
+    download: true
+  }, "\u0421\u043A\u0430\u0447\u0430\u0442\u044C \u043E\u0442\u0437\u044B\u0432\u044B-\u043E\u0441\u043D\u043E\u0432\u0430\u043D\u0438\u044F"), !gosb && /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: () => go("reviews", {
+      rq: {
+        point: d.point
+      }
+    })
+  }, "\u0412\u0441\u0435 \u043E\u0442\u0437\u044B\u0432\u044B \u0412\u0421\u041F")));
+}
+function VspSignals({
+  go,
+  openPoint,
+  f,
+  sig,
+  setSig,
+  level0
+}) {
+  const [level, setLevel] = useState(level0 || "branch");
+  const [period, setPeriod] = useState("12m");
+  const [strength, setStrength] = useState("");
+  const [q, setQ] = useState("");
+  const [d, setD] = useState(null);
+  useEffect(() => {
+    setD(null);
+    apiFetch("/api/vsp/signals?" + vQS({
+      level,
+      period,
+      strength,
+      q,
+      subject: f.subject,
+      gosb: f.gosb,
+      fmt: f.fmt,
+      limit: 200
+    })).then(x => {
+      setD(x);
+      if (x.items.length && !x.items.some(i => i.id === sig)) setSig(x.items[0].id);
+    }).catch(() => setD({
+      err: 1
+    }));
+  }, [level, period, strength, q, f.subject, f.gosb, f.fmt]);
+  return /*#__PURE__*/React.createElement("div", {
+    className: "view",
+    style: {
+      display: "grid",
+      gap: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row"
+  }, /*#__PURE__*/React.createElement(VSeg, {
+    label: "\u0423\u0440\u043E\u0432\u0435\u043D\u044C",
+    value: level,
+    onChange: setLevel,
+    items: [["branch", "ВСП"], ["gosb", "ГОСБ"]]
+  }), /*#__PURE__*/React.createElement(VSeg, {
+    label: "\u041F\u0435\u0440\u0438\u043E\u0434",
+    value: period,
+    onChange: setPeriod,
+    items: [["12m", "Год"], ["24m", "2 года"], ["all", "Вся история"]]
+  }), /*#__PURE__*/React.createElement(VSeg, {
+    label: "\u0421\u0438\u043B\u0430",
+    value: strength,
+    onChange: setStrength,
+    items: [["", "Любая"], ["сильный", "Сильные"], ["средний", "Средние"], ["слабый", "Слабые"]]
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "sp"
+  }), /*#__PURE__*/React.createElement(VSearch, {
+    value: q,
+    onChange: setQ,
+    placeholder: "\u0413\u043E\u0440\u043E\u0434, \u0430\u0434\u0440\u0435\u0441, \u0413\u041E\u0421\u0411"
+  })), !d ? /*#__PURE__*/React.createElement(Skel, {
+    h: 300
+  }) : d.err ? /*#__PURE__*/React.createElement(ErrState, {
+    msg: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u0441\u0438\u0433\u043D\u0430\u043B\u044B"
+  }) : !d.items.length ? /*#__PURE__*/React.createElement("div", {
+    className: "card vempty"
+  }, "\u041F\u043E\u0434 \u044D\u0442\u0438 \u0443\u0441\u043B\u043E\u0432\u0438\u044F \u0441\u0438\u0433\u043D\u0430\u043B\u043E\u0432 \u043D\u0435\u0442. \u0420\u0430\u0441\u0448\u0438\u0440\u044C\u0442\u0435 \u043F\u0435\u0440\u0438\u043E\u0434 \u0438\u043B\u0438 \u0441\u043D\u0438\u043C\u0438\u0442\u0435 \u0444\u0438\u043B\u044C\u0442\u0440\u044B.") : /*#__PURE__*/React.createElement("div", {
+    className: "sig-layout"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "sig-list"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, vN(d.total), " ", level === "gosb" ? "всплесков" : "эпизодов", " \xB7 \u0441\u043D\u0430\u0447\u0430\u043B\u0430 \u0441\u0438\u043B\u044C\u043D\u044B\u0435"), d.items.map(e => /*#__PURE__*/React.createElement("button", {
+    key: e.id,
+    className: "si " + vStrengthCls(e.strength),
+    "aria-current": sig === e.id,
+    onClick: () => setSig(e.id)
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h"
+  }, /*#__PURE__*/React.createElement(VConf, {
+    s: e.score
+  }), /*#__PURE__*/React.createElement("span", null, e.strength), /*#__PURE__*/React.createElement("span", null, "\xB7"), /*#__PURE__*/React.createElement("span", null, vDs(e.start), "\u2013", vD(e.end))), /*#__PURE__*/React.createElement("div", {
+    className: "t"
+  }, level === "gosb" ? `ГОСБ ${e.gosb} · ${e.subject_name || ""}` : `${e.place && e.place.city || ""}${e.place && e.place.address ? ", " + vAddr(e.place.address) : ""}`), /*#__PURE__*/React.createElement("div", {
+    className: "m"
+  }, vN(e.n), " \u043F\u044F\u0442\u0451\u0440\u043E\u043A, \xD7", vN(Math.round(e.ratio)), " \u043A \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u044E", level === "gosb" ? ` · ${e.points} из ${e.points_total} ВСП` : e.oneoff_share != null ? ` · разовые авторы ${vP(e.oneoff_share)}` : "")))), sig ? /*#__PURE__*/React.createElement(VspSignalCard, {
+    id: sig,
+    go: go,
+    openPoint: openPoint
+  }) : /*#__PURE__*/React.createElement("div", null)));
+}
+
+// ── ВСП: таблица и профиль ──────────────────────────────────────────────────
+function VspBranches({
+  ov,
+  go,
+  openPoint,
+  f,
+  setF,
+  focus0
+}) {
+  const [q, setQ] = useState("");
+  const [sort, setSort] = useState("score");
+  const [focus, setFocus] = useState(!!focus0);
+  const [few, setFew] = useState(false);
+  const [d, setD] = useState(null);
+  const [lim, setLim] = useState(50);
+  useEffect(() => {
+    setD(null);
+    apiFetch("/api/vsp/branches?" + vQS({
+      q,
+      sort,
+      focus: focus ? 1 : "",
+      state: few ? "few" : "",
+      subject: f.subject,
+      gosb: f.gosb,
+      fmt: f.fmt,
+      limit: lim
+    })).then(setD).catch(() => setD({
+      err: 1
+    }));
+  }, [q, sort, focus, few, f.subject, f.gosb, f.fmt, lim]);
+  const subjects = [...(ov.tiles || [])].sort((a, b) => (a.name || "").localeCompare(b.name || "", "ru"));
+  return /*#__PURE__*/React.createElement("div", {
+    className: "view",
+    style: {
+      display: "grid",
+      gap: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row"
+  }, /*#__PURE__*/React.createElement(VSearch, {
+    value: q,
+    onChange: setQ,
+    placeholder: "\u0413\u043E\u0440\u043E\u0434, \u0430\u0434\u0440\u0435\u0441, \u0413\u041E\u0421\u0411"
+  }), /*#__PURE__*/React.createElement("select", {
+    className: "vsel",
+    value: f.subject,
+    onChange: e => setF({
+      subject: e.target.value
+    }),
+    "aria-label": "\u0421\u0443\u0431\u044A\u0435\u043A\u0442"
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "\u0412\u0441\u0435 \u0440\u0435\u0433\u0438\u043E\u043D\u044B"), subjects.map(s => /*#__PURE__*/React.createElement("option", {
+    key: s.code,
+    value: s.code
+  }, s.name))), /*#__PURE__*/React.createElement(VSeg, {
+    label: "\u0424\u043E\u0440\u043C\u0430\u0442",
+    value: f.fmt,
+    onChange: v => setF({
+      fmt: v
+    }),
+    items: [["", "Все форматы"], ["mass", "Массовые"], ["premium", "СберПервый и Private"], ["business", "Для бизнеса"]]
+  }), /*#__PURE__*/React.createElement("label", {
+    className: "vchk"
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: focus,
+    onChange: e => setFocus(e.target.checked)
+  }), "\u0442\u043E\u043B\u044C\u043A\u043E \u0432 \u0444\u043E\u043A\u0443\u0441\u0435"), /*#__PURE__*/React.createElement("label", {
+    className: "vchk"
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: few,
+    onChange: e => setFew(e.target.checked)
+  }), "\u043C\u0430\u043B\u043E \u0434\u0430\u043D\u043D\u044B\u0445"), /*#__PURE__*/React.createElement("span", {
+    className: "sp"
+  }), /*#__PURE__*/React.createElement("select", {
+    className: "vsel",
+    value: sort,
+    onChange: e => setSort(e.target.value),
+    "aria-label": "\u0421\u043E\u0440\u0442\u0438\u0440\u043E\u0432\u043A\u0430"
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "score"
+  }, "\u041F\u043E \u0431\u0430\u043B\u043B\u0443 \u043E\u0442\u0431\u043E\u0440\u0430"), /*#__PURE__*/React.createElement("option", {
+    value: "gap"
+  }, "\u041F\u043E \u0440\u0430\u0437\u0440\u044B\u0432\u0443 \u0440\u0435\u0439\u0442\u0438\u043D\u0433\u0430"), /*#__PURE__*/React.createElement("option", {
+    value: "neg"
+  }, "\u041F\u043E \u0436\u0430\u043B\u043E\u0431\u0430\u043C \u0437\u0430 \u0433\u043E\u0434"), /*#__PURE__*/React.createElement("option", {
+    value: "n"
+  }, "\u041F\u043E \u0447\u0438\u0441\u043B\u0443 \u043E\u0442\u0437\u044B\u0432\u043E\u0432"))), !d ? /*#__PURE__*/React.createElement(Skel, {
+    h: 400
+  }) : d.err ? /*#__PURE__*/React.createElement(ErrState, {
+    msg: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u0441\u043F\u0438\u0441\u043E\u043A"
+  }) : /*#__PURE__*/React.createElement("section", {
+    className: "card",
+    style: {
+      padding: "8px 8px 14px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "note",
+    style: {
+      padding: "6px 10px"
+    }
+  }, vN(d.total), " \u0442\u043E\u0447\u0435\u043A \u043E\u0431\u0441\u043B\u0443\u0436\u0438\u0432\u0430\u043D\u0438\u044F"), /*#__PURE__*/React.createElement("div", {
+    className: "tbl-wrap"
+  }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u0411\u0430\u043B\u043B"), /*#__PURE__*/React.createElement("th", null, "\u0412\u0421\u041F"), /*#__PURE__*/React.createElement("th", {
+    className: "hide-sm"
+  }, "\u0413\u041E\u0421\u0411"), /*#__PURE__*/React.createElement("th", null, "\u041E\u0442\u0437\u044B\u0432\u043E\u0432 \u0437\u0430 \u0433\u043E\u0434"), /*#__PURE__*/React.createElement("th", null, "\u0420\u0435\u0439\u0442\u0438\u043D\u0433 \u2192 \u0431\u0435\u0437 \u044D\u043F\u0438\u0437\u043E\u0434\u043E\u0432"), /*#__PURE__*/React.createElement("th", {
+    className: "hide-sm"
+  }, "\u0416\u0430\u043B\u043E\u0431 \u0437\u0430 \u0433\u043E\u0434"), /*#__PURE__*/React.createElement("th", null, "\u041F\u043E\u0447\u0435\u043C\u0443 \u0432 \u043F\u043E\u043B\u0435 \u0437\u0440\u0435\u043D\u0438\u044F"))), /*#__PURE__*/React.createElement("tbody", null, d.items.map(p => /*#__PURE__*/React.createElement("tr", {
+    key: p.point,
+    className: "click",
+    onClick: () => openPoint(p.point)
+  }, /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("div", {
+    className: "prio"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "num",
+    style: {
+      fontWeight: 600,
+      minWidth: 24
+    }
+  }, Math.round(p.score)), /*#__PURE__*/React.createElement("span", {
+    className: "b"
+  }, /*#__PURE__*/React.createElement("i", {
+    style: {
+      width: `${p.score}%`
+    }
+  })))), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 500
+    }
+  }, p.city || "—"), /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, vAddr(p.address) || p.name), p.formats && (p.formats.sber_first || p.formats.private) && /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "fmt-dot"
+  }), p.formats.private ? "Private Banking" : "СберПервый")), /*#__PURE__*/React.createElement("td", {
+    className: "hide-sm num"
+  }, p.gosb || "—"), /*#__PURE__*/React.createElement("td", {
+    className: "num"
+  }, vN(p.n_12m), p.state === "few" && /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, "\u043C\u0430\u043B\u043E \u0434\u0430\u043D\u043D\u044B\u0445")), /*#__PURE__*/React.createElement("td", {
+    className: "num"
+  }, vR(p.rating_all), " \u2192 ", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: p.rating_all - (p.rating_wo_episodes || p.rating_all) > 0.2 ? "var(--accent-ink)" : undefined
+    }
+  }, vR(p.rating_wo_episodes))), /*#__PURE__*/React.createElement("td", {
+    className: "hide-sm num"
+  }, vN(p.neg_12m)), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("div", {
+    className: "chips"
+  }, (p.reasons || []).map(r => /*#__PURE__*/React.createElement("span", {
+    key: r,
+    className: vChip(r)
+  }, r))))))))), d.total > d.items.length && /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "center",
+      marginTop: 10
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: () => setLim(lim + 100)
+  }, "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0435\u0449\u0451"))));
+}
+function VspProfile({
+  point,
+  onClose,
+  go
+}) {
+  const [d, setD] = useState(null);
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    setD(null);
+    apiFetch(`/api/vsp/branches/${encodeURIComponent(point)}`).then(setD).catch(() => setD({
+      err: 1
+    }));
+  }, [point]);
+  useEffect(() => {
+    const t = requestAnimationFrame(() => setOn(true));
+    const k = e => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", k);
+    return () => {
+      cancelAnimationFrame(t);
+      window.removeEventListener("keydown", k);
+    };
+  }, []);
+  const fm = d && d.formats ? Object.entries(d.formats) : [];
+  const shown = d && ((d.declared_rating || {})["2gis"] || d.rating_all);
+  return ReactDOM.createPortal(/*#__PURE__*/React.createElement("div", {
+    className: "vsp"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "scrim" + (on ? " on" : ""),
+    onClick: onClose
+  }), /*#__PURE__*/React.createElement("aside", {
+    className: "sheet" + (on ? " on" : ""),
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-label": "\u041F\u0440\u043E\u0444\u0438\u043B\u044C \u0412\u0421\u041F"
+  }, !d ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: 22
+    }
+  }, /*#__PURE__*/React.createElement(Skel, {
+    h: 26,
+    w: "60%"
+  }), /*#__PURE__*/React.createElement(Skel, {
+    h: 300,
+    style: {
+      marginTop: 14
+    }
+  })) : d.err ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: 22
+    }
+  }, /*#__PURE__*/React.createElement(ErrState, {
+    msg: "\u041F\u0440\u043E\u0444\u0438\u043B\u044C \u043D\u0435 \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u043B\u0441\u044F"
+  })) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "sh-head"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "eyebrow"
+  }, "\u0412\u0421\u041F", d.gosb ? ` · ГОСБ ${d.gosb}` : "", d.subject_name ? ` · ${d.subject_name}` : ""), /*#__PURE__*/React.createElement("span", {
+    className: "sp"
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: onClose,
+    "aria-label": "\u0417\u0430\u043A\u0440\u044B\u0442\u044C"
+  }, "\u0417\u0430\u043A\u0440\u044B\u0442\u044C")), /*#__PURE__*/React.createElement("h2", {
+    style: {
+      font: "600 24px/1.2 var(--f-serif)"
+    }
+  }, d.city || d.name, d.address ? `, ${vAddr(d.address)}` : ""), /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, d.name ? `ВСП ${d.name}` : "", d.open_date ? ` · открыто ${vD(d.open_date)}` : "", d.status && d.status !== "active" ? ` · ${d.status === "closed" ? "закрыто по реестру ЦБ" : d.status}` : ""), /*#__PURE__*/React.createElement("div", {
+    className: "chips"
+  }, fm.map(([k, src]) => /*#__PURE__*/React.createElement("span", {
+    key: k,
+    className: "chip",
+    title: `источник: ${(src || []).join(", ")}`
+  }, VSP_FMT[k] || k)), (d.reasons || []).map(r => /*#__PURE__*/React.createElement("span", {
+    key: r,
+    className: vChip(r)
+  }, r)), /*#__PURE__*/React.createElement("span", {
+    className: "chip"
+  }, "\u0431\u0430\u043B\u043B ", Math.round(d.score)))), /*#__PURE__*/React.createElement("div", {
+    className: "sh-body"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "sec"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ratingcmp"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "big num"
+  }, vR(shown)), /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, "\u043A\u0430\u043A \u0432\u0438\u0434\u0438\u0442 \u043A\u043B\u0438\u0435\u043D\u0442", (d.declared_rating || {})["2gis"] ? " (2ГИС)" : "")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "big num" + (shown - (d.rating_wo_episodes || shown) > 0.2 ? " lo" : "")
+  }, vR(d.rating_wo_episodes)), /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, "\u0431\u0435\u0437 \u044D\u043F\u0438\u0437\u043E\u0434\u043E\u0432 \u043A\u0430\u043C\u043F\u0430\u043D\u0438\u0439")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "big num"
+  }, vR(d.rating_12m)), /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, "\u0441\u0440\u0435\u0434\u043D\u044F\u044F \u0437\u0430 \u0433\u043E\u0434")))), /*#__PURE__*/React.createElement("div", {
+    className: "srcs"
+  }, (d.cards_full || []).map(c => /*#__PURE__*/React.createElement("div", {
+    className: "src",
+    key: c.source + c.id
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, VSP_SRC[c.source] || c.source, c.format ? ` · ${VSP_FMT[c.format] || c.format}` : ""), /*#__PURE__*/React.createElement("div", {
+    className: "v num"
+  }, vR(c.declared_rating), " ", /*#__PURE__*/React.createElement("span", {
+    className: "note"
+  }, "\xB7 ", vN(c.declared_reviews), " \u043E\u0442\u0437\u044B\u0432\u043E\u0432")), /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, c.completeness === "complete" ? "история полная" : c.completeness || "—", c.oldest ? ` · с ${vD(c.oldest)}` : "", c.url ? /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 ", /*#__PURE__*/React.createElement("a", {
+    href: c.url,
+    target: "_blank",
+    rel: "noopener noreferrer"
+  }, "\u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0430")) : null)))), /*#__PURE__*/React.createElement("div", {
+    className: "sec"
+  }, /*#__PURE__*/React.createElement("h3", null, "\u0417\u0430 \u0433\u043E\u0434"), /*#__PURE__*/React.createElement("div", {
+    className: "kpis",
+    style: {
+      gridTemplateColumns: "repeat(4,minmax(0,1fr))"
+    }
+  }, [["отзывов", vN(d.n_12m)], ["пятёрок", vP(d.five_share_12m)], ["подтверждено операцией", vN(d.confirmed_12m)], ["жалоб 1–2★", vN(d.neg_12m)], ["с ответом банка", vP(d.reply_12m, 1)], ["пропали из выдачи", vN(d.gone)], ["помечены площадкой", vN(d.hidden)], ["хвалебщиков сети", vN(d.praisers)]].map(([l, v]) => /*#__PURE__*/React.createElement("div", {
+    className: "kpi",
+    key: l,
+    style: {
+      cursor: "default"
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "v num",
+    style: {
+      fontSize: 22
+    }
+  }, v), /*#__PURE__*/React.createElement("span", {
+    className: "l"
+  }, l))))), /*#__PURE__*/React.createElement("div", {
+    className: "sec tl"
+  }, /*#__PURE__*/React.createElement("h3", null, "\u0425\u0440\u043E\u043D\u043E\u043B\u043E\u0433\u0438\u044F \u043F\u043E \u043C\u0435\u0441\u044F\u0446\u0430\u043C"), /*#__PURE__*/React.createElement(VTimeline, {
+    rows: d.timeline
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "legend",
+    style: {
+      borderTop: 0,
+      padding: "4px 0 0"
+    }
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    className: "sw",
+    style: {
+      background: "var(--accent)"
+    }
+  }), "\u043D\u0435\u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043D\u043D\u044B\u0435 \u043F\u044F\u0442\u0451\u0440\u043A\u0438"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    className: "sw",
+    style: {
+      background: "var(--ink-3)"
+    }
+  }), "\u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043D\u043D\u044B\u0435"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    className: "sw",
+    style: {
+      background: "var(--ink)"
+    }
+  }), "1\u20132\u2605"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    className: "sw",
+    style: {
+      background: "var(--hair-2)"
+    }
+  }), "3\u20134\u2605"))), d.episodes_full.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "sec"
+  }, /*#__PURE__*/React.createElement("h3", null, "\u042D\u043F\u0438\u0437\u043E\u0434\u044B \u043A\u0430\u043C\u043F\u0430\u043D\u0438\u0439 \xB7 ", d.episodes_full.length), /*#__PURE__*/React.createElement("div", {
+    className: "sig-list"
+  }, d.episodes_full.map(e => /*#__PURE__*/React.createElement("button", {
+    key: e.id,
+    className: "si " + vStrengthCls(e.strength),
+    onClick: () => {
+      onClose();
+      go("signals", {
+        sig: e.id
+      });
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h"
+  }, /*#__PURE__*/React.createElement(VConf, {
+    s: e.score
+  }), /*#__PURE__*/React.createElement("span", null, e.strength), /*#__PURE__*/React.createElement("span", null, "\xB7"), /*#__PURE__*/React.createElement("span", null, vD(e.start), " \u2014 ", vD(e.end))), /*#__PURE__*/React.createElement("div", {
+    className: "m"
+  }, vN(e.n), " \u043F\u044F\u0442\u0451\u0440\u043E\u043A, \xD7", vN(Math.round(e.ratio)), " \u043A \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u044E \xB7 \u0440\u0430\u0437\u043E\u0432\u044B\u0435 \u0430\u0432\u0442\u043E\u0440\u044B ", vP(e.oneoff_share), " \xB7 \u043F\u0430\u0447\u043A\u0438 ", vP(e.series_share)))))), d.gosb_episodes.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "sec"
+  }, /*#__PURE__*/React.createElement("h3", null, "\u0412\u0441\u043F\u043B\u0435\u0441\u043A\u0438 \u0432\u043E \u0432\u0441\u0451\u043C \u0413\u041E\u0421\u0411"), /*#__PURE__*/React.createElement("ul", {
+    className: "facts"
+  }, d.gosb_episodes.map(e => /*#__PURE__*/React.createElement("li", {
+    key: e.id,
+    style: {
+      fontSize: 13.5
+    }
+  }, /*#__PURE__*/React.createElement("span", null, vD(e.start), " \u2014 ", vD(e.end), ": ", e.points, " \u0438\u0437 ", e.points_total, " \u0412\u0421\u041F, \xD7", vN(Math.round(e.ratio)), " \xB7 ", e.strength))))), (d.praisers_list.length > 0 || d.groups.length > 0) && /*#__PURE__*/React.createElement("div", {
+    className: "sec"
+  }, /*#__PURE__*/React.createElement("h3", null, "\u0421\u0432\u044F\u0437\u043A\u0438 \u0430\u0432\u0442\u043E\u0440\u043E\u0432"), /*#__PURE__*/React.createElement("ul", {
+    className: "facts"
+  }, d.praisers_list.map(a => /*#__PURE__*/React.createElement("li", {
+    key: a.author,
+    style: {
+      fontSize: 13.5
+    }
+  }, /*#__PURE__*/React.createElement("span", null, "\u0425\u0432\u0430\u043B\u0435\u0431\u0449\u0438\u043A \u0441\u0435\u0442\u0438 ", a.author, ": \u043F\u044F\u0442\u0451\u0440\u043A\u0438 ", a.points, " \u0412\u0421\u041F, \u0432\u0441\u0435\u0433\u043E ", a.n, " \u043E\u0442\u0437\u044B\u0432\u043E\u0432"))), d.groups.map(g => /*#__PURE__*/React.createElement("li", {
+    key: g.id,
+    style: {
+      fontSize: 13.5
+    }
+  }, /*#__PURE__*/React.createElement("span", null, g.kind === "ring" ? `Кольцо: ${g.n_authors} авторов, ${g.n_points} общих ВСП` : `Один текст в ${g.n_points} ВСП, ${g.n_reviews} отзывов`)))), /*#__PURE__*/React.createElement("button", {
+    className: "vmore",
+    onClick: () => {
+      onClose();
+      go("links");
+    }
+  }, "\u041E\u0442\u043A\u0440\u044B\u0442\u044C \xAB\u0421\u0432\u044F\u0437\u0438\xBB")), /*#__PURE__*/React.createElement("div", {
+    className: "sec"
+  }, /*#__PURE__*/React.createElement("h3", null, "\u041F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0435 \u043E\u0442\u0437\u044B\u0432\u044B"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gap: 8
+    }
+  }, d.recent.slice(0, 10).map(r => /*#__PURE__*/React.createElement(VRev, {
+    key: r.id,
+    r: r
+  })))), /*#__PURE__*/React.createElement("div", {
+    className: "actions"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ink",
+    onClick: () => {
+      onClose();
+      go("reviews", {
+        rq: {
+          point
+        }
+      });
+    }
+  }, "\u0412\u0441\u0435 \u043E\u0442\u0437\u044B\u0432\u044B \u0412\u0421\u041F"), /*#__PURE__*/React.createElement("a", {
+    className: "btn btn-ghost",
+    href: `/api/vsp/export/reviews.xlsx?point=${encodeURIComponent(point)}`,
+    download: true
+  }, "\u0421\u043A\u0430\u0447\u0430\u0442\u044C \u043E\u0442\u0437\u044B\u0432\u044B (Excel)")))))), document.body);
+}
+
+// ── связи ────────────────────────────────────────────────────────────────────
+function VGroupModal({
+  id,
+  onClose,
+  openPoint
+}) {
+  const [d, setD] = useState(null);
+  useEffect(() => {
+    apiFetch(`/api/vsp/groups/${id}`).then(setD).catch(() => setD({
+      err: 1
+    }));
+    const k = e => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [id]);
+  return ReactDOM.createPortal(/*#__PURE__*/React.createElement("div", {
+    className: "vsp"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "vpanel",
+    onClick: e => {
+      if (e.target === e.currentTarget) onClose();
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    role: "dialog",
+    "aria-modal": "true"
+  }, !d ? /*#__PURE__*/React.createElement(Skel, {
+    h: 200
+  }) : d.err ? /*#__PURE__*/React.createElement(ErrState, {
+    msg: "\u0413\u0440\u0443\u043F\u043F\u0430 \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u0430"
+  }) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "row"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "eyebrow"
+  }, d.kind === "ring" ? "Кольцо авторов" : "Один текст в разных ВСП"), /*#__PURE__*/React.createElement("h2", {
+    style: {
+      font: "600 20px/1.3 var(--f-serif)",
+      marginTop: 4
+    }
+  }, d.kind === "ring" ? `${d.n_authors} авторов · ${d.n_points} общих ВСП` : `${d.n_points} ВСП · ${d.reviews.length} отзывов`)), /*#__PURE__*/React.createElement("span", {
+    className: "sp"
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: onClose
+  }, "\u0417\u0430\u043A\u0440\u044B\u0442\u044C")), /*#__PURE__*/React.createElement("p", {
+    className: "note",
+    style: {
+      margin: "6px 0 12px"
+    }
+  }, d.kind === "ring" ? "Пары авторов этой группы поставили пятёрки как минимум трём одним и тем же ВСП с разницей до 30 дней. Связь по одному признаку — гипотеза, не вывод." : "Одинаковый текст (8+ слов) в отзывах о разных ВСП: сценарий кампании, если это похвала, или рассылка одной жалобы."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gap: 8
+    }
+  }, d.reviews.map(r => /*#__PURE__*/React.createElement(VRev, {
+    key: r.id,
+    r: r,
+    showPlace: true,
+    onPlace: p => {
+      onClose();
+      openPoint(p);
+    }
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "actions"
+  }, /*#__PURE__*/React.createElement("a", {
+    className: "btn btn-ghost",
+    href: `/api/vsp/export/reviews.xlsx?ids=${encodeURIComponent(d.reviews.map(r => r.id).join(","))}`,
+    download: true
+  }, "\u0421\u043A\u0430\u0447\u0430\u0442\u044C \u043E\u0442\u0437\u044B\u0432\u044B \u0433\u0440\u0443\u043F\u043F\u044B")))))), document.body);
+}
+function VspLinks({
+  openPoint
+}) {
+  const [d, setD] = useState(null);
+  const [g, setG] = useState(null);
+  const [open, setOpen] = useState(null);
+  useEffect(() => {
+    apiFetch("/api/vsp/links").then(setD).catch(() => setD({
+      err: 1
+    }));
+  }, []);
+  if (!d) return /*#__PURE__*/React.createElement(Skel, {
+    h: 400
+  });
+  if (d.err) return /*#__PURE__*/React.createElement(ErrState, {
+    msg: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u0441\u0432\u044F\u0437\u0438"
+  });
+  const places = ps => /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, ps.slice(0, 4).map(p => [p.city, vAddr(p.address) || p.name].filter(Boolean).join(", ")).join(" · "), ps.length > 4 ? ` · ещё ${ps.length - 4}` : "");
+  const praise = d.same_text.filter(t => t.praise),
+    other = d.same_text.filter(t => !t.praise);
+  return /*#__PURE__*/React.createElement("div", {
+    className: "view",
+    style: {
+      display: "grid",
+      gap: 14
+    }
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "note",
+    style: {
+      maxWidth: "80ch"
+    }
+  }, "\u0410\u0432\u0442\u043E\u0440 \u0432\u0438\u0434\u0435\u043D \u0442\u043E\u043B\u044C\u043A\u043E \u0432\u043D\u0443\u0442\u0440\u0438 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0438 \u043F\u043E \u043F\u0441\u0435\u0432\u0434\u043E\u043D\u0438\u043C\u0443 (\u0438\u043C\u0435\u043D\u0430 \u0430\u0432\u0442\u043E\u0440\u043E\u0432 \u043D\u0435 \u0445\u0440\u0430\u043D\u044F\u0442\u0441\u044F). \u041E\u0434\u0438\u043D \u0447\u0435\u043B\u043E\u0432\u0435\u043A \u0441 \u043D\u0435\u0441\u043A\u043E\u043B\u044C\u043A\u0438\u043C\u0438 \u0430\u043A\u043A\u0430\u0443\u043D\u0442\u0430\u043C\u0438 \u043E\u0442\u0441\u044E\u0434\u0430 \u043D\u0435 \u0432\u0438\u0434\u0435\u043D \u2014 \u0442\u043E\u043B\u044C\u043A\u043E \u043A\u043E\u0441\u0432\u0435\u043D\u043D\u043E, \u043F\u043E \u0441\u0435\u0440\u0438\u044F\u043C \u0438 \u0448\u0430\u0431\u043B\u043E\u043D\u0430\u043C. \u0421\u0432\u044F\u0437\u044C \u043F\u043E \u043E\u0434\u043D\u043E\u043C\u0443 \u043F\u0440\u0438\u0437\u043D\u0430\u043A\u0443 \u2014 \u0433\u0438\u043F\u043E\u0442\u0435\u0437\u0430; \u0441\u0438\u043B\u044C\u043D\u0435\u0435 \u2014 \u0441\u043E\u0447\u0435\u0442\u0430\u043D\u0438\u0435: \u0442\u0435 \u0436\u0435 \u0430\u0432\u0442\u043E\u0440\u044B + \u0442\u043E\u0442 \u0436\u0435 \u0442\u0435\u043A\u0441\u0442 + \u043E\u0434\u0438\u043D \u044D\u043F\u0438\u0437\u043E\u0434."), /*#__PURE__*/React.createElement("div", {
+    className: "vgrid2"
+  }, /*#__PURE__*/React.createElement("section", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "eyebrow"
+  }, "\u041A\u043E\u043B\u044C\u0446\u0430 \u0430\u0432\u0442\u043E\u0440\u043E\u0432 \xB7 ", d.rings.length), /*#__PURE__*/React.createElement("p", {
+    className: "note",
+    style: {
+      margin: "4px 0 10px"
+    }
+  }, "3+ \u0430\u0432\u0442\u043E\u0440\u0430, \u0443 \u043A\u0430\u0436\u0434\u043E\u0439 \u043F\u0430\u0440\u044B 3+ \u043E\u0431\u0449\u0438\u0445 \u0412\u0421\u041F \u0441 \u043F\u044F\u0442\u0451\u0440\u043A\u0430\u043C\u0438 \u0432 \u043F\u0440\u0435\u0434\u0435\u043B\u0430\u0445 30 \u0434\u043D\u0435\u0439"), d.rings.length ? d.rings.map(r => /*#__PURE__*/React.createElement("button", {
+    key: r.id,
+    className: "lk",
+    onClick: () => setG(r.id)
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "t"
+  }, r.n_authors, " \u0430\u0432\u0442\u043E\u0440\u043E\u0432 \xB7 ", r.n_points, " \u0412\u0421\u041F \xB7 ", r.n_reviews, " \u043F\u044F\u0442\u0451\u0440\u043E\u043A"), places(r.places))) : /*#__PURE__*/React.createElement("div", {
+    className: "vempty"
+  }, "\u041A\u043E\u043B\u0435\u0446 \u043D\u0435\u0442")), /*#__PURE__*/React.createElement("section", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "eyebrow"
+  }, "\u041E\u0434\u0438\u043D \u0442\u0435\u043A\u0441\u0442 \u0432 \u0440\u0430\u0437\u043D\u044B\u0445 \u0412\u0421\u041F \xB7 \u043F\u043E\u0445\u0432\u0430\u043B\u0430 ", praise.length), /*#__PURE__*/React.createElement("p", {
+    className: "note",
+    style: {
+      margin: "4px 0 10px"
+    }
+  }, "\u041E\u0434\u0438\u043D\u0430\u043A\u043E\u0432\u044B\u0435 \u043F\u044F\u0442\u0451\u0440\u043A\u0438 (8+ \u0441\u043B\u043E\u0432) \u043E \u0440\u0430\u0437\u043D\u044B\u0445 \u0412\u0421\u041F \u2014 \u043F\u0440\u0438\u0437\u043D\u0430\u043A \u0441\u0446\u0435\u043D\u0430\u0440\u0438\u044F"), praise.slice(0, 40).map(t => /*#__PURE__*/React.createElement("button", {
+    key: t.id,
+    className: "lk",
+    onClick: () => setG(t.id)
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "t"
+  }, t.n_points, " \u0412\u0421\u041F \xB7 ", t.n_reviews, " \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \xB7 \u0430\u0432\u0442\u043E\u0440\u043E\u0432 ", t.n_authors), places(t.places))), other.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "note",
+    style: {
+      marginTop: 10
+    }
+  }, "\u0415\u0449\u0451 ", other.length, " \u0433\u0440\u0443\u043F\u043F \u0441 \u0436\u0430\u043B\u043E\u0431\u0430\u043C\u0438 \u2014 \u0447\u0430\u0449\u0435 \u0440\u0430\u0441\u0441\u044B\u043B\u043A\u0430 \u043E\u0434\u043D\u043E\u0439 \u043F\u0440\u043E\u0431\u043B\u0435\u043C\u044B \u043F\u043E \u043C\u043D\u043E\u0433\u0438\u043C \u0412\u0421\u041F."))), /*#__PURE__*/React.createElement("section", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "eyebrow"
+  }, "\u0425\u0432\u0430\u043B\u0435\u0431\u0449\u0438\u043A\u0438 \u0441\u0435\u0442\u0438 \xB7 ", d.praisers.length), /*#__PURE__*/React.createElement("p", {
+    className: "note",
+    style: {
+      margin: "4px 0 10px"
+    }
+  }, "\u0422\u043E\u043B\u044C\u043A\u043E \u043F\u044F\u0442\u0451\u0440\u043A\u0438, 3+ \u0412\u0421\u041F \u0437\u0430 14 \u0434\u043D\u0435\u0439. \u0414\u043B\u044F \u0441\u0440\u0430\u0432\u043D\u0435\u043D\u0438\u044F \u043F\u043E \u0448\u043A\u0430\u043B\u0435 \u0430\u0432\u0442\u043E\u0440\u043E\u0432: ", Object.entries(d.kinds || {}).map(([k, v]) => `${k} — ${vN(v)}`).join(" · ")), /*#__PURE__*/React.createElement("div", {
+    className: "tbl-wrap"
+  }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u0410\u0432\u0442\u043E\u0440"), /*#__PURE__*/React.createElement("th", null, "\u0412\u0421\u041F"), /*#__PURE__*/React.createElement("th", null, "\u0413\u041E\u0421\u0411"), /*#__PURE__*/React.createElement("th", null, "\u041E\u0442\u0437\u044B\u0432\u043E\u0432 \u043D\u0430 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0435"), /*#__PURE__*/React.createElement("th", null, "\u041F\u0435\u0440\u0438\u043E\u0434"), /*#__PURE__*/React.createElement("th", null, "\u0413\u0434\u0435"))), /*#__PURE__*/React.createElement("tbody", null, d.praisers.slice(0, 80).map(a => /*#__PURE__*/React.createElement("tr", {
+    key: a.author,
+    className: "click",
+    onClick: () => setOpen(open === a.author ? null : a.author)
+  }, /*#__PURE__*/React.createElement("td", {
+    className: "mono"
+  }, a.author), /*#__PURE__*/React.createElement("td", {
+    className: "num"
+  }, a.points), /*#__PURE__*/React.createElement("td", {
+    className: "num"
+  }, a.gosbs), /*#__PURE__*/React.createElement("td", {
+    className: "num"
+  }, vN(a.total)), /*#__PURE__*/React.createElement("td", {
+    className: "num"
+  }, vDs(a.first), " \u2014 ", vD(a.last)), /*#__PURE__*/React.createElement("td", null, open === a.author ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gap: 4
+    }
+  }, a.places.map(p => /*#__PURE__*/React.createElement("button", {
+    key: p.point,
+    className: "vmore",
+    style: {
+      textAlign: "left"
+    },
+    onClick: e => {
+      e.stopPropagation();
+      openPoint(p.point);
+    }
+  }, [p.city, vAddr(p.address) || p.name].filter(Boolean).join(", ")))) : places(a.places)))))))), g && /*#__PURE__*/React.createElement(VGroupModal, {
+    id: g,
+    onClose: () => setG(null),
+    openPoint: openPoint
+  }));
+}
+
+// ── проводник отзывов ────────────────────────────────────────────────────────
+function VspReviews({
+  rq,
+  openPoint
+}) {
+  const [flag, setFlag] = useState(rq && rq.flag || "");
+  const [q, setQ] = useState("");
+  const [source, setSource] = useState("");
+  const [d, setD] = useState(null);
+  const [lim, setLim] = useState(50);
+  const [sel, setSel] = useState(() => new Set());
+  const [cur, setCur] = useState(null);
+  const point = rq && rq.point;
+  useEffect(() => {
+    setD(null);
+    apiFetch("/api/vsp/reviews?" + vQS({
+      point,
+      flag,
+      q,
+      source,
+      limit: lim
+    })).then(x => {
+      setD(x);
+      if (x.items[0] && !cur) setCur(x.items[0]);
+    }).catch(() => setD({
+      err: 1
+    }));
+  }, [point, flag, q, source, lim]);
+  const tog = id => setSel(s => {
+    const n = new Set(s);
+    n.has(id) ? n.delete(id) : n.add(id);
+    return n;
+  });
+  const flags = d && d.flags || {
+    episode: "в эпизоде кампании",
+    oneoff: "автор без других отзывов",
+    confirmed: "подтверждён операцией",
+    hidden: "помечен площадкой",
+    gone: "пропал из выдачи",
+    neg: "1–2★",
+    five: "5★",
+    reply: "с ответом банка",
+    names: "упомянут сотрудник"
+  };
+  const exp = "/api/vsp/export/reviews.xlsx?" + vQS({
+    point,
+    flag,
+    q,
+    source
+  });
+  return /*#__PURE__*/React.createElement("div", {
+    className: "view rx-layout"
+  }, /*#__PURE__*/React.createElement("aside", null, /*#__PURE__*/React.createElement("div", {
+    className: "facet"
+  }, /*#__PURE__*/React.createElement("h4", null, "\u041E\u0442\u0437\u044B\u0432\u044B"), /*#__PURE__*/React.createElement("button", {
+    className: "fc",
+    "aria-pressed": !flag,
+    onClick: () => setFlag("")
+  }, /*#__PURE__*/React.createElement("span", null, "\u0412\u0441\u0435")), Object.entries(flags).map(([k, l]) => /*#__PURE__*/React.createElement("button", {
+    key: k,
+    className: "fc",
+    "aria-pressed": flag === k,
+    onClick: () => setFlag(k)
+  }, /*#__PURE__*/React.createElement("span", null, l)))), /*#__PURE__*/React.createElement("div", {
+    className: "facet"
+  }, /*#__PURE__*/React.createElement("h4", null, "\u041F\u043B\u043E\u0449\u0430\u0434\u043A\u0430"), [["", "Все"], ["2gis", "2ГИС"], ["yandex", "Яндекс"]].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
+    key: k,
+    className: "fc",
+    "aria-pressed": source === k,
+    onClick: () => setSource(k)
+  }, /*#__PURE__*/React.createElement("span", null, l)))), point && /*#__PURE__*/React.createElement("div", {
+    className: "note",
+    style: {
+      padding: "0 8px"
+    }
+  }, "\u0422\u043E\u043B\u044C\u043A\u043E \u043E\u0434\u043D\u043E \u0412\u0421\u041F. ", /*#__PURE__*/React.createElement("button", {
+    className: "vmore",
+    onClick: () => openPoint(point)
+  }, "\u041F\u0440\u043E\u0444\u0438\u043B\u044C"))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gap: 10,
+      alignContent: "start"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row"
+  }, /*#__PURE__*/React.createElement(VSearch, {
+    value: q,
+    onChange: setQ,
+    placeholder: "\u0424\u0440\u0430\u0437\u0430 \u0432 \u0442\u0435\u043A\u0441\u0442\u0435"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "sp"
+  }), /*#__PURE__*/React.createElement("a", {
+    className: "btn btn-ghost",
+    href: exp,
+    download: true
+  }, "\u0421\u043A\u0430\u0447\u0430\u0442\u044C \u043F\u043E \u0444\u0438\u043B\u044C\u0442\u0440\u0443")), sel.size > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "bulk"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0412\u044B\u0431\u0440\u0430\u043D\u043E: ", sel.size), /*#__PURE__*/React.createElement("span", {
+    className: "sp"
+  }), /*#__PURE__*/React.createElement("a", {
+    className: "btn",
+    href: `/api/vsp/export/reviews.xlsx?ids=${encodeURIComponent([...sel].join(","))}`,
+    download: true
+  }, "\u0421\u043A\u0430\u0447\u0430\u0442\u044C \u0432\u044B\u0431\u0440\u0430\u043D\u043D\u044B\u0435"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => setSel(new Set())
+  }, "\u0421\u043D\u044F\u0442\u044C \u0432\u044B\u0431\u043E\u0440")), !d ? /*#__PURE__*/React.createElement(Skel, {
+    h: 400
+  }) : d.err ? /*#__PURE__*/React.createElement(ErrState, {
+    msg: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u043E\u0442\u0437\u044B\u0432\u044B"
+  }) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, vN(d.total), " \u043E\u0442\u0437\u044B\u0432\u043E\u0432", flag === "names" ? " (среди 20 000 свежих)" : ""), /*#__PURE__*/React.createElement("div", {
+    className: "rx-list"
+  }, d.items.map(r => /*#__PURE__*/React.createElement("div", {
+    key: r.id,
+    className: "rx",
+    "aria-current": cur && cur.id === r.id,
+    onClick: () => setCur(r),
+    style: {
+      cursor: "pointer"
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: sel.has(r.id),
+    onChange: () => tog(r.id),
+    onClick: e => e.stopPropagation(),
+    "aria-label": "\u0412\u044B\u0431\u0440\u0430\u0442\u044C \u043E\u0442\u0437\u044B\u0432"
+  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "rm"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "stars"
+  }, vStars(r.rating)), /*#__PURE__*/React.createElement("span", null, vD(r.date)), /*#__PURE__*/React.createElement("span", null, VSP_SRC[r.source]), r.in_episode && /*#__PURE__*/React.createElement("span", {
+    className: "flag risk"
+  }, "\u0432 \u044D\u043F\u0438\u0437\u043E\u0434\u0435"), r.author_total === 1 && /*#__PURE__*/React.createElement("span", {
+    className: "flag risk"
+  }, "\u0440\u0430\u0437\u043E\u0432\u044B\u0439 \u0430\u0432\u0442\u043E\u0440"), r.confirmed && /*#__PURE__*/React.createElement("span", {
+    className: "flag"
+  }, "\u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043D"), r.hidden && /*#__PURE__*/React.createElement("span", {
+    className: "flag scheme"
+  }, "\u043F\u043E\u043C\u0435\u0447\u0435\u043D \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u043E\u0439"), /*#__PURE__*/React.createElement("span", null, [r.place && r.place.city, r.place && vAddr(r.place.address)].filter(Boolean).join(", "))), /*#__PURE__*/React.createElement("div", {
+    className: "tx"
+  }, /*#__PURE__*/React.createElement(VMark, {
+    text: r.text || "без текста",
+    q: q
+  })))))), d.total > d.items.length && /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "center"
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: () => setLim(lim + 100)
+  }, "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0435\u0449\u0451")))), /*#__PURE__*/React.createElement("aside", {
+    className: "reader"
+  }, cur && /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      display: "grid",
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "eyebrow"
+  }, "\u041E\u0442\u0437\u044B\u0432"), /*#__PURE__*/React.createElement(VRev, {
+    r: cur,
+    q: q
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, [cur.place && cur.place.city, cur.place && vAddr(cur.place.address)].filter(Boolean).join(", ")), cur.hidden && /*#__PURE__*/React.createElement("div", {
+    className: "box",
+    style: {
+      fontSize: 13
+    }
+  }, /*#__PURE__*/React.createElement("b", null, "\u041F\u043E\u043C\u0435\u0442\u043A\u0430 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0438:"), " ", cur.hidden), /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, "\u0410\u0432\u0442\u043E\u0440 ", cur.author || "—", cur.author_total != null ? ` · всего отзывов на площадке: ${cur.author_total}` : ""), /*#__PURE__*/React.createElement("div", {
+    className: "row"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ink",
+    onClick: () => openPoint(cur.point)
+  }, "\u041F\u0440\u043E\u0444\u0438\u043B\u044C \u0412\u0421\u041F"), cur.url && /*#__PURE__*/React.createElement("a", {
+    className: "btn btn-ghost",
+    href: cur.url,
+    target: "_blank",
+    rel: "noopener noreferrer"
+  }, "\u041D\u0430 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0435")))));
+}
+
+// ── полнота данных и лаборатория ────────────────────────────────────────────
+function VspData() {
+  const [d, setD] = useState(null);
+  useEffect(() => {
+    apiFetch("/api/vsp/completeness").then(setD).catch(() => setD({
+      err: 1
+    }));
+  }, []);
+  if (!d) return /*#__PURE__*/React.createElement(Skel, {
+    h: 300
+  });
+  if (d.err) return /*#__PURE__*/React.createElement(ErrState, {
+    msg: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044C"
+  });
+  const st = d.run.stats || {};
+  const reg = d.registry || {};
+  return /*#__PURE__*/React.createElement("div", {
+    className: "view",
+    style: {
+      display: "grid",
+      gap: 18
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "kpis"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "kpi"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "v num"
+  }, vN(reg.active)), /*#__PURE__*/React.createElement("span", {
+    className: "l"
+  }, "\u0412\u0421\u041F \u0432 \u0440\u0435\u0435\u0441\u0442\u0440\u0435 \u0426\u0411"), /*#__PURE__*/React.createElement("span", {
+    className: "s"
+  }, "\u0435\u0449\u0451 \u043F\u0435\u0440\u0435\u0434\u0432\u0438\u0436\u043D\u044B\u0445 ", vN(reg.mobile), ", \u041A\u0418\u0426 ", vN(reg.cash_center), ", \u0437\u0430\u043A\u0440\u044B\u0442\u044B\u0445 ", vN(reg.closed))), /*#__PURE__*/React.createElement("div", {
+    className: "kpi"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "v num"
+  }, vN(d.branches_covered)), /*#__PURE__*/React.createElement("span", {
+    className: "l"
+  }, "\u0412\u0421\u041F \u0441 \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u043E\u0439 \u043D\u0430 \u043A\u0430\u0440\u0442\u0430\u0445"), /*#__PURE__*/React.createElement("span", {
+    className: "s"
+  }, vP(d.branches_covered / Math.max(1, reg.active || 1)), " \u0440\u0435\u0435\u0441\u0442\u0440\u0430")), Object.entries(d.cards).map(([s, c]) => /*#__PURE__*/React.createElement("div", {
+    className: "kpi",
+    key: s
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "v num"
+  }, vN(c.cards)), /*#__PURE__*/React.createElement("span", {
+    className: "l"
+  }, "\u043A\u0430\u0440\u0442\u043E\u0447\u0435\u043A ", VSP_SRC[s] || s), /*#__PURE__*/React.createElement("span", {
+    className: "s"
+  }, "\u043F\u0440\u0438\u0432\u044F\u0437\u0430\u043D\u043E \u043A \u0412\u0421\u041F ", vP(c.linked / Math.max(1, c.cards)))))), /*#__PURE__*/React.createElement("div", {
+    className: "vgrid2"
+  }, /*#__PURE__*/React.createElement("section", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "eyebrow"
+  }, "\u041E\u0442\u0437\u044B\u0432\u044B"), Object.entries(d.reviews).map(([s, r]) => /*#__PURE__*/React.createElement("div", {
+    className: "vbar-h",
+    key: s
+  }, /*#__PURE__*/React.createElement("span", null, VSP_SRC[s] || s, ": ", vN(r.reviews), " \u043E\u0442\u0437\u044B\u0432\u043E\u0432"), /*#__PURE__*/React.createElement("span", {
+    className: "note"
+  }, vD(r.oldest), " \u2014 ", vD(r.newest)))), /*#__PURE__*/React.createElement("div", {
+    className: "eyebrow",
+    style: {
+      marginTop: 14
+    }
+  }, "\u041F\u043E\u043B\u043D\u043E\u0442\u0430 \u043F\u043E \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0430\u043C"), Object.entries(d.completeness).map(([s, c]) => /*#__PURE__*/React.createElement("div", {
+    className: "vbar-h",
+    key: s
+  }, /*#__PURE__*/React.createElement("span", null, VSP_SRC[s] || s), /*#__PURE__*/React.createElement("span", {
+    className: "note"
+  }, Object.entries(c).map(([k, v]) => `${k === "complete" ? "полная" : k === "window" ? "окно" : k === "partial" ? "частичная" : k === "below_declared" ? "меньше заявленного" : k}: ${vN(v)}`).join(" · "))))), /*#__PURE__*/React.createElement("section", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "eyebrow"
+  }, "\u0420\u0430\u0441\u0447\u0451\u0442 \u0441\u0438\u0433\u043D\u0430\u043B\u043E\u0432"), /*#__PURE__*/React.createElement("div", {
+    className: "vbar-h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041F\u0440\u043E\u0433\u043E\u043D \u2116 ", d.run.id), /*#__PURE__*/React.createElement("span", {
+    className: "note"
+  }, vD(d.run.finished_at))), /*#__PURE__*/React.createElement("div", {
+    className: "vbar-h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0442\u0437\u044B\u0432\u043E\u0432 \u0432 \u0440\u0430\u0441\u0447\u0451\u0442\u0435"), /*#__PURE__*/React.createElement("span", {
+    className: "num"
+  }, vN(st.reviews))), /*#__PURE__*/React.createElement("div", {
+    className: "vbar-h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0422\u043E\u0447\u0435\u043A \u043E\u0431\u0441\u043B\u0443\u0436\u0438\u0432\u0430\u043D\u0438\u044F"), /*#__PURE__*/React.createElement("span", {
+    className: "num"
+  }, vN(st.points), " \xB7 \u043C\u0430\u043B\u043E \u0434\u0430\u043D\u043D\u044B\u0445 ", vN(st.few_points))), /*#__PURE__*/React.createElement("div", {
+    className: "vbar-h"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0411\u0430\u043B\u043B \u2260 \u043E\u0431\u044A\u0451\u043C (\u03C1, \u0433\u0434\u0435 \u0441\u0438\u0433\u043D\u0430\u043B \u043F\u0440\u0438\u043C\u0435\u043D\u0438\u043C)"), /*#__PURE__*/React.createElement("span", {
+    className: "num"
+  }, st.rho_score_vs_volume != null ? String(st.rho_score_vs_volume).replace(".", ",") : "—", " \xB7 \u043F\u043E\u0440\u043E\u0433 0,5")), /*#__PURE__*/React.createElement("p", {
+    className: "note",
+    style: {
+      marginTop: 8
+    }
+  }, "\u0415\u0441\u043B\u0438 \u0431\u0430\u043B\u043B \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u0435\u0442 \u0447\u0438\u0441\u043B\u043E \u043E\u0442\u0437\u044B\u0432\u043E\u0432, \u0441\u0438\u0433\u043D\u0430\u043B \u043F\u0440\u043E\u0441\u0442\u043E \u0432\u044B\u0431\u0438\u0440\u0430\u0435\u0442 \u043A\u0440\u0443\u043F\u043D\u044B\u0435 \u0412\u0421\u041F. \u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0430 \u2014 \u043F\u043E \u0442\u043E\u0447\u043A\u0430\u043C \u0441 30+ \u043E\u0442\u0437\u044B\u0432\u0430\u043C\u0438 \u0437\u0430 \u0433\u043E\u0434 (", vN(st.applicable_points), ")."))), /*#__PURE__*/React.createElement("section", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "eyebrow"
+  }, "\u041E\u0433\u0440\u0430\u043D\u0438\u0447\u0435\u043D\u0438\u044F"), /*#__PURE__*/React.createElement("ul", {
+    className: "facts",
+    style: {
+      marginTop: 8
+    }
+  }, d.limits.map((l, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, l)))));
+}
+const VSP_LAB = [["Похоже на кампанию отзывов", "Всплеск неподтверждённых пятёрок против доли ВСП в своём ГОСБ + разовые авторы, пачки, конец месяца, шаблоны, пометки площадки", "Метаданные", "в работе"], ["Синхронный всплеск в ГОСБ", "Волна пятёрок сразу во многих ВСП ГОСБ против сети — находка уровня управления", "Метаданные", "в работе"], ["Хвалебщики сети и кольца авторов", "Один аккаунт — пятёрки 3+ ВСП за 14 дней; группы авторов с общими ВСП", "Метаданные", "в работе"], ["Один текст в разных ВСП", "Сценарий кампании или рассылка одной жалобы", "Тексты", "в работе"], ["Жалобы тонут", "Всплеск пятёрок в 30 дней после волны единиц; на какую позицию выдачи ушла последняя жалоба", "Метаданные", "проверяю"], ["Пропажа негатива", "Жалобы исчезают из выдачи, похвала — нет (история копится с ежедневного сбора, ~60 дней)", "Ежедневный сбор", "копим данные"], ["Исправленные оценки", "Была единица — стала пятёрка", "История правок", "копим данные"], ["Возраст в тексте + продажа", "«маме 78», «пенсионерка» рядом со страховкой или инвестициями — продажи уязвимым", "Разметка", "идея"], ["Пятёрка с жалобой внутри", "«Ставлю пять, но…», «как попросила девушка» — оценку просили поставить", "Разметка", "проверяю"], ["Визит в нерабочий день", "Визит «сегодня» в день, когда ВСП закрыто по графику с сайта банка", "Часы с сайта банка", "проверяю"], ["Пятёрки в часы работы, жалобы вечером", "Похвалу пишут у стойки, жалобы — дома", "Метаданные", "проверяю"], ["Язык изнутри", "«план», «КПЭ», «нас заставляют» — голос сотрудника", "Словарь + разметка", "идея"], ["Двойник с другой оценкой", "Один текст: в 2ГИС пятёрка, на Яндексе единица", "Почти-дубли", "идея"], ["Тишина после жалобы", "Жалобы перестали появляться в 2ГИС, а на Яндексе продолжаются", "Оба источника", "идея"], ["Знали сумму на счёте", "После визита звонят мошенники и знают баланс — утечка данных (СберПервый, Private)", "Разметка", "идея"], ["Разрыв карточки СберПервого и основной", "Накрутка премиальной карточки или основной зал хуже", "Форматы", "идея"], ["«Не тот формат»", "Отзыв об услуге, которой в ВСП нет по сайту банка", "Форматы + разметка", "идея"], ["Статусы расходятся", "Сайт банка — открыт, реестр ЦБ — закрыт, карта — «временно не работает»", "Все источники", "идея"]];
+function VspLab() {
+  const cls = s => s === "в работе" ? "st-work" : s === "проверяю" || s === "копим данные" ? "st-test" : "st-idea";
+  return /*#__PURE__*/React.createElement("div", {
+    className: "view lab"
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "note",
+    style: {
+      maxWidth: "80ch"
+    }
+  }, "\u0416\u0438\u0432\u043E\u0439 \u0441\u043F\u0438\u0441\u043E\u043A \u043F\u0440\u0438\u0437\u043D\u0430\u043A\u043E\u0432: \u0438\u0434\u0435\u044F \u2192 \u043F\u0440\u043E\u0432\u0435\u0440\u044F\u044E \u043D\u0430 \u0434\u0430\u043D\u043D\u044B\u0445 \u0441\u0435\u0442\u0438 \u2192 \u0432 \u0440\u0430\u0431\u043E\u0442\u0435. \u041F\u0440\u0438\u0437\u043D\u0430\u043A \u0443\u0445\u043E\u0434\u0438\u0442 \u0432 \u0440\u0430\u0431\u043E\u0447\u0438\u0439 \u0440\u0435\u0436\u0438\u043C \u0442\u043E\u043B\u044C\u043A\u043E \u0441 \u043F\u0430\u0441\u043F\u043E\u0440\u0442\u043E\u043C \u043C\u0435\u0442\u043E\u0434\u0438\u043A\u0438 \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u043E\u0439 \u043D\u0430 \u043F\u0435\u0440\u0435\u043C\u0435\u0448\u0430\u043D\u043D\u044B\u0445 \u0434\u0430\u043D\u043D\u044B\u0445."), VSP_LAB.map(([t, p, k, s]) => /*#__PURE__*/React.createElement("div", {
+    className: "idea",
+    key: t
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "t"
+  }, t), /*#__PURE__*/React.createElement("p", null, p), /*#__PURE__*/React.createElement("div", {
+    className: "k"
+  }, "\u0414\u0430\u043D\u043D\u044B\u0435: ", k)), /*#__PURE__*/React.createElement("span", {
+    className: "st-pill " + cls(s)
+  }, s))));
+}
+function VDownload({
+  f
+}) {
+  const [open, setOpen] = useState(false);
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: "relative"
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: () => setOpen(!open),
+    "aria-expanded": open
+  }, "\u0421\u043A\u0430\u0447\u0430\u0442\u044C"), open && /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      position: "absolute",
+      right: 0,
+      top: 42,
+      zIndex: 20,
+      width: 340,
+      padding: 10,
+      display: "grid",
+      gap: 6
+    },
+    onMouseLeave: () => setOpen(false)
+  }, /*#__PURE__*/React.createElement("a", {
+    className: "dl-opt",
+    href: "/api/vsp/export/candidates.xlsx?" + vQS({
+      subject: f.subject,
+      gosb: f.gosb,
+      fmt: f.fmt
+    }),
+    download: true,
+    onClick: () => setOpen(false)
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dl-ic"
+  }, "XLSX"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u041A\u0430\u043D\u0434\u0438\u0434\u0430\u0442\u044B \u0432 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0443"), /*#__PURE__*/React.createElement("p", null, "\u0411\u0430\u043B\u043B, \u043F\u0440\u0438\u0447\u0438\u043D\u044B, \u0440\u0435\u0439\u0442\u0438\u043D\u0433 \u0441 \u044D\u043F\u0438\u0437\u043E\u0434\u0430\u043C\u0438 \u0438 \u0431\u0435\u0437; \u0432\u0442\u043E\u0440\u043E\u0439 \u043B\u0438\u0441\u0442 \u2014 \u044D\u043F\u0438\u0437\u043E\u0434\u044B \u043A\u0430\u043C\u043F\u0430\u043D\u0438\u0439"))), /*#__PURE__*/React.createElement("a", {
+    className: "dl-opt",
+    href: "/api/vsp/export/reviews.xlsx?flag=episode",
+    download: true,
+    onClick: () => setOpen(false)
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dl-ic"
+  }, "XLSX"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u041E\u0442\u0437\u044B\u0432\u044B \u0432 \u044D\u043F\u0438\u0437\u043E\u0434\u0430\u0445 \u043A\u0430\u043C\u043F\u0430\u043D\u0438\u0439"), /*#__PURE__*/React.createElement("p", null, "\u0422\u0435\u043A\u0441\u0442\u044B, \u043E\u0446\u0435\u043D\u043A\u0438, \u043F\u0440\u0438\u0437\u043D\u0430\u043A\u0438 \u2014 \u0434\u043E 5 000 \u0441\u0432\u0435\u0436\u0438\u0445")))));
+}
+function VspPage() {
+  const me = useMe();
+  const [tab, setTab] = useState("overview");
+  const [f, setFState] = useState({
+    subject: "",
+    gosb: "",
+    fmt: ""
+  });
+  const [sheet, setSheet] = useState(null);
+  const [sig, setSig] = useState(null);
+  const [rq, setRq] = useState(null);
+  const [opts, setOpts] = useState({});
+  const [ov, setOv] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => {
+    apiFetch("/api/vsp/overview").then(setOv).catch(e => setErr(String(e).includes("404") ? "Сигналы ещё не рассчитаны: первый расчёт идёт ночью после загрузки отзывов." : "Не удалось загрузить раздел."));
+  }, []);
+  if (me && !me.can_vsp) return /*#__PURE__*/React.createElement(ErrState, {
+    msg: "\u0420\u0430\u0437\u0434\u0435\u043B \u043E\u0442\u043A\u0440\u044B\u0442 \u0442\u043E\u043B\u044C\u043A\u043E \u0432\u043B\u0430\u0434\u0435\u043B\u044C\u0446\u0443 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0430."
+  });
+  const setF = x => setFState(s => ({
+    ...s,
+    ...x
+  }));
+  const go = (t, o = {}) => {
+    if (o.sig !== undefined) setSig(o.sig);
+    if (o.rq !== undefined) setRq(o.rq);
+    setOpts(o);
+    setTab(t);
+    if (t !== "reviews" && o.rq === undefined) setRq(null);
+    try {
+      window.scrollTo({
+        top: 0
+      });
+    } catch (e) {}
+  };
+  const subjName = c => {
+    const t = (ov && ov.tiles || []).find(x => x.code === c);
+    return t ? t.name : c;
+  };
+  const chips = [f.subject && ["subject", subjName(f.subject)], f.gosb && ["gosb", "ГОСБ " + f.gosb], f.fmt && ["fmt", {
+    mass: "массовые",
+    premium: "СберПервый и Private",
+    business: "для бизнеса"
+  }[f.fmt] || f.fmt]].filter(Boolean);
+  return /*#__PURE__*/React.createElement("div", {
+    className: "vsp fade-in"
+  }, /*#__PURE__*/React.createElement(PageHead, {
+    eyebrow: "\u0410\u043D\u0430\u043B\u0438\u0437 \xB7 \u0440\u0430\u0437\u0434\u0435\u043B \u0432\u0438\u0434\u0435\u043D \u0442\u043E\u043B\u044C\u043A\u043E \u0432\u0430\u043C",
+    title: "\u0410\u0443\u0434\u0438\u0442 \u0441\u0435\u0442\u0438 \u0412\u0421\u041F",
+    meta: ov ? `Расчёт ${vD(ov.run.finished_at)} · ${vN(ov.kpi.points)} точек обслуживания · отзывы 2ГИС и Яндекса` : "Отзывы о ВСП: кампании, связки авторов, кандидаты в проверку",
+    actions: /*#__PURE__*/React.createElement(VDownload, {
+      f: f
+    })
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "vtabs"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "tabs",
+    role: "tablist"
+  }, VSP_TABS.map(([id, l]) => /*#__PURE__*/React.createElement("button", {
+    key: id,
+    className: "tab",
+    role: "tab",
+    "aria-selected": tab === id,
+    onClick: () => go(id)
+  }, l)))), chips.length > 0 && tab !== "overview" && /*#__PURE__*/React.createElement("div", {
+    className: "chips",
+    style: {
+      marginBottom: 12
+    }
+  }, chips.map(([k, l]) => /*#__PURE__*/React.createElement("button", {
+    key: k,
+    className: "chip",
+    onClick: () => setF({
+      [k]: ""
+    })
+  }, l, " \u2715"))), err ? /*#__PURE__*/React.createElement(ErrState, {
+    msg: err
+  }) : !ov ? /*#__PURE__*/React.createElement(LoadingPage, null) : /*#__PURE__*/React.createElement("div", {
+    className: "vmain"
+  }, tab === "overview" && /*#__PURE__*/React.createElement(VspOverview, {
+    ov: ov,
+    go: go,
+    openPoint: setSheet,
+    f: f,
+    setF: setF
+  }), tab === "signals" && /*#__PURE__*/React.createElement(VspSignals, {
+    key: opts.level || "branch",
+    level0: opts.level,
+    go: go,
+    openPoint: setSheet,
+    f: f,
+    sig: sig,
+    setSig: setSig
+  }), tab === "branches" && /*#__PURE__*/React.createElement(VspBranches, {
+    key: opts.focus ? "f" : "a",
+    focus0: opts.focus,
+    ov: ov,
+    go: go,
+    openPoint: setSheet,
+    f: f,
+    setF: setF
+  }), tab === "links" && /*#__PURE__*/React.createElement(VspLinks, {
+    openPoint: setSheet
+  }), tab === "reviews" && /*#__PURE__*/React.createElement(VspReviews, {
+    key: rq && rq.point || "all",
+    rq: rq,
+    openPoint: setSheet
+  }), tab === "data" && /*#__PURE__*/React.createElement(VspData, null), tab === "lab" && /*#__PURE__*/React.createElement(VspLab, null)), sheet && /*#__PURE__*/React.createElement(VspProfile, {
+    key: sheet,
+    point: sheet,
+    onClose: () => setSheet(null),
+    go: go
+  }));
+}
+
 // ─── Loophole page (встраивает frontend модуля loophole) ─────────────────────
 function LoopholePage({
   record
@@ -25073,7 +27221,8 @@ const PAGES_FN = {
   banks: BanksPage,
   sources: SourcesPage,
   profile: ProfilePage,
-  pulse: PulsePage
+  pulse: PulsePage,
+  vsp: VspPage
 };
 // Номера синхронизированы с порядком в меню; итог берётся из NAV, а не хардкодом
 // Названия разделов для крошки в шапке. Номер берётся из порядка меню (navOrder),
@@ -25091,7 +27240,8 @@ const PAGE_LABELS = {
   banks: "Банки",
   sources: "Источники",
   profile: "Профиль",
-  pulse: "Пульс"
+  pulse: "Пульс",
+  vsp: "Аудит сети ВСП"
 };
 // до этой даты в меню показывается заметка о переименовании (пока её не закрыли)
 const RENAMED_UNTIL = "2026-10-15";
@@ -28323,7 +30473,10 @@ function Shell() {
   }, [page]);
 
   // номера — только у основных разделов: справочные свёрнуты и без номеров
-  const navOrder = useMemo(() => NAV.filter(n => n.group === "Анализ").map(n => n.id), []);
+  const navOrder = useMemo(() => NAV.flatMap(n => n.id === "loophole" && me && me.can_vsp ? [n, {
+    id: "vsp",
+    group: "Анализ"
+  }] : [n]).filter(n => n.group === "Анализ").map(n => n.id), [me]);
   // «Данные» свёрнуты; раскрываются по щелчку (запоминаем) и сами — когда открыт их раздел
   const [dataOpen, setDataOpen] = useState(() => {
     try {
@@ -28343,12 +30496,19 @@ function Shell() {
     return nv;
   });
   const groups = useMemo(() => {
-    const items = me && (me.is_admin || me.can_pulse) ? [...NAV, {
+    // «Аудит сети ВСП» — только тем, кому открыт (VSP_USERS; по умолчанию владелец), после «Аудита уязвимостей»
+    const base = me && me.can_vsp ? NAV.flatMap(n => n.id === "loophole" ? [n, {
+      id: "vsp",
+      label: "Аудит сети ВСП",
+      icon: Ic.grid,
+      group: "Анализ"
+    }] : [n]) : NAV;
+    const items = me && (me.is_admin || me.can_pulse) ? [...base, {
       id: "pulse",
       label: "Пульс",
       icon: Ic.spark,
       group: "Данные"
-    }] : NAV;
+    }] : base;
     const g = {};
     items.forEach(n => {
       (g[n.group] = g[n.group] || []).push(n);
