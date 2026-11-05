@@ -11435,8 +11435,492 @@ function PuInboxSec(){ return <PuEmpty>Раздел в работе</PuEmpty>; }
 // новые функции раздела пишутся внутри его маркеров, не здесь.
 
 // ⟦pu2:systems⟧ начало — раздел «Системы»; правит только агент раздела
-const PU2_CSS_SYSTEMS=``;
-function PuSystemsSec(){ return <PuEmpty>Раздел в работе</PuEmpty>; }
+// Восемь служб строками (точка, состояние, лента 14 дней, ключевая цифра) — подробности
+// по раскрытию несут всё из прежних вкладок «Данные» и «Техника»; ниже — скорость
+// ответов сервера и плашка «Турбулентность» (только владельцу).
+const PU2_CSS_SYSTEMS=`
+.pu2-sy-row{border-top:1px solid var(--hair)}
+.pu2-ch+.pu2-sy-row{border-top:0}
+.pu2-sy-hd{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(110px,170px) 16px;gap:20px;align-items:center;width:100%;
+  text-align:left;padding:14px 20px;border:0;background:none;font:inherit;color:inherit;cursor:pointer;
+  transition:background-color var(--dur-quick) var(--ease-out)}
+.pu2-sy-hd:hover{background:var(--paper-2)}
+.pu2 .pu2-sy-hd:focus-visible{outline:2px solid var(--select);outline-offset:-2px}
+.pu2-sy-n{display:flex;align-items:center;gap:10px;min-width:0}
+.pu2-sy-n>span:last-child{min-width:0}
+.pu2-sy-n b{display:block;font-weight:500;font-size:14px}
+.pu2-sy-n small{display:block;font-size:12.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pu2-sy-k{font-size:13px;color:var(--ink-2);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pu2-sy-chev{color:var(--ink-4);transition:transform var(--dur-base) var(--ease-spring)}
+.pu2-sy-row.on .pu2-sy-chev{transform:rotate(90deg)}
+.pu2-sy-det{padding:2px 20px 20px 37px;min-width:0}
+.pu2-sy-ribm{display:none}
+.pu2-sy-kv{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:12px}
+.pu2-sy-kv>div{background:var(--paper);border:1px solid var(--hair);border-radius:8px;padding:10px 12px;min-width:0}
+.pu2-sy-kv b{display:block;font-size:17px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pu2-sy-kv span{display:block;font-size:12px;color:var(--ink-3)}
+.pu2-sy-kv b.warn,.pu2-tbl td.pu2-sy-w{color:var(--warn-ink)}
+.pu2-sy-kv b.neg,.pu2-tbl td.pu2-sy-b{color:var(--accent-ink)}
+.pu2-sy-secs{display:flex;gap:8px;flex-wrap:wrap}
+.pu2-sy-secs .pu2-badge{height:auto;min-height:26px;padding:4px 10px;font-size:12.5px;white-space:normal;line-height:1.3}
+.pu2-sy-err{display:grid;grid-template-columns:104px 64px minmax(0,1fr) auto;gap:12px;padding:9px 0;border-top:1px solid var(--hair);
+  font-size:13px;align-items:baseline}
+.pu2-sy-err:first-child,.pu2-sy-kv+.pu2-sy-err{border-top:0}
+.pu2-sy-err time{color:var(--ink-3);font-variant-numeric:tabular-nums;font-size:12.5px}
+.pu2-sy-err .k{color:var(--ink-3);font-size:12.5px}
+.pu2-sy-err .m{overflow-wrap:anywhere;min-width:0}
+.pu2-sy-err .x{font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.pu2-sy-rs{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.pu2-sy-rs .pu2-badge b{font-weight:600}
+.pu2-sy-be{padding:10px 0;border-top:1px solid var(--hair)}
+.pu2-sy-be:first-child{border-top:0}
+.pu2-sy-be-h{display:flex;justify-content:space-between;gap:4px 16px;flex-wrap:wrap;font-size:13px}
+.pu2-sy-be-h b{font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap}
+.pu2-sy-li{display:flex;align-items:baseline;gap:12px;padding:6px 0;font-size:13px;border-top:1px solid var(--hair);min-width:0}
+.pu2-sy-li:first-child{border-top:0}
+.pu2-sy-li .x{color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap;min-width:32px}
+.pu2-sy-li .m{color:var(--ink-2);overflow-wrap:anywhere;min-width:0;flex:1 1 auto}
+.pu2-sy-li a.m{text-decoration:none}.pu2-sy-li a.m:hover{text-decoration:underline;color:var(--ink)}
+.pu2-sy-li .r{margin-left:auto;color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap}
+.pu2-sy-tb{display:flex;gap:12px;align-items:flex-start}
+.pu2-sy-tb>div{min-width:0}
+.pu2-sy-tb b{font-weight:500}
+.pu2-sy-qic{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:var(--paper-2);color:var(--ink-2);flex:none}
+.pu2-sy-tb.on .pu2-sy-qic{background:color-mix(in oklab,var(--warn),transparent 86%);color:var(--warn-ink)}
+.pu2-sy-btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+.pu2-sy-e{display:block;font-size:12.5px;color:var(--accent-ink);margin-top:8px}
+.pu2-sy-det .pu2-tbl td:not(.pu2-l),#pu2-latency .pu2-tbl td,.pu2-sy-nw{white-space:nowrap}
+@media (max-width:1080px){.pu2-sy-hd{grid-template-columns:minmax(0,1fr) auto 16px}.pu2-sy-k{display:none}}
+@media (max-width:760px){
+  .pu2-sy-hd{grid-template-columns:minmax(0,1fr) 16px;padding:14px 16px}
+  .pu2-sy-hd .pu2-rib{display:none}
+  .pu2-sy-det{padding:0 16px 18px}
+  .pu2-sy-ribm{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--ink-3);margin-bottom:12px}
+  .pu2-sy-kv{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .pu2-sy-err{grid-template-columns:minmax(0,1fr) auto}
+  .pu2-sy-err .k{display:none}.pu2-sy-err time{grid-column:1/-1}
+}
+@media (prefers-reduced-motion:reduce){.pu2-sy-hd,.pu2-sy-chev{transition:none}}
+`;
+const puSyMs=(ms)=>ms==null||isNaN(+ms)?"—":+ms<1000?`${Math.round(+ms)} мс`:`${puDec(+ms/1000,1)} с`;
+const puSyErrText=(e)=>e.msg==="Script error."?"ошибка во внешнем скрипте — браузер не раскрывает текст":(e.msg||"");
+const puSyPage=(p)=>AD_PAGE_RU[p]||String(p||"—").replace(/^\/api\//,"");
+// «05.11 09:41» из журнала ошибок → «сегодня 09:41» / «вчера 14:22» / «31 октября 12:40»
+function puSyTs(ts){
+  const s=String(ts||""), dd=s.slice(0,5), tm=s.slice(6);
+  if(dd===ddmm(mskToday())) return "сегодня "+tm;
+  if(dd===ddmm(puDayKey(new Date(Date.now()-864e5)))) return "вчера "+tm;
+  const d=+s.slice(0,2), mo=+s.slice(3,5);
+  return mo>=1&&mo<=12?`${d} ${PU_MON_GEN[mo-1]} ${tm}`:s;
+}
+const puSyTok=(n)=>n>=1e6?`${puDec(n/1e6,2)} млн`:puNum(n);
+// Строка службы: {s — состояние одной фразой, k — ключевая цифра, kt — подсказка к ней}
+function puSyInfo(m,key){
+  const days=m.days||14, dn=(n)=>plural(n,"день","дня","дней");
+  if(key==="server"){
+    if(!m.today) return {s:"нет данных"};
+    const t=m.today, last=(m.errors_recent||[])[0], lat=m.latency||[];
+    const slow=lat.length?[...lat].sort((a,b)=>(+b.p95||0)-(+a.p95||0))[0]:null;
+    const k=slow?{k:`p95 — ${puSyMs(slow.p95)}`,kt:`Самый медленный адрес за 7 дней: ${puSyPage(slow.path)}`}:{};
+    if(t.errors>0) return {...k,s:`${puNum(t.errors)} ${plural(t.errors,"ошибка","ошибки","ошибок")} сегодня`
+      +(last&&String(last.ts||"").slice(0,5)===ddmm(mskToday())?`, последняя — в ${String(last.ts).slice(6)}`:"")};
+    return {...k,s:"Ошибок сегодня нет"};
+  }
+  if(key==="digest"){
+    const dg=Array.isArray(m.digest)?m.digest:[];
+    if(!dg.length) return {s:"Выпуск ещё не собирался"};
+    const d0=dg[0].d, fl=dg.filter(x=>x.status&&x.status!=="ok");
+    const at=dg.map(x=>x.at).filter(Boolean).sort().pop();
+    const k=d0===mskToday()?(at?`готов в ${at}`:"сегодня"):`за ${puDay(d0)}`;
+    if(d0&&d0<mskToday()&&mskHour()>=8) return {k,s:`Сегодняшнего выпуска нет, последний — за ${puDay(d0)}`};
+    if(fl.length) return {k,s:`${dg.length-fl.length} из ${dg.length} ${plural(dg.length,"раздела","разделов","разделов")}: `
+      +`${fl.map(x=>`«${puCap(DG_SECTION_RU[x.section]||x.section)}»`).join(", ")} не ${fl.length===1?"собрался":"собрались"}`};
+    return {k,s:`Все ${dg.length} ${plural(dg.length,"раздел","раздела","разделов")} собраны`};
+  }
+  if(key==="reviews"){
+    const r=m.review_sources; if(!r) return {s:"нет данных"};
+    if(r.error) return {s:"Сводка по площадкам не посчиталась"};
+    const src=r.sources||[], on=src.filter(x=>x.status!=="выключен"), ok=on.filter(x=>x.status==="норма");
+    const k=on.length?`${ok.length} из ${on.length} в норме`:null;
+    const dn0=src.find(x=>x.status==="встал"||x.status==="просел");
+    if(dn0) return {k,s:`${dn0.label}: ${puNum(dn0.week)} ${plural(+dn0.week||0,"отзыв","отзыва","отзывов")} при норме ${puNum(dn0.norm)}`};
+    const sg=src.find(x=>x.status==="всплеск"&&x.norm>0);
+    if(sg) return {k,s:`${sg.label}: всплеск, в ${Math.round(sg.week/sg.norm)} раза больше нормы`};
+    const wk=on.reduce((a,x)=>a+(+x.week||0),0);
+    return {k,s:on.length?`${puNum(wk)} ${plural(wk,"отзыв","отзыва","отзывов")} за неделю, все площадки в норме`:"Площадки не подключены"};
+  }
+  if(key==="news"){
+    const q=m.news_quality; if(!q) return {s:"нет данных"};
+    const st=q.stream||{}, er=(st.sources||[]).filter(x=>x.last_error), hd=q.today&&q.today.head;
+    const k=hd!=null?`заголовок дня — ${hd} из 5`:st.relevant_24h!=null?`${puNum(st.relevant_24h)} про розницу`:null;
+    if(er.length) return {k,s:er.length===1?`Лента «${er[0].label||er[0].source}» не загружается`
+      :`${er.length} ${plural(er.length,"лента","ленты","лент")} не загружаются`};
+    if(st.items_24h==null) return {k,s:"Поток за сутки не посчитан"};
+    return {k,s:`${puNum(st.items_24h)} ${plural(st.items_24h,"материал","материала","материалов")} за сутки, `
+      +`${puNum(st.strong_24h)} ${plural(+st.strong_24h||0,"сильный","сильных","сильных")}`};
+  }
+  if(key==="slices"){
+    const rp=m.reviews_pipeline; if(!rp) return {s:"нет данных"};
+    const sc=(m.slice_canary||[])[0];
+    const k=sc&&sc.run_at?`канарейка — ${puDay(sc.run_at)}`
+      :rp.canary_age_days!=null?`канарейка — ${Math.floor(rp.canary_age_days)} ${dn(Math.floor(rp.canary_age_days))} назад`:null;
+    const p=+rp.pending_old||0, nr=rp.slices_not_ready||[];
+    if(p>50) return {k,s:`Отстаёт: ${puNum(p)} ${plural(p,"жалоба ждёт","жалобы ждут","жалоб ждут")} дольше 6 часов`};
+    if(sc&&sc.alert) return {k,s:`Канарейка ${puDay(sc.run_at)} подняла тревогу`};
+    if(nr.length) return {k,s:`На доразметке: ${nr.map(x=>x.label).join(", ")}`};
+    if(p>0) return {k,s:`${puNum(p)} ${plural(p,"жалоба ждёт","жалобы ждут","жалоб ждут")} дольше 6 часов`};
+    return {k,s:"Разметка успевает за потоком"};
+  }
+  if(key==="rsearch"){
+    const r=m.reviews_search; if(!r) return {s:"нет данных"};
+    if(r.error) return {s:"Журнал поиска недоступен"};
+    if(!r.n) return {s:`Поиском не пользовались за ${days} ${dn(days)}`};
+    const f=+r.failed||0;
+    return {k:`${puNum(r.n)} ${plural(r.n,"запрос","запроса","запросов")}`,
+      s:`медиана ${puSyMs(r.p50)}, ${f?`${puNum(f)} ${plural(f,"сбой","сбоя","сбоев")}`:"без сбоев"} за ${days} ${dn(days)}`};
+  }
+  if(key==="web"){
+    const s=m.search; if(!s) return {s:"нет данных"};
+    const gw=s.gateway||{}, rows=s.backends||[];
+    const fl=rows.find(x=>x.kind==="web_search_chain"&&x.backend==="fleet");
+    const k=fl&&fl.total?`запасной выручил ${puNum(fl.total)} ${plural(fl.total,"раз","раза","раз")}`:null;
+    if(gw.breaker_open) return {k,s:"Шлюз отключён — поиск идёт через запасной канал"};
+    if(!gw.enabled) return {k,s:rows.length?"Шлюз не настроен — работает запасной поиск":"Поиск ещё не вызывали"};
+    return {k,s:gw.primary==="fleet"?"Основной — запасной поиск fleet":"Яндекс через шлюз отвечает"};
+  }
+  if(key==="ingest"){
+    const q=(m.ingest||{}).queue||{}, c=m.collect||{};
+    if(!Object.keys(q).length) return {s:"нет данных"};
+    const k=c.hard?`${puNum(c.hard)} ${plural(c.hard,"сбой","сбоя","сбоев")} сбора`:q.done!=null?`${puNum(q.done)} обработано`:null;
+    if(q.workers===0) return {k,s:"Воркеры не запущены — документы не попадают в базу"};
+    if(q.dropped>0) return {k,s:`Очередь переполнялась: ${puNum(q.dropped)} отброшено`};
+    return {k,s:(q.workers!=null?`${q.workers} ${plural(q.workers,"воркер","воркера","воркеров")}, `:"")
+      +(q.depth?`в очереди ${puNum(q.depth)}`:"очередь пуста")};
+  }
+  return {s:""};
+}
+
+function PuSyServer({m}){
+  const[all,setAll]=useState(false);
+  const t=m.today||{}, errs=m.errors_recent||[], lat=m.latency||[];
+  const tot=m.errors_total!=null?m.errors_total:errs.reduce((a,e)=>a+(+e.n||1),0);
+  const reqs=lat.reduce((a,x)=>a+(+x.n||0),0);
+  const slow=lat.length?[...lat].sort((a,b)=>(+b.p95||0)-(+a.p95||0))[0]:null;
+  const e0=+t.errors||0;
+  return <>
+    <div className="pu2-sy-kv">
+      <div><b className={e0>=10?"neg":e0?"warn":""}>{puNum(e0)}</b><span>{plural(e0,"ошибка","ошибки","ошибок")} сегодня</span></div>
+      <div><b>{puNum(tot)}</b><span>за {m.days} {plural(m.days||0,"день","дня","дней")}</span></div>
+      <div><b>{puNum(reqs)}</b><span>запросов за 7 дней</span></div>
+      <div data-tip={slow?`Самый медленный адрес: ${puSyPage(slow.path)}`:undefined}>
+        <b className={slow&&slow.p95>3000?"warn":""}>{slow?puSyMs(slow.p95):"—"}</b><span>самый медленный, p95</span></div>
+    </div>
+    {errs.length===0?<PuEmpty>За период ни одной ошибки.</PuEmpty>
+      :(all?errs:errs.slice(0,12)).map((e,i)=>{ const tx=puSyErrText(e);
+        return <div key={i} className="pu2-sy-err">
+          <time>{puSyTs(e.ts)}</time><span className="k">{e.kind==="client_error"?"браузер":"сервер"}</span>
+          <span className="m" data-tip={e.msg||undefined}>{puSyPage(e.page)}{e.status?" · "+e.status:""}{tx?" · "+tx:""}</span>
+          <span className="x" data-tip={`${puNum(e.n||1)} ${plural(+e.n||1,"раз","раза","раз")}, у ${puNum(e.users||0)} ${plural(+e.users||0,"человека","человек","человек")}`}>
+            ×{puNum(e.n||1)}{+e.users>0?` · ${puNum(e.users)} чел.`:""}</span>
+        </div>; })}
+    {errs.length>12&&<button type="button" className="pu2-lnk" style={{marginTop:8}} onClick={()=>setAll(x=>!x)}>
+      {all?"Свернуть":`Показать все · ${errs.length}`}</button>}
+  </>;
+}
+function PuSyDigest({m}){
+  const dg=Array.isArray(m.digest)?m.digest:[];
+  const tok=(m.tokens||[]).reduce((a,x)=>a+(+x.tin||0)+(+x.tout||0),0);
+  const hd=m.news_quality&&m.news_quality.today&&m.news_quality.today.head;
+  if(!dg.length) return <PuEmpty>Выпуск ещё не собирался.</PuEmpty>;
+  return <>
+    <div className="pu2-sy-secs">{dg.map(s=>{ const ok=s.status==="ok", bad=s.status==="failed";
+      return <PuBadge key={s.section} lv={ok?"ok":bad?"bad":"warn"}
+          tip={[s.error,s.gen_ms?`собран за ${puDec(s.gen_ms/1000,1)} с`:""].filter(Boolean).join(" · ")||undefined}>
+        <PuIcon n={ok?"check":bad?"stop":"alert"}/>
+        {puCap(DG_SECTION_RU[s.section]||s.section)}{s.at?` · ${s.at}`:""}{!ok?` · ${s.error||s.status}`:""}</PuBadge>; })}</div>
+    <p className="pu2-note">
+      {dg[0].d?`Выпуск за ${puDay(dg[0].d)}. `:""}
+      <span data-tip="Расход ИИ-помощника нигде не пишется — здесь только выпуск">Токены выпуска за {m.days} {plural(m.days||0,"день","дня","дней")} — {puSyTok(tok)}.</span>
+      {hd!=null?` Заголовок дня по оценке судьи — ${hd} из 5.`:""}</p>
+  </>;
+}
+function PuSyReviews({m}){
+  const r=m.review_sources||{}, src=r.sources||[];
+  if(r.error) return <PuLoadErr>{`Сводка по площадкам не посчиталась: ${r.error}`}</PuLoadErr>;
+  if(!src.length) return <PuEmpty>Площадки не подключены.</PuEmpty>;
+  const lv=(st)=>st==="встал"||st==="просел"?"bad":st==="норма"?"ok":st==="всплеск"?"warn":"";
+  const gone=r.gone_banks||[], unk=gone.filter(g=>!g.known), kn=gone.filter(g=>g.known);
+  return <>
+    {r.week_end&&<p className="pu2-note" style={{margin:"0 0 6px"}}>Неделя по {puDay(r.week_end)}.</p>}
+    <div className="pu2-tw"><table className="pu2-tbl">
+      <thead><tr><th className="pu2-l">Площадка</th><th>За 7 дней</th><th>Норма</th><th className="pu2-l">Состояние</th>
+        <th className="pu2-l">Последний сбор</th><th className="pu2-l">Свежий отзыв</th></tr></thead>
+      <tbody>{src.map(x=>{ const off=x.status==="выключен", fail=x.last_run_status==="failed";
+        return <tr key={x.source} className={off?"pu2-dim":undefined}>
+          <td className="pu2-l">{lv(x.status)==="bad"?<b style={{fontWeight:600}}>{x.label}</b>:x.label}</td>
+          <td>{puNum(x.week)}</td><td>{puNum(x.norm)}</td>
+          <td className="pu2-l"><PuBadge lv={lv(x.status)||undefined}
+              tip={x.status==="всплеск"?"Неделя больше трёх норм: наплыв жалоб или догрузка после починки сборщика"
+                :off?"Выключен в настройках сбора; собранное раньше остаётся в индексе":undefined}>
+            {x.status}{x.status==="всплеск"&&x.norm>0?` ×${Math.round(x.week/x.norm)}`:""}</PuBadge></td>
+          <td className={"pu2-l"+(fail?" pu2-sy-b":"")} data-tip={x.last_error||undefined}>
+            {x.external?"внешний корпус":x.last_run?puAgo(x.last_run):"—"}{fail?" · ошибка":""}</td>
+          <td className="pu2-l">{x.last_item?puAgo(x.last_item):"—"}</td>
+        </tr>; })}</tbody></table></div>
+    {/* правило — от собственного потока банка: за дни тишины при его норме ждали бы ≥10 жалоб;
+        известные слияния — пояснением, не тревогой */}
+    {unk.length>0&&<p className="pu2-note">Пропали из корпуса (при их потоке за дни тишины ждали бы 10 и больше жалоб):{" "}
+      {unk.map(g=>`${g.bank} (около ${g.per_month} в месяц, последняя — ${puDay(g.last)}`
+        +(g.silent_days!=null?`, тишина ${g.silent_days} ${plural(g.silent_days,"день","дня","дней")}`:"")
+        +((g.rename_candidates||[]).length?`; возможно, переименован в ${g.rename_candidates.join(" или ")}`:"")+")").join(", ")}.</p>}
+    {kn.length>0&&<p className="pu2-note">Ушли с площадки по известной причине: {kn.map(g=>`${g.bank} — ${g.known}`).join("; ")}.</p>}
+  </>;
+}
+function PuSyNews({m}){
+  const q=m.news_quality||{}, st=q.stream, s=q.series||[], days=m.days||14;
+  const nClicks=(q.clicks||[]).reduce((a,c)=>a+(+c.n||0),0), td=q.today||{};
+  const er=((st||{}).sources||[]).filter(x=>x.last_error);
+  const pct=(r)=>r&&r.n_items?Math.round(100*r.junk/r.n_items):null;
+  return <>
+    {st&&<div className="pu2-sy-kv">
+      <div><b>{puNum(st.items_24h)}</b><span>материалов за сутки</span></div>
+      <div><b>{puNum(st.relevant_24h)}</b><span>про розницу</span></div>
+      <div><b>{puNum(st.strong_24h)}</b><span>сильных поводов, от 7</span></div>
+      <div><b className={td.head!=null&&td.head<4?"warn":""}>{td.head!=null?`${td.head} из 5`:"—"}</b><span>заголовок дня, судья</span></div>
+    </div>}
+    {er.map((x,i)=><div key={i} className="pu2-sy-li"><span className="x pu2-neg">{x.label||x.source}</span>
+      <span className="m">{x.last_error}</span></div>)}
+    <p className="pu2-note">Рубрика судьи — «повод для проверки аудитора розницы»: фон — ставки, тарифы, макро; пропущено —
+      сильные поводы из потока, не попавшие в выпуск.
+      {q.cards&&(q.cards.useful||q.cards.noise)?` Аудиторы отметили: полезно — ${puNum(q.cards.useful)}, не по делу — ${puNum(q.cards.noise)}.`:""}</p>
+    <h3 className="pu2-subh">Выпуск: независимый судья</h3>
+    {s.length===0?<PuEmpty>Судья ещё не оценил ни одного выпуска (первый прогон — в 08:00 МСК).</PuEmpty>
+      :<div className="pu2-tw"><table className="pu2-tbl">
+        <thead><tr><th className="pu2-l">Дата</th><th>Заголовок</th><th>Новостей</th><th>Сильных</th><th>Фон</th><th>Мусор</th><th>Пропущено</th></tr></thead>
+        <tbody>{s.slice(-10).reverse().map((r,i)=><tr key={i}>
+          <td className="pu2-l">{puDay(r.d)}</td><td>{r.head!=null?`${r.head} из 5`:"—"}</td><td>{puNum(r.n_items)}</td>
+          <td>{r.strong??"—"}</td><td>{r.borderline??"—"}</td>
+          <td className={r.junk>0?"pu2-sy-w":undefined}>{puNum(r.junk)}{r.n_items?` (${pct(r)}%)`:""}</td>
+          <td className={r.missed>0?"pu2-sy-w":undefined}>{r.missed??"—"}</td>
+        </tr>)}</tbody></table></div>}
+    {st&&(st.yield_14d||[]).length>0&&<>
+      <h3 className="pu2-subh" data-tip="Сильные — материалы событий с ценностью от 7; слабые источники исключаются по этим цифрам">
+        Отдача источников · 14 дней</h3>
+      <div className="pu2-tw"><table className="pu2-tbl">
+        <thead><tr><th className="pu2-l">Источник</th><th>Собрано</th><th>Про розницу</th><th>Сильных</th><th>В выпуске</th></tr></thead>
+        <tbody>{st.yield_14d.map((r,i)=>{ const weak=r.items>=20&&!r.strong;
+          return <tr key={i}>
+            <td className="pu2-l" data-tip={r.source||undefined}>{r.label||r.source}</td><td>{puNum(r.items)}</td><td>{puNum(r.relevant)}</td>
+            <td className={weak?"pu2-sy-w":undefined} data-tip={weak?"Больше 20 материалов и ни одного сильного: кандидат на исключение":undefined}
+              tabIndex={weak?0:undefined}>{puNum(r.strong)}</td><td>{puNum(r.published)}</td></tr>; })}</tbody></table></div></>}
+    <h3 className="pu2-subh">Что открывали чаще · {days} {plural(days,"день","дня","дней")}
+      <span className="pu2-muted" style={{fontWeight:400}}> · {puNum(nClicks)} {plural(nClicks,"клик","клика","кликов")}</span></h3>
+    {(q.top_clicked||[]).length===0?<PuEmpty>Кликов ещё нет — трекинг включён с 5 августа.</PuEmpty>
+      :<div>{q.top_clicked.map((r,i)=><div key={i} className="pu2-sy-li"><span className="x">{puNum(r.n)}×</span>
+        <a className="m" href={r.url} target="_blank" rel="noopener noreferrer" data-tip={r.url||undefined}>
+          {r.title||(r.url||"").replace(/^https?:\/\/(www\.)?/,"").slice(0,70)}</a></div>)}</div>}
+  </>;
+}
+function PuSySlices({m}){
+  const {d,err,loading,reload}=usePuData("/api/admin/pulse/slices",{ttl:120000});
+  const rp=m.reviews_pipeline||{}, j=m.signal_journal;
+  const pc=v=>v==null?"—":puDec(v,2);
+  const ago=(h)=>h==null?"—":h<1?"меньше часа":`${Math.round(h)} ч назад`;
+  const keys=(d&&d.keys)||[];
+  const sp=d?Object.entries(d.spend||{}).map(([k,v])=>`${k}: ${puNum(v.rows)} ${plural(+v.rows||0,"жалоба","жалобы","жалоб")}, ${puRub(v.rub)}`).join(" · "):"";
+  return <>
+    {m.reviews_pipeline&&<div className="pu2-sy-kv">
+      <div><b className={rp.pending_old>50?"neg":""}>{puNum(rp.pending_old)}</b><span>ждут разметки дольше 6 ч</span></div>
+      <div><b className={rp.dedup_age_h>30?"warn":""}>{ago(rp.dedup_age_h)}</b><span>склейка копий отзывов</span></div>
+      <div><b className={rp.stories_age_h>50?"warn":""}>{ago(rp.stories_age_h)}</b><span>пересчёт «Сюжетов»</span></div>
+      <div><b>{puNum(rp.flags_open)}</b><span>отметок «не относится»</span></div>
+    </div>}
+    <h3 className="pu2-subh">Срезы «Аудита отзывов»{keys.some(k=>!k.ready)?<span className="pu2-muted" style={{fontWeight:400}}> · разметка догоняет</span>:null}</h3>
+    {err&&err.status===403?<PuEmpty>Срезы видит команда «Аудита отзывов».</PuEmpty>
+      :err&&!d?<PuLoadErr onRetry={reload}>Не удалось загрузить срезы.</PuLoadErr>
+      :loading?<Skel h={90}/>
+      :!keys.length?<PuEmpty>Срезов пока нет.</PuEmpty>
+      :<>
+        <div className="pu2-tw"><table className="pu2-tbl">
+          <thead><tr><th className="pu2-l">Срез</th><th className="pu2-l">Версия</th><th>Размечено кандидатов</th>
+            <th data-tip="На эталоне">Точность / полнота</th><th>Было (s6)</th><th>«Не относится»</th></tr></thead>
+          <tbody>{keys.map(k=><tr key={k.key}>
+            <td className="pu2-l" data-tip={k.note||undefined}>{k.label}</td>
+            <td className="pu2-l pu2-sy-nw">{k.schema}{k.switched_at?<span className="pu2-muted"> · с {puDay(k.switched_at)}</span>:null}</td>
+            <td><PuBadge lv={k.ready?"ok":"warn"}>{k.share!=null?Math.round(k.share*100)+"%":"—"}{k.ready?"":" · доразметка"}</PuBadge>
+              <span className="pu2-muted"> {puNum(k.tagged)} из {puNum(k.candidates)}</span></td>
+            <td>{k.gold?`${pc(k.gold.precision)} / ${pc(k.gold.recall)}`:"—"}</td>
+            <td>{k.gold&&k.gold.precision_s6!=null?pc(k.gold.precision_s6):"—"}</td>
+            <td>{k.open_flags?puNum(k.open_flags):<span className="pu2-muted">—</span>}</td>
+          </tr>)}</tbody></table></div>
+        <p className="pu2-note">Эталон 4 ноября: 260 жалоб, два слепых разметчика и арбитр. Траты разметки: {sp||"—"}.
+          {d.sieve?` Сито по смыслу (жалобы без ключевых слов): просеяно ${puNum(d.sieve.sieved)}, отмечено ${puNum(d.sieve.flagged)}, ${puRub(d.sieve.rub)}.`:""}</p>
+        {/* канарейка: раз в неделю тот же каскад на постоянной выборке эталона, без записи
+            разметки — смену модели в облаке видно за неделю */}
+        {(d.canary||[]).length>0&&<>
+          <h3 className="pu2-subh">Канарейка · точность / полнота</h3>
+          <div className="pu2-tw"><table className="pu2-tbl">
+            <thead><tr><th className="pu2-l">Прогон</th>{keys.map(k=><th key={k.key}>{k.label}</th>)}<th>Траты</th></tr></thead>
+            <tbody>{d.canary.map(r=><tr key={r.run_at}>
+              <td className="pu2-l" data-tip={r.note||undefined}>{puDay(r.run_at)}{r.alert?<> <PuBadge lv="bad" tip={(r.reasons||[]).join("; ")||undefined}>тревога</PuBadge></>:null}</td>
+              {keys.map(k=>{const x=(r.metrics||{})[k.key]; return <td key={k.key}>{x?`${pc(x.precision)} / ${pc(x.recall)}`:"—"}</td>;})}
+              <td>{puRub(r.rub||0)}</td></tr>)}</tbody></table></div></>}
+      </>}
+    {j&&!j.error&&<>
+      <h3 className="pu2-subh">Точность сигналов радара · {j.days} {plural(j.days||0,"день","дня","дней")}
+        {j.precision!=null&&<> <PuBadge lv={j.precision>=70?"ok":j.precision<50?"bad":"warn"}>{j.precision}% подтвердились</PuBadge></>}</h3>
+      <p className="pu2-note" style={{marginTop:0}}>Эпизод — всплеск жалоб, записанный радаром вместе со снимком жалоб. Аудиторы отмечают
+        в журнале сигналов, подтвердился ли он при проверке. Эпизодов {puNum(j.episodes)}, отмечено {puNum(j.rated)}
+        {j.rated?` (подтвердились ${puNum(j.confirmed)}, ложных ${puNum(j["false"])})`:""}.</p>
+      {(j.by_bank||[]).length>0&&<div className="pu2-tw"><table className="pu2-tbl">
+        <thead><tr><th className="pu2-l">Банк</th><th>Эпизодов</th><th>Отмечено</th><th>Подтвердились</th></tr></thead>
+        <tbody>{j.by_bank.map(b=><tr key={b.bank}><td className="pu2-l">{b.bank}</td><td>{puNum(b.episodes)}</td><td>{puNum(b.rated)}</td>
+          <td>{b.precision!=null?b.precision+"%":"—"}</td></tr>)}</tbody></table></div>}</>}
+  </>;
+}
+function PuSyRsearch({m}){
+  const r=m.reviews_search||{};
+  if(r.error) return <PuLoadErr>{`Журнал поиска недоступен: ${r.error}`}</PuLoadErr>;
+  if(!r.n) return <PuEmpty>За период поиском по жалобам не пользовались.</PuEmpty>;
+  const pct=v=>r.n?Math.round(100*(v||0)/r.n)+"%":"—";
+  return <>
+    <div className="pu2-sy-kv">
+      <div><b>{puNum(r.n)}</b><span>запросов от {puNum(r.users)} {plural(+r.users||0,"человека","человек","человек")}</span></div>
+      <div><b>{puSyMs(r.p50)}</b><span>медиана ожидания</span></div>
+      <div><b>{puSyMs(r.p90)}</b><span>9 из 10 быстрее</span></div>
+      <div data-tip={`${puNum(r.no_words||0)} из ${puNum(r.n)}`}><b>{pct(r.no_words)}</b><span>без совпадений по словам</span></div>
+    </div>
+    <p className="pu2-note" style={{marginTop:0}}>Поиск не отработал: <b className={r.failed?"pu2-neg":""} style={{fontWeight:600}}>{puNum(r.failed||0)}</b>.
+      {" "}«По смыслу» без проверки: {puNum(r.unchecked||0)}.</p>
+    {(r.zero_queries||[]).length>0&&<p className="pu2-note">Без совпадений по словам (без авторов): {r.zero_queries.map(q=>`«${q}»`).join(", ")}.</p>}
+  </>;
+}
+const PU_SY_WEB={"web_search:yandex":"Яндекс (шлюз) — каждый вызов","web_search_chain:yandex_gw":"Итог поиска — ответил Яндекс",
+  "web_search_chain:fleet":"Итог поиска — выручил запасной fleet","web_search_chain:none":"Итог поиска — не нашёл никто",
+  "web_read:yandex_copy":"Копии страниц · Яндекс"};
+const PU_SY_WST={ok:["нашёл","ok"],empty:["пусто",""],limited:["лимит","warn"],down:["недоступен","bad"],error:["ошибка","bad"]};
+function PuSyWeb({m}){
+  const s=m.search||{}, rows=s.backends||[], gw=s.gateway||{};
+  return <>
+    <p className="pu2-note" style={{marginTop:0}}>
+      {gw.enabled?`Основной поиск — ${gw.primary==="fleet"?"запасной fleet":"Яндекс через шлюз"}.`:"Шлюз не настроен."}
+      {gw.breaker_open?` Шлюз отключён${gw.breaker_reason?`: ${gw.breaker_reason}`:""}.`:""}
+      {gw.copies_breaker_open?" Чтение копий страниц временно отключено.":""}
+      {" "}«Лимит» и «недоступен» — запрос ушёл на запасной поиск; «пусто» — честно ничего не нашлось. Копии — страницы,
+      закрытые антиботом, прочитанные из сохранённой копии Яндекса. Повторы из кэша не считаются.</p>
+    {rows.length===0?<PuEmpty>Поиск ещё не вызывали.</PuEmpty>:<div>{rows.map(r=>{ const k=r.kind+":"+r.backend, bs=r.by_status||{};
+      return <div key={k} className="pu2-sy-be">
+        <div className="pu2-sy-be-h"><span>{PU_SY_WEB[k]||k}</span>
+          <b>{puNum(r.total)}{r.p50_ok!=null?` · медиана ${puSyMs(r.p50_ok)}`:""}</b></div>
+        <div className="pu2-sy-rs">{Object.keys(bs).map(st=>{ const [l,lv]=PU_SY_WST[st]||[st,""];
+          return <PuBadge key={st} lv={lv||undefined}>{l} <b>{puNum(bs[st])}</b></PuBadge>; })}</div>
+      </div>; })}</div>}
+  </>;
+}
+function PuSyIngest({m}){
+  const q=(m.ingest||{}).queue||{}, pd=(m.ingest||{}).per_day||[], c=m.collect||{};
+  const mx=Math.max(1,...pd.map(d=>+d.n||0)), total=(c.ok||0)+(c.hard||0)+(c.soft||0);
+  const v=(x)=>x==null?"—":puNum(x);
+  return <>
+    <div className="pu2-sy-kv">
+      <div><b>{v(q.depth)}</b><span>в очереди · воркеров {q.workers??"—"}</span></div>
+      <div><b>{v(q.done)}</b><span>обработано</span></div>
+      <div><b className={q.dropped?"neg":""}>{v(q.dropped)}</b><span>отброшено</span></div>
+      <div><b className={q.failed?"warn":""}>{v(q.failed)}</b><span>ошибок</span></div>
+    </div>
+    <p className="pu2-note" style={{marginTop:0}}>Страницы, которые быстрый ИИ-помощник читает по дороге, попадают в базу знаний фоном
+      (отчёты базу не пополняют). Счётчики очереди обнуляются при перезапуске — пустая очередь не значит, что фон стоит.</p>
+    {pd.length>0&&<>
+      <h3 className="pu2-subh">По дням <span className="pu2-muted" style={{fontWeight:400}}>· всего · пусто · p95</span></h3>
+      {pd.slice(-10).map(d=><PuHBar key={d.d} label={puDay(d.d)} value={d.n} max={mx}
+        right={<><b>{puNum(d.n)}</b> · {puNum(d.empty)} · {puSyMs(d.p95)}</>}/>)}</>}
+    {total>0&&<>
+      <h3 className="pu2-subh">Что не доехало в базу знаний <span className="pu2-muted" style={{fontWeight:400}}>· {puNum(c.hard||0)} {plural(c.hard||0,"сбой","сбоя","сбоев")} из {puNum(total)}</span></h3>
+      <div className="pu2-sy-rs">{(c.reasons||[]).map(r=><PuBadge key={r.key} lv={r.hard?"bad":r.key==="ok"?"ok":undefined}>
+        {r.label} <b>{puNum(r.n)}</b></PuBadge>)}</div>
+      <p className="pu2-note">«Сбой» требует вмешательства (капча, сеть), «штатно пропущено» — нормальная работа (документ уже был
+        в базе). Учитываются только загрузки через очередь.</p>
+      {(c.domains||[]).length>0&&<>
+        <h3 className="pu2-subh">Где срывается чаще</h3>
+        <div>{c.domains.map(d=><div key={d.domain} className="pu2-sy-li"><span className="m">{d.domain}</span><span className="r">{puNum(d.n)}</span></div>)}</div></>}
+    </>}
+  </>;
+}
+const PU_SY_DET={server:PuSyServer,digest:PuSyDigest,reviews:PuSyReviews,news:PuSyNews,slices:PuSySlices,
+  rsearch:PuSyRsearch,web:PuSyWeb,ingest:PuSyIngest};
+
+// Плашка «В облаках турбулентность» для всех пользователей (web/banner.py); только владельцу
+function PuSyBanner(){
+  const {d,err,reload}=usePuData("/api/admin/banner",{ttl:30000});
+  const[st,setSt]=useState(null), [busy,setBusy]=useState(false), [e2,setE2]=useState("");
+  const b=st||d;
+  const save=(active,days)=>{ setBusy(true); setE2("");
+    apiFetch("/api/admin/banner",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({active,days})})
+      .then(r=>setSt(r||{})).catch(()=>setE2("Не сохранилось — попробуйте ещё раз.")).finally(()=>setBusy(false)); };
+  if(err&&err.status===403) return null;
+  const until=b&&b.until?puFmt(puDate(b.until)||new Date(b.until),{day:"numeric",month:"long",hour:"2-digit",minute:"2-digit"}):null;
+  return <PuCard id="pu2-banner" title="Плашка для всех" meta="видят все пользователи" span={5}>
+    {!b?(err?<PuLoadErr onRetry={reload}>Не удалось узнать, включена ли плашка.</PuLoadErr>:<Skel h={64}/>)
+      :<div className={"pu2-sy-tb"+(b.active?" on":"")}>
+        <span className="pu2-sy-qic"><PuIcon n="cloud"/></span>
+        <div><b>«В облаках турбулентность»</b>
+          <p className="pu2-note" style={{marginTop:4}} aria-live="polite">{b.active
+            ?(until?`Включена до ${until}: все видят предупреждение о перебоях моделей.`
+              :"Включена, пока вы её не выключите: все видят предупреждение о перебоях моделей.")
+            :b.on&&b.until?"Срок вышел, плашка скрыта. Включите снова, если перебои продолжаются."
+            :"Выключена. Включите, когда облако моделей работает с перебоями."}</p>
+          <div className="pu2-sy-btns">{b.active
+            ?<button type="button" className="btn btn-sm" disabled={busy} onClick={()=>save(false,null)}>Выключить</button>
+            :<><button type="button" className="btn btn-sm" disabled={busy} onClick={()=>save(true,3)}>На 3 дня</button>
+              <button type="button" className="btn btn-sm" disabled={busy} onClick={()=>save(true,7)}>На неделю</button>
+              <button type="button" className="btn btn-sm" disabled={busy} onClick={()=>save(true,null)}>Пока не выключу</button></>}</div>
+          {e2&&<span className="pu2-sy-e" role="alert">{e2}</span>}
+        </div></div>}
+  </PuCard>;
+}
+
+function PuSystemsSec(){
+  const c=usePu(), m=c.m||{}, sig=c.sig||{}, sys=sig.sys||{};
+  const tid=c.target&&c.target.id, tn=c.target&&c.target.n;
+  // строки со сбоями раскрыты сразу; переход из очереди (go → pu2-sys-<ключ>) раскрывает свою
+  const[open,setOpen]=useState(()=>{ const s=new Set(PU_SYS.filter(([k])=>sys[k]==="w"||sys[k]==="b").map(([k])=>k));
+    if(tid&&tid.startsWith("pu2-sys-")) s.add(tid.slice(8)); return s; });
+  useEffect(()=>{ if(tid&&tid.startsWith("pu2-sys-")){ const k=tid.slice(8);
+    setOpen(s=>s.has(k)?s:new Set([...s,k])); } },[tid,tn]);
+  const flip=(k)=>setOpen(s=>{ const n=new Set(s); if(n.has(k)) n.delete(k); else n.add(k); return n; });
+  const ok=PU_SYS.filter(([k])=>sys[k]==="o").length, lat=m.latency||[];
+  return <div className="pu2-grid">
+    <PuCard id="pu2-sys" title="Системы" flush ruled
+        meta={`${ok} из ${PU_SYS.length} в норме · лента — последние 14 дней, по всем учёткам`}>
+      {PU_SYS.map(([k,name])=>{ const on=open.has(k), lv=puSysLv(sys[k]), inf=puSyInfo(m,k), Det=PU_SY_DET[k];
+        const cells=puSysCells(m,sig,k);
+        return <div key={k} id={"pu2-sys-"+k} className={"pu2-sy-row"+(on?" on":"")}>
+          <button type="button" className="pu2-sy-hd" aria-expanded={on} aria-controls={"pu2-sd-"+k} onClick={()=>flip(k)}>
+            <span className="pu2-sy-n"><PuDot lv={lv} label={PU_LV_RU[lv]}/><span><b>{name}</b><small>{inf.s}</small></span></span>
+            <PuRibbon cells={cells} lg/>
+            <span className="pu2-sy-k" data-tip={inf.kt||undefined}>{inf.k||""}</span>
+            <PuIcon n="right" className="pu2-sy-chev"/>
+          </button>
+          <div className="pu2-sy-det" id={"pu2-sd-"+k} role="region" aria-label={name} hidden={!on}>
+            {on&&<><div className="pu2-sy-ribm"><PuRibbon cells={cells}/><span>последние 14 дней</span>{inf.k&&<span>· {inf.k}</span>}</div>
+              <PuBoundary name={"systems:"+k}><Det m={m}/></PuBoundary></>}
+          </div>
+        </div>; })}
+    </PuCard>
+    <PuCard id="pu2-latency" title="Скорость ответов сервера" meta="7 дней, без запросов самого «Пульса»" span={c.isOwner?7:12}>
+      {lat.length===0?<PuEmpty>Накапливается.</PuEmpty>
+        :<div className="pu2-tw"><table className="pu2-tbl">
+          <thead><tr><th className="pu2-l">Адрес</th><th>Запросов</th><th>Медиана</th><th>p95</th><th data-tip="Ответы с кодом 5xx">Ошибок</th></tr></thead>
+          <tbody>{lat.map((r,i)=><tr key={i}>
+            <td className="pu2-l" data-tip={r.path||undefined}>{String(r.path||"").replace(/^\/api\//,"")}</td>
+            <td>{puNum(r.n)}</td><td>{puSyMs(r.p50)}</td>
+            <td className={r.p95>3000?"pu2-sy-w":undefined}>{puSyMs(r.p95)}</td>
+            <td className={r.errs>0?"pu2-sy-b":"pu2-muted"}>{puNum(r.errs||0)}</td>
+          </tr>)}</tbody></table></div>}
+    </PuCard>
+    {c.isOwner&&<PuSyBanner/>}
+  </div>;
+}
 // ⟦pu2:systems⟧ конец
 
 // ── граница: выше «Системы», ниже «Итоги» ────────────────────────────────────
