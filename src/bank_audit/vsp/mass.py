@@ -29,7 +29,7 @@ from .collectors.base import Area, Collector
 from .config import Settings
 from .http import SourceHttp, set_source_rps
 from .models import CollectorError, NotFound, SourceBlocked, utcnow
-from .registry.apply import import_registry, match_all
+from .registry.apply import apply_formats, import_registry, link_profiles, match_all
 from .registry.cbr import fetch_registry
 from .registry.match import haversine_m
 from .storage import Store, branches, reviews, source_branches, sync_state
@@ -143,6 +143,90 @@ async def discover_2gis_all(store: Store, settings: Settings, *, force: bool = F
         return {"settlements": len(settl), "found": st["found"], "errors": st["errors"]}
     finally:
         await g.close()
+
+
+async def discover_2gis_private(store: Store, settings: Settings, *, force: bool = False,
+                                factory: Callable[[str, Settings], Collector] = make_collector) -> dict:
+    """Private Banking в 2ГИС — отдельная организация банка, в выдаче «СберБанк» её нет.
+    Один поиск на проект 2ГИС (офисы есть только в крупных городах)."""
+    now = utcnow()
+    st = _round_state(store, "discover:2gis_private", settings.schedule.discover_every_d, now, force)
+    if st is None:
+        return {"skipped": "свежий обход"}
+    apply_rps(store, settings, "2gis")
+    g = factory("2gis", settings)
+    done = set(st["done"])
+    try:
+        settl = await g.settlements()                       # type: ignore[attr-defined]
+        if not settl:
+            raise CollectorError("2gis: список населённых пунктов пуст — страница не та")
+        per_project: dict[str, str] = {}
+        for s in settl:
+            if s["region_id"] != "0":
+                per_project.setdefault(s["region_id"], s["alias"])
+        aliases = sorted(per_project.values())
+        seen: set[str] = set()
+        for a in aliases:
+            if a in done:
+                continue
+            if paused(store, "2gis", utcnow()):
+                return {"paused": True, "done": len(done)}
+            try:
+                async for b in g.discover(Area(city=a), seen=seen, patience=1,   # type: ignore[call-arg]
+                                          query="Sberbank Private Banking"):
+                    if (b.raw or {}).get("format") == "private":
+                        store.upsert_source_branch(b)
+                        st["found"] += 1
+            except SourceBlocked:
+                raise
+            except (CollectorError, NotFound) as e:
+                st["errors"] += 1
+                log.info("2gis Private Banking %s: %s", a, e)
+            done.add(a)
+            st["done"] = sorted(done)
+            store.kv_set("discover:2gis_private", st)
+        st["finished"] = utcnow().isoformat()
+        store.kv_set("discover:2gis_private", st)
+        log.info("2gis Private Banking: проектов %d, офисов %d", len(aliases), st["found"])
+        return {"projects": len(aliases), "found": st["found"], "errors": st["errors"]}
+    finally:
+        await g.close()
+
+
+async def refresh_banksite(store: Store, settings: Settings, *, force: bool = False) -> dict:
+    """Паспорт ВСП с сайта банка (registry/banksite.py): плитки карты, где у нас есть ВСП,
+    раз в месяц; затем привязка к реестру по коду ВСП и пересчёт форматов."""
+    from .registry.banksite import BankSiteBrowser, fetch_offices, tiles_for_points
+    if not settings.bank_site:
+        return {"skipped": "VSP_BANK_SITE не задан"}
+    now = utcnow()
+    if not force and not _older(store, "banksite:at", hours=24 * settings.schedule.banksite_every_d, now=now):
+        return {"skipped": "свежий обход"}
+    with store.engine.connect() as c:
+        pts = [(r[0], r[1]) for r in c.execute(select(source_branches.c.lat, source_branches.c.lon).where(
+            source_branches.c.lat.isnot(None)))]
+        pts += [(r[0], r[1]) for r in c.execute(select(branches.c.lat, branches.c.lon).where(
+            branches.c.lat.isnot(None)))]
+    tiles = tiles_for_points(pts)
+    if not tiles:
+        return {"skipped": "нет точек ВСП с координатами"}
+    log.info("сайт банка: плиток %d", len(tiles))
+
+    def progress(done, left, n):
+        log.info("сайт банка: плиток пройдено %d, в очереди %d, офисов %d", done, left, n)
+    async with BankSiteBrowser(settings.bank_site, rps=settings.bank_site_rps,
+                               user_agent=settings.user_agent) as br:
+        offices = await fetch_offices(br, tiles, progress=progress)
+    if not offices:
+        raise CollectorError("сайт банка: обход не вернул ни одного офиса — не засчитан")
+    st = await asyncio.to_thread(store.save_profiles, offices, crawled_tiles=set(tiles))
+    st["linked"] = await asyncio.to_thread(link_profiles, store)
+    st["formats"] = await asyncio.to_thread(apply_formats, store)
+    st.update(tiles=len(tiles), offices=len(offices), requests=br.requests)
+    store.kv_set("banksite:last", st)
+    store.kv_set("banksite:at", utcnow().isoformat())
+    log.info("сайт банка: %s", st)
+    return st
 
 
 def search_points(store: Store) -> list[tuple[str, float, float]]:
@@ -352,13 +436,14 @@ async def daemon(store: Store, settings: Settings,
         if _older(store, "registry:at", hours=sch.registry_every_h, now=now):
             if await step("registry", lambda: refresh_registry(store, settings)) is not None:
                 await step("match", lambda: _match(store))
-        for source, fn in (("2gis", discover_2gis_all), ("yandex", discover_yandex_points)):
+        for source, fn in (("2gis", discover_2gis_all), ("2gis", discover_2gis_private),
+                           ("yandex", discover_yandex_points)):
             if not settings.source(source).enabled or paused(store, source, now):
                 continue
-            if source == "yandex" and not (store.kv_get("discover:2gis") or {}).get("finished"):
-                continue                                   # точки Яндекса — из карточек 2ГИС
+            if fn is not discover_2gis_all and not (store.kv_get("discover:2gis") or {}).get("finished"):
+                continue                                   # после основного обхода 2ГИС
             try:
-                res = await step(f"discover:{source}", lambda fn=fn: fn(store, settings, factory=factory))
+                res = await step(f"discover:{fn.__name__}", lambda fn=fn: fn(store, settings, factory=factory))
             except SourceBlocked as e:
                 _pause(store, source, settings, e.reason)
                 continue
@@ -366,6 +451,9 @@ async def daemon(store: Store, settings: Settings,
                 await step("match", lambda: _match(store))
         if _older(store, "match:at", hours=sch.match_every_h, now=now):
             await step("match", lambda: _match(store))
+        # паспорт ВСП с сайта банка — когда есть точки (после обхода 2ГИС), раз в месяц
+        if settings.bank_site and (store.kv_get("discover:2gis") or {}).get("finished"):
+            await step("banksite", lambda: refresh_banksite(store, settings), retry_h=24)
         return False
 
     def src_loop(source: str):
@@ -403,6 +491,7 @@ async def daemon(store: Store, settings: Settings,
 
 async def _match(store: Store) -> dict:
     res = await asyncio.to_thread(match_all, store)
+    res["formats"] = await asyncio.to_thread(apply_formats, store)
     store.kv_set("match:at", utcnow().isoformat())
     store.kv_set("match:last", res)
     log.info("привязка: %s", {k: v for k, v in res.items() if k != "rows_changed"})

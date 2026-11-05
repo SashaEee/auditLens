@@ -40,6 +40,7 @@ branches = Table(
     Column("registry_ref", String(200)),               # id в том источнике
     Column("registry_num", String(40), index=True),    # номер подразделения по ЦБ (FILIAL_NUM)
     Column("status", String(20), default="active"),    # active | mobile | remote | cash_center | closed
+    Column("formats", Text),       # JSON {формат: [источники]}: mass, sber_first, private, legal, business, … (apply_formats)
     Column("created_at", DateTime(timezone=True), default=utcnow),
     Column("updated_at", DateTime(timezone=True), default=utcnow),
 )
@@ -119,6 +120,31 @@ sync_state = Table(
     # полный проход (правки, ответы, пропавшие) — см. sync.schedule_next
     Column("next_due_at", DateTime(timezone=True)),
     Column("next_full_at", DateTime(timezone=True)),
+)
+
+branch_profiles = Table(
+    "vsp_branch_profile", meta,                          # паспорт офиса с сайта банка (registry/banksite.py)
+    Column("site_id", String(40), primary_key=True),
+    Column("branch_id", Integer, index=True),            # ВСП реестра (по коду ВСП в названии)
+    Column("vsp_key", String(20), index=True),           # «ГОСБ/номер» без ведущих нулей
+    Column("code", String(40)),
+    Column("name", Text),
+    Column("lat", Float), Column("lon", Float),
+    Column("formats", Text),                             # JSON-список: mass, sber_first, private, legal, islamic, zone24, mobile
+    Column("services", Text),                            # JSON-список кодов услуг
+    Column("hours", Text),                               # JSON: np/lp/all по дням, special, tz, text
+    Column("status", String(20), default="active"),      # active | gone (пропал с сайта)
+    Column("first_seen_at", DateTime(timezone=True)),
+    Column("last_seen_at", DateTime(timezone=True)),
+    Column("gone_at", DateTime(timezone=True)),
+)
+
+profile_changes = Table(
+    "vsp_branch_profile_change", meta,                   # история: «убрали СберПервый», «сменились часы»
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("site_id", String(40), index=True),
+    Column("at", DateTime(timezone=True)),
+    Column("field", String(40)), Column("old", Text), Column("new", Text),
 )
 
 kv = Table(
@@ -400,6 +426,48 @@ class Store:
             .order_by(ss.c.next_due_at).limit(limit))
         with self.engine.connect() as c:
             return {"full": [r[0] for r in c.execute(full_q)], "new": [r[0] for r in c.execute(new_q)]}
+
+    # ── паспорт офисов с сайта банка ────────────────────────────────────────
+    def save_profiles(self, recs: dict[str, dict], *, seen_at: datetime | None = None,
+                      crawled_tiles: set | None = None) -> dict:
+        """Записать офисы обхода сайта. Изменение форматов, услуг или часов пишется в
+        историю. Пропавшим считается только офис, чью плитку этот обход прошёл."""
+        from .registry.banksite import tile_of
+        seen_at = seen_at or utcnow()
+        st = {"new": 0, "changed": 0, "same": 0, "gone": 0}
+        bp = branch_profiles
+        with self.engine.begin() as c:
+            old = {r.site_id: r for r in c.execute(select(bp))}
+            for sid, r in recs.items():
+                vals = {"vsp_key": r.get("vsp_key"), "code": r.get("code"), "name": _nul(r.get("name")),
+                        "lat": r.get("lat"), "lon": r.get("lon"), "formats": _j(r.get("formats") or []),
+                        "services": _j(r.get("services") or []), "hours": _j(r.get("hours") or {}),
+                        "status": "active", "last_seen_at": seen_at, "gone_at": None}
+                o = old.get(sid)
+                if o is None:
+                    c.execute(bp.insert().values(site_id=sid, first_seen_at=seen_at, **vals))
+                    st["new"] += 1
+                    continue
+                changed = False
+                for f, new in (("formats", vals["formats"]), ("services", vals["services"]),
+                               ("hours", _j((r.get("hours") or {}).get("text"))), ("status", "active")):
+                    prev = getattr(o, f) if f != "hours" else _j((json.loads(o.hours or "{}") or {}).get("text"))
+                    if prev != new:
+                        c.execute(profile_changes.insert().values(site_id=sid, at=seen_at, field=f,
+                                                                  old=prev, new=new))
+                        changed = True
+                c.execute(update(bp).where(bp.c.site_id == sid).values(**vals))
+                st["changed" if changed else "same"] += 1
+            if crawled_tiles:
+                for sid, o in old.items():
+                    if sid in recs or o.status != "active" or o.lat is None:
+                        continue
+                    if tile_of(o.lat, o.lon) in crawled_tiles:
+                        c.execute(update(bp).where(bp.c.site_id == sid).values(status="gone", gone_at=seen_at))
+                        c.execute(profile_changes.insert().values(site_id=sid, at=seen_at, field="status",
+                                                                  old="active", new="gone"))
+                        st["gone"] += 1
+        return st
 
     # ── служебное key-value ─────────────────────────────────────────────────
     def kv_get(self, key: str, default: Any = None) -> Any:

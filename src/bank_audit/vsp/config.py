@@ -52,6 +52,7 @@ class Schedule:
     registry_every_h: float = field(default_factory=lambda: _f("VSP_REGISTRY_EVERY_H", 24))
     discover_every_d: float = field(default_factory=lambda: _f("VSP_DISCOVER_EVERY_D", 30))
     match_every_h: float = field(default_factory=lambda: _f("VSP_MATCH_EVERY_H", 6))
+    banksite_every_d: float = field(default_factory=lambda: _f("VSP_BANK_SITE_EVERY_D", 30))
     pause_on_block_h: float = field(default_factory=lambda: _f("VSP_PAUSE_ON_BLOCK_H", 3))
     backoff_factor: float = field(default_factory=lambda: _f("VSP_BACKOFF_FACTOR", 0.7))
     min_rps: float = field(default_factory=lambda: _f("VSP_MIN_RPS", 0.1))
@@ -68,6 +69,9 @@ class Settings:
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"))
     log_dir: str = field(default_factory=lambda: os.getenv("VSP_LOG_DIR", "workspace/vsp/logs"))
+    # сайт банка для паспорта ВСП (форматы, часы, услуги); пусто — шаг выключен
+    bank_site: str = field(default_factory=lambda: os.getenv("VSP_BANK_SITE", ""))
+    bank_site_rps: float = field(default_factory=lambda: _f("VSP_BANK_SITE_RPS", 0.5))
     sources: dict[str, SourceSettings] = field(default_factory=dict)
     schedule: Schedule = field(default_factory=Schedule)
 

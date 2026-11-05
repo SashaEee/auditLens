@@ -14,6 +14,7 @@
 | `registry_source`, `registry_ref` | Источник реестра (`cbr`) и id подразделения в нём (`FILIAL_SBJ_ID`). |
 | `registry_num` | Номер подразделения по ЦБ (`FILIAL_NUM`, «1481/1948/115»); тот же номер есть в карточке Яндекса. |
 | `status` | `active` (доп. офис), `cash_center` (кассово-инкассаторский центр, без клиентов), `mobile` (передвижной пункт), `remote`, `closed`. |
+| `formats` | JSON `{формат: [источники]}`: `mass`, `sber_first` (СберПервый), `private` (Private Banking), `legal`, `business`, `corporate`, `islamic`, `zone24`, `head` (головной офис ГОСБ), `mobile`, `cash_center`. Источники: сайт банка, Яндекс, 2ГИС, реестр ЦБ. |
 | `created_at`, `updated_at` | — |
 
 ## vsp_source_branch — карточка отделения в источнике
@@ -29,7 +30,22 @@
 | `availability` | Удалось ли до неё дойти: `ok`, `not_found`, `blocked`, `error`. |
 | `match_method`, `match_score`, `match_status` | Как привязана: `registry_code` (номер ЦБ в карточке) / `registry_address` / `cross_source` / `manual`; `auto` / `confirmed` / `conflict` / `none`. |
 | `last_checked_at` | Дата последней проверки. |
-| `raw_json` | Служебные поля источника: организация, число оценок без текста, рубрики; у Яндекса — `cbr_num`, `office_type`, `division_type`. |
+| `raw_json` | Служебные поля источника: организация, число оценок без текста, рубрики, `format` (2ГИС: `sber_first` — карточка СберПервого, `private` — Private Banking; такие карточки — дочерние к ВСП своего здания); у Яндекса — `cbr_num`, `office_type`, `division_type`. |
+
+## vsp_branch_profile — паспорт офиса с сайта банка
+
+Офисный поиск на сайте банка (адрес — в настройке `VSP_BANK_SITE`), раз в месяц.
+
+| Поле | Смысл |
+|---|---|
+| `site_id` | Id офиса на сайте. |
+| `branch_id`, `vsp_key` | ВСП реестра и код «ГОСБ/номер» без ведущих нулей, по которому привязка. |
+| `formats` | Форматы с сайта: массовый, СберПервый, Private Banking, юрлица, исламский, круглосуточная зона, передвижной. |
+| `services` | Коды услуг сайта. |
+| `hours` | Часы работы физлиц и юрлиц по дням, особые даты, часовой пояс, текст «пн–пт 10:00–20:00 · …». |
+| `status`, `first_seen_at`, `last_seen_at`, `gone_at` | `gone` — офис пропал с сайта. Считается только для плиток карты, пройденных в этом обходе. |
+
+`vsp_branch_profile_change` — история изменений: форматы, услуги, часы, статус («убрали СберПервый», «сменились часы»).
 
 ## vsp_review — отзыв
 

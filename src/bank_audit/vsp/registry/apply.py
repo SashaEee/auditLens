@@ -23,7 +23,7 @@ from sqlalchemy import select, update
 from ..models import utcnow
 from ..storage import Store, branches, source_branches
 from .cbr import RegistryRow
-from .match import Item, address_key, match_sources, norm_city
+from .match import GEO_STRONG_M, Item, address_key, haversine_m, match_sources, norm_city
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +65,14 @@ def import_registry(store: Store, rows: list[RegistryRow], source: str = "cbr") 
                                                    created_at=utcnow(), **vals))
                 st["new"] += 1
     return st
+
+
+CHILD_FORMATS = ("sber_first", "private")
+
+
+def is_child(x) -> bool:
+    """Дочерняя карточка особого формата (СберПервый, Private Banking) внутри ВСП."""
+    return _raw(x).get("format") in CHILD_FORMATS
 
 
 def _raw(x) -> dict:
@@ -115,10 +123,13 @@ def match_all(store: Store) -> dict:
             assign[(x["source"], x["source_branch_id"])] = (ids[0], "registry_address", "auto", 1.0)
         elif len(ids) > 1:
             assign[(x["source"], x["source_branch_id"])] = (None, "registry_address", "conflict", None)
-    # перекрёстно: непривязанные карточки — через привязанные другого источника в том же здании
+    # перекрёстно: непривязанные карточки — через привязанные другого источника в том же здании.
+    # Дочерние карточки особых форматов (СберПервый, Private Banking в 2ГИС) в пары не идут:
+    # иначе карточка Яндекса могла бы сойтись с ними, а не с основной карточкой ВСП
     by_src: dict[str, list[dict]] = defaultdict(list)
     for x in cards:
-        by_src[x["source"]].append(x)
+        if not is_child(x):
+            by_src[x["source"]].append(x)
     srcs = sorted(by_src)
     for i, sa in enumerate(srcs):
         for sb in srcs[i + 1:]:
@@ -136,6 +147,30 @@ def match_all(store: Store) -> dict:
                     assign[kb] = (ga[0], "cross_source", "auto", m.score)
                 elif gb and gb[0] and not (ga and ga[0]):
                     assign[ka] = (gb[0], "cross_source", "auto", m.score)
+    # дочерние карточки без своей привязки — к основной карточке того же источника в том же
+    # здании (тот же ключ адреса, иначе ближе GEO_STRONG_M)
+    mains = [x for x in cards if not is_child(x)]
+    for x in cards:
+        key = (x["source"], x["source_branch_id"])
+        if not is_child(x) or x["match_status"] == "confirmed" or (assign.get(key) or (None,))[0]:
+            continue
+        k = address_key(x["address"], x["city"])
+        best = None
+        for m in mains:
+            if m["source"] != x["source"]:
+                continue
+            mb = (assign.get((m["source"], m["source_branch_id"])) or (None,))[0]
+            if not mb:
+                continue
+            same = k and address_key(m["address"], m["city"]) == k
+            near = (None not in (x["lat"], x["lon"], m["lat"], m["lon"])
+                    and haversine_m(x["lat"], x["lon"], m["lat"], m["lon"]) <= GEO_STRONG_M)
+            if same or near:
+                best = mb
+                break
+        if best:
+            assign[key] = (best, "parent_card", "auto", 0.9)
+            st["child_linked"] += 1
     # ВСП закрылся (пропал из реестра ЦБ): его карточки и вся история отзывов остаются
     # привязанными к нему — новой привязки нет, а прежняя указывает на закрытое отделение
     for x in cards:
@@ -185,4 +220,69 @@ def match_all(store: Store) -> dict:
         st["reviews_relinked"] = c.execute(update(reviews).where(
             reviews.c.first_seen_at >= utcnow() - timedelta(days=2),
             reviews.c.branch_id.is_distinct_from(cur)).values(branch_id=cur)).rowcount or 0
+    return dict(st)
+
+
+# ── паспорт с сайта банка и форматы ВСП ─────────────────────────────────────
+
+def link_profiles(store: Store) -> dict:
+    """Офисы сайта банка → ВСП реестра по коду ВСП («ГОСБ/номер» без ведущих нулей)."""
+    from ..storage import branch_profiles as bp
+    from .banksite import vsp_key
+    st = {"linked": 0, "unlinked": 0, "ambiguous": 0}
+    with store.engine.connect() as c:
+        idx: dict[str, list[int]] = defaultdict(list)
+        for bid, name in c.execute(select(branches.c.branch_id, branches.c.name)):
+            k = vsp_key(name)
+            if k:
+                idx[k].append(bid)
+        profs = list(c.execute(select(bp.c.site_id, bp.c.vsp_key, bp.c.branch_id)))
+    with store.engine.begin() as c:
+        for sid, k, cur in profs:
+            ids = idx.get(k or "", [])
+            bid = ids[0] if len(ids) == 1 else None
+            st["linked" if bid else ("ambiguous" if len(ids) > 1 else "unlinked")] += 1
+            if bid != cur:
+                c.execute(update(bp).where(bp.c.site_id == sid).values(branch_id=bid))
+    return st
+
+
+YANDEX_FORMATS = {"office_vip": "sber_first", "office_sme": "business", "office_corporate": "corporate",
+                  "office_retail": "mass"}
+
+
+def apply_formats(store: Store) -> dict:
+    """Форматы ВСП из всех источников: {формат: [источники]} в vsp_branch.formats.
+    Сайт банка — офисный поиск; Яндекс — признаки карточки; 2ГИС — дочерние карточки;
+    реестр ЦБ — передвижные пункты и кассово-инкассаторские центры."""
+    from ..storage import branch_profiles as bp
+    acc: dict[int, dict[str, set]] = defaultdict(lambda: defaultdict(set))
+    with store.engine.connect() as c:
+        for bid, fm in c.execute(select(bp.c.branch_id, bp.c.formats).where(
+                bp.c.branch_id.isnot(None), bp.c.status == "active")):
+            for f in json.loads(fm or "[]"):
+                acc[bid][f].add("сайт банка")
+        for x in c.execute(select(source_branches).where(source_branches.c.branch_id.isnot(None))).mappings():
+            raw = _raw(x)
+            if x["source"] == "yandex":
+                for t in raw.get("office_type") or []:
+                    if t in YANDEX_FORMATS:
+                        acc[x["branch_id"]][YANDEX_FORMATS[t]].add("Яндекс")
+                if "branch_bank" in (raw.get("division_type") or []):
+                    acc[x["branch_id"]]["head"].add("Яндекс")
+            if raw.get("format") in CHILD_FORMATS:
+                acc[x["branch_id"]][raw["format"]].add(x["source"] == "2gis" and "2ГИС" or x["source"])
+        for bid, status in c.execute(select(branches.c.branch_id, branches.c.status).where(
+                branches.c.status.in_(("mobile", "cash_center")))):
+            acc[bid][status].add("реестр ЦБ")
+        cur = dict(c.execute(select(branches.c.branch_id, branches.c.formats)).all())
+    st: dict = defaultdict(int)
+    with store.engine.begin() as c:
+        for bid, fm in acc.items():
+            val = json.dumps({f: sorted(src) for f, src in sorted(fm.items())}, ensure_ascii=False)
+            for f in fm:
+                st[f] += 1
+            if cur.get(bid) != val:
+                c.execute(update(branches).where(branches.c.branch_id == bid).values(formats=val))
+                st["rows_changed"] += 1
     return dict(st)

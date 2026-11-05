@@ -191,7 +191,7 @@ class TwoGisCollector(Collector):
         raise NotFound(f"2gis: населённый пункт «{area.city}» не найден среди городов 2ГИС")
 
     async def discover(self, area: Area, *, seen: set[str] | None = None,
-                       patience: int = 2) -> AsyncIterator[SourceBranch]:
+                       patience: int = 2, query: str = "СберБанк") -> AsyncIterator[SourceBranch]:
         """Страницы поиска «СберБанк» в населённом пункте, пока идут новые объекты.
         seen — общий для всего обхода набор уже виденных id (вместе с банкоматами):
         пункты одного проекта 2ГИС видят одну выдачу (по удалённости от своего центра),
@@ -203,7 +203,7 @@ class TwoGisCollector(Collector):
             if n == 400:
                 log.warning("2gis поиск %s: дошли до предохранителя 400 страниц — выдача могла не кончиться", alias)
             try:
-                html = await self.http.get(f"https://2gis.ru/{alias}/search/СберБанк/page/{n}",
+                html = await self.http.get(f"https://2gis.ru/{alias}/search/{query}/page/{n}",
                                            expect_json=False)
             except NotFound:
                 return
@@ -258,11 +258,28 @@ def ssr_branches(html: str) -> list[dict]:
     return out
 
 
+PRIVATE_ORG = "Sberbank Private Banking"
+
+
+def card_format(d: dict) -> str | None:
+    """Особый формат карточки: СберПервый — отдельная карточка внутри организации банка
+    («СберПервый, отдел по работе с ВИП-клиентами»); Private Banking — своя организация."""
+    org = (d.get("org") or {}).get("name") or ""
+    name = d.get("name") or ""
+    if org.startswith(PRIVATE_ORG) or name.startswith(PRIVATE_ORG):
+        return "private"
+    if name.startswith("СберПервый"):
+        return "sber_first"
+    return None
+
+
 def is_sber_office(d: dict) -> bool:
     """Отделение Сбербанка, а не банкомат/терминал и не дочерняя компания."""
     org = (d.get("org") or {}).get("name") or ""
     name = d.get("name") or ""
     rubrics = {r.get("name") for r in d.get("rubrics") or []}
+    if card_format(d) == "private":
+        return True                      # своя организация банка для частного банкинга
     # решает организация карточки; название — только если организации нет
     if not (org.startswith("СберБанк") if org else name.startswith("СберБанк")):
         return False
@@ -291,4 +308,5 @@ def to_source_branch(d: dict, alias: str) -> SourceBranch:
         status="open",
         raw={"org_id": org.get("id"), "org_name": org.get("name"), "org_branch_count": org.get("branch_count"),
              "ratings_with_stars": rv.get("general_review_count_with_stars"), "alias": alias,
-             "rubrics": [r.get("name") for r in d.get("rubrics") or []]})
+             "rubrics": [r.get("name") for r in d.get("rubrics") or []],
+             "format": card_format(d)})

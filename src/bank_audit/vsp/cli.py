@@ -10,6 +10,7 @@
   export    --out file.jsonl [--source …] [--city …]           выгрузка отзывов
   registry                                                   обновить реестр ЦБ (закрытые/новые ВСП)
   discover-all --source 2gis|yandex [--force]                обход всей сети (с продолжением)
+  banksite  [--force]                                        паспорт ВСП с сайта банка: форматы, часы, услуги
   daemon    --i-know-this-is-mass                            сбор и дописывание по расписанию (mass.py)
   status                                                     сводка: карточки, полнота, расписание, паузы
 
@@ -129,8 +130,10 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--city")
     sub.add_parser("registry")
     da = sub.add_parser("discover-all")
-    da.add_argument("--source", required=True, choices=("2gis", "yandex"))
+    da.add_argument("--source", required=True, choices=("2gis", "2gis-private", "yandex"))
     da.add_argument("--force", action="store_true")
+    bs = sub.add_parser("banksite")
+    bs.add_argument("--force", action="store_true")
     dm = sub.add_parser("daemon")
     dm.add_argument("--i-know-this-is-mass", action="store_true")
     sub.add_parser("status")
@@ -157,8 +160,12 @@ def main(argv: list[str] | None = None) -> int:
         out = asyncio.run(refresh_registry(store, settings))
     elif a.cmd == "discover-all":
         from . import mass
-        fn = mass.discover_2gis_all if a.source == "2gis" else mass.discover_yandex_points
+        fn = {"2gis": mass.discover_2gis_all, "2gis-private": mass.discover_2gis_private,
+              "yandex": mass.discover_yandex_points}[a.source]
         out = asyncio.run(fn(store, settings, force=a.force))
+    elif a.cmd == "banksite":
+        from .mass import refresh_banksite
+        out = asyncio.run(refresh_banksite(store, settings, force=a.force))
     elif a.cmd == "daemon":
         if not a.i_know_this_is_mass:
             raise SystemExit("daemon — сбор по всей сети: нужен флаг --i-know-this-is-mass (и согласование)")
