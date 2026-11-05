@@ -491,6 +491,7 @@ async def daemon(store: Store, settings: Settings,
 
 async def _match(store: Store) -> dict:
     res = await asyncio.to_thread(match_all, store)
+    res["profiles"] = await asyncio.to_thread(link_profiles, store)
     res["formats"] = await asyncio.to_thread(apply_formats, store)
     store.kv_set("match:at", utcnow().isoformat())
     store.kv_set("match:last", res)

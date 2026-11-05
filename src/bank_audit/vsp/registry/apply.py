@@ -226,24 +226,35 @@ def match_all(store: Store) -> dict:
 # ── паспорт с сайта банка и форматы ВСП ─────────────────────────────────────
 
 def link_profiles(store: Store) -> dict:
-    """Офисы сайта банка → ВСП реестра по коду ВСП («ГОСБ/номер» без ведущих нулей)."""
+    """Офисы сайта банка → ВСП реестра по коду ВСП («ГОСБ/номер» без ведущих нулей).
+    Код пересчитывается из названия при каждой привязке — правка разбора кода применяется
+    без повторного обхода сайта. Остановки передвижных офисов к ВСП не привязываются
+    (в реестре передвижной пункт записан по госномеру машины) и считаются отдельно."""
     from ..storage import branch_profiles as bp
     from .banksite import vsp_key
-    st = {"linked": 0, "unlinked": 0, "ambiguous": 0}
+    st = {"linked": 0, "unlinked": 0, "ambiguous": 0, "mobile_stops": 0, "mobile_routes": 0}
+    routes: set[str] = set()
     with store.engine.connect() as c:
         idx: dict[str, list[int]] = defaultdict(list)
         for bid, name in c.execute(select(branches.c.branch_id, branches.c.name)):
             k = vsp_key(name)
             if k:
                 idx[k].append(bid)
-        profs = list(c.execute(select(bp.c.site_id, bp.c.vsp_key, bp.c.branch_id)))
+        profs = list(c.execute(select(bp.c.site_id, bp.c.name, bp.c.vsp_key, bp.c.branch_id, bp.c.formats)))
     with store.engine.begin() as c:
-        for sid, k, cur in profs:
-            ids = idx.get(k or "", [])
-            bid = ids[0] if len(ids) == 1 else None
-            st["linked" if bid else ("ambiguous" if len(ids) > 1 else "unlinked")] += 1
-            if bid != cur:
-                c.execute(update(bp).where(bp.c.site_id == sid).values(branch_id=bid))
+        for sid, name, old_k, cur, fm in profs:
+            k = vsp_key(name)
+            if "mobile" in json.loads(fm or "[]"):
+                st["mobile_stops"] += 1
+                routes.add(k or sid)
+                bid = None
+            else:
+                ids = idx.get(k or "", [])
+                bid = ids[0] if len(ids) == 1 else None
+                st["linked" if bid else ("ambiguous" if len(ids) > 1 else "unlinked")] += 1
+            if bid != cur or k != old_k:
+                c.execute(update(bp).where(bp.c.site_id == sid).values(branch_id=bid, vsp_key=k))
+    st["mobile_routes"] = len(routes)
     return st
 
 

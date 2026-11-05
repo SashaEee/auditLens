@@ -32,6 +32,8 @@ def test_parse_office_formats_hours_and_code():
     assert r["hours"]["text"] == "пн–пт 10:00–20:00 · сб 10:00–15:00 · вс выходной"
     assert bs.works_on(WEEK, 6) is False and bs.works_on(WEEK, 0) is True
     assert bs.vsp_key("№ 9038/1008") == bs.vsp_key("№9038/01008") == "9038/1008"
+    assert bs.vsp_key("Доп.офис №17/0291") == bs.vsp_key("№17/291") == "17/291"   # двузначный ГОСБ
+    assert bs.vsp_key("Московский банк") is None and bs.vsp_key("№123456/1") is None
     assert bs.tile_of(55.75, 37.62) == (154, 80)                     # Москва на масштабе 8
 
 
@@ -95,6 +97,22 @@ def test_link_profiles_and_formats_from_all_sources(db_url):
     assert f["1"]["sber_first"] == ["2ГИС", "сайт банка"] and f["1"]["business"] == ["Яндекс"]
     assert f["1"]["legal"] == ["сайт банка"] and f["2"] == {"mobile": ["реестр ЦБ"]}
     assert res["sber_first"] == 1
+
+
+def test_link_profiles_two_digit_gosb_and_mobile_stops(db_url):
+    st = Store(db_url)
+    import_registry(st, [_cbr("1", "№17/0291", "150000, Г. ЯРОСЛАВЛЬ, УЛ. СВОБОДЫ, Д. 1"),
+                         _cbr("2", "В066ОС193 Автомобиль", "350000, Г. КРАСНОДАР, УЛ. КРАСНАЯ, Д. 1", kind="BNK_PPKO")])
+    stops = {str(i): bs.parse_office(feat(i, f"МО №8626/06008 (п. Точка {i})", mobile=True)) for i in (2, 3)}
+    st.save_profiles({"1": bs.parse_office(feat(1, "Доп.офис №17/0291")), **stops,
+                      "4": bs.parse_office(feat(4, "Московский банк"))})
+    with st.engine.begin() as c:                           # ключ, сохранённый старым разбором
+        c.execute(branch_profiles.update().where(branch_profiles.c.site_id == "1").values(vsp_key=None))
+    res = link_profiles(st)
+    assert res == {"linked": 1, "unlinked": 1, "ambiguous": 0, "mobile_stops": 2, "mobile_routes": 1}
+    with st.engine.connect() as c:
+        keys = dict(c.execute(select(branch_profiles.c.site_id, branch_profiles.c.vsp_key)).all())
+    assert keys["1"] == "17/291" and keys["2"] == "8626/6008"
 
 
 def test_child_card_does_not_steal_the_yandex_pair(db_url):
