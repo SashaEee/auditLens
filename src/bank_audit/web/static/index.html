@@ -4383,6 +4383,55 @@ html.dark .vsp{--shadow-3:0 1px 0 oklch(0% 0 0 / .35),0 16px 48px oklch(0% 0 0 /
 .vsp .tile{font-size:8px;border-radius:6px}
 .vsp .two,.vsp .srcs{grid-template-columns:1fr}
 .vsp .hide-sm{display:none}}
+
+/* — вкладка ВСП: фильтры, сводка, таблицы, истории, динамика, план — */
+.vsp{--vc1:oklch(58% .16 25);--vc2:oklch(58% .13 250);--vc3:oklch(62% .13 150);--vc4:oklch(72% .14 75);--vc5:oklch(56% .14 310);--vc6:oklch(64% .1 200)}
+.vsp .vfil{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin:0 0 14px}
+.vsp .view:not(.vst-layout){grid-template-columns:minmax(0,1fr)}
+.vsp .vgrid2>*,.vsp .view>*{min-width:0}
+.vsp .vfil .chip{display:inline-flex;align-items:center;gap:6px}
+.vsp .vx-in{width:18px;height:18px;font-size:10px;color:inherit;box-shadow:inset 0 0 0 1px currentColor}
+.vsp button.chip{cursor:pointer;transition:background var(--dur-quick),color var(--dur-quick)}
+.vsp button.chip:hover{color:var(--ink)}
+.vsp button.chip.on:hover{color:var(--paper)}
+.vsp .vsum{display:grid;gap:12px}
+.vsp .vsum-h{display:flex;gap:14px;align-items:center}
+.vsp .vsum-n{font:600 40px/1 var(--f-serif);letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.vsp .vsum-sep{width:1px;align-self:stretch;background:var(--hair);margin:0 4px}
+.vsp .vrow.v2{grid-template-columns:minmax(0,1fr) auto 20px;align-items:start}
+.vsp .btn.vsm{height:28px;padding:0 10px;font-size:12.5px;white-space:nowrap}
+.vsp .vtbl td:first-child{min-width:240px}
+.vsp .vtbl td:nth-last-child(2){min-width:140px}
+.vsp .seg.vseg button[aria-pressed="true"]{background:var(--surface);box-shadow:var(--shadow-1),inset 0 0 0 1px var(--hair)}
+.vsp .vth{font:inherit;color:inherit;letter-spacing:inherit;text-transform:inherit;padding:0;cursor:pointer;white-space:nowrap}
+.vsp .vth.on{color:var(--ink)}
+.vsp .vtbl th.num,.vsp .vtbl td.num{text-align:right;font-variant-numeric:tabular-nums}
+.vsp tr.click:focus-visible td{background:var(--paper-2)}
+.vsp tr.on td{background:var(--accent-soft)}
+.vsp .vst-layout{display:grid;grid-template-columns:260px minmax(0,1fr);gap:18px;align-items:start}
+.vsp .vst-layout>aside{position:sticky;top:calc(var(--topbar) + 64px);max-height:calc(100vh - var(--topbar) - 80px);overflow:auto}
+.vsp .fc[aria-pressed="true"]{background:var(--paper-2);color:var(--ink);font-weight:600}
+.vsp .vtools{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center}
+.vsp .vstory{display:grid;gap:6px}
+.vsp .vmonths{display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:3px;height:64px;align-items:end;margin-top:12px}
+.vsp .vm{position:relative;height:100%}
+.vsp .vm i{position:absolute;left:0;right:0;bottom:0;border-radius:3px 3px 0 0}
+.vsp .vm i.a{background:var(--hair-2)}
+.vsp .vm i.h{background:var(--accent)}
+.vsp .vm-ax{display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink-3);margin-top:4px;font-variant-numeric:tabular-nums}
+.vsp .vstack{display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:3px;height:160px;align-items:end;margin-top:14px}
+.vsp .vs{display:flex;flex-direction:column-reverse;height:100%;gap:1px}
+.vsp .vs i{display:block;border-radius:2px;min-height:2px}
+.vsp .vup{color:var(--accent-ink);font-weight:600}
+.vsp .vcmp{display:grid}
+.vsp .vcmp-r{display:grid;grid-template-columns:minmax(200px,1fr) 90px 130px minmax(130px,auto);gap:10px;align-items:baseline;font-size:14px;padding:7px 0;border-bottom:1px solid var(--hair)}
+.vsp .vcmp-k{color:var(--ink-3);font-size:13px}
+.vsp .vcmp-k.hi{color:var(--accent-ink);font-weight:600}
+.vsp .vplan-it{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:12px;align-items:center;border-bottom:1px solid var(--hair);padding:4px 0}
+.vsp .vtext{white-space:pre-wrap;font-size:14.5px;line-height:1.5;overflow-wrap:anywhere}
+@media (max-width:900px){.vsp .vst-layout{grid-template-columns:1fr}.vsp .vst-layout>aside{position:static;max-height:none}}
+@media (max-width:640px){.vsp .vcmp-r{grid-template-columns:1fr auto}.vsp .vcmp-r .note,.vsp .vcmp-r .vcmp-k{grid-column:1/-1}
+  .vsp .vrow.v2{grid-template-columns:minmax(0,1fr) 20px}.vsp .vrow.v2>.btn{grid-column:1;justify-self:start}}
 </style>
 </head>
 <body>

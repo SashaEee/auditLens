@@ -1172,7 +1172,21 @@ def staff(subject: Optional[str] = None, gosb: Optional[str] = None, user: Curre
                "types": [RISK[k].label if k in RISK else k for k in (x["detail"].get("types") or {})],
                "heavy_here": heavy_by_pt.get(x["point"], 0), "place": _place(pts.get(x["point"]))}
         (comp if x["kind"] == "complaints" else praise).append(row)
-    comp.sort(key=lambda r: (-r["authors"], -r["n"]))
+    # одно и то же имя из карточек модели и из слов — одна строка: берём строку модели,
+    # а у строки «по словам» забираем id (кнопка «Отзывы»)
+    def _k(pt, name):
+        return pt, (name or "").lower().replace("ё", "е")[:5]
+    by_model = {_k(r["place"].get("point"), r["name"]): r for r in model_rows}
+    keep = []
+    for r in comp:
+        m = by_model.get(_k(r["place"].get("point"), r["name"]))
+        if m is not None:
+            m.setdefault("id", r["id"])
+            m.setdefault("full_name", r.get("full_name"))
+        elif (r["name"] or "").strip():
+            keep.append(r)
+    comp = sorted(keep, key=lambda r: (-r["authors"], -r["n"]))
+    praise = [r for r in praise if (r["name"] or "").strip()]
     praise.sort(key=lambda r: (-(r["heavy_here"] > 0), -(r["oneoff"] or 0), -r["n"]))
     # 3) посредники и обслуживание по знакомству
     mid: dict[str, list[dict]] = defaultdict(list)
