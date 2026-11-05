@@ -70,8 +70,18 @@ def _kmeans(X, k: int, iters: int = 30, seed: int = 7):
 
 
 def _embed(texts: list[str]) -> list[list[float]]:
-    from ...rag.embedder import embed_batch
-    return embed_batch(texts)
+    """Векторы описаний через API (bge-m3, как в «Аудите отзывов»). Напрямую, без модуля
+    приложения: сборщик запускается со своим src, где rag нет."""
+    import os
+    from openai import OpenAI
+    cli = OpenAI(base_url=os.getenv("EMBEDDING_BASE_URL") or os.environ["LLM_BASE_URL"],
+                 api_key=os.getenv("EMBEDDING_API_KEY") or os.environ["LLM_API_KEY"], timeout=120)
+    model = os.getenv("VSP_EMBED_MODEL", "BAAI/bge-m3")
+    out: list[list[float]] = []
+    for i in range(0, len(texts), 64):
+        r = cli.embeddings.create(model=model, input=[t[:2000] for t in texts[i:i + 64]])
+        out += [d.embedding for d in r.data]
+    return out
 
 
 async def build(store: Store, *, k: int | None = None, min_relevance_rows: int = 30) -> dict:
