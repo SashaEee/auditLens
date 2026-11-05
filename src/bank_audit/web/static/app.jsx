@@ -11417,8 +11417,360 @@ function PuPeopleSec(){ return <PuEmpty>Раздел в работе</PuEmpty>; 
 // одного раздела не должны задевать строки соседнего.
 
 // ⟦pu2:quality⟧ начало — раздел «Качество ИИ»; правит только агент раздела
-const PU2_CSS_QUALITY=``;
-function PuQualitySec(){ return <PuEmpty>Раздел в работе</PuEmpty>; }
+// Проверочный набор (ответ/отчёт), прогоны, оценки ответов, что не прошло проверку и
+// история прогонов, жалобы одной лентой, вопросы без шанса на результат, отчёты и ответы.
+// Период — переключатель страницы (7/14/30 дней, ctx.days).
+const PU2_CSS_QUALITY=`
+.pu2-qa-ch{display:flex;align-items:center;justify-content:space-between;gap:8px 12px;flex-wrap:wrap}
+.pu2-qa-stack{display:flex;height:10px;border-radius:5px;overflow:hidden;gap:2px;margin-top:14px;background:var(--paper-2)}
+.pu2-qa-stack i{display:block;height:100%;background:var(--viz)}
+.pu2-qa-stack i.b{background:var(--neg)}.pu2-qa-stack i.s{background:var(--viz-3)}.pu2-qa-stack i.w{background:var(--warn)}
+.pu2-qa-leg{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:10px;font-size:12.5px;color:var(--ink-2)}
+.pu2-qa-leg span{display:inline-flex;align-items:center;gap:6px}
+.pu2-qa-sw{width:9px;height:9px;border-radius:2px;display:inline-block;flex:none;background:var(--viz)}
+.pu2-qa-sw.b{background:var(--neg)}.pu2-qa-sw.s{background:var(--viz-3)}.pu2-qa-sw.w{background:var(--warn)}
+.pu2-qa-stats{display:flex;gap:12px 28px;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1px solid var(--hair)}
+.pu2-qa-stats b{display:block;font-size:18px;font-weight:600;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.pu2-qa-stats span{font-size:12.5px;color:var(--ink-3)}
+.pu2-qa-duo{display:flex;gap:32px;align-items:flex-end}
+.pu2-qa-rd{display:flex;gap:4px;align-items:flex-end;height:var(--h,46px)}
+.pu2-qa-rd>span{flex:1;display:flex;flex-direction:column-reverse;align-items:center;gap:2px;height:100%;border-bottom:1px solid var(--hair);
+  padding-bottom:3px;min-width:0}
+.pu2-qa-rd i{width:7px;height:7px;border-radius:50%;background:var(--viz);flex:none}
+.pu2-qa-rd i.b{background:transparent;box-shadow:inset 0 0 0 2px var(--neg)}
+.pu2-qa-rd>span.we{opacity:.6}
+.pu2-qa-more{margin-top:12px;font-size:13px}
+.pu2-qa-more summary{cursor:pointer;color:var(--ink-2);font-weight:500;border-radius:var(--r-sm)}
+.pu2-qa-li{padding:8px 0;border-top:1px solid var(--hair);min-width:0}
+.pu2-qa-li:first-of-type{border-top:0}
+.pu2-qa-li p{margin:0 0 4px;text-wrap:pretty}
+.pu2-qa-meta{display:flex;align-items:center;gap:4px 8px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-3)}
+.pu2-qa-rsn{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px}
+.pu2-qa-cmp{padding:14px 0;border-top:1px solid var(--hair);min-width:0}
+.pu2-qa-rsn+.pu2-qa-cmp{border-top:0}
+.pu2-qa-cmp .pu2-person b{font-size:13px}
+.pu2-qa-q{font-size:14px;font-weight:500;margin:6px 0 0;text-wrap:pretty;overflow-wrap:anywhere}
+.pu2-qa-cmp blockquote{margin:8px 0 0;padding:0 0 0 12px;border-left:2px solid var(--hair-2);font-family:'Source Serif 4',Georgia,serif;
+  font-size:15px;color:var(--ink-2);font-style:italic;text-wrap:pretty;overflow-wrap:anywhere}
+.pu2-qa-cmp blockquote.frag{font-size:13.5px;border-left-color:var(--viz-2)}
+.pu2-qa-f{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}
+.pu2-qa-f .pu2-sp{flex:1 1 auto}
+.pu2-qa-ex{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;padding:10px 0;border-top:1px solid var(--hair);font-size:13px}
+.pu2-qa-ex:first-child{border-top:0}
+.pu2-qa-ex q{quotes:"«" "»";overflow-wrap:anywhere}
+.pu2-qa-ex small{grid-column:1/-1;color:var(--ink-3);font-size:12px}
+.pu2-qa-chips{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0 4px}
+.pu2-qa-fbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px 20px;border-bottom:1px solid var(--hair)}
+.pu2-qa-fbar .pu2-sp{flex:1 1 auto}
+.pu2-qa-in{height:32px;border:1px solid var(--hair-2);border-radius:var(--r);background:var(--surface);color:var(--ink);font:inherit;font-size:13px;
+  padding:0 10px;min-width:0;width:260px;max-width:100%}
+.pu2-qa-in:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+.pu2-tbl td.pu2-qa-qc{min-width:260px;text-align:left;text-wrap:pretty}
+.pu2-qa-qc em{display:block;font-size:12.5px;color:var(--ink-3);margin-top:2px}
+.pu2-tbl td.pu2-qa-nw{white-space:nowrap}
+.pu2-tbl td.pu2-qa-b,.pu2-qa-b{color:var(--accent-ink)}
+.pu2-qa-g{color:var(--pos)}
+.pu2-qa-ans{margin:2px 0 4px;padding:12px 14px;border-radius:var(--r);background:var(--paper-2);font-size:13.5px;line-height:1.5;text-align:left;
+  white-space:normal;max-width:100%;overflow-wrap:anywhere}
+.pu2-qa-ans p:first-child{margin-top:0}.pu2-qa-ans p:last-child{margin-bottom:0}
+.pu2-qa-qtx{font-size:12.5px;color:var(--ink-3);margin:2px 0 8px;text-align:left;white-space:normal}
+.pu2-tbl tr.pu2-qa-x td{padding-top:0}
+@media (min-width:761px) and (max-width:1280px){.pu2-grid>.pu2-qa-half{grid-column:span 6}}
+@media (max-width:760px){
+  .pu2-qa-fbar{padding:12px 16px}
+  .pu2-qa-in{width:100%}
+  .pu2-qa-duo{gap:24px}
+  .pu2-tbl td.pu2-qa-qc{min-width:200px}
+}
+`;
+const PU_QA_ENG=[["hermes","Ответ"],["deep","Отчёт"]];
+const PU_QA_V_ORD={fail:0,partial:1,skip:2};
+
+// «Проверочный набор»: итог последнего прогона, изменение к прошлому прогону той же модели
+function PuQaEval({ev,eng,setEng}){
+  const {d,err,reload}=ev, runs=(d&&d.runs)||[], last=runs[0];
+  const prev=last&&runs.slice(1).find(r=>r.model===last.model);
+  const delta=last&&prev&&last.score!=null&&prev.score!=null?Math.round((last.score-prev.score)*10)/10:null;
+  const cases=last?(+last.n_pass||0)+(+last.n_partial||0)+(+last.n_fail||0):0;
+  return <PuCard id="pu2-eval" title="Проверочный набор" span={4} className="pu2-qa-half"
+      actions={<PuSeg value={eng} options={PU_QA_ENG} onChange={setEng} label="Режим ИИ-помощника"/>}>
+    {!d?(err?<PuLoadErr onRetry={reload}>Не удалось загрузить прогоны.</PuLoadErr>:<Skel h={120}/>)
+      :!last?<PuEmpty>Прогонов ещё не было.</PuEmpty>
+      :<>
+        <PuKpi className="pu2-bare" span={12} label={<>Итог прогона · {PU_MODEL[last.model]||last.model}{d.running?<PuBadge lv="new">идёт прогон</PuBadge>:null}</>}
+          value={puDec(last.score)} unit="из 100"
+          sub={delta!=null?<><PuDelta v={delta}/><span>к прогону {puDay(prev.finished_at||prev.started_at)}</span></>
+            :<span>прогон {puDay(last.finished_at||last.started_at)}</span>}
+          viz={<PuSpark vals={runs.slice(0,8).reverse().map(r=>r.score)} label="Итоги последних прогонов"/>}/>
+        <p className="pu2-note">{puNum(last.n_pass)} из {puNum(cases)} {plural(cases,"вопроса","вопросов","вопросов")} прошли,
+          {" "}{puNum(last.n_partial)} частично, {puNum(last.n_fail)} — провал. Если итог падает на 5 и больше, навыки агента откатываются сами.</p>
+      </>}
+  </PuCard>;
+}
+// «Прогоны ИИ-помощника» за период: готово / сорвалось / остановили сами и время
+function PuQaRuns({m}){
+  const f=m.features||{}, ok=+f.runs_ok||0, bad=+f.runs_failed||0, st=+f.runs_stopped||0, n=ok+bad+st, days=m.days||14;
+  return <PuCard title="Прогоны ИИ-помощника" meta={`${days} ${plural(days,"день","дня","дней")}`} span={4} className="pu2-qa-half">
+    {!m.features?<PuEmpty>нет данных</PuEmpty>:!n?<PuEmpty>За период ИИ-помощника не запускали.</PuEmpty>:<>
+      <PuKpi className="pu2-bare" span={12} label="Готовы" value={puNum(ok)} unit={`из ${puNum(n)}`}/>
+      <div className="pu2-qa-stack" role="img" aria-label={`Готово ${ok}, сорвалось ${bad}, остановили сами ${st}`}>
+        <i style={{flex:ok}}/>{bad>0&&<i className="b" style={{flex:bad}}/>}{st>0&&<i className="s" style={{flex:st}}/>}</div>
+      <div className="pu2-qa-leg"><span><i className="pu2-qa-sw"/>готово {puNum(ok)}</span>
+        <span><i className="pu2-qa-sw b"/>сорвалось {puNum(bad)}</span><span><i className="pu2-qa-sw s"/>остановили сами {puNum(st)}</span></div>
+    </>}
+    {m.features&&<div className="pu2-qa-stats">
+      {f.quick_p50_s==null&&f.deep_p50_s==null
+        ?<span>{f.deep_failed?`Отчёты: готово ${puNum(f.deep_ok)}, сорвалось ${puNum(f.deep_failed)}. `:""}Время появится после первых прогонов.</span>
+        :<>
+          {f.quick_p50_s!=null&&<div><b>{puDur(f.quick_p50_s)}</b><span>ответ, медиана</span></div>}
+          {f.deep_p50_s!=null&&<div data-tip={f.deep_p95_s!=null?`95% отчётов готовы за ${puDur(f.deep_p95_s)}`:undefined} tabIndex={0}>
+            <b>{puDur(f.deep_p50_s)}</b><span>отчёт, медиана</span></div>}
+          {f.deep_failed?<div><b>{puNum(f.deep_failed)}</b><span>отчётов сорвалось из {puNum((+f.deep_ok||0)+(+f.deep_failed||0))}</span></div>:null}
+        </>}
+    </div>}
+  </PuCard>;
+}
+// «Оценки ответов»: два числа без долей, оценки по дням точками, оценки новостей и проверок
+function PuQaRatings({m}){
+  const c=usePu(), fb=m.ai_feedback||{}, f=m.features||{}, days=m.days||14;
+  const likes=+fb.likes||0, dis=+fb.dislikes||0, rated=likes+dis, ans=+fb.answers||0;
+  const rl=(f.ratings_last||[]).find(x=>x.kind==="ai_answer");
+  const bd=fb.by_day||[], {off}=puDays14(m);
+  const mx=Math.max(1,...bd.map(x=>(+x.good||0)+(+x.bad||0)));
+  const good=(fb.items||[]).filter(x=>x.verdict>0);
+  return <PuCard id="pu2-ratings" title="Оценки ответов" meta={`${days} ${plural(days,"день","дня","дней")}`} span={4}>
+    {!m.ai_feedback?<PuEmpty>нет данных</PuEmpty>:<>
+      <div className="pu2-qa-duo">
+        <PuKpi className="pu2-bare" span={12} label={<span style={{display:"inline-flex",gap:6,alignItems:"center"}}><PuIcon n="like"/>Хорошо</span>} value={puNum(likes)}/>
+        <PuKpi className="pu2-bare" span={12} label={<span style={{display:"inline-flex",gap:6,alignItems:"center"}}><PuIcon n="dislike"/>Плохо</span>}
+          value={dis?<span className="pu2-qa-b">{puNum(dis)}</span>:puNum(dis)}/>
+      </div>
+      {rated>0&&bd.length>0&&<>
+        <h3 className="pu2-subh">Когда оценивали</h3>
+        <div className="pu2-qa-rd" style={{"--h":Math.max(46,mx*9+6)+"px"}} role="img"
+            aria-label={`Оценки по дням: ${likes} ${plural(likes,"хорошая","хорошие","хороших")}, ${dis} ${plural(dis,"плохая","плохие","плохих")}`}>
+          {bd.map((x,i)=><span key={x.d} className={bd.length===14&&off.has(i)?"we":undefined}
+              data-tip={`${puWd(x.d)}, ${puDay(x.d)}: хорошо ${+x.good||0}, плохо ${+x.bad||0}`}>
+            {Array.from({length:+x.bad||0},(_,j)=><i key={"b"+j} className="b"/>)}
+            {Array.from({length:+x.good||0},(_,j)=><i key={"g"+j}/>)}</span>)}</div>
+        <div className="pu2-bullet-leg"><span>{puDay(bd[0].d)}</span><span>{bd[bd.length-1].d===mskToday()?"сегодня":puDay(bd[bd.length-1].d)}</span></div></>}
+      <p className="pu2-note">{rated>0
+        ?`Оценили ${puNum(rated)} ${plural(rated,"ответ","ответа","ответов")} из ${puNum(ans)}${rl?`, последняя оценка — ${puAgo(rl.d)}`:""}. `
+          +"Доли не считаем: на таком числе оценок они вводят в заблуждение."
+        :`За ${days} ${plural(days,"день","дня","дней")} ответы ИИ никто не оценивал${rl?` (последняя оценка — ${puAgo(rl.d)})`:""}. `
+          +`За период — ${puNum(ans)} ${plural(ans,"ответ","ответа","ответов")}. Кнопки «хорошо» и «плохо» стоят под каждым ответом `
+          +"ИИ-помощника; при «плохо» открывается выбор причины и поле комментария — это и попадёт сюда. Пока оценок нет, «жалоб нет» ни о чём не говорит."}</p>
+      {good.length>0&&<details className="pu2-qa-more"><summary>Хорошие оценки · {good.length}</summary>
+        {good.map((x,i)=><div key={i} className="pu2-qa-li"><p>{x.question||"без текста вопроса"}</p>
+          <div className="pu2-qa-meta"><PuPerson login={x.username} name={x.name||x.username} noAv/>
+            <span>· {x.mode==="deep"?"отчёт":"быстрый ответ"} · {puAgo(x.created_at)}</span>
+            {x.report_id&&<button type="button" className="pu2-lnk" onClick={()=>c.openReport(x.report_id)}>Открыть отчёт<PuIcon n="right"/></button>}</div>
+          {x.comment&&<p className="pu2-muted" style={{marginTop:4}}>«{x.comment}»</p>}</div>)}</details>}
+    </>}
+    {m.features&&<div className="pu2-qa-stats"><div><b>{puNum(f.fb_likes)} · <span className={f.fb_dislikes?"pu2-qa-b":undefined}>{puNum(f.fb_dislikes)}</span></b>
+      <span>хорошо · плохо: новости и проверки</span></div></div>}
+  </PuCard>;
+}
+// «Что не прошло проверку» и история прогонов; «Запустить прогон» — только владельцу
+function PuQaCases({ev,eng}){
+  const c=usePu(), {d,reload}=ev;
+  const[open,setOpen]=useState(null), [busy,setBusy]=useState(false), [msg,setMsg]=useState("");
+  useEffect(()=>{ setOpen(null); },[eng]);
+  if(!d||d.runs==null) return null;
+  const runs=d.runs||[], last=runs[0];
+  const cases=(d.last_cases||[]).filter(x=>x.verdict!=="pass")
+    .sort((a,b)=>(PU_QA_V_ORD[a.verdict]??3)-(PU_QA_V_ORD[b.verdict]??3));
+  const start=()=>{ setBusy(true); setMsg("");
+    apiPost("/api/admin/agent-eval",{engine:eng==="deep"?"deep":"quick"})
+      .then(()=>{ setMsg("Прогон запущен — обычно 15–20 минут."); setTimeout(reload,1500); })
+      .catch(()=>setMsg("Не запустился — попробуйте ещё раз.")).finally(()=>setBusy(false)); };
+  const why=(x)=>{ const bad=(x.checks||[]).filter(k=>!k.ok).map(k=>k.check+(k.detail!=null&&k.detail!==""?` (${k.detail})`:""));
+    const iss=((x.judge||{}).issues||[]).slice(0,2); return x.error||[...bad,...iss].join("; ")||"—"; };
+  const tog=(id)=>setOpen(o=>o===id?null:id);
+  return <PuCard id="pu2-cases" flush span={12}
+      title={`Что не прошло проверку${last?` · прогон ${puDay(last.finished_at||last.started_at)}`:""}`}
+      actions={c.isOwner?<button type="button" className="btn btn-sm" disabled={busy||d.running} onClick={start}>
+        <PuIcon n="play" sm/>{d.running?"Идёт прогон…":"Запустить прогон"}</button>:d.running?<PuBadge lv="new">идёт прогон</PuBadge>:null}>
+    <div className="pu2-pad" style={{paddingBottom:0}}>
+      {msg&&<p className="pu2-note" style={{marginTop:0}} role="status">{msg}</p>}
+      <p className="pu2-note" style={{marginTop:0}}>Вопросы по всем разделам; эталон считается в момент прогона теми же функциями, что рисуют
+        разделы. Проверки: числа, темы, запреты (внутренние адреса, служебные ключи, заглушки) и судья-модель. Раз в неделю прогон
+        проверяет самообучение агента: если качество упало, навыки откатываются. Нажмите на строку — откроется ответ агента.</p>
+    </div>
+    {!last?<div className="pu2-pad"><PuEmpty>Прогонов ещё не было.</PuEmpty></div>
+      :!cases.length?<div className="pu2-pad"><PuEmpty>Все вопросы прогона прошли проверку.</PuEmpty></div>
+      :<div className="pu2-tw"><table className="pu2-tbl">
+        <thead><tr><th className="pu2-l">Вопрос</th><th className="pu2-l pu2-hide-s">Раздел</th><th className="pu2-l">Итог</th>
+          <th className="pu2-l">Что не так</th><th data-tip="Оценка судьи-модели из 10">Судья</th><th className="pu2-hide-s">Время</th></tr></thead>
+        <tbody>{cases.map(x=>{ const v=PU_VERDICT[x.verdict]||[x.verdict,""], on=open===x.id;
+          return <React.Fragment key={x.id}>
+            <tr className="pu2-click" tabIndex={0} aria-expanded={on} onClick={()=>tog(x.id)}
+                onKeyDown={e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); tog(x.id); } }}>
+              <td className="pu2-l" style={{minWidth:180}}><span className="pu2-muted">{x.id}</span> {x.title}</td>
+              <td className="pu2-l pu2-hide-s pu2-muted pu2-qa-nw">{PU_EVAL_TAB[x.tab]||x.tab}</td>
+              <td className="pu2-l"><PuBadge lv={v[1]||undefined}>{v[0]}</PuBadge></td>
+              <td className="pu2-l pu2-muted" style={{minWidth:180}}>{why(x)}</td>
+              <td>{(x.judge||{}).score??"—"}</td><td className="pu2-hide-s pu2-qa-nw">{x.seconds!=null?`${puDec(x.seconds)} с`:"—"}</td>
+            </tr>
+            {on&&<tr className="pu2-qa-x"><td colSpan={6} className="pu2-l">
+              <div className="pu2-qa-qtx">{x.question}</div>
+              {x.answer?<div className="pu2-qa-ans">{renderMD(x.answer)}</div>:<PuEmpty>Ответа нет.</PuEmpty>}</td></tr>}
+          </React.Fragment>; })}</tbody></table></div>}
+    {runs.length>0&&<>
+      <h3 className="pu2-subh" style={{padding:"0 20px",marginTop:18}}>Прогоны</h3>
+      <div className="pu2-tw"><table className="pu2-tbl">
+        <thead><tr><th className="pu2-l">Когда</th><th className="pu2-l">Модель</th><th className="pu2-l pu2-hide-s">Запуск</th><th>Итог</th>
+          <th>Зачёт</th><th>Частично</th><th>Провал</th><th>Медиана</th></tr></thead>
+        <tbody>{runs.slice(0,10).map(r=><tr key={r.run_id}>
+          <td className="pu2-l pu2-qa-nw">{puDay(r.finished_at||r.started_at)}</td><td className="pu2-l pu2-qa-nw">{PU_MODEL[r.model]||r.model}</td>
+          <td className="pu2-l pu2-hide-s pu2-muted" data-tip={r.note||undefined}>{PU_TRIGGER[r.trigger]||r.trigger}</td>
+          <td><b style={{fontWeight:600}}>{puDec(r.score)}</b></td><td>{puNum(r.n_pass)}</td><td>{puNum(r.n_partial)}</td>
+          <td className={r.n_fail>0?"pu2-qa-b":"pu2-muted"}>{puNum(r.n_fail)}</td>
+          <td className="pu2-qa-nw">{r.median_s!=null?`${puDec(r.median_s)} с`:"—"}</td></tr>)}</tbody></table></div></>}
+    <div style={{height:8}}/>
+  </PuCard>;
+}
+// «Жалобы»: одна лента — ответы ИИ, новости, проверки; фрагмент отчёта — из оценок ответов
+function PuQaComplaints(){
+  const c=usePu(), m=c.m||{};
+  const {d,err,reload}=usePuData(`/api/admin/complaints?days=${c.days}${puMe(c.withMe)}`);
+  const fbi=((m.ai_feedback||{}).items)||[];
+  const items=(d&&d.items)||[], total=d&&d.total!=null?d.total:items.length;
+  const rs={}; items.forEach(x=>(x.reasons||[]).forEach(r=>{ rs[r]=(rs[r]||0)+1; }));
+  const quote=(x)=>{ const f=fbi.find(y=>y.verdict<0&&y.quote&&y.username===x.username
+    &&((x.report_id&&String(y.report_id)===String(x.report_id))||(y.question&&y.question===x.question)));
+    return f&&f.quote; };
+  return <PuCard id="pu2-complaints" title="Жалобы" span={7}
+      meta={d?`${puNum(total)} за ${c.days} ${plural(c.days||0,"день","дня","дней")}${total>items.length?` · показаны последние ${items.length}`:""}`:"на ответы ИИ и новости выпуска"}>
+    {!d?(err?<PuLoadErr onRetry={reload}>Не удалось загрузить жалобы.</PuLoadErr>:<Skel h={120}/>)
+      :!items.length?<PuEmpty>За период жалоб не было. Учтите: оценки ставят редко — если их давно нет, это появится
+        в «Требует внимания» на «Сводке».</PuEmpty>
+      :<>
+        {Object.keys(rs).length>0&&<div className="pu2-qa-rsn">{Object.entries(rs).sort((a,b)=>b[1]-a[1])
+          .map(([r,n])=><PuBadge key={r}>{puCap(r)} · {n}</PuBadge>)}</div>}
+        {items.map((x,i)=>{ const q=quote(x);
+          return <article key={i} className="pu2-qa-cmp">
+            <div className="pu2-qa-meta"><PuPerson login={x.username} name={x.name||x.username} size="xs"/>
+              <span>· {PU_KIND_RU[x.kind]||x.kind}{x.mode&&x.kind==="ai_answer"?(x.mode==="deep"?", отчёт":", быстрый ответ"):""} · {x.at}</span></div>
+            <p className="pu2-qa-q">{x.question||x.title||x.item_key}</p>
+            {x.comment&&<blockquote>{x.comment}</blockquote>}
+            {q&&<blockquote className="frag" data-tip="Выделенный аудитором фрагмент отчёта">Фрагмент: «{String(q).slice(0,220)}{String(q).length>220?"…":""}»</blockquote>}
+            <div className="pu2-qa-f">
+              {(x.reasons||[]).map((r,j)=><PuBadge key={j} lv="bad">{r}</PuBadge>)}
+              {!(x.reasons||[]).length&&!x.comment&&<span className="pu2-muted" style={{fontSize:12.5}}>без причины — панель не отправлена</span>}
+              <span className="pu2-sp"/>
+              {x.report_id?<button type="button" className="pu2-lnk" onClick={()=>c.openReport(x.report_id)}>Открыть отчёт<PuIcon n="right"/></button>
+                :x.session_id?<button type="button" className="pu2-lnk" onClick={()=>c.openSession(x.session_id)}>Открыть диалог<PuIcon n="right"/></button>:null}
+            </div>
+          </article>; })}
+      </>}
+  </PuCard>;
+}
+// «Вопросы без шанса на результат» — пригодность запросов за период страницы (без авторов)
+function PuQaHopeless(){
+  const c=usePu();
+  const {d,err,reload}=usePuData(`/api/admin/pulse/outcomes?days=${c.days}${puMe(c.withMe)}`);
+  const[flt,setFlt]=useState(""), [all,setAll]=useState(false);
+  const title="Вопросы без шанса на результат";
+  if(!d) return <PuCard id="pu2-hopeless" title={title} span={5}>
+    {err?<PuLoadErr onRetry={reload}>Не удалось посчитать пригодность вопросов.</PuLoadErr>:<Skel h={160}/>}</PuCard>;
+  const q=(d.quality||{}), qa=q.ai||{}, qv=q.vuln||{}, ex=d.bad_examples||[];
+  const blk=(nm,x,main)=>{ const cn=x.counts||{}, tot=+x.total||0;
+    const bad=OC_BAD.reduce((a,k)=>a+(+cn[k]||0),0), good=tot-bad;
+    const gtip=OC_Q.filter(([k])=>!OC_BAD.includes(k)&&cn[k]).map(([k,l])=>`${l} — ${cn[k]}`).join(", ");
+    const bmx=Math.max(1,...OC_BAD.map(k=>+cn[k]||0));
+    if(!tot) return main?<PuEmpty>За период вопросов не было.</PuEmpty>:null;
+    return <div>
+      {main?<PuKpi className="pu2-bare" span={12} label={nm} value={puNum(bad)} unit={`из ${puNum(tot)} ${plural(tot,"вопроса","вопросов","вопросов")}`}/>
+        :<h3 className="pu2-subh">{nm} <span className="pu2-muted" style={{fontWeight:400}}>· не дадут результата {puNum(bad)} из {puNum(tot)}</span></h3>}
+      <div className="pu2-qa-stack" role="img" aria-label={`${nm}: дадут результат ${good}, не дадут ${bad}`}>
+        <i style={{flex:good}}/>{bad>0&&<i className="w" style={{flex:bad}}/>}</div>
+      <div className="pu2-qa-leg"><span data-tip={gtip||undefined} tabIndex={gtip?0:undefined}><i className="pu2-qa-sw"/>дадут результат {puNum(good)}</span>
+        <span><i className="pu2-qa-sw w"/>не дадут {puNum(bad)} · {puPct(tot?bad/tot:0)}</span></div>
+      {main&&bad>0&&<div style={{marginTop:14}}>{OC_BAD.filter(k=>cn[k]).sort((a,b)=>cn[b]-cn[a]).map(k=>
+        <PuHBar key={k} label={OC_QL[k]} value={cn[k]} max={bmx} lv="warn" tip={`${OC_QL[k]}: ${cn[k]} из ${tot}`}/>)}</div>}
+    </div>; };
+  const bn=Object.fromEntries(OC_BAD.map(k=>[k,ex.filter(b=>b.quality===k).length]));
+  const rows=ex.filter(b=>!flt||b.quality===flt);
+  return <PuCard id="pu2-hopeless" title={title} span={5} meta={`${c.days} ${plural(c.days||0,"день","дня","дней")}`}>
+    {blk("ИИ-помощник",qa,true)}
+    {blk("Аудит уязвимостей",qv,false)}
+    {ex.length>0&&<>
+      <h3 className="pu2-subh">Примеры, без авторов</h3>
+      <div className="pu2-qa-chips" role="group" aria-label="Категория примеров">
+        <button type="button" className={"chip"+(!flt?" on":"")} aria-pressed={!flt} onClick={()=>setFlt("")}>Все <i>{ex.length}</i></button>
+        {OC_BAD.filter(k=>bn[k]).map(k=><button key={k} type="button" className={"chip"+(flt===k?" on":"")} aria-pressed={flt===k}
+          onClick={()=>setFlt(k)}>{OC_QL[k]} <i>{bn[k]}</i></button>)}</div>
+      <div>{(all?rows:rows.slice(0,6)).map((b,i)=><div key={i} className="pu2-qa-ex"><q>{b.text}</q>
+        <span className="pu2-muted pu2-tnum">{b.n>1?"×"+b.n:""}</span>
+        <small>{OC_QL[b.quality]||b.quality} · {b.section} · {puDay(b.d)}{b.why?` — ${b.why}`:""}</small></div>)}</div>
+      {rows.length>6&&<button type="button" className="pu2-lnk" style={{marginTop:8}} onClick={()=>setAll(x=>!x)}>
+        {all?"Свернуть":`Показать все · ${rows.length}`}</button>}</>}
+    <p className="pu2-note">Годные — понятны предмет и цель, ответ есть в открытых данных; уточнения — ответ на вопрос помощника.
+      Не дадут результата — слишком общие, нужны закрытые данные банка, персональные данные, вне темы, тест; спорные случаи
+      перепроверяет вторая модель. Одинаковые запросы — одной строкой (×N). Чаще всего вопрос слишком общий: помогают шаблоны
+      по направлениям и памятка «Как спросить».</p>
+  </PuCard>;
+}
+// «Отчёты и ответы»: строка — открыть отчёт; автор — лист человека
+function PuQaReports(){
+  const c=usePu();
+  const[mode,setMode]=useState("all"), [bad,setBad]=useState(false), [qq,setQq]=useState(""), [all,setAll]=useState(false);
+  const {d,err,reload}=usePuData(`/api/admin/reports?days=${c.days}&limit=300${bad?"&only_bad=true":""}${puMe(c.withMe)}`);
+  const ql=qq.trim().toLowerCase().replace(/ё/g,"е");
+  const rows=((d&&d.reports)||[]).filter(r=>(mode==="all"||(mode==="quick")===(r.mode==="quick"))
+    &&(!ql||[r.question,r.title,r.name,r.username].some(s=>String(s||"").toLowerCase().replace(/ё/g,"е").includes(ql))));
+  const shown=all?rows:rows.slice(0,30);
+  const open=(r)=>c.openReport(r.report_id);
+  return <PuCard id="pu2-reports" title="Отчёты и ответы" flush span={12}
+      meta={d?`${puNum(d.deep)} ${plural(+d.deep||0,"отчёт","отчёта","отчётов")} · ${puNum(d.quick)} ${plural(+d.quick||0,"сохранённый ответ","сохранённых ответа","сохранённых ответов")}`
+        +(d.bad>0?` · с жалобами ${puNum(d.bad)}`:""):undefined}>
+    <div className="pu2-qa-fbar">
+      <PuSeg value={mode} options={[["all","Все"],["deep","Только отчёты"],["quick","Быстрые ответы"]]} onChange={setMode} label="Что показывать"/>
+      <button type="button" className={"chip"+(bad?" on":"")} aria-pressed={bad} onClick={()=>setBad(x=>!x)}>С жалобами</button>
+      <span className="pu2-sp"/>
+      <input className="pu2-qa-in" type="search" value={qq} onChange={e=>setQq(e.target.value)} placeholder="Поиск по вопросу или автору"
+        aria-label="Поиск по отчётам и ответам"/>
+    </div>
+    {!d?<div className="pu2-pad" style={{paddingTop:14}}>{err?<PuLoadErr onRetry={reload}>Не удалось загрузить отчёты.</PuLoadErr>:<Skel h={160}/>}</div>
+      :!rows.length?<div className="pu2-pad" style={{paddingTop:14}}><PuEmpty>{ql||bad||mode!=="all"?"Ничего не найдено.":"За период отчётов и ответов не было."}</PuEmpty></div>
+      :<div className="pu2-tw"><table className="pu2-tbl">
+        <thead><tr><th className="pu2-l">Вопрос</th><th className="pu2-l">Автор</th><th className="pu2-l pu2-hide-s">Вид</th><th className="pu2-l">Когда</th>
+          <th data-tip="Объём текста; красным — сорвался или слишком короткий">Объём</th><th>Оценки</th><th>Открытий · пересылок</th></tr></thead>
+        <tbody>{shown.map(r=><tr key={r.report_id} className="pu2-click" tabIndex={0} onClick={()=>open(r)}
+            onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); open(r); } }} aria-label={`Открыть: ${r.title||r.question||"отчёт"}`}>
+          <td className="pu2-qa-qc">{r.title||r.question||"—"}{r.comment&&<em>«{r.comment}»</em>}</td>
+          <td className="pu2-l pu2-qa-nw"><PuPerson login={r.username} name={r.name||r.username} noAv/></td>
+          <td className="pu2-l pu2-hide-s pu2-muted pu2-qa-nw">{r.mode==="quick"?"ответ":"отчёт"}</td>
+          <td className="pu2-l pu2-muted pu2-qa-nw">{r.at}</td>
+          <td className="pu2-qa-nw">{puLen(r)}</td>
+          <td className="pu2-qa-nw">{+r.likes>0&&<span className="pu2-qa-g">+{r.likes}</span>}{+r.likes>0&&+r.dislikes>0?" ":""}
+            {+r.dislikes>0&&<span className="pu2-qa-b">−{r.dislikes}</span>}{!+r.likes&&!+r.dislikes&&<span className="pu2-muted">—</span>}</td>
+          <td className="pu2-qa-nw">{+r.opens?puNum(r.opens):<span className="pu2-muted">—</span>}{+r.shares>0?` · ${puNum(r.shares)}`:""}</td>
+        </tr>)}</tbody></table></div>}
+    {rows.length>30&&<div className="pu2-pad" style={{paddingTop:12}}><button type="button" className="pu2-lnk" onClick={()=>setAll(x=>!x)}>
+      {all?"Свернуть":`Показать все · ${rows.length}`}</button></div>}
+    <div style={{height:6}}/>
+  </PuCard>;
+}
+
+function PuQualitySec(){
+  const c=usePu(), m=c.m||{};
+  const[eng,setEng]=useState("hermes");
+  const ev=usePuData(`/api/admin/agent-eval?engine=${eng}`);
+  // идёт прогон — опрос раз в 20 с, только пока «Пульс» на экране
+  const running=!!(ev.d&&ev.d.running), reload=ev.reload;
+  useEffect(()=>{ if(!running||!c.visible) return; const t=setInterval(reload,20000); return ()=>clearInterval(t); },[running,c.visible,reload]);
+  return <div className="pu2-grid">
+    <PuQaEval ev={ev} eng={eng} setEng={setEng}/>
+    <PuQaRuns m={m}/>
+    <PuQaRatings m={m}/>
+    <PuQaCases ev={ev} eng={eng}/>
+    <PuQaComplaints/>
+    <PuQaHopeless/>
+    <PuQaReports/>
+  </div>;
+}
 // ⟦pu2:quality⟧ конец
 
 // ── граница: выше «Качество ИИ», ниже «Обращения» ────────────────────────────
