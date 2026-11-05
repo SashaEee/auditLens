@@ -14085,7 +14085,8 @@ function PuIbMail(){
     <button type="button" className="btn btn-sm" onClick={start}>Изменить</button></div>;
   return <div className="pu2-ib-mail edit">
     <span className="pu2-ib-mh">Письма об обращениях</span>
-    <p className="pu2-ib-mnote">Логин сотрудника — письмо на почту, которую он подключил в колокольчике; можно вписать и адрес.
+    <p className="pu2-ib-mnote">Логин сотрудника — письмо на почту, которую он подключил в колокольчике; можно вписать адрес
+      или «логин &lt;адрес&gt;» — тогда письмо на адрес, а кнопка «Ответить» есть, если у человека открыт «Пульс».
       На некорпоративную почту уходит только номер обращения, без текста и снимков.</p>
     <label className="pu2-ib-mrow"><span>Все обращения</span>
       <input value={all} onChange={e=>setAll(e.target.value)} placeholder="логины или адреса через запятую"/></label>

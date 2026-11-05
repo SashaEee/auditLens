@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy import text
@@ -92,9 +93,19 @@ def set_routes(all_: list[str] | str, sections: dict, by: str) -> dict:
 
 # ── адресаты ─────────────────────────────────────────────────────────────────
 
+_LOGIN_ADDR = re.compile(r"^\s*([^\s<>@]+)\s*<\s*([^<>\s]+@[^<>\s]+)\s*>\s*$")
+
+
 def _resolve(entry: str) -> dict:
-    """Логин → подтверждённая почта из колокольчика; адрес → как есть (его вписал владелец)."""
+    """Логин → подтверждённая почта из колокольчика; адрес → как есть (его вписал владелец);
+    «логин <адрес>» — письмо на адрес, права (есть ли «Пульс», чтобы ответить) — по логину."""
     from . import mail_delivery as MD
+    m = _LOGIN_ADDR.match(entry)
+    if m:
+        login, addr = m.group(1), m.group(2).lower()
+        with db.session() as s:
+            name = s.execute(text("SELECT display_name FROM app_user WHERE username = :u"), {"u": login}).scalar()
+        return {"entry": entry, "username": login, "name": name, "email": addr, "ok": True, "source": "admin"}
     if "@" in entry:
         return {"entry": entry, "username": None, "name": None, "email": entry.lower(), "ok": True,
                 "source": "admin"}
@@ -113,11 +124,12 @@ def _resolve(entry: str) -> dict:
 def recipients_for(section: str | None) -> list[dict]:
     rt = routes()
     out, seen = [], set()
-    for e in rt["all"] + rt["sections"].get(section or "", []):
-        r = _resolve(e)
-        if r["ok"] and r["email"] not in seen:
-            seen.add(r["email"])
-            out.append(r)
+    for scope, xs in (("all", rt["all"]), ("section", rt["sections"].get(section or "", []))):
+        for e in xs:
+            r = _resolve(e)
+            if r["ok"] and r["email"] not in seen:
+                seen.add(r["email"])
+                out.append({**r, "scope": scope})
     return out
 
 
@@ -146,7 +158,8 @@ def known_sections() -> list[dict]:
 
 # ── письмо ───────────────────────────────────────────────────────────────────
 
-def render(t: dict, *, msg: dict | None, private: bool, team: bool, images: list[dict]) -> dict:
+def render(t: dict, *, msg: dict | None, private: bool, team: bool, images: list[dict],
+           by_section: bool = False) -> dict:
     """Обращение (или новое сообщение в нём) → письмо. private — на некорпоративную почту:
     только номер и раздел, без текста и снимков. team — адресат отвечает в «Пульсе»."""
     no = t["ticket_id"]
@@ -165,7 +178,7 @@ def render(t: dict, *, msg: dict | None, private: bool, team: bool, images: list
     if private:
         subject = f"Обращение № {no} в AuditLens"
     reason = ("Вы получили это письмо, потому что вам приходят обращения AuditLens"
-              + ("" if team else f" по разделу «{sect.split(' › ')[0]}»") + ".")
+              + (f" по разделу «{sect.split(' › ')[0]}»" if by_section or not team else "") + ".")
     note = ("Ответ на это письмо автор не увидит — отвечайте в «Пульсе» → «Обращения»." if team
             else "Ответ на это письмо автор не увидит. Ответ пишет команда AuditLens — передайте его владельцу.")
     if private:
@@ -272,7 +285,8 @@ def _send_item(t: dict, msg: dict | None) -> int:
         team = bool(r["username"]) and can_pulse(r["username"])
         if imgs is None:
             imgs = [] if msg else _images(int(t["ticket_id"]))
-        mail = render(t, msg=msg, private=private, team=team, images=[] if private else imgs)
+        mail = render(t, msg=msg, private=private, team=team, images=[] if private else imgs,
+                      by_section=r.get("scope") == "section")
         MD.deliver(r["username"], kind, to, mail, consented=True, n=n_ref)
         if not msg:
             _mark_bell_emailed(r["username"], int(t["ticket_id"]))

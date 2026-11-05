@@ -102,6 +102,7 @@ def pg(monkeypatch):
     monkeypatch.setenv("MAIL_CORP_DOMAINS", "corp.example.ru")
     monkeypatch.setenv("APP_BASE_URL", "https://al.example")
     monkeypatch.setenv("ADMIN_USERS", "owner-1")
+    monkeypatch.setenv("PULSE_USERS", "dev-3")
     yield eng
     eng.dispose()
 
@@ -135,7 +136,8 @@ def test_tick_sends_every_ticket_to_owner_and_section_route(pg, sent):
     _sql("INSERT INTO user_ticket (username, kind, section, section_label, body) VALUES ('u1','bug','reviews','Аудит отзывов','старое')")
     assert IM.tick()["started"]                                         # старое обращение не рассылаем
     assert sent == []
-    IM.set_routes(["owner-1"], {"loophole": ["dev-2", "dev2@corp.example.ru"]}, "owner-1")
+    IM.set_routes(["owner-1"], {"loophole": ["dev-2", "dev2@corp.example.ru", "dev-3 <Dev3@corp.example.ru>"]},
+                  "owner-1")
     tid = _sql("""INSERT INTO user_ticket (username, kind, section, section_label, body, context)
                   VALUES ('u1','bug','loophole','Аудит уязвимостей','Не грузится', '{"url":"#loophole"}')
                   RETURNING ticket_id""")
@@ -144,9 +146,11 @@ def test_tick_sends_every_ticket_to_owner_and_section_route(pg, sent):
             VALUES ('owner-1', 'team_ticket', 'Обращение', '#pulse', CAST(:r AS jsonb))""",
          {"r": '{"no": %d}' % tid})
     r = IM.tick()
-    assert r["tickets"] == 1 and r["mails"] == 2
+    assert r["tickets"] == 1 and r["mails"] == 3
     to = sorted(x["to"] for x in sent)
-    assert to == ["dev2@corp.example.ru", "owner@corp.example.ru"]       # dev-2 без почты — пропущен
+    assert to == ["dev2@corp.example.ru", "dev3@corp.example.ru", "owner@corp.example.ru"]   # dev-2 без почты — пропущен
+    d3 = next(x["mail"] for x in sent if x["to"].startswith("dev3"))
+    assert "Ответить в «Пульсе»" in d3["html"] and "по разделу «Аудит уязвимостей»" in d3["html"]   # dev-3 в PULSE_USERS
     owner_mail = next(x["mail"] for x in sent if x["to"].startswith("owner"))
     assert "Ответить в «Пульсе»" in owner_mail["html"] and owner_mail["images"]
     assert _sql("SELECT emailed_at IS NOT NULL FROM app_notice WHERE kind = 'team_ticket'")   # колокольчик не дублирует
@@ -155,7 +159,7 @@ def test_tick_sends_every_ticket_to_owner_and_section_route(pg, sent):
     _sql("INSERT INTO user_ticket_msg (ticket_id, author, role, body) VALUES (:t, 'u1', 'user', 'Ещё деталь')", {"t": tid})
     sent.clear()
     r = IM.tick()
-    assert r["messages"] == 1 and len(sent) == 2 and "Ещё деталь" in sent[0]["mail"]["html"]
+    assert r["messages"] == 1 and len(sent) == 3 and "Ещё деталь" in sent[0]["mail"]["html"]
     sent.clear()
     assert IM.tick()["mails"] == 0 and sent == []
     d = IM.describe()
