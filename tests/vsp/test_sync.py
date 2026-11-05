@@ -210,3 +210,9 @@ def test_report_single_author_unknown_when_source_lacks_field(store):
     store.save_reviews([a, g], seen_at=now)
     prof = completeness_report(store)["profile"]
     assert prof["ya"]["five_2026_single_author"] is None and prof["gis"]["five_2026_single_author"] == 1
+
+
+def test_duplicate_review_on_one_page_is_saved_once(store):
+    r = _rev("a", 1)
+    st = store.save_reviews([r, r, _rev("a", 2)])
+    assert st["new"] == 2 and store.counts("fake", "a")["stored"] == 2

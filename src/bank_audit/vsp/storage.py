@@ -249,7 +249,8 @@ class Store:
         """Записать страницу отзывов. Возвращает {new, updated, seen}."""
         seen_at = seen_at or utcnow()
         st = {"new": 0, "updated": 0, "seen": 0}
-        items = list(items)
+        # один и тот же отзыв дважды на странице (замечено у Яндекса на проде) — оставляем последний
+        items = list({r.review_id: r for r in items}.values())
         if not items:
             return st
         ids = [r.review_id for r in items]
@@ -269,7 +270,7 @@ class Store:
                     bmap[key] = got[0] if got else None
                 o = old.get(r.review_id)
                 if o is None:
-                    c.execute(reviews.insert().values(
+                    c.execute(self._insert_once(reviews).values(
                         review_id=r.review_id, source=r.source, source_review_id=r.source_review_id,
                         source_branch_id=r.source_branch_id, branch_id=bmap[key], rating=r.rating,
                         review_text=_nul(r.review_text), review_date=r.review_date, author_ref=r.author_ref,
@@ -291,6 +292,14 @@ class Store:
                     st["updated"] += 1
                 c.execute(update(reviews).where(reviews.c.review_id == r.review_id).values(**vals))
         return st
+
+    def _insert_once(self, table):
+        """INSERT, который молча пропускает уже существующий ключ (два прохода одновременно
+        встретили один отзыв): PostgreSQL — ON CONFLICT DO NOTHING, SQLite — OR IGNORE."""
+        if self.pg:
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+            return pg_insert(table).on_conflict_do_nothing()
+        return table.insert().prefix_with("OR IGNORE")
 
     def known_ids(self, source: str, sid: str, ids: Iterable[str]) -> set[str]:
         ids = list(ids)
