@@ -11928,8 +11928,353 @@ function PuSystemsSec(){
 // остаются как есть при любых правках разделов.
 
 // ⟦pu2:results⟧ начало — раздел «Итоги»; правит только агент раздела
-const PU2_CSS_RESULTS=``;
-function PuResultsSec(){ return <PuEmpty>Раздел в работе</PuEmpty>; }
+// Свой период (Всё время/90/30/14/7 дней, localStorage 'al-pu-oc-days' — его же берёт пункт
+// меню «Скачать итоги в Excel»), плитки, охват по ТБ, путь от вопроса к результату, банки,
+// направления аудита, траты на модели, обратная связь и дела. Всё из прежних «Итогов» и
+// «Охвата и трат»; качество запросов — в «Качестве ИИ».
+const PU2_CSS_RESULTS=`
+.pu2-res-tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+.pu2-res-tools .pu2-sp{flex:1 1 auto}
+.pu2-res-tools .pu2-note{margin:0}
+.pu2-res-msg{margin:-6px 0 16px;font-size:13px;color:var(--ink-2)}
+.pu2-res-tools a.btn{display:inline-flex;align-items:center;gap:6px;text-decoration:none}
+.pu2-res-fun{display:flex;flex-direction:column;gap:10px}
+.pu2-res-fs{display:grid;grid-template-columns:minmax(0,230px) minmax(0,1fr) 64px;gap:14px;align-items:center}
+.pu2-res-fs .lb{font-size:13px;color:var(--ink-2);min-width:0}
+.pu2-res-fs .lb small{display:block;font-size:12px;color:var(--ink-3)}
+.pu2-res-fs .pu2-tr{height:24px;border-radius:5px}
+.pu2-res-fs .pu2-tr i{border-radius:5px}
+.pu2-res-fs .v{font-size:15px;font-weight:600;text-align:right;font-variant-numeric:tabular-nums}
+.pu2-res-kv{display:flex;justify-content:space-between;align-items:baseline;gap:4px 16px;padding:9px 0;border-top:1px solid var(--hair);font-size:13px}
+.pu2-res-kv:first-child{border-top:0}
+.pu2-res-kv>span{min-width:0;color:var(--ink-2)}
+.pu2-res-kv small{display:block;font-size:12px;color:var(--ink-3)}
+.pu2-res-kv b{font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+.pu2-res-fun+.pu2-res-more{margin-top:14px;padding-top:4px;border-top:1px solid var(--hair)}
+.pu2-res-sber{color:var(--sber);font-weight:500}
+.pu2-res-dots{display:flex;flex-wrap:wrap;gap:3px;max-width:230px}
+.pu2-res-dots i{width:7px;height:12px;border-radius:2px;background:var(--paper-2);box-shadow:inset 0 0 0 1px var(--hair)}
+.pu2-res-dots i.on{background:var(--viz);box-shadow:none}
+.pu2-res-uc{display:flex;align-items:center;gap:12px;min-width:200px}
+.pu2-tbl td.pu2-res-nw,.pu2-res-nw{white-space:nowrap}
+.pu2-tbl tr.pu2-res-tot td{font-weight:600;border-top:1px solid var(--hair-2)}
+.pu2-res-air{display:flex;align-items:center;gap:10px;min-width:170px}
+.pu2-res-air .pu2-tr{flex:1 1 auto;max-width:160px}
+.pu2-tbl td.pu2-res-dn{min-width:150px;max-width:280px}
+.pu2-res-air b{font-weight:500;min-width:30px;text-align:right}
+.pu2-res-u{font-size:12px;color:var(--ink-3);white-space:nowrap;margin-left:6px}
+.pu2-res-reachf{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:32px;padding:18px 20px 20px;border-top:1px solid var(--hair)}
+.pu2-res-reachf>*{min-width:0}
+.pu2-res-reachf .pu2-hbar{grid-template-columns:minmax(0,170px) minmax(0,1fr) auto}
+.pu2-res-act{display:flex;gap:8px 12px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.pu2-res-cost{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:32px}
+.pu2-res-cost>*{min-width:0}
+.pu2-res-stats{display:flex;gap:12px 28px;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1px solid var(--hair)}
+.pu2-res-stats b{display:block;font-size:18px;font-weight:600;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.pu2-res-stats span{font-size:12.5px;color:var(--ink-3)}
+.pu2-res-bars{display:flex;align-items:flex-end;gap:4px;height:120px}
+.pu2-res-bars>span{flex:1;display:flex;flex-direction:column-reverse;gap:2px;height:100%;min-width:0}
+.pu2-res-bars i{display:block;border-radius:2px;background:var(--viz)}
+.pu2-res-bars i.o{background:var(--viz-3)}
+.pu2-res-bars>span.prev{opacity:.5}
+.pu2-res-bx{display:flex;gap:4px;margin-top:6px;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.pu2-res-bx span{flex:1;min-width:0;white-space:nowrap;display:flex}
+.pu2-res-bx span.e{justify-content:flex-end}
+.pu2-res-leg{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:10px;font-size:12.5px;color:var(--ink-2)}
+.pu2-res-leg span{display:inline-flex;align-items:center;gap:6px}
+.pu2-res-sw{width:9px;height:9px;border-radius:2px;display:inline-block;flex:none;background:var(--viz)}
+.pu2-res-sw.o{background:var(--viz-3)}
+.pu2-res-cost .pu2-hbar-l{white-space:nowrap}
+@media (max-width:1080px){.pu2-res-cost{grid-template-columns:minmax(0,1fr);gap:24px}}
+@media (max-width:760px){
+  .pu2-res-reachf{grid-template-columns:minmax(0,1fr);gap:16px;padding:16px}
+  .pu2-res-fs{grid-template-columns:minmax(0,1fr) 64px;row-gap:6px}
+  .pu2-res-fs .pu2-tr{grid-column:1/-1;grid-row:2}
+  .pu2-res-reachf .pu2-hbar{grid-template-columns:minmax(0,120px) minmax(0,1fr) auto}
+}
+`;
+const PU_RES_PER=[[0,"Всё время"],[90,"90 дн"],[30,"30 дн"],[14,"14 дн"],[7,"7 дн"]];
+const puResRead=()=>{ try{ const s=localStorage.getItem("al-pu-oc-days"); const v=+s;
+  return s!=null&&PU_RES_PER.some(([k])=>k===v)?v:0; }catch{ return 0; } };
+// изменение к прошлому такому же периоду: стрелка и модуль; pp — в процентных пунктах
+function PuResDelta({cur,prev,days,pp,good=true}){
+  if(!days||prev==null||cur==null) return null;
+  const d=pp?Math.round((cur-prev)*1000)/10:cur-prev;
+  if(!d) return <span className="pu2-delta">как в прошлые {days} дн</span>;
+  return <><PuDelta v={d} unit={pp?"п. п.":undefined} good={good}/><span>к прошлым {days} дн</span></>;
+}
+function PuResTile({label,icon,value,sub,delta}){
+  return <PuKpi label={label} icon={icon} value={value} sub={<>{sub}{delta}</>}/>;
+}
+
+// Охват по территориальным банкам (web/org_reach.py): штат из кадровой выгрузки
+function PuResReach(){
+  const c=usePu();
+  const url="/api/admin/pulse/reach?v=1"+puMe(c.withMe);
+  const {d,err,reload}=usePuData(url,{ttl:300000});
+  const[busy,setBusy]=useState(false), [msg,setMsg]=useState("");
+  const fileRef=useRef(null);
+  const upload=(f)=>{ if(!f) return; setBusy(true); setMsg("");
+    const rd=new FileReader();
+    rd.onload=()=>{ const b64=String(rd.result).split(",")[1]||"";
+      fetch("/api/admin/pulse/reach",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({name:f.name,data:b64})})
+        .then(async r=>{ const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.detail||"проверьте файл"); return j; })
+        .then(r=>{ setMsg(`Загружено ${puNum(r.rows)} ${plural(+r.rows||0,"запись","записи","записей")}, работают ${puNum(r.current)}.`);
+          puInvalidate("/api/admin/pulse/reach"); })
+        .catch(e=>setMsg("Не загрузилось: "+e.message))
+        .finally(()=>{ setBusy(false); if(fileRef.current) fileRef.current.value=""; }); };
+    rd.onerror=()=>{ setBusy(false); setMsg("Не удалось прочитать файл."); };
+    rd.readAsDataURL(f); };
+  const pick=c.isOwner&&<>
+    <input ref={fileRef} type="file" accept=".xlsx" hidden onChange={e=>upload(e.target.files&&e.target.files[0])}/>
+    <button type="button" className="btn btn-sm" disabled={busy} onClick={()=>fileRef.current&&fileRef.current.click()}>
+      {busy?"Загружаю…":d&&d.loaded?"Обновить штат (.xlsx)":"Загрузить штат (.xlsx)"}</button></>;
+  const act=(pick||msg)&&<div className="pu2-res-act">{pick}{msg&&<span className="pu2-note" style={{margin:0}} role="status">{msg}</span>}</div>;
+  const title="Охват по территориальным банкам";
+  if(!d) return <PuCard id="pu2-reach" title={title}>
+    {err?<PuLoadErr onRetry={reload}>Не удалось посчитать охват.</PuLoadErr>:<Skel h={160}/>}</PuCard>;
+  if(!d.loaded) return <PuCard id="pu2-reach" title={title}>
+    <PuEmpty>Штат не загружен. {c.isOwner?"Загрузите кадровую выгрузку (xlsx: табельный номер, статус, ФИО, должность, номер "
+      +"подразделения) — посчитаем, какая доля каждого подразделения пользуется AuditLens. ФИО не сохраняются."
+      :"Его загружает владелец инструмента."}</PuEmpty>{act}</PuCard>;
+  const units=d.units||[], roles=d.roles||[], oth=d.other||{}, mt=d.matched||{};
+  const sum=(k)=>units.reduce((a,u)=>a+(+u[k]||0),0);
+  const maxH=Math.max(1,...units.map(u=>+u.head||0)), k=Math.max(1,Math.ceil(maxH/40));
+  const dots=(u)=>{ const n=Math.ceil((+u.head||0)/k), on=Math.round((+u.users||0)/k);
+    return <span className="pu2-res-dots" role="img" aria-label={`${u.users} из ${u.head}`}
+        data-tip={k>1?`Одна точка — ${k} ${plural(k,"человек","человека","человек")}`:undefined}>
+      {Array.from({length:n},(_,i)=><i key={i} className={i<on?"on":undefined}/>)}</span>; };
+  return <PuCard id="pu2-reach" title={title} flush
+      meta={`кадровая выгрузка от ${puDay(d.loaded_at)} · всё время · ФИО не хранятся`}>
+    <div className="pu2-pad" style={{paddingTop:4}}>
+      <PuStatRow items={[
+        {v:`${puNum(d.users)} из ${puNum(d.head)}`,l:`работающих пользуются · ${puPct(d.reach)}`,s:"без уволенных и служебных учёток"},
+        {v:puNum(d.active30),l:"активны за 30 дней",s:"сотрудники из штата"},
+        {v:puNum(oth.users),l:"не из штата",s:`другие подразделения · ${puNum(oth.active30)} за 30 дней`
+          +(oth.ai!=null?` · вопросов ИИ — ${puNum(oth.ai)}`:"")},
+        {v:puNum(sum("ai")),l:"вопросов ИИ от штата",s:`задавали ${puNum(sum("ai_users"))} чел.`}]}/>
+    </div>
+    <div className="pu2-tw"><table className="pu2-tbl">
+      <thead><tr><th className="pu2-l">{d.label||"Подразделение"}</th><th>Штат</th><th className="pu2-l">Пользуются</th><th>Охват</th>
+        <th>Активны 30 дней</th><th>Вопросы ИИ</th><th data-tip="Заходили 5 и больше разных дней">Постоянные</th><th>Часы</th></tr></thead>
+      <tbody>{units.map(u=><tr key={u.code+":"+u.name}>
+        <td className="pu2-l pu2-res-nw" style={{fontWeight:500}} data-tip={u.code&&u.code!=="-"?`номер ${u.code}`:"без номера"}>{u.name}</td>
+        <td data-tip={u.head_set?`Задано отдельно; по выгрузке — ${puNum(u.head_roster)}`:undefined}>{puNum(u.head)}</td>
+        <td className="pu2-l"><span className="pu2-res-uc">{dots(u)}<span className="pu2-res-nw">{puNum(u.users)} из {puNum(u.head)}</span></span></td>
+        <td><b style={{fontWeight:600}}>{puPct(u.reach)}</b></td><td>{puNum(u.active30)}</td><td>{puNum(u.ai)}</td>
+        <td>{u.regular?puNum(u.regular):<span className="pu2-muted">—</span>}</td><td>{puDec(u.hours,1)}</td></tr>)}
+        <tr className="pu2-res-tot"><td className="pu2-l">Итого</td><td>{puNum(d.head)}</td>
+          <td className="pu2-l pu2-res-nw">{puNum(d.users)} из {puNum(d.head)}</td><td>{puPct(d.reach)}</td><td>{puNum(d.active30)}</td>
+          <td>{puNum(sum("ai"))}</td><td>{puNum(sum("regular"))}</td><td>{puDec(sum("hours"),1)}</td></tr>
+      </tbody></table></div>
+    <div className="pu2-res-reachf">
+      <div><h3 className="pu2-subh" style={{marginTop:0}}>По должностям</h3>
+        {roles.length?roles.map(r=><PuHBar key={r.role} label={r.role} value={r.users} max={r.head}
+          right={<><b>{puNum(r.users)} из {puNum(r.head)}</b> · {puPct(r.reach)}</>}/>):<PuEmpty>Должностей в выгрузке нет.</PuEmpty>}</div>
+      <div><p className="pu2-note" style={{marginTop:0}}>Сотрудник подразделения — табельный номер в логине совпал со штатом
+        ({puNum(mt.tab)}) или совпали имя и фамилия ({puNum(mt.name)}). Постоянные — заходили 5 и больше разных дней.{" "}
+        {d.head_set?`Численность штата ${d.head_set} ${plural(d.head_set,"подразделения","подразделений","подразделений")} задана отдельно `
+          +"(наведите на число — по выгрузке), остальных — по выгрузке без уволенных.":"Штат — без уволенных."}
+        {" "}Служебные учётки не считаются. Штат загружен {puDay(d.loaded_at)}.</p>
+        {act}</div>
+    </div>
+  </PuCard>;
+}
+
+// Траты на модели (учёт расходов облака)
+function PuResCosts(){
+  const {d,err,reload}=usePuData("/api/admin/pulse/costs",{ttl:300000});
+  const title="Траты на модели";
+  if(!d) return <PuCard id="pu2-costs" title={title}>
+    {err?<PuLoadErr onRetry={reload}>Не удалось получить траты.</PuLoadErr>:<Skel h={160}/>}</PuCard>;
+  if(!d.configured) return <PuCard id="pu2-costs" title={title}>
+    <PuEmpty>Учёт трат не подключён: на сервере нужны адрес сервиса учёта расходов облака и токен отдела.</PuEmpty></PuCard>;
+  const mo=d.month||{}, cm=mo.period||"", mname=puMonth(cm), days=d.days||[], months=d.months||[], models=d.models||[];
+  // текущий месяц в своём масштабе: разовый прогон прошлого месяца сжимал бы его в полоски;
+  // в первые дни месяца — и конец прошлого
+  const cur=days.filter(x=>String(x.day).startsWith(cm));
+  const shown=cur.length>=10?cur:days.slice(-Math.max(cur.length,14));
+  const dmax=Math.max(1,...shown.map(x=>+x.dept||0));
+  const firstApp=(months.find(x=>x.app>0)||{}).month;
+  const mmax=Math.max(1,...models.map(x=>+x.month||0));
+  const cmM=+cm.split("-")[1], pm=cmM?PU_MON[(cmM+10)%12]:"";            // прошлый месяц
+  const lbl=(x,i)=>{ const last=i===shown.length-1;
+    if(last) return x.day===mskToday()?"сегодня":puFmt(puDate(x.day),{day:"numeric",month:"short"});
+    if(i===0||(String(x.day).endsWith("-01")&&i>1&&i<shown.length-3)) return puFmt(puDate(x.day),{day:"numeric",month:"short"});
+    return ""; };
+  const asOf=d.as_of?puFmt(puDate(d.as_of),{day:"numeric",month:"long",hour:"2-digit",minute:"2-digit"}):"";
+  return <PuCard id="pu2-costs" title={title} meta={asOf?`данные облака на ${asOf}`:undefined}>
+    <div className="pu2-res-cost">
+      <div>
+        <PuKpi className="pu2-bare" span={12} label={`Отдел · ${mname}`} value={puRub(mo.dept)}
+          sub={mo.threshold?`${puPct(mo.util,1)} месячного лимита ${puRub(mo.threshold)}`:"лимит не задан"}/>
+        {mo.threshold?<>
+          <div style={{marginTop:16}}><PuBullet value={mo.dept} limit={mo.threshold} forecast={mo.forecast}/></div>
+          <span className="pu2-bullet-leg"><span>сейчас {puRub(mo.dept)}</span>
+            <span>прогноз {puRub(mo.forecast)} · {puPct(mo.util_forecast)}</span></span></>
+          :<p className="pu2-note">Прогноз отдела на месяц по темпу трат — {puRub(mo.forecast)}.</p>}
+        <div className="pu2-res-stats">
+          <div><b>{puRub(mo.app)}</b><span>AuditLens, {puPct(mo.app_share)} трат отдела · прогноз {puRub(mo.app_forecast)}</span></div>
+          <div data-tip="Медиана за 4 недели — разовые прогоны её почти не двигают"><b>{puRub(mo.app_median_day)}</b><span>AuditLens в обычный день</span></div>
+        </div>
+      </div>
+      <div>
+        {shown.length?<>
+          <div className="pu2-res-bars" role="img" aria-label={`Траты по дням за ${shown.length} ${plural(shown.length,"день","дня","дней")}: AuditLens и другие задачи отдела`}>
+            {shown.map(x=><span key={x.day} className={String(x.day).startsWith(cm)?undefined:"prev"}
+                data-tip={`${puWd(x.day)}, ${puDay(x.day)}: отдел ${puRub(x.dept)}, AuditLens ${puRub(x.app)}`}>
+              <i style={{height:((+x.app||0)/dmax*100).toFixed(1)+"%"}}/>
+              <i className="o" style={{height:(Math.max(0,(+x.dept||0)-(+x.app||0))/dmax*100).toFixed(1)+"%"}}/></span>)}</div>
+          <div className="pu2-res-bx" aria-hidden="true">{shown.map((x,i)=><span key={x.day} className={i===shown.length-1?"e":undefined}>{lbl(x,i)}</span>)}</div>
+          <div className="pu2-res-leg"><span><i className="pu2-res-sw"/>AuditLens</span><span><i className="pu2-res-sw o"/>другие задачи отдела</span>
+            {shown.length>cur.length&&<span className="pu2-muted">бледнее — {pm}</span>}</div></>
+          :<PuEmpty>Трат по дням ещё нет.</PuEmpty>}
+        <h3 className="pu2-subh">Модели AuditLens · {mname}{pm?` и ${pm}`:""}</h3>
+        {models.length?models.map(x=><PuHBar key={x.model} label={x.model} value={x.month} max={mmax} tip={x.model}
+          right={<><b>{puRub(x.month)}</b> · {puRub(x.prev)}</>}/>):<PuEmpty>В этом месяце трат AuditLens ещё нет.</PuEmpty>}
+      </div>
+    </div>
+    <h3 className="pu2-subh" style={{marginTop:22}}>По месяцам{months.length?<span className="pu2-muted" style={{fontWeight:400}}>{" "}· история с {(()=>{const[y,m]=months[0].month.split("-").map(Number);return `${PU_MON_GEN[m-1]} ${y}`;})()}</span>:null}</h3>
+    {months.length?<div className="pu2-tw"><table className="pu2-tbl">
+      <thead><tr><th className="pu2-l">Месяц</th><th>Отдел</th><th>AuditLens</th><th>Доля AuditLens</th></tr></thead>
+      <tbody>{months.slice().reverse().map(x=>{ const shared=firstApp&&x.month<firstApp;
+        return <tr key={x.month}><td className="pu2-l pu2-res-nw">{puMonth(x.month)}{x.month===cm?", идёт":""}</td><td>{puRub(x.dept)}</td>
+          <td className={shared?"pu2-muted":undefined} tabIndex={shared?0:undefined}
+            data-tip={shared?"Приложение работало на общем ключе отдела — его траты не выделены":undefined}>{shared?"—":puRub(x.app)}</td>
+          <td className={shared||!x.dept?"pu2-muted":undefined}>{shared||!x.dept?"—":puPct(x.app/x.dept)}</td></tr>; })}</tbody></table></div>
+      :<PuEmpty>История по месяцам ещё не накопилась.</PuEmpty>}
+    <p className="pu2-note">AuditLens — ключи приложения в учёте расходов облака; до перехода на свой ключ приложение делило общий ключ
+      отдела, и его траты здесь не выделены.</p>
+  </PuCard>;
+}
+
+function PuResultsSec(){
+  const c=usePu(), m=c.m||{};
+  const[days,setDays]=useState(puResRead);
+  const pickDays=(v)=>{ setDays(v); try{ localStorage.setItem("al-pu-oc-days",String(v)); }catch{} };
+  const {d,err,reload}=usePuData(`/api/admin/pulse/outcomes?days=${days}${puMe(c.withMe)}`);
+  const[busy,setBusy]=useState(false), [msg,setMsg]=useState("");
+  const relabel=()=>{ setBusy(true); setMsg("");
+    apiFetch("/api/admin/pulse/outcomes/label",{method:"POST"})
+      .then(r=>setMsg(r&&r.started?`Разметка запущена: ${puNum(r.pending)} ${plural(+r.pending||0,"запрос","запроса","запросов")} — `
+        +"обычно несколько минут, затем обновите раздел.":"Разметка уже идёт."))
+      .catch(()=>setMsg("Не запустилась — попробуйте ещё раз.")).finally(()=>setBusy(false)); };
+  const lab=(d&&d.labels)||{}, lr=lab.last_run;
+  const hh=String(lab.hour_msk??3).padStart(2,"0");
+  const perL=days?`за ${days} ${plural(days,"день","дня","дней")}`:"за всё время";
+  const tools=<>
+    <div className="pu2-res-tools">
+      <PuSeg value={days} options={PU_RES_PER} onChange={pickDays} label="Период итогов"/>
+      <span className="pu2-sp"/>
+      {d&&<span className="pu2-note pu2-hide-s">Запросы размечаются каждую ночь в {hh}:40
+        {lr&&lr.finished_at?` · последняя разметка — ${puAgo(lr.finished_at)}`:""}</span>}
+      {c.isOwner&&<button type="button" className="btn btn-sm" disabled={busy} onClick={relabel}
+        data-tip="Разметить новые запросы сейчас, не дожидаясь ночи">{busy?"Запускаю…":"Разметить новые"}</button>}
+      <a className="btn btn-sm" href={`/api/admin/pulse/outcomes.xlsx?days=${days}${puMe(c.withMe)}`} download
+        data-tip="Та же сводка файлом — для письма руководству"><PuIcon n="download" sm/>Скачать Excel</a>
+    </div>
+    {msg&&<p className="pu2-res-msg" role="status">{msg}</p>}
+  </>;
+  if(!d) return <>{tools}<div className="pu2-grid">
+    {err?<div className="pu2-card pu2-c12"><PuLoadErr onRetry={reload}>Не удалось посчитать итоги.</PuLoadErr></div>
+      :[0,1,2,3].map(i=><div key={i} className="pu2-card pu2-c3"><Skel h={84}/></div>)}
+    <PuResReach/></div></>;
+  const f=d.funnel||{}, qa=(d.quality||{}).ai||{}, pv=d.prev||{}, dirs=d.dirs||[], tk=d.tickets||{}, src=d.sources||{};
+  const items=(+f.case_reports||0)+(+f.case_reviews||0)+(+f.case_documents||0);
+  const runs=(+f.runs_ok||0)+(+f.runs_failed||0)+(+f.runs_stopped||0);
+  const maxAi=Math.max(1,...dirs.map(x=>+x.ai||0));
+  const banks=((m.topics||{}).banks)||[], mxB=Math.max(1,...banks.map(b=>+b.n||0));
+  const revTip=(p)=>{ p=p||{}; return [p.case&&`жалобы в аудит-делах — ${p.case}`,p.view&&`смотрели продукт — ${p.view}`,
+    p.export&&`выгрузки в Excel — ${p.export}`,p.sub&&`подписки — ${p.sub}`].filter(Boolean).join(" · ")||undefined; };
+  const cell=(n,u)=>n?<><b style={{fontWeight:500}}>{puNum(n)}</b><span className="pu2-res-u">{puNum(u)} чел.</span></>:<span className="pu2-muted">—</span>;
+  const F=[["Вопросы ИИ-помощнику",`${puNum(f.askers)} чел. · заказов глубокого отчёта — ${puNum(f.deep)}`,f.questions],
+    ["Ответ получен",`учёт с 5 октября · ${runs?puPct((+f.runs_ok||0)/runs):"—"} прогонов · остановили сами — ${puNum(f.runs_stopped)}, сбоев — ${puNum(f.runs_failed)}`,f.runs_ok],
+    ["Сохранено отчётов",`${puNum(f.report_users)} чел.`,f.reports],
+    ["Вернулись к отчёту","открывали сохранённый отчёт ещё раз",f.reopened],
+    ["Переслали коллегам",`${puNum(f.shares)} ${plural(+f.shares||0,"пересылка","пересылки","пересылок")}`,f.shared],
+    ["Материалы в аудит-делах",`отчёты ИИ — ${puNum(f.case_reports)}, жалобы клиентов — ${puNum(f.case_reviews)}, документы — ${puNum(f.case_documents)}`,items]];
+  const f0=Math.max(1,+f.questions||0);
+  const casesSub=[`сбор материалов — ${puNum(f.cases_collect)}`,`в работе — ${puNum(f.cases_work)}`,
+    f.cases_done!=null?`завершено — ${puNum(f.cases_done)}`:"",`с итоговым анализом — ${puNum(f.cases_analysed)}`,
+    `пустых — ${puNum(f.cases_empty)}`].filter(Boolean).join(", ");
+  return <>{tools}
+    <div className="pu2-grid">
+      <PuResTile label="Вопросы ИИ-помощнику" icon="spark" value={puNum(f.questions)}
+        sub={`задавали ${puNum(f.askers)} чел. · ${perL}`} delta={<PuResDelta cur={f.questions} prev={pv.questions} days={days}/>}/>
+      <PuResTile label="Запросы в «Аудите уязвимостей»" icon="shield" value={puNum(f.vuln_queries)}
+        sub={`${puNum(f.vuln_users)} чел. · чат и поиск схем`} delta={<PuResDelta cur={f.vuln_queries} prev={pv.vuln_queries} days={days}/>}/>
+      <PuResTile label="Годные вопросы" icon="check" value={qa.good!=null?puNum(qa.good):puPct(qa.good_share)}
+        sub={qa.total?`из ${puNum(qa.total)} дают результат · ${puPct(qa.good_share)}`:"разметки пока нет"}
+        delta={<PuResDelta cur={qa.good_share} prev={pv.good_share} days={days} pp/>}/>
+      <PuResTile label="Аудит-дела" icon="case" value={puNum(f.cases)}
+        sub={`${puNum(f.case_owners)} ${plural(+f.case_owners||0,"аудитор","аудитора","аудиторов")} · ${puNum(items)} ${plural(items,"материал","материала","материалов")}`}
+        delta={<PuResDelta cur={f.cases} prev={pv.cases} days={days}/>}/>
+
+      <PuResReach/>
+
+      <PuCard id="pu2-funnel" title="От вопроса к результату" meta={perL} span={7}>
+        <div className="pu2-res-fun">{F.map(([l,s,v])=><div key={l} className="pu2-res-fs">
+          <span className="lb">{l}<small>{s}</small></span>
+          <span className="pu2-tr" aria-hidden="true"><i style={{width:Math.max(1.5,Math.min(100,(+v||0)/f0*100)).toFixed(1)+"%"}}/></span>
+          <span className="v">{puNum(v)}</span></div>)}</div>
+        <div className="pu2-res-more">
+          <div className="pu2-res-kv"><span>Аудит-дела<small>{casesSub}</small></span><b>{puNum(f.cases)}</b></div>
+          <div className="pu2-res-kv"><span>Выгрузки отзывов в Excel<small>{puNum(f.export_users)} чел. · подписок на сигналы — {puNum(f.subs)}</small></span><b>{puNum(f.exports)}</b></div>
+          <div className="pu2-res-kv"><span>Отметки экспертов по схемам<small>«Аудит уязвимостей» · выгрузок — {puNum(f.vuln_exports)}</small></span><b>{puNum(f.verdicts)}</b></div>
+        </div>
+        {(d.case_topics||[]).length>0&&<p className="pu2-note">Темы дел с материалами: {d.case_topics.map(x=>`${x.title} (${x.items})`).join(" · ")}.</p>}
+        {f.cases>0&&f.cases_collect/f.cases>.8&&<p className="pu2-note">{puNum(f.cases_collect)} {plural(+f.cases_collect||0,"дело","дела","дел")} из {puNum(f.cases)} —
+          в статусе «сбор материалов». Итог проверки («замечание», «риск принят», «не подтвердилось») в деле пока не фиксируется,
+          поэтому результат по делу отсюда не виден.</p>}
+      </PuCard>
+
+      <PuCard id="pu2-banks" title="Какие банки проверяют" meta={`упоминания в отчётах и ответах · ${m.days||14} дн`} span={5}>
+        {banks.length?banks.map(b=><PuHBar key={b.slug||b.name} tip={b.slug||undefined} value={b.n} max={mxB}
+          label={<span className={b.slug==="sberbank"?"pu2-res-sber":undefined}>{BANK_RU[b.slug]||b.name}</span>}/>)
+          :<PuEmpty>В отчётах и ответах за период банки не упоминались.</PuEmpty>}
+        <p className="pu2-note">Сводно по команде, без имён: под какие темы затачивать инструмент.</p>
+      </PuCard>
+
+      <PuCard id="pu2-dirs" title="Запросы по направлениям аудита" flush
+          meta={`${perL} · направление определяет модель по тексту запроса`}>
+        {dirs.length?<div className="pu2-tw" style={{marginTop:4}}><table className="pu2-tbl">
+          <thead><tr><th className="pu2-l">Направление</th><th className="pu2-l">ИИ-помощник</th><th>Аудит отзывов</th>
+            <th>Аудит уязвимостей</th><th>Аудит-дела</th></tr></thead>
+          <tbody>{dirs.map(x=><tr key={x.code} className={x.code==="other"?"pu2-dim":undefined}>
+            <td className="pu2-l pu2-res-dn">{x.name}</td>
+            <td className="pu2-l"><span className="pu2-res-air"><span className="pu2-tr" aria-hidden="true"><i style={{width:((+x.ai||0)/maxAi*100).toFixed(0)+"%"}}/></span>
+              <b>{puNum(x.ai)}</b><span className="pu2-res-u">{x.ai?`${puNum(x.ai_users)} чел.`:""}</span></span></td>
+            <td className="pu2-res-nw" data-tip={x.rev?revTip(x.rev_parts):undefined} tabIndex={x.rev?0:undefined}>{cell(x.rev,x.rev_users)}</td>
+            <td className="pu2-res-nw">{cell(x.vuln,x.vuln_users)}</td>
+            <td className="pu2-res-nw">{cell(x.cases,x.cases_users)}</td>
+          </tr>)}</tbody></table></div>:<div className="pu2-pad"><PuEmpty>За период запросов нет.</PuEmpty></div>}
+        <div className="pu2-pad"><p className="pu2-note">Один запрос может относиться к нескольким направлениям. «Аудит отзывов» — жалобы, добавленные
+          в аудит-дела (направление — по теме дела), выгрузки в Excel и подписки на сигналы с указанным продуктом
+          {d.review_view_since?`, а с ${puDay(d.review_view_since)} — и просмотры продукта в фильтре раздела (один человек и продукт — один раз в день)`
+            :"; какой продукт смотрят в фильтре раздела, записывается с 20 октября — появится здесь с первыми просмотрами"}.
+          Наведите на число — из чего оно складывается. «Аудит-дела» — дела по теме названия.</p></div>
+      </PuCard>
+
+      <PuResCosts/>
+
+      <PuCard id="pu2-feedback" title="Обратная связь и дела" meta={perL}>
+        <PuStatRow items={[
+          {v:puNum(tk.total),l:"предложений по доработкам",s:`сделано ${puNum(tk.done)}, ждут ответа ${puNum((tk.counts||{})["ждёт ответа"]||0)}`
+            +(days?`, новых ${perL} — ${puNum(tk.new_in_period)}`:"")},
+          {v:puNum(src.total),l:"заявок на источники",s:`одобрено ${puNum(src.approved)}, отклонено ${puNum(src.rejected)}, ждут ${puNum(src.pending)}`},
+          {v:puNum(f.cases),l:"аудит-дел",s:casesSub},
+          {v:puNum(f.verdicts),l:"отметок экспертов по схемам",s:`«Аудит уязвимостей», выгрузок — ${puNum(f.vuln_exports)}`}]}/>
+        <p className="pu2-note">Списки обращений — в разделе «Обращения», заявки на источники разбирает владелец в разделе «Источники».</p>
+      </PuCard>
+    </div>
+    <p className="pu2-note" style={{marginTop:16}}>Как обновляется: цифры пересчитываются при каждом открытии раздела. Направление и пригодность
+      запроса определяет модель — новые запросы она размечает каждую ночь в {hh}:40 МСК
+      {lr&&lr.finished_at?` (последняя разметка — ${puAgo(lr.finished_at)}${lr.labeled!=null?`, ${puNum(lr.labeled)} ${plural(+lr.labeled||0,"запрос","запроса","запросов")}`:""})`:""}
+      {lab.pending?`; ждут разметки — ${puNum(lab.pending)}, в таблицах их пока нет`:""}. Неделя к неделе — выберите «7 дн»: под числами
+      изменение к предыдущим 7 дням. Служебные учётки не считаются.</p>
+  </>;
+}
 // ⟦pu2:results⟧ конец
 
 // ── граница: выше «Итоги», ниже слои (лист человека, отчёта, диалога) ─────────
