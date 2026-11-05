@@ -66,3 +66,10 @@ def test_quote_ok_accepts_fragments_joined_by_ellipsis():
                     "страховка является обязательной", text)
     assert not quote_ok("нам без объяснений оформили 2 разные страховки... и заставили подписать отказ", text)
     assert quote_ok("Сотрудник банка выписала нам 2 квитанции", text) and not quote_ok("", text)
+
+
+def test_short_complaints_are_read_short_praise_is_not():
+    from bank_audit.vsp.signals.llm_read import long_enough
+    assert long_enough("Подключение услуг в тихую", 1) and long_enough("Девушка с краю сразу страховки впаривает", 3)
+    assert not long_enough("Всё отлично, спасибо большое!", 5) and not long_enough("Норм", 1)
+    assert long_enough("x" * 60, 5) and not long_enough("Подключение услуг в тихую", None)

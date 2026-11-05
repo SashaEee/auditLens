@@ -35,6 +35,14 @@ BATCH = int(os.getenv("VSP_LLM_BATCH", "5"))
 INFLIGHT = int(os.getenv("VSP_LLM_INFLIGHT", "8"))
 CAP_RUB = float(os.getenv("VSP_LLM_CAP_RUB", "4000"))
 MIN_CHARS = int(os.getenv("VSP_LLM_MIN_CHARS", "60"))
+# короткие жалобы тоже читаем: «Подключение услуг в тихую», «Девушка с краю сразу страховки впаривает»
+# (06.11: 12 тыс. отзывов на 1–3★ короче 60 знаков не попадали к модели); короткие 4–5★ — нет
+MIN_CHARS_NEG = int(os.getenv("VSP_LLM_MIN_CHARS_NEG", "15"))
+
+
+def long_enough(text: str | None, rating) -> bool:
+    n = len((text or "").strip())
+    return n >= MIN_CHARS or (rating is not None and rating <= 3 and n >= MIN_CHARS_NEG)
 PRICES = {  # ₽ за 1 млн токенов (вход, выход) — каталог Cloud.ru 05.11.2026
     "google/gemini-3-flash-preview": (85.4, 512.4), "google/gemini-3.8-flash": (133.5, 667.47),
     "google/gemini-3.5-flash-lite": (53.4, 444.98), "google/gemini-3.1-flash-lite": (42.7, 256.2),
@@ -356,7 +364,7 @@ def candidates(store: Store, *, stage: str, ids: list[str] | None = None) -> lis
             continue
         if r["review_id"] in done or (passed is not None and r["review_id"] not in passed):
             continue
-        if want is None and (len((r["text"] or "").strip()) < MIN_CHARS
+        if want is None and (not long_enough(r["text"], r["rating"])
                              or by_author.get(r["author_ref"], 0) >= SPAM_AUTHOR_MIN):
             continue
         h = _hash(_norm_text(r["text"]))

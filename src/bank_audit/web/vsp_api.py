@@ -1004,11 +1004,12 @@ def _progress() -> dict:
         v["synced"] = {s: n for s, n in c.execute(select(sync_state.c.source, func.count()).where(
             sync_state.c.status == "done").group_by(sync_state.c.source))}
         # знаменатель — как отбор модели: текст от 60 знаков, без массовых аккаунтов-рассыльщиков
-        from ..vsp.signals.llm_read import MIN_CHARS, SPAM_AUTHOR_MIN
+        from ..vsp.signals.llm_read import MIN_CHARS, MIN_CHARS_NEG, SPAM_AUTHOR_MIN
         spam = select(reviews.c.author_ref).where(reviews.c.author_ref.isnot(None), reviews.c.review_text.isnot(None)) \
             .group_by(reviews.c.author_ref).having(func.count() >= SPAM_AUTHOR_MIN)
         v["with_text"] = c.execute(select(func.count()).select_from(reviews).where(
-            func.length(func.trim(reviews.c.review_text)) >= MIN_CHARS,
+            or_(func.length(func.trim(reviews.c.review_text)) >= MIN_CHARS,
+                and_(reviews.c.rating <= 3, func.length(func.trim(reviews.c.review_text)) >= MIN_CHARS_NEG)),
             or_(reviews.c.author_ref.is_(None), reviews.c.author_ref.notin_(spam)))).scalar() or 0
         try:
             from ..vsp.signals.llm_read import PROMPT_VERSION, SCREEN_VERSION, review_llm
