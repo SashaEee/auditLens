@@ -11875,8 +11875,449 @@ function PuOverview(){
 // чтобы правки соседних разделов не конфликтовали при слиянии.
 
 // ⟦pu2:people⟧ начало — раздел «Люди»; правит только агент раздела
-const PU2_CSS_PEOPLE=``;
-function PuPeopleSec(){ return <PuEmpty>Раздел в работе</PuEmpty>; }
+// «Люди» отвечают на «кто пользуется инструментом и кто перестал»: пять групп по дням
+// активности (точка — человек), кто перестал заходить и кто ушёл (с текстом личного
+// письма), возвращаются ли новички, таблица всех людей с отборами, разделы, часы и
+// почта с персонализацией. Период — переключатель оболочки (ctx.days: 7/14/30).
+// Кроме /api/admin/pulse раздел берёт /api/admin/users?days=N (+me): таблица и точки.
+const PU2_CSS_PEOPLE=`
+/* «Кто с нами»: пять групп, одна точка — один человек */
+.pu2-pp-seg{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:20px 24px}
+.pu2-pp-col{min-width:0}
+.pu2-pp-col>b{display:block;font-family:'Source Serif 4',Georgia,serif;font-weight:500;font-size:32px;line-height:1.1;
+  font-variant-numeric:tabular-nums lining-nums;color:var(--ink)}
+.pu2-pp-col>span{display:block;font-size:13.5px;font-weight:500;margin-top:2px;color:var(--ink)}
+.pu2-pp-col>small{display:block;font-size:12px;color:var(--ink-3)}
+.pu2-pp-dots{display:flex;flex-wrap:wrap;gap:5px;margin-top:12px}
+.pu2-pp-u{width:14px;height:14px;border-radius:50%;flex:none;padding:0;margin:0;border:0;background:var(--viz);cursor:pointer;
+  transition:transform var(--dur-quick) var(--ease-spring)}
+.pu2-pp-u:hover{transform:scale(1.3)}
+.pu2-pp-u:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.pu2-pp-u.regular{background:var(--viz-2)}
+.pu2-pp-u.once{background:var(--viz-3)}
+.pu2-pp-u.churned{background:transparent;box-shadow:inset 0 0 0 2px var(--warn)}
+.pu2-pp-u.long{background:transparent;box-shadow:inset 0 0 0 1.5px var(--hair-2)}
+
+/* «Перестали заходить», «Ушли»: человек слева, «Текст письма» справа */
+.pu2-pp-rows{list-style:none;margin:0;padding:0}
+.pu2-pp-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;align-items:center;padding:12px 0;border-top:1px solid var(--hair)}
+.pu2-pp-row:first-child{border-top:0;padding-top:2px}
+.pu2-pp-row .pu2-person small{white-space:normal;text-wrap:pretty}
+.pu2-pp-wb .pu2-ic{width:14px;height:14px}
+.pu2-pp-wbf{grid-column:1/-1;display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:var(--ink-3)}
+.pu2-pp-wbf textarea{width:100%;min-height:96px;resize:vertical;font:inherit;font-size:13px;line-height:1.45;color:var(--ink);
+  background:var(--paper-2);border:1px solid var(--hair-2);border-radius:var(--r);padding:8px 10px}
+.pu2-pp-gone{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:8px}
+
+/* «Новички возвращаются?»: счётчики вместо процентов */
+.pu2 table.pu2-pp-coh{display:table;width:100%;border-collapse:separate;border-spacing:0 4px;font-size:12.5px;table-layout:fixed}
+.pu2 .pu2-pp-coh thead th{font-size:12px;font-weight:500;color:var(--ink-3);text-align:left;padding:0 6px 2px 0;border:0;
+  text-transform:none;letter-spacing:0;position:static;background:none;white-space:normal}
+.pu2 .pu2-pp-coh td{padding:0 6px 0 0;border:0}
+.pu2 .pu2-pp-coh tbody tr:hover{background:none}
+.pu2-pp-wk{color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums}
+.pu2-pp-cell{height:34px;border-radius:6px;display:grid;place-items:center;font-weight:500;font-variant-numeric:tabular-nums;color:var(--ink)}
+.pu2-pp-cell:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.pu2-pp-cell.wait{border:1px dashed var(--hair-2);color:var(--ink-4);font-weight:400}
+
+/* «Все люди»: отборы, поиск, порядок; таблица прокручивается сама, не страница */
+.pu2-pp-fbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px 20px;border-bottom:1px solid var(--hair)}
+.pu2-pp-chips{display:flex;gap:6px;flex-wrap:wrap}
+.pu2-pp-chips .chip i{font-style:normal;font-variant-numeric:tabular-nums;opacity:.75;margin-left:2px}
+.pu2-pp-sp{flex:1 1 auto}
+.pu2-pp-sw{position:relative;display:inline-flex;align-items:center}
+.pu2-pp-sw>.pu2-ic{position:absolute;left:10px;color:var(--ink-4);pointer-events:none}
+.pu2-pp-q{height:32px;width:220px;border:1px solid var(--hair-2);border-radius:var(--r);background:var(--surface);color:var(--ink);
+  font:inherit;font-size:13px;padding:0 10px 0 32px}
+.pu2-pp-q:focus{border-color:var(--select);box-shadow:0 0 0 3px var(--select-soft)}
+.pu2-pp-sel{height:32px;border:1px solid var(--hair-2);border-radius:var(--r);background:var(--surface);color:var(--ink);
+  font:inherit;font-size:13px;padding:0 8px}
+.pu2-pp-sel:focus-visible,.pu2-pp-q:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.pu2 .pu2-pp-tbl{min-width:860px}
+.pu2-pp-sort{display:inline-flex;align-items:center;gap:4px;font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;
+  cursor:pointer;border-radius:var(--r-sm);white-space:nowrap}
+.pu2-pp-sort:hover,.pu2-pp-tbl th[aria-sort] .pu2-pp-sort{color:var(--ink)}
+.pu2-pp-sort:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.pu2-pp-sort .pu2-ic{width:12px;height:12px;opacity:0;transition:opacity var(--dur-quick) var(--ease-out)}
+.pu2-pp-sort:hover .pu2-ic,.pu2-pp-tbl th[aria-sort] .pu2-pp-sort .pu2-ic{opacity:1}
+.pu2-pp-tbl .pu2-person b{display:flex;align-items:center;gap:6px}
+.pu2-pp-nm{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.pu2-pp-st{display:inline-flex;align-items:center;gap:7px;color:var(--ink-2);white-space:nowrap}
+.pu2-pp-st.m{color:var(--ink-3)}
+.pu2-pp-pct{display:inline-flex;align-items:center;gap:8px;font-variant-numeric:tabular-nums}
+.pu2-pp-ring{--p:50;width:20px;height:20px;border-radius:50%;flex:none;display:inline-block;
+  background:conic-gradient(var(--viz) calc(var(--p)*1%),var(--hair-2) 0);
+  -webkit-mask:radial-gradient(circle,transparent 5.5px,currentColor 6px);mask:radial-gradient(circle,transparent 5.5px,currentColor 6px)}
+.pu2-pp-more{display:flex;justify-content:center;padding:12px;border-top:1px solid var(--hair)}
+.pu2-pp-none{padding:18px 20px;font-size:13px;color:var(--ink-3);display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+
+/* «Когда пользуются»: будни × часы МСК, последовательная шкала --viz */
+.pu2-pp-heat{display:grid;grid-template-columns:26px repeat(var(--cols,13),minmax(0,1fr));gap:3px;font-size:11px;color:var(--ink-3)}
+.pu2-pp-hc{height:24px;border-radius:3px;background:var(--paper-2)}
+.pu2-pp-hl{display:flex;align-items:center}
+.pu2-pp-hh{font-variant-numeric:tabular-nums;white-space:nowrap;overflow:visible}
+
+@media (max-width:1100px){ .pu2-pp-seg{grid-template-columns:repeat(3,minmax(0,1fr))} }
+@media (max-width:760px){
+  .pu2-pp-fbar{padding:12px 16px}
+  .pu2-pp-sw{flex:1 1 100%}
+  .pu2-pp-q{width:100%}
+  .pu2-pp-sp{display:none}
+  .pu2-pp-none{padding:16px}
+}
+@media (max-width:560px){
+  .pu2-pp-seg{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .pu2-pp-hc{height:18px}
+  .pu2-pp-row{grid-template-columns:minmax(0,1fr)}
+  .pu2-pp-row>.pu2-pp-wb{justify-self:start;margin-left:38px}
+}
+@media (prefers-reduced-motion:reduce){
+  .pu2-pp-u,.pu2-pp-sort .pu2-ic{transition:none}
+  .pu2-pp-u:hover{transform:none}
+}
+`;
+
+// ── «Люди»: справочники и помощники ──
+const PU_PP_SEG=[["core","Ядро","8 и больше дней за 30"],["regular","Регулярные","3–7 дней за 30"],
+  ["once","Разовые","1–2 дня за 30"],["churned","Ушли","были 1–3 месяца назад"],["long","Давно не заходят","дольше 3 месяцев"]];
+const PU_PP_F=[["all","Все"],["online","Онлайн"],["today","Сегодня"],["ai","Задают вопросы ИИ"],
+  ["noai","Без вопросов ИИ"],["silent","Молчат 14 дней"],["nomail","Без почты"]];
+// порядок строк — прежние варианты сортировки; score — как отдаёт сервер (по активности)
+const PU_PP_SORT=[["score","по активности"],["last","по последнему визиту"],["views","по просмотрам"],
+  ["time_s","по времени"],["ai","по вопросам ИИ"],["reports","по отчётам"],["dislikes","по жалобам"]];
+const PU_PP_DOW=["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
+// заходил(а) за 14 дней: по полосе активности, без неё — по последнему действию
+const puPpAct=(u)=>u.act14?/[1-3]/.test(String(u.act14)):u.last_seen_ago_s!=null&&+u.last_seen_ago_s<14*86400;
+// «05.11 10:01» / «04.06.2026» → 'YYYY-MM-DD' (год — текущий, если не указан и месяц не впереди)
+function puPpKey(s){
+  const x=String(s||"").match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?/); if(!x) return "";
+  const t=mskToday()||"", cy=+t.slice(0,4)||new Date().getFullYear(), cm=+t.slice(5,7)||12;
+  const y=x[3]?+x[3]:(+x[2]>cm?cy-1:cy);
+  return `${y}-${String(x[2]).padStart(2,"0")}-${String(x[1]).padStart(2,"0")}`;
+}
+// «был(а)»: «онлайн», «сегодня, 10:01», «вчера, 14:22», «3 ноября»
+function puPpSeen(u){
+  if(u.online) return "онлайн";
+  const k=puPpKey(u.last_seen); if(!k) return u.last_seen||"";
+  const hm=(String(u.last_seen).match(/(\d{1,2}:\d{2})/)||[])[1];
+  const yest=puDayKey(new Date(Date.now()-864e5));
+  if(k===mskToday()) return hm?`сегодня, ${hm}`:"сегодня";
+  if(k===yest) return hm?`вчера, ${hm}`:"вчера";
+  return k.slice(0,4)===String(mskToday()).slice(0,4)?puDay(k):`${puDay(k)} ${k.slice(0,4)}`;
+}
+// Личный текст «вернуться»: короткий, от владельца, по рабочему каналу — массово без
+// согласия не пишем. Ссылка с from=mail&m=winback — видно, кто вернулся. r: {name, last}.
+function puWinbackText(r){
+  const p=String((r&&r.name)||"").trim().split(/\s+/), fn=p[1]||p[0]||"";
+  return `${fn?fn+", добрый день!":"Добрый день!"} Вы заходили в AuditLens ${fmtDateMsk(r&&r.last)}. `
+    +`С тех пор появилось: каждое утро — выпуск с главным по Сберу и рынку, сверху — «С прошлого визита» `
+    +`(что изменилось с вашего захода), а на продукты Сбера из вашей зоны можно подписаться — `
+    +`о новых всплесках жалоб сообщим в колокольчике и на почту. `
+    +`Если что-то мешало пользоваться — ответьте одной строкой, поправим. `
+    +`${location.origin}/?go=overview&from=mail&m=winback`;
+}
+// в буфер обмена: Clipboard API, без него — через скрытое поле; false — не получилось
+function puCopyText(txt){
+  const legacy=()=>{ try{ const ta=document.createElement("textarea"); ta.value=txt; ta.setAttribute("readonly","");
+      ta.style.position="fixed"; ta.style.opacity="0"; document.body.appendChild(ta); ta.select();
+      const ok=document.execCommand("copy"); ta.remove(); return !!ok; }catch{ return false; } };
+  return new Promise(res=>{
+    try{ if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(txt).then(()=>res(true),()=>res(legacy())); return; } }catch{}
+    res(legacy()); });
+}
+// «Текст письма»: копирует личный текст; не вышло — показывает его для ручного копирования
+function PuWinbackBtn({r,label}){
+  const[manual,setManual]=useState(null);
+  const copy=()=>{ const txt=puWinbackText(r);
+    puCopyText(txt).then(ok=>{ if(ok){ setManual(null); fbToast("Текст скопирован — отправьте его сами"); } else setManual(txt); }); };
+  return <>
+    <button type="button" className="btn btn-sm pu2-pp-wb" onClick={copy}
+      data-tip="Короткий личный текст для письма или мессенджера"
+      aria-label={`Текст письма для ${(r&&r.name)||"человека"}`}><PuIcon n="copy" sm/>{label||"Текст письма"}</button>
+    {manual&&<div className="pu2-pp-wbf" role="status">
+      <span>Не удалось скопировать автоматически — выделите текст и скопируйте сами.</span>
+      <textarea readOnly value={manual} aria-label="Текст письма" onFocus={e=>e.target.select()}/></div>}
+  </>;
+}
+
+// ── «Кто с нами · последние 30 дней» ──
+function PuPpLife({U}){
+  const c=usePu(), m=c.m||{}, rt=m.retention||{}, sg=rt.segments, so=rt.seg_of, t=m.today||{};
+  if(!sg) return <PuCard id="pu2-pp-life" title="Кто с нами · последние 30 дней"><PuEmpty>Нет данных об удержании</PuEmpty></PuCard>;
+  const sum=["core","regular","once","churned"].reduce((s,k)=>s+(+sg[k]||0),0);
+  const cnt={...sg, long:t.users_total!=null?Math.max(0,+t.users_total-sum):null};
+  const users=(((U.d||{}).users)||[]).filter(u=>u&&!u.excluded);
+  const by={}; if(so) users.forEach(u=>{ const k=so[u.username]||"long"; (by[k]=by[k]||[]).push(u); });
+  const total=t.users_total!=null?+t.users_total:users.length;
+  return <PuCard id="pu2-pp-life" title="Кто с нами · последние 30 дней"
+      meta={`одна точка — один человек · всего ${puNum(total)}, без служебных учёток`}>
+    <div className="pu2-pp-seg">{PU_PP_SEG.map(([k,l,s])=>{ const n=cnt[k], us=by[k]||[];
+      return <div key={k} className="pu2-pp-col" data-seg={k}>
+        <b>{n==null?<span className="pu2-muted" style={{fontSize:15}}>нет данных</span>:puNum(n)}</b><span>{l}</span><small>{s}</small>
+        {so&&U.d!==undefined&&us.length>0&&<div className="pu2-pp-dots" role="group" aria-label={`${l}: ${us.length} ${plural(us.length,"человек","человека","человек")}`}>
+          {us.map(u=>{ const nm=u.name||u.username;
+            return <button key={u.username} type="button" className={"pu2-pp-u "+k} data-tip={nm} aria-label={nm}
+              onClick={()=>c.openPerson(u.username)}/>; })}</div>}
+      </div>; })}</div>
+    {U.err&&U.d===undefined?<PuLoadErr onRetry={U.reload}>Не удалось загрузить список людей — точки не показаны.</PuLoadErr>
+      :U.loading?<Skel h={14} w="40%" style={{marginTop:12}}/>
+      :!so?<p className="pu2-note">Точки появятся, когда сервер начнёт отдавать группу каждого человека.</p>:null}
+    <p className="pu2-note">{[sg.new!=null&&`Новых за 30 дней — ${puNum(sg.new)}.`,
+      rt.active_7d!=null&&`За неделю заходили ${puNum(rt.active_7d)}${rt.active_prev_7d!=null?`, неделей раньше — ${puNum(rt.active_prev_7d)}`:""}.`,
+      rt.from_mail_7d!=null&&`По ссылке из письма за 7 дней пришли ${puNum(rt.from_mail_7d)}.`].filter(Boolean).join(" ")}</p>
+  </PuCard>;
+}
+
+// ── «Перестали заходить» и «Ушли»: кому написать лично ──
+function PuPpRisk({onSilent}){
+  const c=usePu(), m=c.m||{}, rt=m.retention||{};
+  const[all,setAll]=useState(false);
+  const risk=rt.at_risk||[], gone=rt.churned||[], shown=all?gone:gone.slice(0,3);
+  const where=(r)=>AD_PAGE_RU[r.page]||r.page||"";
+  const row=(r,isGone)=>{
+    const sub=[r.last&&`последний визит ${puDay(r.last)}`,
+      !isGone&&r.days_60!=null&&`${puNum(r.days_60)} ${plural(+r.days_60||0,"день","дня","дней")} активности за 60`,
+      isGone&&r.days_prev!=null&&`${puNum(r.days_prev)} ${plural(+r.days_prev||0,"день","дня","дней")} активности`,
+      r.ai?`${puNum(r.ai)} ${plural(+r.ai,"вопрос","вопроса","вопросов")} ИИ`:null,
+      where(r)&&`«${where(r)}»`].filter(Boolean).join(" · ");
+    return <li key={r.username} className="pu2-pp-row" data-login={r.username}>
+      <PuPerson login={r.username} name={r.name} sub={sub}/>
+      <PuWinbackBtn r={r}/></li>;
+  };
+  return <PuCard id="pu2-risk" span={6} title="Перестали заходить" meta="были в ядре или регулярными, нет 7–29 дней">
+    {risk.length?<ul className="pu2-pp-rows" aria-label="Перестали заходить">{risk.map(r=>row(r,false))}</ul>
+      :<PuEmpty>Все, кто заходил регулярно, заходят и сейчас.</PuEmpty>}
+    <p className="pu2-note">Короткий личный текст: что появилось с последнего визита и просьба написать, если что-то мешало. Отправляете вы сами.</p>
+    <h3 className="pu2-subh">Ушли · {puNum(rt.churned_total!=null?rt.churned_total:gone.length)} <span className="pu2-muted" style={{fontWeight:400}}>были активны 1–3 месяца назад</span></h3>
+    {gone.length?<ul className="pu2-pp-rows" aria-label="Ушли">{shown.map(r=>row(r,true))}</ul>
+      :<PuEmpty>Никто не ушёл.</PuEmpty>}
+    <div className="pu2-pp-gone">
+      {gone.length>3&&<button type="button" className="pu2-lnk" aria-expanded={all} onClick={()=>setAll(v=>!v)}>
+        {all?"Свернуть":`Показать всех · ${puNum(gone.length)}`}</button>}
+      <button type="button" className="pu2-lnk" onClick={onSilent}>Все, кто молчит, — в списке ниже<PuIcon n="right"/></button>
+    </div>
+  </PuCard>;
+}
+
+// ── «Новички возвращаются?»: счётчики, процент — в подсказке ──
+function PuPpCohorts(){
+  const c=usePu(), co=((c.m||{}).retention||{}).cohorts||[];
+  const cell=(v,n)=>{ if(!n) return <div className="pu2-pp-cell wait">рано</div>;
+    const r=Math.max(0,Math.min(1,(+v||0)/n)), p=Math.round(r*100);
+    return <div className="pu2-pp-cell" tabIndex={0} data-tip={`${puNum(v)} из ${puNum(n)} — ${p}%`}
+      aria-label={`${puNum(v)} из ${puNum(n)}, ${p}%`}
+      style={{background:`color-mix(in oklab,var(--viz),transparent ${Math.round(92-32*r)}%)`}}>{puNum(v)} из {puNum(n)}</div>; };
+  return <PuCard id="pu2-pp-coh" span={6} title="Новички возвращаются?" meta="по неделе первого визита">
+    {co.length?<table className="pu2-pp-coh">
+        <colgroup><col style={{width:"24%"}}/><col style={{width:"14%"}}/><col/><col/></colgroup>
+        <thead><tr><th scope="col">Неделя</th><th scope="col">Пришли</th><th scope="col">Вернулись на 2-й неделе</th><th scope="col">на 4-й неделе</th></tr></thead>
+        <tbody>{co.map(x=><tr key={x.week}>
+          <td className="pu2-pp-wk">с {puFmt(puDate(x.week)||new Date(),{day:"numeric",month:"short"})}</td>
+          <td className="pu2-pp-wk">{puNum(x.n)}</td>
+          <td>{cell(x.w2,x.w2_ready)}</td><td>{cell(x.w4,x.w4_ready)}</td></tr>)}</tbody></table>
+      :<PuEmpty>Новичков за последние недели не было.</PuEmpty>}
+    <p className="pu2-note">Счётчики вместо процентов: в группе по 2–6 человек, и один человек сдвигает долю на 20–50 пунктов. Процент — в подсказке. «Рано» — неделя ещё не прошла.</p>
+  </PuCard>;
+}
+
+// ── «Все люди»: отборы с живыми счётчиками, поиск, порядок, 16 строк + «Показать всех» ──
+function PuPpTable({U,pf,setPf}){
+  const c=usePu(), m=c.m||{};
+  const[q,setQ]=useState(""), [sort,setSort]=useState(["score","desc"]), [more,setMore]=useState(false);
+  const d=U.d;
+  const mailOk=Array.isArray((m.mail||{}).people);
+  const mail={}; ((m.mail||{}).people||[]).forEach(x=>{ if(x&&x.username) mail[x.username]=x; });
+  const per={}; ((m.persona||{}).users||[]).forEach(x=>{ if(x&&x.username) per[x.username]=x; });
+  const parts=(m.persona||{}).parts||[];
+  const risk=new Set(((m.retention||{}).at_risk||[]).map(x=>x.username));
+  const ad=(d&&d.act_days)||[], aoff=new Set((d&&d.act_off)||[]);
+  const since=ad[0]||puDayKey(new Date(Date.now()-13*864e5));
+  const F={all:()=>true,online:u=>!!u.online,today:u=>!!u.today,ai:u=>puPpAct(u)&&+u.ai>0,
+    noai:u=>puPpAct(u)&&!+u.ai,silent:u=>!puPpAct(u),nomail:u=>!mail[u.username]};
+  const flt=PU_PP_F.filter(([k])=>k!=="nomail"||mailOk);
+  const f=F[pf]&&(pf!=="nomail"||mailOk)?pf:"all";
+  const all=((d&&d.users)||[]).filter(Boolean);
+  const base=all.filter(u=>!u.excluded);
+  const ql=q.trim().toLowerCase().replace(/ё/g,"е");
+  const hit=(u)=>!ql||`${u.name||""} ${u.username||""}`.toLowerCase().replace(/ё/g,"е").includes(ql);
+  const idx=new Map(all.map((u,i)=>[u.username,i]));
+  const[sk,sd]=sort, sgn=sd==="asc"?-1:1;
+  const cmp=sk==="score"?(a,b)=>sgn*(idx.get(a.username)-idx.get(b.username))
+    :sk==="last"?(a,b)=>sgn*((a.online?-1:+(a.last_seen_ago_s??1e12))-(b.online?-1:+(b.last_seen_ago_s??1e12)))
+    :(a,b)=>sgn*((+b[sk]||0)-(+a[sk]||0));
+  const main=base.filter(F[f]).filter(hit).sort(cmp);
+  const ex=f==="all"?all.filter(u=>u.excluded).filter(hit):[];
+  const rows=[...main,...ex], N=rows.length, LIM=16, view=more?rows:rows.slice(0,LIM);
+  const head=(k,l,cls)=>{ const on=sk===k;
+    return <th scope="col" className={cls} aria-sort={on?(sd==="desc"?"descending":"ascending"):undefined}>
+      <button type="button" className="pu2-pp-sort" onClick={()=>setSort(on?[k,sd==="desc"?"asc":"desc"]:[k,"desc"])}>
+        {l}<PuIcon n={on&&sd==="asc"?"up":"down"}/></button></th>; };
+  const open=(u)=>c.openPerson(u.username);
+  const meta=d?[`${puNum(d.total!=null?d.total:base.length)} ${plural(+(d.total!=null?d.total:base.length)||0,"человек","человека","человек")}`,
+    d.active!=null&&`заходили за ${puNum(d.days||c.days)} дн. — ${puNum(d.active)}`,
+    d.silent!=null&&`молчат — ${puNum(d.silent)}`, d.excluded?`не в счёт — ${puNum(d.excluded)}`:null].filter(Boolean).join(" · "):null;
+  const seenCell=(u)=>{ const t=puPpSeen(u);
+    if(u.online) return <span className="pu2-pp-st"><PuDot lv="ok"/>онлайн</span>;
+    if(u.today) return <span className="pu2-pp-st"><PuDot lv="viz"/>{t}</span>;
+    return <span className={"pu2-pp-st m"}>{risk.has(u.username)?<PuDot lv="warn" label="перестал(а) заходить"/>:<PuDot lv="idle"/>}{t||"—"}</span>; };
+  const strip=(u)=>{ const s=String(u.act14||""); if(!/^[0-3]{14}$/.test(s)) return <span className="pu2-muted">—</span>;
+    const lv=s.split("").map(Number);
+    return <PuStrip levels={lv} off={aoff} label={`Активность за 14 дней: ${lv.filter(Boolean).length} из 14`}
+      tips={ad.length===14?lv.map((x,i)=>`${puWd(ad[i])}, ${puDay(ad[i])}: ${PU_ACT_RU[x]}`):undefined}/>; };
+  const prof=(u)=>{ const p=per[u.username]; if(!p||p.score==null) return <span className="pu2-muted">—</span>;
+    const miss=parts.filter(x=>!(p.parts||{})[x.key]).map(x=>PU_PERSONA_COL[x.key]||x.label);
+    const tip=`Готовность профиля ${p.score}%`+(miss.length?`. Не хватает: ${miss.join(", ")}`:"")+(p.personal_on===false?". Персонализация выключена":"");
+    return <span className="pu2-pp-pct" data-tip={tip}><span className="pu2-pp-ring" style={{"--p":Math.max(0,Math.min(100,+p.score))}}/>{p.score}%</span>; };
+  const mailCell=(u)=>{ const x=mail[u.username]; if(!x) return <span className="pu2-muted">—</span>;
+    const [kl]=PU_MAIL_KIND[x.kind]||[x.kind||"есть"];
+    const tip=[x.email,x.since&&`подключена ${x.since}`,x.sent!=null&&`писем за ${m.days||c.days} дн. — ${x.sent}`,
+      x.failed?`не ушло — ${x.failed}`:null].filter(Boolean).join(" · ");
+    return <span data-tip={tip||undefined}>{kl}</span>; };
+  return <PuCard id="pu2-people" flush title="Все люди" meta={meta}>
+    <div className="pu2-pp-fbar">
+      <div className="pu2-pp-chips" role="group" aria-label="Отбор людей">{flt.map(([k,l])=>{ const n=base.filter(F[k]).length;
+        return <button key={k} type="button" className={"chip"+(f===k?" on":"")} aria-pressed={f===k}
+          onClick={()=>{ setPf(k); setMore(false); }}>{l} <i>{d?puNum(n):"…"}</i></button>; })}</div>
+      <span className="pu2-pp-sp"/>
+      <label className="pu2-pp-sw"><span className="vh">Поиск по людям</span><PuIcon n="search"/>
+        <input className="pu2-pp-q" type="search" placeholder="ФИО или логин" value={q} autoComplete="off"
+          onChange={e=>{ setQ(e.target.value); setMore(false); }}/></label>
+      <label className="pu2-pp-sw"><span className="vh">Порядок строк</span>
+        <select className="pu2-pp-sel" value={sk} onChange={e=>setSort([e.target.value,"desc"])}>
+          {PU_PP_SORT.map(([k,l])=><option key={k} value={k}>{l}</option>)}</select></label>
+    </div>
+    {U.err&&d===undefined?<div className="pu2-pad" style={{paddingTop:14}}><PuLoadErr onRetry={U.reload}>Не удалось загрузить список людей.</PuLoadErr></div>
+      :d===undefined?<div className="pu2-pad" style={{paddingTop:14}} role="status" aria-label="Загружаем людей">
+          {[0,1,2,3,4].map(i=><Skel key={i} h={28} style={{marginTop:i?10:0}}/>)}</div>
+      :<>
+        <div className="pu2-tw"><table className="pu2-tbl pu2-pp-tbl">
+          <thead><tr>
+            <th scope="col" className="pu2-l">Человек</th>
+            {head("last","Был(а)","pu2-l")}
+            {head("score","14 дней","pu2-l")}
+            {head("ai","Вопросы ИИ")}
+            {head("reports","Отчёты")}
+            {head("dislikes","Оценки")}
+            {mailOk&&<th scope="col" className="pu2-l">Почта</th>}
+            <th scope="col" className="pu2-l">Профиль</th>
+          </tr></thead>
+          <tbody>{view.map(u=>{ const nm=u.name||u.username, fk=puPpKey(u.first_seen);
+            const isNew=!u.excluded&&!!fk&&fk>=since;
+            return <tr key={u.username} className={"pu2-click"+(u.excluded?" pu2-dim":"")} tabIndex={0} data-login={u.username}
+                aria-label={`${nm} — открыть карточку`} onClick={()=>open(u)}
+                onKeyDown={e=>{ if(e.target===e.currentTarget&&(e.key==="Enter"||e.key===" ")){ e.preventDefault(); open(u); } }}>
+              <td className="pu2-l"><span className="pu2-person"><PuAv name={nm}/>
+                <span><b><span className="pu2-pp-nm">{nm}</span>{isNew&&<PuBadge lv="new">новый</PuBadge>}
+                  {u.excluded&&<PuBadge tip="Не входит в итоги — пометка в карточке человека">{u.hidden?"служебная":"вы"}</PuBadge>}</b>
+                  <small>@{u.username}{u.excluded?" · не в счёт":""}</small></span></span></td>
+              <td className="pu2-l">{seenCell(u)}</td>
+              <td className="pu2-l">{strip(u)}</td>
+              <td>{+u.ai?puNum(u.ai):<span className="pu2-muted">—</span>}</td>
+              <td data-tip={+u.quick?`и ${puNum(u.quick)} ${plural(+u.quick,"сохранённый быстрый ответ","сохранённых быстрых ответа","сохранённых быстрых ответов")}`:undefined}>
+                {+u.reports?puNum(u.reports):<span className="pu2-muted">—</span>}</td>
+              <td className="pu2-nw">{+u.likes>0&&<span>+{puNum(u.likes)}</span>}
+                {+u.dislikes>0&&<span className="pu2-neg">{+u.likes>0?" ":""}−{puNum(u.dislikes)}</span>}
+                {!+u.likes&&!+u.dislikes&&<span className="pu2-muted">—</span>}</td>
+              {mailOk&&<td className="pu2-l">{mailCell(u)}</td>}
+              <td className="pu2-l">{prof(u)}</td>
+            </tr>; })}</tbody></table></div>
+        {N===0&&<div className="pu2-pp-none" role="status">Никого не нашлось. Сбросьте отбор или проверьте написание.
+          <button type="button" className="btn btn-sm" onClick={()=>{ setPf("all"); setQ(""); }}>Сбросить</button></div>}
+        {N>LIM&&<div className="pu2-pp-more"><button type="button" className="btn btn-sm" onClick={()=>setMore(v=>!v)}>
+          {more?"Свернуть":`Показать всех · ${puNum(N)}`}</button></div>}
+      </>}
+  </PuCard>;
+}
+
+// ── «Разделы» и «Когда пользуются» ──
+function PuPpPages(){
+  const c=usePu(), m=c.m||{}, pg=(m.pages||[]).filter(Boolean), mx=Math.max(1,...pg.map(x=>+x.views||0));
+  return <PuCard id="pu2-pp-pages" span={6} title="Разделы" meta={`просмотры · активное время · ${puNum(m.days||c.days)} дн.`}>
+    {pg.length?pg.map(x=><PuHBar key={x.page} label={AD_PAGE_RU[x.page]||x.page} value={x.views} max={mx}
+        tip={x.users!=null?`${puNum(x.users)} ${plural(+x.users||0,"человек","человека","человек")} открывали раздел`:undefined}
+        right={<><b>{puNum(x.views)}</b> · {adFmtS(x.total_s)}</>}/>)
+      :<PuEmpty>За период никто не заходил.</PuEmpty>}
+  </PuCard>;
+}
+function PuPpHeat(){
+  const c=usePu(), m=c.m||{}, cells=(m.heatmap||[]).filter(x=>x&&x.dow!=null&&x.hour!=null);
+  const H0=8, H1=20, hrs=[]; for(let h=H0;h<=H1;h++) hrs.push(h);
+  const map={}; let tot=0, we=0, out=0;
+  cells.forEach(x=>{ const n=+x.n||0; tot+=n;
+    if(x.dow>=6) we+=n; else if(x.hour<H0||x.hour>H1) out+=n; else map[x.dow+"-"+x.hour]=(map[x.dow+"-"+x.hour]||0)+n; });
+  // выходные — в сетке, только если ими заметно пользуются (от 10% открытий)
+  const showWe=tot>0&&we/tot>=.1;
+  if(showWe) cells.forEach(x=>{ if(x.dow>=6&&x.hour>=H0&&x.hour<=H1) map[x.dow+"-"+x.hour]=(map[x.dow+"-"+x.hour]||0)+(+x.n||0); });
+  const days=showWe?[1,2,3,4,5,6,7]:[1,2,3,4,5];
+  const mx=Math.max(1,...Object.values(map));
+  let pk=null; Object.entries(map).forEach(([k,n])=>{ if(!pk||n>pk.n) pk={k,n}; });
+  const byH={}; Object.entries(map).forEach(([k,n])=>{ const h=+k.split("-")[1]; byH[h]=(byH[h]||0)+n; });
+  // два самых нагруженных часа; соседние сливаются: «с 11 до 13»
+  const top=Object.entries(byH).sort((a,b)=>b[1]-a[1]).slice(0,2).map(x=>+x[0]).sort((a,b)=>a-b);
+  const spans=[]; top.forEach(h=>{ const l=spans[spans.length-1]; if(l&&l[1]===h) l[1]=h+1; else spans.push([h,h+1]); });
+  const opn=(n)=>`${puNum(n)} ${plural(n,"открытие","открытия","открытий")}`;
+  const pkTxt=pk?`${PU_PP_DOW[+pk.k.split("-")[0]-1]}, ${pk.k.split("-")[1]}:00–${+pk.k.split("-")[1]+1}:00`:"";
+  const weSh=tot?we/tot:0;
+  const note=[spans.length?`Чаще всего открывают ${spans.map(([a,b])=>`с ${a} до ${b}`).join(" и ")}.`:null,
+    !showWe&&tot?(we?`Выходные — ${opn(we)} (${weSh<.01?"меньше 1%":puPct(weSh)}), в сетку не вошли.`:"В выходные не заходили."):null,
+    out?`До ${H0}:00 и после ${H1+1}:00 — ${opn(out)}.`:null].filter(Boolean).join(" ");
+  return <PuCard id="pu2-pp-heat" span={6} title="Когда пользуются" meta={`открытия разделов по часам, МСК · ${puNum(m.days||c.days)} дн.`}>
+    {tot?<><div className="pu2-pp-heat" role="img" style={{"--cols":hrs.length}}
+        aria-label={`Открытия разделов по часам${pk?`: больше всего — ${pkTxt}, ${opn(pk.n)}`:""}`}>
+        <span/>{hrs.map((h,i)=><span key={"h"+h} className="pu2-pp-hh">{i%2===0?h:""}</span>)}
+        {days.map(dw=><React.Fragment key={dw}><span className="pu2-pp-hl">{PU_PP_DOW[dw-1]}</span>
+          {hrs.map(h=>{ const n=map[dw+"-"+h]||0;
+            return <span key={h} className="pu2-pp-hc" data-tip={`${PU_PP_DOW[dw-1]}, ${h}:00–${h+1}:00 — ${opn(n)}`}
+              style={n?{background:`color-mix(in oklab,var(--viz),transparent ${Math.round(95-n/mx*85)}%)`}:undefined}/>; })}
+        </React.Fragment>)}
+      </div>
+      {note&&<p className="pu2-note">{note}</p>}</>
+      :<PuEmpty>За период никто не заходил.</PuEmpty>}
+  </PuCard>;
+}
+
+// ── «Почта и персонализация»: одна строка статов (списки — в карточке человека) ──
+function PuPpMail(){
+  const c=usePu(), m=c.m||{}, ml=m.mail, pr=(ml&&ml.promo)||{}, ps=m.persona||{}, pz=m.personalization||{};
+  const f=m.features||{}, t=m.today||{};
+  const it=[];
+  if(ml&&ml.connected!=null){
+    it.push({v:puNum(ml.connected),l:"подключили почту",
+      s:[`Sigma — ${puNum(ml.sigma)}, личная — ${puNum(ml.private)}`+(+ml.sso?`, из учётной записи — ${puNum(ml.sso)}`:""),
+        ml.active?`у ${puNum(ml.active_connected)} из ${puNum(ml.active)} активных за ${puNum(m.days||c.days)} дн.`:null].filter(Boolean).join(" · ")});
+    it.push({v:puNum(ml.pending),l:"ждут кода",s:"указали адрес, но не подтвердили"});
+    it.push({v:puNum(ml.sent),l:`писем ушло за ${puNum(m.days||c.days)} дн.`,
+      s:<>{+ml.failed?<span className="pu2-neg">не ушло {puNum(ml.failed)}</span>:"без сбоев"} · кодов {puNum(ml.codes)}</>});
+    it.push({v:`${puNum(pr.connect)} из ${puNum(pr.shown)}`,l:"приняли приглашение",s:`ответили «Не сейчас» — ${puNum(pr.later)}`});
+  }
+  if(f.profiles!=null||ps.median!=null){
+    const gaps=(ps.gaps||[]).map(g=>`${String(g.label||"").toLowerCase()} (${puNum(g.miss)})`);
+    it.push({v:f.profiles!=null?`${puNum(f.profiles)}${t.users_total!=null?` из ${puNum(t.users_total)}`:""}`:null,l:"описали зону ответственности",
+      s:[ps.median!=null&&`медиана готовности профиля — ${puNum(ps.median)}%`,gaps.length&&`чаще не хватает: ${gaps.join(", ")}`,
+        pz.ctr!=null&&`${puDec(pz.ctr)} ${Number.isInteger(+pz.ctr)?plural(+pz.ctr,"клик","клика","кликов"):"клика"} на 100 открытий «Для вас»`].filter(Boolean).join(" · ")});
+  }
+  return <PuCard id="pu2-pp-mail" title="Почта и персонализация"
+      meta={ml&&!c.isOwner?"адреса почты видит владелец инструмента":null}>
+    {it.length?<PuStatRow items={it}/>:<PuEmpty>Нет данных о почте и профилях</PuEmpty>}
+  </PuCard>;
+}
+
+function PuPeopleSec(){
+  const c=usePu();
+  const[pf,setPf]=useState("all");
+  const U=usePuData(`/api/admin/users?days=${c.days||14}${puMe(c.withMe)}`,{ttl:60000});
+  if(!c.m) return null;
+  return <div className="pu2-grid pu2-pp">
+    <PuPpLife U={U}/>
+    <PuPpRisk onSilent={()=>{ setPf("silent"); c.go("people","pu2-people"); }}/>
+    <PuPpCohorts/>
+    <PuPpTable U={U} pf={pf} setPf={setPf}/>
+    <PuPpPages/>
+    <PuPpHeat/>
+    <PuPpMail/>
+  </div>;
+}
 // ⟦pu2:people⟧ конец
 
 // ── граница: выше «Люди», ниже «Качество ИИ» ─────────────────────────────────
