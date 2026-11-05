@@ -11399,8 +11399,475 @@ function puSysCells(m,sig,key){
 // Раздел читает всё нужное из PuCtx (usePu()): m, days, withMe, isOwner, go, open*.
 
 // ⟦pu2:overview⟧ начало — раздел «Сводка»; правит только агент раздела
-const PU2_CSS_OVERVIEW=``;
-function PuOverview(){ return <PuEmpty>Раздел в работе</PuEmpty>; }
+// «Сводка» отвечает на «всё ли в порядке и что от меня нужно»: очередь «Требует
+// внимания» (ctx.sig — сигналы уже посчитала оболочка), восемь служб с лентой за
+// 14 дней, четыре плитки со сравнением с прошлым периодом, аудитория по дням и
+// «Сейчас в инструменте». Своего периода нет: подписи «за N дней» — из m.days.
+// Кроме /api/admin/pulse раздел берёт /api/admin/users (кто онлайн; тот же адрес
+// и кэш, что у поиска), /api/admin/agent-eval?engine=hermes (прогоны проверочного
+// набора; тот же адрес, что у «Качества ИИ») и /api/admin/pulse/costs (траты отдела).
+const PU2_CSS_OVERVIEW=`
+/* «Сводка»: соседние карточки ряда одной высоты — содержимое тянется по колонке */
+.pu2-ov-col{display:flex;flex-direction:column}
+
+/* очередь «Требует внимания» */
+.pu2 h3.pu2-ov-qg{display:flex;align-items:center;gap:8px;margin:0 0 2px;font-family:inherit;font-size:12px;font-weight:600;
+  line-height:1.4;letter-spacing:0;color:var(--ink-3)}
+.pu2 .pu2-ov-ql+h3.pu2-ov-qg,.pu2 h3.pu2-ov-qg+h3.pu2-ov-qg{margin-top:18px}
+.pu2-ov-ql{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.pu2-ov-qi{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:12px;align-items:center;padding:11px 0;border-top:1px solid var(--hair)}
+.pu2-ov-qi:first-child{border-top:0}
+.pu2-ov-qic{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:var(--paper-2);color:var(--ink-2)}
+.pu2-ov-qi.bad .pu2-ov-qic{background:color-mix(in oklab,var(--neg),transparent 88%);color:var(--accent-ink)}
+.pu2-ov-qi.warn .pu2-ov-qic{background:color-mix(in oklab,var(--warn),transparent 86%);color:var(--warn-ink)}
+.pu2-ov-qx{min-width:0}
+.pu2-ov-qt{font-size:14px;font-weight:500;line-height:1.35;color:var(--ink);text-wrap:pretty;overflow-wrap:anywhere}
+.pu2-ov-qm{font-size:12.5px;line-height:1.45;color:var(--ink-3);margin-top:2px;text-wrap:pretty;overflow-wrap:anywhere}
+.pu2-ov-qb{white-space:nowrap;text-decoration:none}
+.pu2-ov-qb:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.pu2-ov-calm{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;
+  padding:28px 12px;min-height:180px}
+.pu2-ov-calm p{margin:0;max-width:40ch;font-size:14px;line-height:1.45;color:var(--ink-2);text-wrap:balance}
+.pu2-ov-calm-i{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:var(--pos);
+  background:color-mix(in oklab,var(--pos),transparent 88%)}
+.pu2-ov-calm-i .pu2-ic{width:22px;height:22px}
+
+/* системы: строка — кнопка в «Системы», лента состояния за 14 дней справа */
+.pu2-ov-sum{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2);margin:-4px 0 8px}
+.pu2-ov-sl{list-style:none;margin:0;padding:0;flex:1 1 auto;display:flex;flex-direction:column}
+.pu2-ov-sl>li{flex:1 1 auto;display:flex;min-width:0;border-top:1px solid var(--hair)}
+.pu2-ov-sys{flex:1 1 auto;min-width:0;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 14px;align-items:center;
+  align-content:center;padding:8px 0;margin:0;text-align:left;border-radius:var(--r-sm);cursor:pointer}
+.pu2-ov-sys:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.pu2-ov-sn{display:flex;align-items:center;gap:9px;min-width:0;font-size:13.5px;color:var(--ink)}
+.pu2-ov-sn>span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pu2-ov-sys:hover .pu2-ov-sn>span:last-child{text-decoration:underline;text-decoration-color:var(--ink-4);text-underline-offset:3px}
+.pu2-ov-st{grid-column:1;min-width:0;padding-left:16px;font-size:12px;line-height:1.4;color:var(--ink-3);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pu2-ov-sys>.pu2-rib{grid-column:2;grid-row:1/span 2}
+
+/* аудитория по дням */
+.pu2-ov-chart{position:relative;min-width:0}
+.pu2-ov-chart svg{display:block;width:100%;height:auto;overflow:visible}
+.pu2-ov-gl{stroke:var(--hair);stroke-width:1}
+.pu2-ov-ax{fill:var(--ink-3);font-size:11px;font-variant-numeric:tabular-nums}
+.pu2-ov-pk{fill:var(--ink);font-weight:600}
+.pu2-ov-bar{fill:var(--viz);pointer-events:none;transition:opacity var(--dur-quick) var(--ease-out)}
+.pu2-ov-bar.off{fill:var(--viz-3)}
+.pu2-ov-bar.now{fill:url(#pu2-ov-hatch)}
+.pu2-ov-hit{fill:transparent}
+.pu2-ov-hit:hover+.pu2-ov-bar{opacity:.72}
+.pu2-ov-leg{display:flex;flex-wrap:wrap;gap:4px 16px;margin:8px 0 14px;font-size:12px;color:var(--ink-3)}
+.pu2-ov-leg i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px;background:var(--viz)}
+.pu2-ov-leg i.off{background:var(--viz-3)}
+.pu2-ov-leg i.now{background:repeating-linear-gradient(45deg,var(--viz) 0 1.6px,var(--viz-3) 1.6px 4px)}
+.pu2-ov-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px 24px;margin-top:auto;padding-top:14px;
+  border-top:1px solid var(--hair)}
+.pu2-ov-stat{min-width:0}
+.pu2-ov-stat b{display:block;font-size:18px;font-weight:600;line-height:1.3;letter-spacing:-.01em;font-variant-numeric:tabular-nums;color:var(--ink)}
+.pu2-ov-stat b .pu2-ov-na{font-size:13px;font-weight:400;letter-spacing:0;color:var(--ink-3)}
+.pu2-ov-stat>span{font-size:12.5px;color:var(--ink-3)}
+/* узкая плитка трат (1281–1400): подписи линейки переносятся целиком, не по словам */
+.pu2-ov-k .pu2-bullet-leg{flex-wrap:wrap;gap:2px 10px}
+.pu2-ov-k .pu2-bullet-leg>span{white-space:nowrap}
+
+/* «Сейчас в инструменте» */
+.pu2-ov-on{display:inline-flex;align-items:center;gap:7px}
+.pu2-ov-avs{display:flex;align-items:center;flex-wrap:wrap;gap:6px 0;min-height:32px;margin:0 0 10px;padding-left:7px}
+.pu2-ov-avs>.pu2-err,.pu2-ov-avs>.pu2-ov-none{margin-left:-7px}
+.pu2-ov-av{margin-left:-7px;padding:0;border:2px solid var(--surface);cursor:pointer;
+  transition:transform var(--dur-quick) var(--ease-spring)}
+.pu2-ov-av:hover{transform:translateY(-2px)}
+.pu2-ov-av:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.pu2-ov-avm{font-size:10.5px;background:var(--surface);color:var(--ink-3);border-color:var(--hair-2)}
+.pu2-ov-sk{display:inline-flex;gap:4px;margin-left:-7px}
+.pu2-ov-none{font-size:13px;color:var(--ink-3)}
+.pu2-ov-feed{list-style:none;margin:0;padding:0}
+.pu2-ov-feedw{position:relative;flex:1 1 auto;display:flex;flex-direction:column}
+.pu2-ov-feed{flex:1 1 auto;display:flex;flex-direction:column}
+.pu2-ov-fe{flex:1 1 auto;display:grid;grid-template-columns:40px minmax(0,1fr);gap:10px;align-content:center;padding:8px 0;
+  border-top:1px solid var(--hair);font-size:13px;line-height:1.45}
+.pu2-ov-fe.pu2-ov-cut{display:none}
+.pu2-ov-fe:first-child{border-top:0}
+.pu2-ov-fe time{color:var(--ink-3);font-size:12.5px;font-variant-numeric:tabular-nums;padding-top:1px}
+.pu2-ov-fe>div{min-width:0;display:flex;flex-direction:column;align-items:flex-start;overflow-wrap:anywhere}
+.pu2-ov-who{display:inline;padding:0;margin:0;font:inherit;font-weight:500;color:var(--ink);text-align:left;border-radius:var(--r-sm);cursor:pointer}
+span.pu2-ov-who{cursor:default}
+button.pu2-ov-who:hover{text-decoration:underline;text-decoration-color:var(--ink-4);text-underline-offset:3px}
+.pu2-ov-who:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.pu2-ov-what{color:var(--ink-2)}
+.pu2-ov-fe.bad .pu2-ov-what{color:var(--accent-ink)}
+
+/* до 1280 «Аудитория» и «Сейчас в инструменте» — во всю ширину; шире — лента
+   не растягивает ряд: высоту задаёт график, лишние события прячутся целиком */
+@media (min-width:1281px){
+  .pu2-ov-live>.pu2-ov-feedw{flex:1 1 0;min-height:0;overflow:hidden}
+}
+@media (max-width:760px){
+  .pu2-ov-qi{grid-template-columns:28px minmax(0,1fr)}
+  .pu2-ov-qb{grid-column:2;justify-self:start;margin-top:2px}
+}
+@media (max-width:520px){
+  .pu2-ov-st{white-space:normal;text-wrap:pretty}
+  .pu2-ov-stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 20px}
+}
+@media (prefers-reduced-motion:reduce){
+  .pu2-ov-av,.pu2-ov-bar{transition:none}
+  .pu2-ov-av:hover{transform:none}
+}
+`;
+
+// ── «Сводка»: справочники и помощники ──
+// путь запроса с ошибкой → раздел приложения (адрес /api/… — внутренний, в подсказке)
+const PU_OV_API={reviews:"Аудит отзывов",market:"Рынок · позиция",overview:"Новостные обзоры",digest:"Новостные обзоры",
+  news:"Новостные обзоры",foryou:"Для вас",chat:"ИИ-помощник",ai:"ИИ-помощник",reports:"ИИ-помощник",
+  loophole:"Аудит уязвимостей",knowledge:"База знаний",banks:"Банки",sources:"Источники",admin:"Пульс",
+  inbox:"Обратная связь",say:"Обратная связь",cases:"Аудит-дела",profile:"Профиль"};
+const puOvDaysW=(n)=>`${puNum(n)} ${plural(+n||0,"день","дня","дней")}`;
+const puOvWeekend=(d)=>{ const x=puDate(d); return !!x&&[0,6].includes(new Date(puDayKey(x)+"T12:00:00Z").getUTCDay()); };
+// нерабочие дни ряда dau: от сервера (dau[i].off), без него — субботы и воскресенья
+function puOvOff(dau){
+  const o=new Set();
+  (dau||[]).forEach((x,i)=>{ if(x&&(typeof x.off==="boolean"?x.off:puOvWeekend(x.d))) o.add(i); });
+  return o;
+}
+// шаг сетки графика по настоящему максимуму: 0/10/20/30, 0/2/4, 0/20/40/60…
+function puOvStep(mx){
+  const raw=Math.max(1,mx/4), p=10**Math.floor(Math.log10(raw));
+  return [1,2,5,10].map(k=>k*p).find(s=>s>=raw)||raw;
+}
+// строка «Живой ленты» — формулировки прежней ленты (сервер не отдаёт заголовков отчётов)
+function puOvFeed(e){
+  const pg=AD_PAGE_RU[e.page]||PU_OV_API[e.page]||e.page||"";
+  if(e.kind==="page_view") return {t:"→ "+pg};
+  if(e.kind==="ai_query") return {t:e.deep?"заказ отчёта":"вопрос ИИ-помощнику"};
+  if(e.kind==="share") return {t:"отправка отчёта коллеге"};
+  if(e.kind==="report_open") return {t:"открытие сохранённого отчёта"};
+  if(e.kind==="client_error") return {t:"ошибка в браузере"+(pg?" · "+pg:""),bad:true};
+  const seg=String(e.page||"").replace(/^\/api\//,"").split(/[/?]/)[0];
+  const where=PU_OV_API[seg]||AD_PAGE_RU[seg]||"";
+  return {t:"ошибка сервера"+(where?" · "+where:"")+(e.status?" · "+e.status:""),bad:true,
+    tip:e.page?`Запрос ${e.page}`:undefined};
+}
+// служба → строка состояния сегодня: худший сбой из очереди (те же правила, что у
+// ленты), иначе — короткая сводка по данным службы
+function puOvSysText(m,sig,key){
+  const its=((sig&&sig.incidents)||[]).filter(x=>x.sys===key);
+  if(its.length) return {t:its[0].title+(its.length>1?` и ещё ${its.length-1}`:""),
+    tip:its.map(x=>x.title+(x.meta?". "+x.meta:"")).join(" · ")};
+  const s=((sig&&sig.sys)||{})[key];
+  if(!s||s==="n") return {t:"нет данных"};
+  const dg=Array.isArray(m.digest)?m.digest:[];
+  let t="в норме";
+  if(key==="server") t="Ошибок сегодня нет";
+  else if(key==="digest"){ const d=(dg[0]||{}).d, at=dg.map(x=>x.at).filter(Boolean).sort().pop();
+    t=d&&d===mskToday()?`Собран${at?" к "+at:""}: ${dg.length} ${plural(dg.length,"раздел","раздела","разделов")}`
+      :d?`Последний — за ${puDay(d)}`:t; }
+  else if(key==="reviews"){
+    const rs=(((m.review_sources||{}).sources)||[]).filter(x=>x.status!=="выключен");
+    const ok=rs.filter(x=>x.status==="норма"||x.status==="малый поток").length;
+    t=`${ok} из ${rs.length} ${plural(rs.length,"площадки","площадок","площадок")} в норме`; }
+  else if(key==="news"){ const nq=m.news_quality||{}, src=((nq.stream||{}).sources)||[], st=(nq.today||{}).strong;
+    const n=src.reduce((a,x)=>a+(+x.items_24h||0),0);
+    if(src.length) t=`${puNum(n)} ${plural(n,"материал","материала","материалов")} за сутки`
+      +(st!=null?`, ${puNum(st)} ${plural(+st,"сильный","сильных","сильных")}`:""); }
+  else if(key==="slices"){ const n=+((m.reviews_pipeline||{}).pending_old)||0;
+    t=n?`${puNum(n)} ${plural(n,"жалоба ждёт","жалобы ждут","жалоб ждут")} разметки дольше 6 часов`:"Разметка успевает"; }
+  else if(key==="rsearch"){ const r=m.reviews_search||{};
+    if(r.p50!=null) t=`медиана ${puDec(r.p50/1000)} с, ${puNum(r.n)} ${plural(+r.n||0,"запрос","запроса","запросов")}`; }
+  else if(key==="web"){ const sr=m.search||{}, gw=sr.gateway||{};
+    const fl=+(((sr.backends||[]).find(x=>x.kind==="web_search_chain"&&x.backend==="fleet"))||{}).total||0;
+    t=gw.enabled?`${gw.primary==="fleet"?"Запасной поиск":"Яндекс через шлюз"} отвечает`:"Шлюз не настроен, поиск идёт напрямую";
+    if(gw.enabled&&fl&&gw.primary!=="fleet")
+      return {t,tip:`${t}. Запасной поиск выручил ${puNum(fl)} ${plural(fl,"раз","раза","раз")}.`}; }
+  else if(key==="ingest"){ const q=(m.ingest||{}).queue||{}, w=+q.workers||0;
+    t=`${puNum(w)} ${plural(w,"воркер","воркера","воркеров")}, `+(q.depth>0?`в очереди ${puNum(q.depth)}`:"очередь пуста"); }
+  return {t};
+}
+// ширина блока (график рисуется в своих пикселях: подписи не растут вместе с картой)
+function usePuOvWidth(ref){
+  const[w,setW]=useState(0);
+  React.useLayoutEffect(()=>{ const el=ref.current; if(!el) return;
+    const set=()=>{ const v=Math.round(el.getBoundingClientRect().width); if(v>0) setW(p=>p===v?p:v); };
+    set(); let ro=null; try{ ro=new ResizeObserver(set); ro.observe(el); }catch{}
+    return ()=>{ try{ if(ro) ro.disconnect(); }catch{} }; },[ref]);
+  return w;
+}
+
+// ── «Требует внимания»: сбои и то, что ждёт решения; у пункта одна кнопка ──
+function PuOvItem({x}){
+  const c=usePu();
+  const lv=x.lv==="bad"||x.lv==="warn"?x.lv:"";
+  const inc=x.ic==="stop"||x.ic==="alert";           // значки сбоев; у дел — значок дела
+  const lbl=`${x.act}: ${x.title}`;
+  return <li className={"pu2-ov-qi"+(lv?" "+lv:"")}>
+    <span className="pu2-ov-qic"><PuIcon n={x.ic||"alert"} label={inc?(lv==="bad"?"сбой":"внимание"):undefined}/></span>
+    <div className="pu2-ov-qx"><div className="pu2-ov-qt">{x.title}</div>
+      {x.meta&&<div className="pu2-ov-qm">{x.meta}</div>}</div>
+    {x.href?<a className="btn btn-sm btn-ghost pu2-ov-qb" href={x.href} aria-label={lbl}>{x.act}</a>
+      :<button type="button" className="btn btn-sm btn-ghost pu2-ov-qb" aria-label={lbl}
+          onClick={()=>{ if(x.to) c.go(x.to.section,x.to.anchor||undefined); }}>{x.act}</button>}
+  </li>;
+}
+function PuOvQueue(){
+  const {sig}=usePu();
+  const inc=(sig&&sig.incidents)||[], todo=(sig&&sig.todo)||[], n=inc.length+todo.length;
+  return <PuCard id="pu2-queue" span={7} className="pu2-ov-col" title="Требует внимания"
+      meta={n?`${n} ${plural(n,"пункт","пункта","пунктов")}`:null}>
+    {n===0?<div className="pu2-ov-calm" role="status">
+        <span className="pu2-ov-calm-i"><PuIcon n="check"/></span>
+        <p>Всё спокойно: ошибок нет, выпуск собран, площадки и фон работают.</p></div>
+      :<>
+        <h3 className="pu2-ov-qg"><PuDot lv={inc.length?"bad":"ok"}/>{inc.length?`Сбои · ${inc.length}`:"Сбоев нет"}</h3>
+        {inc.length>0&&<ul className="pu2-ov-ql" aria-label="Сбои">{inc.map(x=><PuOvItem key={x.key} x={x}/>)}</ul>}
+        <h3 className="pu2-ov-qg"><PuDot/>{todo.length?`Ждёт вашего решения · ${todo.length}`:"Вашего решения ничего не ждёт"}</h3>
+        {todo.length>0&&<ul className="pu2-ov-ql" aria-label="Ждёт вашего решения">{todo.map(x=><PuOvItem key={x.key} x={x}/>)}</ul>}
+      </>}
+  </PuCard>;
+}
+
+// ── «Системы»: состояние сегодня (из очереди) и лента за 14 дней (m.health) ──
+function PuOvSystems(){
+  const c=usePu(), m=c.m||{}, sig=c.sig||{};
+  const rows=PU_SYS.map(([k,l])=>{ const s=(sig.sys||{})[k]||"n";
+    return {k,l,s,lv:puSysLv(s),...puOvSysText(m,sig,k),cells:puSysCells(m,sig,k)}; });
+  const ok=rows.filter(r=>r.s==="o").length;
+  const lv=rows.some(r=>r.s==="b")?"bad":rows.some(r=>r.s==="w")?"warn":ok===rows.length?"ok":"idle";
+  return <PuCard id="pu2-ov-sys" span={5} className="pu2-ov-col" title="Системы"
+      actions={<button type="button" className="pu2-lnk" aria-label="Подробно о системах" onClick={()=>c.go("systems")}>
+        Подробно<PuIcon n="right"/></button>}>
+    <div className="pu2-ov-sum"><PuDot lv={lv}/><span>{ok} из {rows.length} в норме · последние 14 дней</span></div>
+    <ul className="pu2-ov-sl">{rows.map(r=><li key={r.k}>
+      <button type="button" className="pu2-ov-sys" data-sys={r.k} onClick={()=>c.go("systems","pu2-sys-"+r.k)}>
+        <span className="pu2-ov-sn"><PuDot lv={r.lv} label={PU_LV_RU[r.lv]}/><span>{r.l}</span></span>
+        <span className="pu2-ov-st" data-tip={r.tip||r.t}>{r.t}</span>
+        <PuRibbon cells={r.cells}/>
+      </button></li>)}</ul>
+  </PuCard>;
+}
+
+// ── плитки: активные за неделю, вопросы ИИ, проверочный набор, траты ──
+function PuOvEvalTile(){
+  const c=usePu(), ev=((c.m||{}).eval||{}).hermes;
+  const E=usePuData("/api/admin/agent-eval?engine=hermes",{ttl:300000});
+  const runs=(((E.d||{}).runs)||[]).filter(r=>r&&r.score!=null);
+  const last=runs[0], prev=last&&runs.slice(1).find(r=>r.model===last.model);
+  const hist=runs.slice(0,8).reverse().map(r=>+r.score);
+  const failed=!!E.err&&E.d===undefined;
+  const sc=ev&&ev.score!=null?+ev.score:last?+last.score:null;
+  const dl=ev&&ev.delta!=null?+ev.delta:last&&prev?Math.round((last.score-prev.score)*10)/10:null;
+  const sub=dl!=null?<><PuDelta v={dl}/>{prev?`к прогону ${puDay(prev.finished_at||prev.started_at)}`:"к прошлому прогону"}</>
+    :ev&&ev.d?`прогон ${puDay(ev.d)}`:null;
+  const viz=failed?<PuLoadErr onRetry={E.reload}>История прогонов не загрузилась.</PuLoadErr>
+    :E.loading?<span className="pu2-spw" role="status" aria-label="Загружаем прогоны"/>
+    :hist.length>=2?<PuSpark vals={hist}
+        label={`Итоги последних ${hist.length} прогонов: ${hist.map(v=>puDec(v)).join(", ")}`}/>
+    :<span className="pu2-spw"><span className="pu2-spe">{hist.length?"пока один прогон":"прогонов ещё не было"}</span></span>;
+  return <PuKpi label="Проверочный набор ИИ" icon="check" value={sc!=null?puDec(sc):null} unit="из 100" sub={sub} viz={viz}
+    className="pu2-ov-k" onClick={failed?undefined:()=>c.go("quality","pu2-eval")}/>;
+}
+function PuOvCostTile(){
+  const c=usePu();
+  const C=usePuData("/api/admin/pulse/costs",{ttl:600000});
+  const reload=C.reload;
+  // учёт облака обновляется редко: раз в 10 минут, пока «Пульс» на экране
+  useEffect(()=>{ if(!c.visible) return;
+    const t=setInterval(()=>{ if(!document.hidden) reload(); },600000);
+    return ()=>clearInterval(t); },[c.visible,reload]);
+  const d=C.d, mo=(d&&d.month)||{};
+  const mon=/^\d{4}-\d{2}/.test(mo.period||"")?PU_MON[+String(mo.period).slice(5,7)-1]:"";
+  const head=(t)=><span className="pu2-kl">{t}<PuIcon n="cloud"/></span>;
+  if(C.err&&d===undefined) return <div className="pu2-card pu2-kpi pu2-c3 pu2-ov-k">{head("Траты отдела")}
+    <span className="pu2-kv"><span className="pu2-kv-na">нет данных</span></span>
+    <span className="pu2-kviz"><PuLoadErr onRetry={reload}>Не удалось получить траты.</PuLoadErr></span></div>;
+  if(d===undefined) return <div className="pu2-card pu2-kpi pu2-c3 pu2-ov-k" role="status" aria-label="Загружаем траты">
+    {head("Траты отдела")}<Skel h={36} w="55%" style={{marginTop:8}}/><Skel h={14} w="70%" style={{marginTop:8}}/>
+    <span className="pu2-kviz"><Skel h={12}/></span></div>;
+  if(!d.configured) return <div className="pu2-card pu2-kpi pu2-c3 pu2-ov-k">{head("Траты отдела")}
+    <span className="pu2-kv"><span className="pu2-kv-na">Учёт трат не подключён</span></span>
+    <span className="pu2-ks">Траты появятся, когда сервер подключат к учёту расходов облака</span></div>;
+  const k=(v)=>puDec((+v||0)/1000,1);
+  const lim=+mo.threshold||0;
+  const util=mo.util!=null?+mo.util:lim&&mo.dept!=null?mo.dept/lim:null;
+  const uf=mo.util_forecast!=null?+mo.util_forecast:lim&&mo.forecast!=null?mo.forecast/lim:null;
+  const asOf=d.as_of?puDate(d.as_of):null;
+  return <PuKpi label={"Траты отдела"+(mon?" · "+mon:"")} icon="cloud" className="pu2-ov-k"
+    value={mo.dept!=null?k(mo.dept):null} unit="тыс. ₽"
+    sub={mo.app!=null?`из них AuditLens — ${k(mo.app)} тыс. ₽`:null}
+    tip={asOf?`Данные облака на ${puFmt(asOf,{day:"numeric",month:"long",hour:"2-digit",minute:"2-digit"})}`:undefined}
+    viz={lim?<><PuBullet value={mo.dept} limit={lim} forecast={mo.forecast}/>
+        <span className="pu2-bullet-leg"><span>{puPct(util)} лимита</span>{uf!=null&&<span>прогноз {puPct(uf)}</span>}
+          <span>{puNum(Math.round(lim/1000))} тыс.</span></span></>
+      :<span className="pu2-ks">месячный лимит не задан</span>}
+    onClick={()=>c.go("results")}/>;
+}
+function PuOvKpis(){
+  const c=usePu(), m=c.m||{}, t=m.today||{}, rt=m.retention||{}, f=m.features;
+  const dau=m.dau||[], off=puOvOff(dau), N=+m.days||dau.length||14;
+  const a=rt.active_7d, p=rt.active_prev_7d;
+  const byD={}; (m.ai_per_day||[]).forEach(x=>{ if(x&&x.d) byD[x.d]=+x.n||0; });
+  const aiVals=dau.length?dau.map(x=>byD[x.d]||0):(m.ai_per_day||[]).map(x=>+x.n||0);
+  // после стрелки — одна строка текста (как в макете): переносится по словам, «61 — отчёты» не рвётся
+  const cmp=!!f&&f.ai_total!=null&&f.ai_total_prev!=null;
+  const aiTxt=f?[cmp&&`к прошлым ${puNum(N)} ${plural(N,"дню","дням","дням")}`,
+    f.ai_deep!=null&&`${puNum(f.ai_deep)} — отчёты`].filter(Boolean).join(" · "):"";
+  return <div className="pu2-grid pu2-ov-kpis">
+    <PuKpi label="Активны за 7 дней" icon="users" className="pu2-ov-k" value={a==null?null:puNum(a)}
+      unit={t.users_total!=null?`из ${puNum(t.users_total)}`:null}
+      sub={a!=null&&p!=null?<><PuDelta v={a-p} d={0}/>к прошлой неделе</>:null}
+      viz={<PuBarSpark vals={dau.map(x=>x.users)} off={off} label={`Человек в день за ${puOvDaysW(dau.length)}`}
+        tips={dau.map(x=>`${puWd(x.d)}, ${puDay(x.d)}: ${puNum(x.users)} ${plural(+x.users||0,"человек","человека","человек")}`)}/>}
+      onClick={()=>c.go("people")}/>
+    <PuKpi label="Вопросы ИИ-помощнику" icon="spark" className="pu2-ov-k"
+      value={f&&f.ai_total!=null?puNum(f.ai_total):null} unit={`за ${puOvDaysW(N)}`}
+      sub={cmp||aiTxt?<>{cmp&&<PuDelta v={f.ai_total-f.ai_total_prev} d={0}/>}{aiTxt}</>:null}
+      viz={<PuSpark vals={aiVals} zero label={`Вопросы ИИ-помощнику по дням за ${puOvDaysW(aiVals.length)}`}/>}
+      onClick={()=>c.go("quality")}/>
+    <PuOvEvalTile/>
+    <PuOvCostTile/>
+  </div>;
+}
+
+// ── «Аудитория · человек в день»: столбик на день, нерабочие бледнее, сегодня — штриховка ──
+function PuOvDau({dau,ai,ts}){
+  const ref=useRef(null), cw=usePuOvWidth(ref);
+  const n=dau.length, today=mskToday(), off=puOvOff(dau);
+  const W=Math.max(260,cw||720), narrow=W<640, H=narrow?200:236, pl=30, pt=16, pb=24;
+  const g=n>20?(narrow?2:4):(narrow?5:10), bw=Math.max(2,(W-pl-g*(n-1))/Math.max(1,n));
+  const vals=dau.map(x=>+x.users||0), mx=Math.max(0,...vals);
+  const top=Math.max(mx,1)*1.14, step=puOvStep(mx), ticks=[];
+  for(let v=0;v<=top+1e-9;v+=step) ticks.push(v);
+  const y=(v)=>pt+(H-pt-pb)*(1-v/top), x0=(i)=>pl+i*(bw+g);
+  const hm=puFmt(ts||new Date(),{hour:"2-digit",minute:"2-digit"});
+  const aiN=(i)=>{ const r=ai[dau[i].d]; return r==null?null:r; };
+  const tw=(s)=>s.length*6.3;                     // ширина подписи 11px Geist, оценка
+  const place=(cx,s)=>cx+tw(s)/2>W?{x:W,a:"end"}:cx-tw(s)/2<0?{x:0,a:"start"}:{x:cx,a:"middle"};
+  // подписи оси: первый день, понедельники и «сегодня»; наползающие — убираем
+  const labs=[]; const gap=narrow?46:54;
+  dau.forEach((r,i)=>{ const isT=i===n-1&&r.d===today;
+    const mon=puDate(r.d)&&new Date(r.d+"T12:00:00Z").getUTCDay()===1;
+    if(!isT&&i!==0&&!mon) return;
+    const l={i,t:isT?"сегодня":puFmt(puDate(r.d),{day:"numeric",month:"short"}).replace(".",""),pr:isT?2:1,cx:x0(i)+bw/2};
+    const pv=labs[labs.length-1];
+    if(pv&&l.cx-pv.cx<gap){ if(l.pr>pv.pr) labs.pop(); else return; }
+    labs.push(l); });
+  const pk=mx>0?vals.indexOf(mx):-1;
+  const wv=vals.filter((v,i)=>!off.has(i)), ov=vals.filter((v,i)=>off.has(i));
+  const rng=(a)=>{ const lo=Math.min(...a), hi=Math.max(...a); return lo===hi?puNum(lo):`${puNum(lo)}–${puNum(hi)}`; };
+  const label=`Человек в день за ${puOvDaysW(n)}`+(wv.length?`: в будни ${rng(wv)}`:"")+(ov.length?`, в нерабочие дни ${rng(ov)}`:"");
+  return <div className="pu2-ov-chart" ref={ref}>
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={label}>
+      <defs><pattern id="pu2-ov-hatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <rect width="4" height="4" style={{fill:"var(--viz-3)"}}/><rect width="1.6" height="4" style={{fill:"var(--viz)"}}/></pattern></defs>
+      {ticks.map(t=><g key={t}><line className="pu2-ov-gl" x1={pl} x2={W} y1={y(t).toFixed(1)} y2={y(t).toFixed(1)}/>
+        <text className="pu2-ov-ax" x={pl-8} y={(y(t)+4).toFixed(1)} textAnchor="end">{puNum(t)}</text></g>)}
+      {dau.map((r,i)=>{ const v=vals[i], x=x0(i), bh=Math.max(y(0)-y(v),1.5), isT=i===n-1&&r.d===today;
+        const q=aiN(i), offW=off.has(i)&&!puOvWeekend(r.d);
+        const tip=`${puWd(r.d)}, ${puDay(r.d)}${offW?", нерабочий день":""}${isT?`, к ${hm}`:""}: `
+          +`${puNum(v)} ${plural(v,"человек","человека","человек")}`
+          +(r.views!=null?`, ${puNum(r.views)} ${plural(+r.views||0,"просмотр","просмотра","просмотров")}`:"")
+          +(q!=null?`, ${puNum(q)} ${plural(q,"вопрос","вопроса","вопросов")} ИИ`:"");
+        return <g key={r.d||i}>
+          <rect className="pu2-ov-hit" x={(x-g/2).toFixed(1)} y={pt} width={(bw+g).toFixed(1)} height={H-pt-pb} data-tip={tip}/>
+          <rect className={"pu2-ov-bar"+(isT?" now":off.has(i)?" off":"")} x={x.toFixed(1)} y={(y(0)-bh).toFixed(1)}
+            width={bw.toFixed(1)} height={bh.toFixed(1)} rx={Math.min(4,bw/3).toFixed(1)}/>
+        </g>; })}
+      {labs.map(l=>{ const p=place(l.cx,l.t);
+        return <text key={"l"+l.i} className="pu2-ov-ax" x={p.x.toFixed(1)} y={H-6} textAnchor={p.a}>{l.t}</text>; })}
+      {pk>=0&&(()=>{ const s=`пик · ${puNum(mx)}`, p=place(x0(pk)+bw/2,s);
+        return <text className="pu2-ov-ax pu2-ov-pk" x={p.x.toFixed(1)} y={(y(mx)-6).toFixed(1)} textAnchor={p.a}>{s}</text>; })()}
+    </svg>
+  </div>;
+}
+function PuOvAudience(){
+  const c=usePu(), m=c.m||{}, dau=(m.dau||[]).filter(x=>x&&x.d), rt=m.retention||{};
+  const N=+m.days||dau.length, today=mskToday(), off=puOvOff(dau);
+  const ai={}; (m.ai_per_day||[]).forEach(x=>{ if(x&&x.d) ai[x.d]=+x.n||0; });
+  if(Array.isArray(m.ai_per_day)) dau.forEach(x=>{ if(ai[x.d]==null) ai[x.d]=0; });
+  const views=dau.reduce((s,x)=>s+(+x.views||0),0), pd=dau.reduce((s,x)=>s+(+x.users||0),0);
+  const newN=Array.isArray(m.new_users)?m.new_users.reduce((s,x)=>s+(+x.n||0),0):null;
+  const work=dau.filter((x,i)=>!off.has(i)&&x.d!==today);
+  const avg=work.length?Math.round(work.reduce((s,x)=>s+(+x.users||0),0)/work.length):null;
+  const hol=dau.filter((x,i)=>off.has(i)&&!puOvWeekend(x.d));
+  const meta=[avg!=null&&`в будни в среднем ${puNum(avg)}`,
+    hol.length?`${hol.slice(0,2).map(x=>puDay(x.d)).join(", ")}${hol.length>2?" и др.":""} — ${hol.length===1?"нерабочий день":"нерабочие дни"}`:null]
+    .filter(Boolean).join(" · ");
+  const st=[
+    {v:dau.length?puNum(views):null,l:"просмотров разделов"},
+    {v:pd?puNum(Math.round(views/pd)):null,l:"просмотров на человека в день"},
+    {v:newN!=null?puNum(newN):null,l:`новых за ${puOvDaysW(N)}`},
+    {v:rt.from_mail_7d!=null?puNum(rt.from_mail_7d):null,l:"пришли по ссылке из письма за 7 дней"},
+  ];
+  const isT=dau.length&&dau[dau.length-1].d===today;
+  return <PuCard id="pu2-ov-aud" span={8} className="pu2-ov-col" title="Аудитория · человек в день" meta={meta||null}>
+    {dau.length?<PuOvDau dau={dau} ai={ai} ts={c.ts}/>:<PuEmpty>Нет данных за период</PuEmpty>}
+    {dau.length>0&&<div className="pu2-ov-leg" aria-hidden="true"><span><i/>рабочий день</span>
+      {off.size>0&&<span><i className="off"/>выходной или праздник</span>}{isT&&<span><i className="now"/>сегодня, день не закончился</span>}</div>}
+    <div className="pu2-ov-stats">{st.map((x,i)=><div key={i} className="pu2-ov-stat">
+      <b>{x.v==null?<span className="pu2-ov-na">нет данных</span>:x.v}</b><span>{x.l}</span></div>)}</div>
+  </PuCard>;
+}
+
+// ── «Сейчас в инструменте»: кто онлайн и последние действия ──
+function PuOvLive(){
+  const c=usePu(), m=c.m||{}, t=m.today||{};
+  const url="/api/admin/users?days=30"+puMe(c.withMe);
+  const U=usePuData(url,{ttl:60000});
+  // список онлайн обновляется вместе с «Пульсом» (раз в минуту, пока страница видна)
+  const seen=useRef(c.ts);
+  useEffect(()=>{ if(seen.current===c.ts) return; seen.current=c.ts; if(!c.visible) return;
+    const e=_puCache.get(url); if(e&&!e.p&&Date.now()-e.t>45000) U.reload(); },[c.ts]); // eslint-disable-line
+  const on=(((U.d||{}).users)||[]).filter(u=>u&&u.online&&!u.excluded);
+  const MAX=8, shown=on.slice(0,MAX), rest=on.slice(MAX);
+  const feed=(m.feed||[]).slice(0,5);
+  // шире 1280 высоту ряда задаёт «Аудитория»: события, которые не помещаются, прячутся
+  // целиком (первое видно всегда); уже — карточка во всю ширину, видны все пять
+  const fw=useRef(null);
+  React.useLayoutEffect(()=>{ const el=fw.current; if(!el) return;
+    const fit=()=>{ const li=[...el.querySelectorAll(".pu2-ov-fe")];
+      li.forEach(x=>x.classList.remove("pu2-ov-cut"));
+      const h=el.clientHeight; if(!h) return;
+      li.forEach((x,i)=>{ if(i&&x.offsetTop+x.offsetHeight>h+1) x.classList.add("pu2-ov-cut"); }); };
+    fit(); let ro=null; try{ ro=new ResizeObserver(fit); ro.observe(el); }catch{}
+    return ()=>{ try{ if(ro) ro.disconnect(); }catch{} }; });
+  return <PuCard id="pu2-ov-live" span={4} className="pu2-ov-col pu2-ov-live" title="Сейчас в инструменте"
+      meta={t.online!=null?<span className="pu2-ov-on" tabIndex={0} data-tip="Заходили за последние 15 минут">
+        <PuDot lv={t.online>0?"ok":"idle"} pulse={t.online>0}/>{puNum(t.online)} онлайн</span>:"нет данных"}>
+    <div className="pu2-ov-avs">
+      {U.err&&U.d===undefined?<PuLoadErr onRetry={U.reload}>Не удалось узнать, кто онлайн.</PuLoadErr>
+        :U.d===undefined?<span className="pu2-ov-sk" role="status" aria-label="Загружаем, кто онлайн">
+            {[0,1,2].map(i=><Skel key={i} w={28} h={28} style={{borderRadius:"50%"}}/>)}</span>
+        :shown.length?<>{shown.map(u=>{ const nm=u.name||u.username;
+            return <button key={u.username} type="button" className="pu2-av pu2-ov-av" data-tip={nm}
+              aria-label={`${nm} — открыть карточку`} onClick={()=>c.openPerson(u.username)}>{initials(nm)}</button>; })}
+          {rest.length>0&&<button type="button" className="pu2-av pu2-ov-av pu2-ov-avm"
+            data-tip={rest.map(u=>u.name||u.username).join(", ")} aria-label={`Ещё ${rest.length} онлайн — раздел «Люди»`}
+            onClick={()=>c.go("people")}>+{rest.length}</button>}</>
+        :<span className="pu2-ov-none">{t.online>0?"Список обновится через минуту":"Сейчас никого нет"}</span>}
+    </div>
+    <div className="pu2-ov-feedw" ref={fw}>
+      {feed.length?<ol className="pu2-ov-feed" aria-label="Последние действия">{feed.map((e,i)=>{
+          const f=puOvFeed(e), nm=e.name||e.username||"—";
+          return <li key={i} className={"pu2-ov-fe"+(f.bad?" bad":"")}>
+            <time>{e.ts||""}</time>
+            <div>{e.username?<button type="button" className="pu2-ov-who" onClick={()=>c.openPerson(e.username)}>{nm}</button>
+                :<span className="pu2-ov-who">{nm}</span>}{" "}
+              <span className="pu2-ov-what" data-tip={f.tip}>{f.t}</span></div>
+          </li>; })}</ol>
+        :<PuEmpty>Пока тихо: за последние минуты действий не было.</PuEmpty>}
+    </div>
+  </PuCard>;
+}
+
+function PuOverview(){
+  const c=usePu();
+  if(!c.m) return null;
+  return <div className="pu2-ov">
+    <div className="pu2-grid"><PuOvQueue/><PuOvSystems/></div>
+    <PuOvKpis/>
+    <div className="pu2-grid"><PuOvAudience/><PuOvLive/></div>
+  </div>;
+}
 // ⟦pu2:overview⟧ конец
 
 // ── граница: выше «Сводка», ниже «Люди» ──────────────────────────────────────
