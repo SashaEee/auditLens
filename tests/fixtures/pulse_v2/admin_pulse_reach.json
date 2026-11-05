@@ -1,0 +1,202 @@
+{
+ "loaded": true,
+ "loaded_at": "2026-10-28T15:12:00+03:00",
+ "label": "ТБ",
+ "head": 412,
+ "users": 51,
+ "reach": 0.1238,
+ "active30": 44,
+ "matched": {
+  "tab": 38,
+  "name": 13
+ },
+ "other": {
+  "users": 13,
+  "active30": 9,
+  "ai": 41
+ },
+ "head_set": 1,
+ "units": [
+  {
+   "code": "55",
+   "name": "СЗБ",
+   "head": 41,
+   "users": 7,
+   "active30": 6,
+   "ai_users": 5,
+   "ai": 44,
+   "regular": 4,
+   "hours": 30.2,
+   "head_roster": 41,
+   "reach": 0.1707
+  },
+  {
+   "code": "42",
+   "name": "Среднерусский",
+   "head": 38,
+   "users": 6,
+   "active30": 5,
+   "ai_users": 4,
+   "ai": 37,
+   "regular": 3,
+   "hours": 22.8,
+   "head_roster": 38,
+   "reach": 0.1579
+  },
+  {
+   "code": "38",
+   "name": "Московский банк",
+   "head": 64,
+   "users": 9,
+   "active30": 8,
+   "ai_users": 7,
+   "ai": 61,
+   "regular": 6,
+   "hours": 41.5,
+   "head_roster": 61,
+   "head_set": true,
+   "reach": 0.1406
+  },
+  {
+   "code": "54",
+   "name": "Поволжский",
+   "head": 36,
+   "users": 5,
+   "active30": 4,
+   "ai_users": 3,
+   "ai": 21,
+   "regular": 2,
+   "hours": 15.1,
+   "head_roster": 36,
+   "reach": 0.1389
+  },
+  {
+   "code": "44",
+   "name": "Волго-Вятский",
+   "head": 33,
+   "users": 4,
+   "active30": 4,
+   "ai_users": 3,
+   "ai": 18,
+   "regular": 2,
+   "hours": 12.4,
+   "head_roster": 33,
+   "reach": 0.1212
+  },
+  {
+   "code": "16",
+   "name": "Уральский",
+   "head": 35,
+   "users": 4,
+   "active30": 3,
+   "ai_users": 3,
+   "ai": 26,
+   "regular": 2,
+   "hours": 11.9,
+   "head_roster": 35,
+   "reach": 0.1143
+  },
+  {
+   "code": "-",
+   "name": "Центр",
+   "head": 62,
+   "users": 7,
+   "active30": 6,
+   "ai_users": 6,
+   "ai": 74,
+   "regular": 5,
+   "hours": 46.8,
+   "head_roster": 62,
+   "reach": 0.1129
+  },
+  {
+   "code": "18",
+   "name": "Байкальский",
+   "head": 20,
+   "users": 2,
+   "active30": 1,
+   "ai_users": 1,
+   "ai": 3,
+   "regular": 0,
+   "hours": 2.1,
+   "head_roster": 20,
+   "reach": 0.1
+  },
+  {
+   "code": "67",
+   "name": "Сибирский",
+   "head": 31,
+   "users": 3,
+   "active30": 3,
+   "ai_users": 2,
+   "ai": 12,
+   "regular": 1,
+   "hours": 8.3,
+   "head_roster": 31,
+   "reach": 0.0968
+  },
+  {
+   "code": "70",
+   "name": "Дальневосточный",
+   "head": 22,
+   "users": 2,
+   "active30": 2,
+   "ai_users": 1,
+   "ai": 6,
+   "regular": 1,
+   "hours": 4.0,
+   "head_roster": 22,
+   "reach": 0.0909
+  },
+  {
+   "code": "52",
+   "name": "Юго-Западный",
+   "head": 30,
+   "users": 2,
+   "active30": 2,
+   "ai_users": 1,
+   "ai": 9,
+   "regular": 1,
+   "hours": 3.6,
+   "head_roster": 30,
+   "reach": 0.0667
+  }
+ ],
+ "roles": [
+  {
+   "role": "Ведущий аудитор",
+   "head": 140,
+   "users": 21,
+   "ai": 168,
+   "reach": 0.15
+  },
+  {
+   "role": "Старший аудитор",
+   "head": 121,
+   "users": 15,
+   "ai": 97,
+   "reach": 0.124
+  },
+  {
+   "role": "Главный аудитор",
+   "head": 61,
+   "users": 9,
+   "ai": 44,
+   "reach": 0.1475
+  },
+  {
+   "role": "Руководитель направления",
+   "head": 52,
+   "users": 6,
+   "ai": 21,
+   "reach": 0.1154
+  },
+  {
+   "role": "Прочие",
+   "head": 38,
+   "users": 0,
+   "ai": 0,
+   "reach": 0.0
+  }
+ ]
+}

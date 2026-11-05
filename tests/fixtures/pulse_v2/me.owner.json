@@ -1,0 +1,52 @@
+{
+ "username": "oaleksandrov",
+ "has_email": true,
+ "name": "Олег Александров",
+ "timezone": "Europe/Moscow",
+ "prefs": {
+  "onboarded": true,
+  "mail_promo": "again",
+  "mail_promo_at": "2026-10-20",
+  "pulse_hidden": true
+ },
+ "created_at": "2026-10-02T09:00:00+03:00",
+ "interests": {
+  "banks": [
+   "Сбербанк"
+  ],
+  "products": [
+   "Вклады"
+  ],
+  "pinned": [],
+  "muted": [],
+  "custom": []
+ },
+ "recommendations": [
+  "Кредитные карты"
+ ],
+ "profile_note": null,
+ "profile_note_at": null,
+ "personalization": {
+  "score": 46,
+  "parts": [
+   {
+    "key": "desc",
+    "label": "Описание зоны ответственности",
+    "earned": 25,
+    "max": 25,
+    "done": true,
+    "cta": "Опишите, что вы проверяете в Сбере",
+    "target": "profile"
+   }
+  ],
+  "counts": {
+   "queries": 12,
+   "content_ratings": 3,
+   "ai_ratings": 1
+  }
+ },
+ "is_admin": true,
+ "can_pulse": true,
+ "can_ingest": true,
+ "authenticated": true
+}
