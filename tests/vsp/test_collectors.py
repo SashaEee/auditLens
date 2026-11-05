@@ -135,7 +135,7 @@ def test_yandex_signed_union_dedupes_and_stops_on_captcha():
     pages = asyncio.run(collect(c.pages("42", sort="union")))
     ids = [r.source_review_id for p in pages for r in p.reviews]
     assert len(ids) == len(set(ids)) == 120                  # 0–59, 30–89, 60–119 → 120 разных
-    assert len(calls) == 8                                    # 4 сортировки × 2 страницы
+    assert len(calls) == 6                                    # 3 сортировки × 2 стр.; 4-я не нужна: собрано всё
 
     def blocked(req: httpx.Request):
         if "/maps/org/" in str(req.url):
@@ -199,7 +199,7 @@ def test_yandex_card_carries_cbr_number():
     assert b.raw["division_type"] == ["additional_bank"] and b.raw["cbr_actual"] == "04.10.2026"
 
 
-def test_branch_then_pages_reuses_first_page(tmp_path):
+def test_branch_then_pages_reuses_first_page(db_url):
     """sync: карточка и первая страница — один запрос (2ГИС и Яндекс без подписи)."""
     from bank_audit.vsp.storage import Store
     from bank_audit.vsp.sync import sync_branch
@@ -220,9 +220,29 @@ def test_branch_then_pages_reuses_first_page(tmp_path):
         page = int(parse_qs(urlparse(str(req.url)).query).get("page", ["1"])[0])
         return httpx.Response(200, text=_ya_state("42", page, 120))
 
-    st = Store(f"sqlite:///{tmp_path / 'c.sqlite'}")
+    st = Store(db_url)
     r1 = asyncio.run(sync_branch(TwoGisCollector(Settings(), http=http_for(g_handler, "2gis")), st, "7000"))
     r2 = asyncio.run(sync_branch(YandexMapsCollector(Settings(), http=http_for(y_handler, "yandex"), signed=False),
                                  st, "42"))
     assert (r1.fetched, r1.completeness, calls["2gis"]) == (120, "complete", 3)
     assert (r2.fetched, r2.completeness, calls["yandex"]) == (120, "complete", 3)
+
+
+def test_yandex_signed_union_small_branch_needs_one_ranking():
+    """До 600 отзывов «по новизне» отдаёт всё: остальные сортировки не запрашиваются."""
+    calls = []
+
+    def handler(req: httpx.Request):
+        u = str(req.url)
+        if "/maps/org/" in u:
+            return httpx.Response(200, text=_ya_state("42", 1, 70))
+        q = parse_qs(urlparse(u).query)
+        calls.append(q["ranking"][0])
+        page = int(q["page"][0])
+        revs = [{"reviewId": f"r{(page - 1) * 50 + i}", "text": "т", "rating": 5, "updatedTime": "2026-01-01T00:00:00Z",
+                 "author": {"publicId": "x"}} for i in range(min(50, 70 - (page - 1) * 50))]
+        return httpx.Response(200, json={"data": {"reviews": revs, "params": {"count": 70, "totalPages": 2}}})
+    c = YandexMapsCollector(Settings(), http=http_for(handler, "yandex"), signed=True)
+    pages = asyncio.run(collect(c.pages("42", sort="union")))
+    assert sum(len(p.reviews) for p in pages) == 70 and calls == ["by_time", "by_time"]
+    assert pages[-1].next_cursor is None

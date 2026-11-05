@@ -44,6 +44,7 @@ ORG_URL = "https://yandex.ru/maps/org/{seo}/{oid}/reviews/"
 CHAIN_URL = "https://yandex.ru/maps/213/moscow/chain/sberbank/{chain}/"
 SBER_CHAIN = "6003612"
 FIRST_PAGE_TTL = 60.0
+SESSION_TTL = 1200.0                 # с: сессию со страницы организации переиспользуем 20 минут
 MAX_PAGES = 12                      # 12 × 50 = 600 — потолок выдачи страниц организации
 _STATE = re.compile(r'<script type="application/json" class="state-view">(.*?)</script>', re.S)
 
@@ -94,7 +95,11 @@ def cbr_features(it: dict) -> dict:
     nomer_sp_cbr — номер подразделения по ЦБ («1481/1948/115»), он совпадает с FILIAL_NUM
     реестра ЦБ и даёт точную привязку карточки к ВСП; office_type — для частных лиц,
     для бизнеса, для корпоративных клиентов; devision_type_bank — вид подразделения."""
-    out: dict = {}
+    # блока признаков нет вовсе — «не знаю», ничего не утверждаем; есть, но без номера —
+    # явный None: «в карточке больше нет» (хранилище удалит устаревший номер)
+    if not isinstance(it.get("features"), list):
+        return {}
+    out: dict = {"cbr_num": None, "office_type": None, "division_type": None, "cbr_actual": None}
     for f in it.get("features") or []:
         fid, v = f.get("id"), f.get("value")
         if fid == "nomer_sp_cbr" and isinstance(v, str):
@@ -172,7 +177,9 @@ class YandexMapsCollector(Collector):
         self.signed = os.getenv("VSP_YANDEX_SIGNED_API", "0") == "1" if signed is None else signed
         self.capabilities = API_CAPS if self.signed else PAGE_CAPS
         self._sess: dict[str, dict] = {}
+        self._shared: dict | None = None             # сессия последней страницы — годится для любых организаций
         self._p1: dict[str, tuple[float, dict]] = {}
+        self._first: dict[tuple[str, str], tuple[float, dict]] = {}
 
     async def close(self) -> None:
         await self.http.close()
@@ -189,18 +196,29 @@ class YandexMapsCollector(Collector):
         if page == 1:
             self._p1[oid] = (time.monotonic(), it)
             cfg = st.get("config") or {}
-            self._sess[oid] = {
-                "url": url, "csrf": cfg.get("csrfToken"),
+            self._sess[oid] = self._shared = {
+                "url": url, "csrf": cfg.get("csrfToken"), "t": time.monotonic(),
                 "sessionId": ((cfg.get("counters") or {}).get("analytics") or {}).get("sessionId"),
                 "reqId": it.get("requestId") or (st["stack"][0].get("results") or {}).get("requestId")}
         return it
 
+    async def _session(self, oid: str) -> dict:
+        """Сессия для fetchReviews. Проверено 05.11: csrf/sessionId/reqId со страницы ОДНОЙ
+        организации принимаются для отзывов любой другой — поэтому страницу (≈1 Мбайт HTML)
+        тянем раз в SESSION_TTL, а не на каждое отделение; проверка «только новых» —
+        один JSON-запрос."""
+        own = self._sess.get(oid)
+        if own:
+            return own
+        sh = self._shared
+        if sh and time.monotonic() - sh["t"] < SESSION_TTL:
+            return sh
+        await self._org_page(oid, 1)
+        return self._sess[oid]
+
     async def _api_page(self, oid: str, ranking: str, page: int) -> dict:
         """Одна страница fetchReviews (50 отзывов). Обновлённый csrf — повтор один раз."""
-        sess = self._sess.get(oid)
-        if not sess:
-            await self._org_page(oid, 1)
-            sess = self._sess[oid]
+        sess = await self._session(oid)
         for _ in range(2):
             q = signed_query({"ajax": "1", "businessId": oid, "csrfToken": sess["csrf"], "locale": "ru_RU",
                               "page": str(page), "pageSize": "50", "ranking": ranking,
@@ -211,6 +229,9 @@ class YandexMapsCollector(Collector):
                 sess["csrf"] = j["csrfToken"]
                 continue
             return j if isinstance(j, dict) else {}
+        # сессия больше не принимается — сбросить, следующая попытка возьмёт свежую страницу
+        self._shared = None
+        self._sess.pop(oid, None)
         raise CollectorError("yandex: csrf-токен не принят дважды")
 
     def _fresh_p1(self, oid: str) -> dict | None:
@@ -219,6 +240,15 @@ class YandexMapsCollector(Collector):
         return hit[1] if hit and time.monotonic() - hit[0] < FIRST_PAGE_TTL else None
 
     async def branch(self, source_branch_id: str) -> SourceBranch:
+        if self.signed and getattr(self, "light_card", False):
+            # заявленное число — из первой страницы «по новизне» (она же пригодится pages());
+            # адрес и координаты карточки уже есть с поиска
+            j = await self._api_page(source_branch_id, "by_time", 1)
+            params = (j.get("data") or {}).get("params")
+            if not j.get("error") and isinstance(params, dict):
+                self._first[(source_branch_id, "by_time")] = (time.monotonic(), j)
+                return SourceBranch("yandex", source_branch_id, declared_reviews=params.get("count"))
+            # ошибка сервиса — карточка страницей (NotFound, если организации больше нет)
         return to_source_branch(await self._org_page(source_branch_id, 1))
 
     async def pages(self, source_branch_id: str, *, sort: str | None = None,
@@ -250,11 +280,13 @@ class YandexMapsCollector(Collector):
         ranks = list(RANKINGS) if sort == "union" else [sort]
         ri, page = (int(x) for x in (cursor or "0:1").split(":"))
         seen: set[str] = set()
-        if not (self._fresh_p1(oid) and oid in self._sess):
-            await self._org_page(oid, 1)                     # сессия и заявленное число
         n = 0
         while ri < len(ranks):
-            j = await self._api_page(oid, ranks[ri], page)
+            hit = self._first.pop((oid, ranks[ri]), None) if page == 1 else None
+            if hit and time.monotonic() - hit[0] < FIRST_PAGE_TTL:
+                j = hit[1]                                   # первая страница уже получена в branch()
+            else:
+                j = await self._api_page(oid, ranks[ri], page)
             data = j.get("data") or {}
             items = data.get("reviews") or []
             params = data.get("params") or {}
@@ -268,6 +300,11 @@ class YandexMapsCollector(Collector):
             total_pages = min(int(params.get("totalPages") or 0), MAX_PAGES)
             last_of_rank = page >= total_pages
             nri, npage = (ri + 1, 1) if last_of_rank else (ri, page + 1)
+            declared = params.get("count")
+            if last_of_rank and declared and len(seen) >= int(declared):
+                # собрано всё заявленное (у отделения до 600 отзывов — уже после «по новизне»):
+                # остальные сортировки дали бы те же отзывы — не тратим запросы
+                nri = len(ranks)
             nxt = f"{nri}:{npage}" if nri < len(ranks) else None
             yield ReviewPage([parse_review(x, oid, self.settings.author_salt) for x in fresh], page_no=n,
                              next_cursor=nxt, declared_total=params.get("count"),

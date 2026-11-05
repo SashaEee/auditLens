@@ -190,18 +190,33 @@ class TwoGisCollector(Collector):
                 return x["alias"]
         raise NotFound(f"2gis: населённый пункт «{area.city}» не найден среди городов 2ГИС")
 
-    async def discover(self, area: Area) -> AsyncIterator[SourceBranch]:
+    async def discover(self, area: Area, *, seen: set[str] | None = None,
+                       patience: int = 2) -> AsyncIterator[SourceBranch]:
+        """Страницы поиска «СберБанк» в населённом пункте, пока идут новые объекты.
+        seen — общий для всего обхода набор уже виденных id (вместе с банкоматами):
+        пункты одного проекта 2ГИС видят одну выдачу (по удалённости от своего центра),
+        поэтому соседний пункт останавливается через patience страниц без нового."""
         alias = await self.alias_for(area)
-        seen: set[str] = set()
-        for n in range(1, 301):
+        seen = set() if seen is None else seen
+        dry = 0
+        for n in range(1, 401):
+            if n == 400:
+                log.warning("2gis поиск %s: дошли до предохранителя 400 страниц — выдача могла не кончиться", alias)
             try:
                 html = await self.http.get(f"https://2gis.ru/{alias}/search/СберБанк/page/{n}",
                                            expect_json=False)
             except NotFound:
                 return
-            items = [b for b in ssr_branches(html) if b["id"] not in seen]
+            objs = ssr_branches(html)
+            items = [b for b in objs if b["id"] not in seen]
+            if not objs:
+                return                                   # выдача кончилась
             if not items:
-                return
+                dry += 1
+                if dry >= patience:
+                    return
+                continue
+            dry = 0
             for b in items:
                 seen.add(b["id"])
                 if is_sber_office(b):

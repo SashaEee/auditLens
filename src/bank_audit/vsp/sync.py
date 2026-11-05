@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -40,6 +41,26 @@ NEW_OVERLAP = timedelta(days=3)
 log = logging.getLogger(__name__)
 
 DECLARED_TOLERANCE = 0.02     # «получили не меньше заявленного» — с допуском 2 %
+GONE_MAX_SHARE = 0.3          # пропало больше трети хранимого за один проход — сбой, не удаления
+GONE_MIN_SUSPICIOUS = 5
+
+
+def schedule_next(store: Store, collector: Collector, sid: str, *, full_pass: bool,
+                  now: datetime | None = None) -> dict:
+    """Когда проверить отделение снова. Интервал «только новых» — по частоте отзывов
+    за последние rate_window_d дней (ожидаем ~due_target новых к следующей проверке),
+    в пределах [due_min_h, due_max_h]. Полный проход — через full_every_d дней с
+    постоянным для отделения сдвигом до 3 суток, чтобы проходы не сбивались в один день."""
+    sch = collector.settings.schedule
+    now = now or utcnow()
+    n = store.recent_count(collector.source, sid, now - timedelta(days=sch.rate_window_d))
+    per_day = n / max(1, sch.rate_window_d)
+    hours = sch.due_max_h if per_day <= 0 else min(sch.due_max_h, max(sch.due_min_h, 24 * sch.due_target / per_day))
+    out = {"next_due_at": now + timedelta(hours=hours)}
+    if full_pass:
+        spread = int(hashlib.sha1(f"{collector.source}:{sid}".encode()).hexdigest()[:8], 16) % 72
+        out["next_full_at"] = now + timedelta(days=sch.full_every_d, hours=spread)
+    return out
 
 
 def _aware(d: datetime | None) -> datetime | None:
@@ -102,14 +123,36 @@ async def sync_branch(collector: Collector, store: Store, sid: str, *, mode: str
     res = BranchResult(src, sid, status="failed")
     prev = store.get_state(src, sid) or {}
     try:
+        # «лёгкая» карточка для проверки только новых (Яндекс с подписью: одна JSON-страница);
+        # при полном проходе — полная карточка (закрытие, рейтинг, номер ЦБ). Внутри одного
+        # sync_many режим общий, так что флаг на адаптере не гоняется между отделениями
+        collector.light_card = mode == "new"
         card = await collector.branch(sid)
         store.upsert_source_branch(card)
         res.declared = card.declared_reviews
     except NotFound as e:
         store.set_availability(src, sid, "not_found")
+        later = utcnow() + timedelta(days=collector.settings.schedule.full_every_d)
         store.put_state(src, sid, status="failed", completeness="unknown", last_error=str(e),
-                        last_sync_at=utcnow())
+                        last_sync_at=utcnow(), next_due_at=later, next_full_at=later)
         res.status, res.error = "not_found", str(e)
+        return res
+    except SourceBlocked as e:
+        store.set_availability(src, sid, "blocked")
+        store.put_state(src, sid, status="blocked", completeness="blocked", last_error=e.reason,
+                        last_sync_at=utcnow())
+        if run_id is not None:
+            store.log_error(run_id, src, sid, "blocked", f"{e.reason} {e.url or ''}")
+        raise
+    except CollectorError as e:
+        # сбой карточки (сеть, 5xx, заглушка вместо данных) — как сбой прохода: состояние
+        # и повтор через retry_h, иначе отделение без состояния выбирается снова и снова
+        store.put_state(src, sid, status="failed", completeness="partial", last_error=str(e),
+                        errors=int(prev.get("errors") or 0) + 1, last_sync_at=utcnow(),
+                        next_due_at=utcnow() + timedelta(hours=collector.settings.schedule.retry_h))
+        if run_id is not None:
+            store.log_error(run_id, src, sid, "error", str(e))
+        res.status, res.completeness, res.error = "failed", "partial", str(e)
         return res
 
     caps = collector.capabilities
@@ -148,9 +191,12 @@ async def sync_branch(collector: Collector, store: Store, sid: str, *, mode: str
                 d = _aware(r.review_date)
                 if d and (oldest_in_pass is None or d < oldest_in_pass):
                     oldest_in_pass = d
-            # прогресс после каждой страницы — прерывание не теряет пройденное
-            store.put_state(src, sid, cursor=page.next_cursor, pages=pages, fetched_total=fetched,
-                            declared_total=res.declared)
+            # прогресс после каждой страницы — прерывание не теряет пройденное (только у
+            # полного прохода: короткий «только новые» не продолжается и не должен затирать
+            # «получено за полный проход»)
+            if mode == "full":
+                store.put_state(src, sid, cursor=page.next_cursor, pages=pages, fetched_total=fetched,
+                                declared_total=res.declared)
             # «только новые»: страница целиком знакома, без правок и старше отсечки —
             # дальше только старое (правка старого отзыва поднимает его наверх, поэтому
             # «всё знакомо» без отсечки по времени — не повод остановиться)
@@ -173,7 +219,8 @@ async def sync_branch(collector: Collector, store: Store, sid: str, *, mode: str
         raise
     except CollectorError as e:
         store.put_state(src, sid, status="failed", completeness="partial", last_error=str(e),
-                        errors=int(prev.get("errors") or 0) + 1, last_sync_at=utcnow())
+                        errors=int(prev.get("errors") or 0) + 1, last_sync_at=utcnow(),
+                        next_due_at=utcnow() + timedelta(hours=collector.settings.schedule.retry_h))
         if run_id is not None:
             store.log_error(run_id, src, sid, "error", str(e))
         res.status, res.completeness, res.error = "failed", "partial", str(e)
@@ -189,9 +236,20 @@ async def sync_branch(collector: Collector, store: Store, sid: str, *, mode: str
     res.stop = stop
     full_pass = mode == "full" and stop == "end"
     if full_pass:
-        # пропавшие — только после полного прохода с начала (в т. ч. продолженного)
-        res.gone = store.mark_gone(src, sid, pass_started,
-                                   window_from=None if caps.full_history else oldest_in_pass)
+        # пропавшие — только после полного прохода с начала (в т. ч. продолженного) и только
+        # если проход видел ВСЁ заявленное: у выдачи с потолком (Яндекс, >600 отзывов, порядок
+        # по релевантности) невиденный отзыв не значит удалённый. Предохранители: пустой проход
+        # ничего не помечает; «пропало» больше трети хранимого — сбой выдачи, а не удаления
+        saw_all = caps.full_history or (res.declared is not None and fetched >= res.declared)
+        if fetched > 0 and saw_all:
+            cand = store.gone_candidates(src, sid, pass_started)
+            stored = store.counts(src, sid)["stored"]
+            if cand > max(GONE_MIN_SUSPICIOUS, GONE_MAX_SHARE * stored):
+                log.warning("%s %s: «пропало» %d из %d — похоже на сбой выдачи, не помечаю", src, sid, cand, stored)
+                if run_id is not None:
+                    store.log_error(run_id, src, sid, "gone_guard", f"кандидатов {cand} из {stored}")
+            elif cand:
+                res.gone = store.mark_gone(src, sid, pass_started)
     cnt = store.counts(src, sid)
     vals = dict(status="done", cursor=None, last_sync_at=utcnow(), stored_total=cnt["stored"],
                 newest_review_date=cnt["newest"], oldest_review_date=cnt["oldest"])
@@ -203,6 +261,7 @@ async def sync_branch(collector: Collector, store: Store, sid: str, *, mode: str
             vals["last_full_at"] = utcnow()
     else:
         res.completeness = prev.get("completeness") or "incremental"
+    vals.update(schedule_next(store, collector, sid, full_pass=full_pass))
     store.put_state(src, sid, **vals)
     res.status = "done"
     res.seconds = round(asyncio.get_running_loop().time() - t0, 1)
@@ -213,18 +272,39 @@ async def sync_branch(collector: Collector, store: Store, sid: str, *, mode: str
 
 
 async def sync_many(collector: Collector, store: Store, ids: list[str], *, mode: str = "full",
-                    run_id: int | None = None) -> RunStats:
+                    run_id: int | None = None, stop_check=None) -> RunStats:
     """Много отделений одного источника: параллельность из настроек источника,
     блокировка останавливает оставшиеся задачи этого источника."""
     stats = RunStats()
     sem = asyncio.Semaphore(max(1, collector.cfg.concurrency))
     blocked = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    req0 = getattr(getattr(collector, "http", None), "requests", 0)
+    last_log = [t0]
+
+    def progress() -> None:
+        done, now = len(stats.results), loop.time()
+        if done % 25 and now - last_log[0] < 300 and done != len(ids):
+            return
+        last_log[0] = now
+        el = max(1e-6, now - t0)
+        req = getattr(getattr(collector, "http", None), "requests", 0) - req0
+        left = el / done * (len(ids) - done) if done else 0
+        log.info("%s %s: %d/%d отделений, новых отзывов %d, %.2f запроса/с, осталось ~%.1f ч",
+                 collector.source, mode, done, len(ids), sum(r.new for r in stats.results),
+                 req / el, left / 3600)
 
     async def one(sid: str) -> None:
         if blocked.is_set():
             return
         async with sem:
             if blocked.is_set():
+                return
+            # источник поставлен на паузу другим циклом (поиск поймал капчу) — не продолжаем
+            if stop_check is not None and stop_check():
+                blocked.set()
+                stats.blocked.setdefault(collector.source, "пауза источника")
                 return
             try:
                 stats.results.append(await sync_branch(collector, store, sid, mode=mode, run_id=run_id))
@@ -239,8 +319,19 @@ async def sync_many(collector: Collector, store: Store, ids: list[str], *, mode:
                 log.exception("%s %s: сбой", collector.source, sid)
                 if run_id is not None:
                     store.log_error(run_id, collector.source, sid, "crash", repr(e))
+                # непредвиденная ошибка (не CollectorError): тоже повтор через retry_h,
+                # иначе демон выбирает это отделение снова в каждом цикле
+                try:
+                    prev = store.get_state(collector.source, sid) or {}
+                    store.put_state(collector.source, sid, status="failed", completeness="partial",
+                                    last_error=repr(e)[:500], errors=int(prev.get("errors") or 0) + 1,
+                                    last_sync_at=utcnow(), cursor=None,
+                                    next_due_at=utcnow() + timedelta(hours=collector.settings.schedule.retry_h))
+                except Exception:  # noqa: BLE001
+                    log.exception("%s %s: не удалось записать состояние сбоя", collector.source, sid)
                 stats.results.append(BranchResult(collector.source, sid, "failed", "partial",
                                                   error=repr(e)[:300]))
+            progress()
 
     await asyncio.gather(*(one(s) for s in ids))
     return stats

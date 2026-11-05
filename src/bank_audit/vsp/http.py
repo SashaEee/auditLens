@@ -47,6 +47,34 @@ class RateLimiter:
             self._next = time.monotonic() + gap
 
 
+_LIMITERS: dict[tuple[str, str], RateLimiter] = {}
+_SOURCE_RPS: dict[str, float] = {}
+
+
+def set_source_rps(source: str, rps: float) -> None:
+    """Частота источника для всего процесса (после блокировки демон её снижает): действует
+    сразу на все живые клиенты источника, включая уже идущий многочасовой поиск."""
+    _SOURCE_RPS[source] = rps
+
+
+def host_limiter(source: str, host: str, rps: float) -> RateLimiter:
+    """Один лимит на (источник, хост) на весь процесс: сколько бы клиентов источника ни
+    работало одновременно (поиск отделений и сбор отзывов в демоне), к хосту уходит
+    не больше rps запросов в секунду. Лимит не пересоздаётся (иначе сбрасывалась бы
+    очередь ожидания): меняется только интервал; общая частота источника — потолок."""
+    if rps <= 0:
+        return RateLimiter(0)
+    cap = _SOURCE_RPS.get(source)
+    if cap:
+        rps = min(rps, cap)
+    lim = _LIMITERS.get((source, host))
+    if lim is None:
+        lim = _LIMITERS[(source, host)] = RateLimiter(rps)
+    else:
+        lim.interval = 1.0 / rps
+    return lim
+
+
 def looks_blocked(status: int, text: str) -> str | None:
     """Причина блокировки по ответу или None."""
     if status in (401, 403):
@@ -65,7 +93,8 @@ class SourceHttp:
                  user_agent: str, headers: dict[str, str] | None = None,
                  client: httpx.AsyncClient | None = None):
         self.source = source
-        self.limiter = RateLimiter(rps)
+        self.rps = rps
+        self.limiter = RateLimiter(rps)          # запасной; обычно — общий на хост (host_limiter)
         self.max_retries = max_retries
         self.requests = 0
         self.client = client or httpx.AsyncClient(
@@ -79,8 +108,10 @@ class SourceHttp:
                   headers: dict[str, str] | None = None, expect_json: bool = True) -> Any:
         """GET с лимитом и повторами. Возвращает JSON (или текст при expect_json=False)."""
         delay = 2.0
+        host = httpx.URL(url).host
+        limiter = host_limiter(self.source, host, self.rps) if host else self.limiter
         for attempt in range(self.max_retries + 1):
-            await self.limiter.wait()
+            await limiter.wait()
             self.requests += 1
             try:
                 r = await self.client.get(url, params=params, headers=headers)

@@ -16,6 +16,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
+from functools import cached_property
 
 GEO_STRONG_M = 60.0       # почти наверняка то же здание
 GEO_WEAK_M = 250.0        # рядом — только при совпадении адреса
@@ -125,9 +126,14 @@ class Item:
     city: str | None
     name: str | None = None
 
-    @property
+    @cached_property
     def akey(self) -> str | None:
+        # ключ адреса считается регулярками — один раз на карточку, а не на каждую пару
         return address_key(self.address, self.city)
+
+    @property
+    def has_geo(self) -> bool:
+        return self.lat is not None and self.lon is not None
 
 
 @dataclass
@@ -157,31 +163,63 @@ def _score(a: Item, b: Item) -> tuple[float | None, bool, float] | None:
     return (None, True, 0.6) if same else None
 
 
+def _cell(lat: float, lon: float) -> tuple[int, int]:
+    """Ячейка сетки ≈ 1,1 км по широте и 0,02° по долготе (≥ 380 м даже на 80° с. ш.):
+    соседние ячейки покрывают радиус GEO_WEAK_M = 250 м с запасом."""
+    return math.floor(lat * 100), math.floor(lon * 50)
+
+
 def match_sources(left: list[Item], right: list[Item]) -> list[Match]:
     """Пары «то же отделение» между двумя источниками (left и right — разные источники).
-    Взаимно-лучшие пары принимаются автоматически; спорные — со статусом conflict."""
+    Взаимно-лучшие пары принимаются автоматически; спорные — со статусом conflict.
+
+    Кандидаты ищутся не перебором всех пар (на всей сети это ~10⁸ сравнений), а:
+    с координатами — в соседних ячейках сетки; без координат — по точному ключу адреса
+    (без координат пара возможна только при совпадении адреса — см. _score)."""
+    grid: dict[tuple[int, int], list[int]] = {}
+    nogeo_by_key: dict[str, list[int]] = {}
+    by_key: dict[str, list[int]] = {}
+    for j, b in enumerate(right):
+        k = b.akey
+        if b.has_geo:
+            grid.setdefault(_cell(b.lat, b.lon), []).append(j)   # type: ignore[arg-type]
+        elif k:
+            nogeo_by_key.setdefault(k, []).append(j)
+        if k:
+            by_key.setdefault(k, []).append(j)
     cand: dict[tuple[int, int], tuple[float | None, bool, float]] = {}
     for i, a in enumerate(left):
-        for j, b in enumerate(right):
-            s = _score(a, b)
+        if a.has_geo:
+            ci, cj = _cell(a.lat, a.lon)                          # type: ignore[arg-type]
+            js = [j for di in (-1, 0, 1) for dj in (-1, 0, 1) for j in grid.get((ci + di, cj + dj), ())]
+            if a.akey:
+                js += nogeo_by_key.get(a.akey, [])
+        else:
+            js = by_key.get(a.akey, []) if a.akey else []
+        for j in js:
+            s = _score(a, right[j])
             if s:
                 cand[(i, j)] = s
     best_l: dict[int, tuple[int, float]] = {}
     best_r: dict[int, tuple[int, float]] = {}
-    for (i, j), (_d, _same, sc) in cand.items():
+    per_l: dict[int, list[tuple[int, float | None, bool]]] = {}
+    per_r: dict[int, list[tuple[int, float | None, bool]]] = {}
+    for (i, j), (d, same, sc) in cand.items():
         if sc > best_l.get(i, (-1, -1.0))[1]:
             best_l[i] = (j, sc)
         if sc > best_r.get(j, (-1, -1.0))[1]:
             best_r[j] = (i, sc)
+        per_l.setdefault(i, []).append((j, d, same))
+        per_r.setdefault(j, []).append((i, d, same))
     out: list[Match] = []
     for i, (j, sc) in best_l.items():
         d, same, _ = cand[(i, j)]
         mutual = best_r.get(j, (-1, 0))[0] == i
         # соперники: другой объект того же источника почти там же и с тем же адресом
-        rivals_r = [jj for (ii, jj), (dd, ss, _s) in cand.items()
-                    if ii == i and jj != j and (dd is None or dd <= GEO_STRONG_M) and (ss or not same)]
-        rivals_l = [ii for (ii, jj), (dd, ss, _s) in cand.items()
-                    if jj == j and ii != i and (dd is None or dd <= GEO_STRONG_M) and (ss or not same)]
+        rivals_r = [jj for jj, dd, ss in per_l.get(i, ())
+                    if jj != j and (dd is None or dd <= GEO_STRONG_M) and (ss or not same)]
+        rivals_l = [ii for ii, dd, ss in per_r.get(j, ())
+                    if ii != i and (dd is None or dd <= GEO_STRONG_M) and (ss or not same)]
         if d is None:
             status, reason = "conflict", "совпал только адрес, координат нет"
         elif not mutual:

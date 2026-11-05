@@ -33,6 +33,31 @@ class SourceSettings:
 
 
 @dataclass
+class Schedule:
+    """Расписание дописывания (sync.schedule_next, mass.daemon).
+
+    Отделение проверяется «только новыми» тем чаще, чем чаще у него появляются отзывы:
+    интервал = due_target / (отзывов в день за rate_window_d), в пределах [due_min_h, due_max_h].
+    Активное отделение — до 4 раз в день, тихое — раз в двое суток. Полный проход (правки,
+    ответы банка, пропавшие отзывы) — раз в full_every_d дней с разбросом по отделениям."""
+    due_target: float = field(default_factory=lambda: _f("VSP_DUE_TARGET", 1.0))
+    due_min_h: float = field(default_factory=lambda: _f("VSP_DUE_MIN_H", 6))
+    due_max_h: float = field(default_factory=lambda: _f("VSP_DUE_MAX_H", 48))
+    rate_window_d: int = field(default_factory=lambda: _i("VSP_RATE_WINDOW_D", 90))
+    full_every_d: float = field(default_factory=lambda: _f("VSP_FULL_EVERY_D", 30))
+    retry_h: float = field(default_factory=lambda: _f("VSP_RETRY_H", 6))
+    # демон
+    sleep_s: float = field(default_factory=lambda: _f("VSP_DAEMON_SLEEP_S", 600))
+    batch: int = field(default_factory=lambda: _i("VSP_DAEMON_BATCH", 200))
+    registry_every_h: float = field(default_factory=lambda: _f("VSP_REGISTRY_EVERY_H", 24))
+    discover_every_d: float = field(default_factory=lambda: _f("VSP_DISCOVER_EVERY_D", 30))
+    match_every_h: float = field(default_factory=lambda: _f("VSP_MATCH_EVERY_H", 6))
+    pause_on_block_h: float = field(default_factory=lambda: _f("VSP_PAUSE_ON_BLOCK_H", 3))
+    backoff_factor: float = field(default_factory=lambda: _f("VSP_BACKOFF_FACTOR", 0.7))
+    min_rps: float = field(default_factory=lambda: _f("VSP_MIN_RPS", 0.1))
+
+
+@dataclass
 class Settings:
     db_url: str = field(default_factory=lambda: os.getenv(
         "VSP_DB_URL", "sqlite:///workspace/vsp/vsp_reviews.sqlite"))
@@ -44,6 +69,7 @@ class Settings:
         "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"))
     log_dir: str = field(default_factory=lambda: os.getenv("VSP_LOG_DIR", "workspace/vsp/logs"))
     sources: dict[str, SourceSettings] = field(default_factory=dict)
+    schedule: Schedule = field(default_factory=Schedule)
 
     def source(self, name: str) -> SourceSettings:
         return self.sources.setdefault(name, SourceSettings())

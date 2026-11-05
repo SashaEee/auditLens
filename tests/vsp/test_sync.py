@@ -63,8 +63,8 @@ class Fake(Collector):
 
 
 @pytest.fixture
-def store(tmp_path):
-    return Store(f"sqlite:///{tmp_path / 'v.sqlite'}")
+def store(db_url):
+    return Store(db_url)
 
 
 def run(coro):
@@ -107,18 +107,32 @@ def test_resume_after_failure_keeps_progress_and_gone_logic(store):
     assert r2.gone == 0                                      # продолженный проход — ничего не потеряно
 
 
-def test_window_source_marks_gone_only_inside_window(store):
-    old = [_rev("a", k, days=400 + k) for k in range(1, 3)]   # старые, вне окна выдачи
-    fresh = [_rev("a", k) for k in range(3, 6)]
-    c = Fake({"a": fresh + old}, full_history=False)
+def test_capped_source_marks_gone_only_when_it_saw_everything(store):
+    """Выдача с потолком (Яндекс >600, порядок по релевантности): невиденный отзыв ещё не
+    удалённый. Пропавшие помечаются, только когда проход увидел всё заявленное."""
+    revs = [_rev("a", k) for k in range(1, 6)]
+    c = Fake({"a": list(revs)}, full_history=False, declared=5)
     run(sync_branch(c, store, "a"))
-    # источник с потолком: старые отзывы больше не отдаёт, свежий из середины окна исчез
-    c.data["a"] = [fresh[0], fresh[2]]
+    # заявлено по-прежнему 5, отдано 3 — потолок/релевантность: ничего не «пропало»
+    c.data["a"] = revs[:3]
     r = run(sync_branch(c, store, "a"))
-    assert r.completeness == "window" and r.gone == 1          # старые не помечены пропавшими
-    # самый старый из окна выпал за край — не «пропал»: мог просто уйти за потолок
-    c.data["a"] = [fresh[0]]
+    assert r.completeness == "window" and r.gone == 0
+    # отзыв действительно удалён: заявлено 4, отдано все 4
+    c.declared = 4
+    c.data["a"] = revs[:2] + revs[3:]
+    assert run(sync_branch(c, store, "a")).gone == 1
+
+
+def test_gone_guards_empty_pass_and_mass_disappearance(store):
+    revs = [_rev("a", k) for k in range(1, 21)]
+    c = Fake({"a": list(revs)}, declared=None)
+    run(sync_branch(c, store, "a"))
+    c.data["a"] = []                                            # пустая выдача — сбой, не удаления
     assert run(sync_branch(c, store, "a")).gone == 0
+    c.data["a"] = revs[:10]                                     # «пропала» половина — тоже не помечаем
+    assert run(sync_branch(c, store, "a")).gone == 0
+    c.data["a"] = revs[:18]                                     # пропали 2 из 20 — реальные удаления
+    assert run(sync_branch(c, store, "a")).gone == 2
 
 
 def test_new_mode_stops_at_known_page(store):

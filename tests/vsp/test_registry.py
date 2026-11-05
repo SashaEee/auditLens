@@ -29,13 +29,13 @@ def test_parse_row_kinds_and_key():
                 kind="BNK_PPKO").kind == "mobile"
 
 
-def test_import_and_match(tmp_path):
-    st = Store(f"sqlite:///{tmp_path / 'r.sqlite'}")
+def test_import_and_match(db_url):
+    st = Store(db_url)
     rows = [_cbr("1", "655017, РЕСПУБЛИКА ХАКАСИЯ, Г. АБАКАН, УЛ. ПУШКИНА, Д. 165, СТРОЕНИЕ 1"),
             _cbr("2", "655017, РЕСПУБЛИКА ХАКАСИЯ, Г. АБАКАН, УЛ. ЛЕНИНА, Д. 10"),
             _cbr("3", "655017, РЕСПУБЛИКА ХАКАСИЯ, Г. АБАКАН, УЛ. ЛЕНИНА, Д. 10")]   # два ВСП по одному адресу
-    assert import_registry(st, rows) == {"new": 3, "updated": 0}
-    assert import_registry(st, rows) == {"new": 0, "updated": 3}                     # повтор — без дублей
+    assert import_registry(st, rows) == {"new": 3, "updated": 0, "closed": 0}
+    assert import_registry(st, rows) == {"new": 0, "updated": 3, "closed": 0}        # повтор — без дублей
     # 2ГИС: карточка по адресу «Пушкина, 165 ст1»; Яндекс — та же точка без разборчивого адреса
     st.upsert_source_branch(SourceBranch("2gis", "g1", address="Пушкина, 165 ст1", city="Абакан",
                                          lat=53.72, lon=91.44))
@@ -58,13 +58,13 @@ def test_import_and_match(tmp_path):
     assert res["2gis:auto"] == 1 and res["yandex:auto"] == 1
 
 
-def test_pilot_pairs_2gis_with_yandex_without_registry(tmp_path):
+def test_pilot_pairs_2gis_with_yandex_without_registry(db_url):
     """Пилот берёт карточку Яндекса в том же здании, даже если реестр ЦБ адрес не разобрал;
     соседнее отделение через дорогу не склеивается."""
     from bank_audit.vsp.models import SourceBranch
     from bank_audit.vsp.pilot import _yandex_for_pilot
     from bank_audit.vsp.storage import Store
-    st = Store(f"sqlite:///{tmp_path}/p.sqlite")
+    st = Store(db_url)
     st.upsert_source_branch(SourceBranch("2gis", "g1", "СберБанк", "улица Мира, 5", "Кимры", None, 56.87, 37.35))
     st.upsert_source_branch(SourceBranch("yandex", "y1", "СберБанк", "Тверская область, Кимры, улица Мира, 5",
                                          "Кимры", None, 56.8701, 37.3501))
@@ -74,12 +74,12 @@ def test_pilot_pairs_2gis_with_yandex_without_registry(tmp_path):
     assert ids == ["y1"] and info["missing"] == [] and info["pairs"] == {"g1": "y1"}
 
 
-def test_cash_center_and_match_by_cbr_number(tmp_path):
+def test_cash_center_and_match_by_cbr_number(db_url):
     """Кассово-инкассаторский центр не обслуживает клиентов — не кандидат для привязки по адресу.
     Карточка Яндекса с номером подразделения ЦБ привязывается по номеру, даже если адрес не разобран."""
     kic = _cbr("9", "655017, Г. АБАКАН, УЛ. ПУШКИНА, Д. 165", name='№8602/0112 кассово-инкассаторский центр "Абаканский"')
     assert kic.kind == "cash_center"
-    st = Store(f"sqlite:///{tmp_path / 'c.sqlite'}")
+    st = Store(db_url)
     import_registry(st, [kic, _cbr("1", "655017, Г. АБАКАН, УЛ. ЛЕНИНА, Д. 10", num="1481/1662/34")])
     st.upsert_source_branch(SourceBranch("2gis", "g1", address="Пушкина, 165", city="Абакан", lat=53.7, lon=91.4))
     st.upsert_source_branch(SourceBranch("yandex", "y1", address="Абакан, ТЦ «Центр»", city="Абакан",
@@ -113,10 +113,10 @@ def test_store_adds_missing_columns(tmp_path):
     assert row.name == "старое" and row.registry_num is None
 
 
-def test_cbr_number_of_mobile_office_is_conflict_not_match(tmp_path):
+def test_cbr_number_of_mobile_office_is_conflict_not_match(db_url):
     """Карточка Яндекса в городе с номером передвижного пункта (по реестру — объезд сёл):
     номер не повод склеивать — конфликт на разбор. То же для номера из другого города."""
-    st = Store(f"sqlite:///{tmp_path / 'm.sqlite'}")
+    st = Store(db_url)
     van = _cbr("5", "602212, ВЛАДИМИРСКАЯ ОБЛАСТЬ, МУРОМСКИЙ РАЙОН, С. БОРИСОГЛЕБ, УЛ. КОМИНТЕРНА, Д. 48",
                kind="BNK_PPKO", name="С000ТС00 Автомобиль", num="1481/261/2/МО")
     office = _cbr("6", "602267, ВЛАДИМИРСКАЯ ОБЛАСТЬ, Г. МУРОМ, УЛ. ЛЕНИНА, Д. 1", num="1481/261/77")
@@ -131,3 +131,60 @@ def test_cbr_number_of_mobile_office_is_conflict_not_match(tmp_path):
                for r in c.execute(select(source_branches))}
     assert got["y1"] == (None, "registry_code", "conflict") and got["y2"] == (None, "registry_code", "conflict")
     assert res["code_conflict"] == 2 and "by_code" not in res
+
+
+def test_registry_closes_vanished_branch_with_guard(db_url):
+    """ЦБ удаляет закрытые ВСП из списка: пропавшее получает closed. Неполная выгрузка
+    (меньше 90 % прежней) ничего не закрывает."""
+    st = Store(db_url)
+    rows = [_cbr(str(k), f"655017, Г. АБАКАН, УЛ. ЛЕНИНА, Д. {k}") for k in range(1, 11)]
+    import_registry(st, rows)
+    assert import_registry(st, rows[:5])["closed"] == 0                              # 50 % — сбой выгрузки
+    assert import_registry(st, rows[:9])["closed"] == 1                              # одно закрылось
+    with st.engine.connect() as c:
+        status = dict(c.execute(select(branches.c.registry_ref, branches.c.status)).all())
+    assert status["10"] == "closed" and status["1"] == "active"
+
+
+def test_closed_branch_keeps_cards_and_review_history(db_url):
+    """ВСП пропал из реестра ЦБ (закрылся): карточка и её отзывы остаются при нём."""
+    from datetime import datetime, timezone
+    from bank_audit.vsp.models import Review
+    from bank_audit.vsp.storage import reviews
+    st = Store(db_url)
+    rows = [_cbr(str(k), f"655017, Г. АБАКАН, УЛ. ЛЕНИНА, Д. {k}") for k in range(1, 11)]
+    import_registry(st, rows)
+    st.upsert_source_branch(SourceBranch("2gis", "g10", address="Ленина, 10", city="Абакан", lat=53.7, lon=91.4))
+    match_all(st)
+    st.save_reviews([Review(source="2gis", source_review_id="1", source_branch_id="g10", rating=1,
+                            review_text="плохо", review_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                            collection_method="t")])
+    import_registry(st, rows[:9])                                    # № 10 закрылся
+    res = match_all(st)
+    with st.engine.connect() as c:
+        b10 = c.execute(select(branches.c.branch_id, branches.c.status).where(branches.c.registry_ref == "10")).first()
+        card = c.execute(select(source_branches.c.branch_id).where(source_branches.c.source_branch_id == "g10")).scalar()
+        rev = c.execute(select(reviews.c.branch_id)).scalar()
+    assert b10.status == "closed" and card == b10.branch_id and rev == b10.branch_id and res["kept_closed"] == 1
+
+
+def test_nul_in_text_and_raw_key_removal(db_url):
+    """U+0000 в тексте отзыва (PostgreSQL его не принимает) вычищается; явный None в raw
+    удаляет устаревшее поле (номер ЦБ пропал из карточки)."""
+    import json as _json
+    from datetime import datetime, timezone
+    from bank_audit.vsp.models import Review
+    from bank_audit.vsp.storage import reviews
+    st = Store(db_url)
+    st.save_reviews([Review(source="ya", source_review_id="1", source_branch_id="b", rating=5,
+                            review_text="хорошо\x00", organization_reply="спасибо\x00",
+                            review_date=datetime(2026, 1, 1, tzinfo=timezone.utc), collection_method="t",
+                            raw={"x": "a\x00b"})])
+    with st.engine.connect() as c:
+        r = c.execute(select(reviews.c.review_text, reviews.c.organization_reply)).first()
+    assert r.review_text == "хорошо" and r.organization_reply == "спасибо"
+    st.upsert_source_branch(SourceBranch("yandex", "1", raw={"cbr_num": "1481/1/2", "seoname": "s"}))
+    st.upsert_source_branch(SourceBranch("yandex", "1", raw={"cbr_num": None}))
+    with st.engine.connect() as c:
+        raw = _json.loads(c.execute(select(source_branches.c.raw_json)).scalar())
+    assert raw == {"seoname": "s"}
