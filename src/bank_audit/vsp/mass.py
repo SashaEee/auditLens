@@ -40,6 +40,7 @@ log = logging.getLogger(__name__)
 
 SOURCES = ("2gis", "yandex")
 COVERED_M = 150.0        # точка поиска Яндекса считается покрытой, если карточка сети ближе
+GROWTH_REDISCOVER = 1.5  # точек поиска стало в 1,5 раза больше, чем в прошлом круге, — обойти заново
 
 
 def make_collector(source: str, settings: Settings) -> Collector:
@@ -273,18 +274,25 @@ async def discover_yandex_points(store: Store, settings: Settings, *, force: boo
     Каждый запрос даёт до 10–19 ближайших отделений, поэтому в плотных городах большая
     часть точек оказывается покрытой соседними запросами."""
     now = utcnow()
+    pts = search_points(store)
     st = _round_state(store, "discover:yandex", settings.schedule.discover_every_d, now, force)
     if st is None:
-        return {"skipped": "свежий обход"}
+        # круг свежий, но точек стало заметно больше: прошлый обход шёл по неполному набору
+        # (05.11 он прошёл по пилотным 20 точкам до обхода 2ГИС и закрылся на месяц)
+        prev = store.kv_get("discover:yandex") or {}
+        if len(pts) <= GROWTH_REDISCOVER * (prev.get("points") or 0):
+            return {"skipped": "свежий обход"}
+        log.info("yandex поиск: точек %d против %s в прошлом круге — новый круг", len(pts), prev.get("points"))
+        st = _round_state(store, "discover:yandex", settings.schedule.discover_every_d, now, True)
     grid = _Grid()
     with store.engine.connect() as c:
         for lat, lon in c.execute(select(source_branches.c.lat, source_branches.c.lon).where(
                 source_branches.c.source == "yandex", source_branches.c.lat.isnot(None))):
             grid.add(lat, lon)
-    pts = search_points(store)
     if not pts:
         return {"skipped": "нет точек (карточек 2ГИС и ВСП с координатами)"}
     done = set(st["done"])
+    st["points"] = len(pts)
     apply_rps(store, settings, "yandex")
     y = factory("yandex", settings)
     queried = 0

@@ -120,3 +120,36 @@ def test_home_dossier_schemes_search_feedback_exports(client, monkeypatch):
     assert r.status_code == 200 and r.content[:2] == b"PK"
     r = client.get("/api/vsp/export/visit.docx", params={"point": b6})
     assert r.status_code == 200 and r.content[:2] == b"PK"
+
+
+def test_stories_table_staff_trends_peers(client):
+    b6 = f"b{client.ids['6']}"
+    st = client.get("/api/vsp/stories", params={"period": ""}).json()
+    assert st["total"] >= 3 and st["items"][0]["place"]["city"] and st["actions"] and len(st["months"]) == 24
+    key = st["actions"][0]["key"]
+    st2 = client.get("/api/vsp/stories", params={"period": "", "action": key}).json()
+    assert 0 < st2["total"] <= st["total"] and all(key in x["actions"] for x in st2["items"])
+    assert st2["actions"] == st["actions"]                      # грани считаются без своего фильтра
+    assert client.get("/api/vsp/stories", params={"period": "", "q": "Ольга"}).json()["total"] >= 2
+    assert client.get("/api/vsp/stories", params={"period": "", "named": True}).json()["total"] >= 2
+    sev = client.get("/api/vsp/stories", params={"period": "", "sort": "severe"}).json()["items"]
+    assert [x["severity"] for x in sev] == sorted((x["severity"] for x in sev), reverse=True)
+    r = client.get("/api/vsp/export/stories.xlsx", params={"period": ""})
+    assert r.status_code == 200 and r.content[:2] == b"PK"
+    tb = client.get("/api/vsp/table", params={"period": ""}).json()
+    row = next(x for x in tb["items"] if x["point"] == b6)
+    assert row["stories"] >= 3 and row["heavy"] >= 1 and row["actions"] and row["city"]
+    assert client.get("/api/vsp/table", params={"period": "", "sort": "last"}).json()["sort"] == "last"
+    sf = client.get("/api/vsp/staff").json()
+    assert any("Ольга" in x["name"] for x in sf["complaints"]) and "middlemen" in sf and "praise" in sf
+    tr = client.get("/api/vsp/trends").json()
+    assert len(tr["months"]) == 24 and "gosbs" in tr and "actions" in tr
+    h = client.get("/api/vsp/home").json()
+    assert h["summary"]["actions"] is not None and h["gosb_table"] and "in_scope" in h
+    act = st["actions"][0]["key"]
+    hf = client.get("/api/vsp/home", params={"action": act}).json()
+    assert hf["filtered"] and len(hf["list"]) <= len(h["list"])
+    d = client.get(f"/api/vsp/dossier/{b6}").json()
+    assert len(d["compare"]) == 3 and d["actions"] and d["stories"][0]["labels"]
+    r = client.get("/api/vsp/export/visit.docx", params={"points": f"{b6},b{client.ids['1']}"})
+    assert r.status_code == 200 and r.content[:2] == b"PK"

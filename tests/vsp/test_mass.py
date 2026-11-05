@@ -153,6 +153,20 @@ def test_discover_yandex_skips_covered_points_and_resumes(store):
                and fy.queries) == 2                                     # новый круг: всё уже покрыто
 
 
+def test_discover_yandex_reruns_when_points_grew(store):
+    """Свежий круг по пилотному набору точек не должен закрывать обход на месяц."""
+    s = Settings()
+    store.upsert_source_branch(SourceBranch("2gis", "g1", lat=55.75, lon=37.60))
+    fy = FakeYa(s, [("y1", 55.7501, 37.6001)])
+    run(mass.discover_yandex_points(store, s, factory=lambda src, st: fy))
+    assert store.kv_get("discover:yandex")["points"] == 1
+    for i in range(4):                                                  # обход 2ГИС нашёл новые города
+        store.upsert_source_branch(SourceBranch("2gis", f"n{i}", lat=50.0 + i, lon=40.0 + i))
+    res = run(mass.discover_yandex_points(store, s, factory=lambda src, st: fy))
+    assert res.get("points") == 5 and res["queried"] == 4
+    assert run(mass.discover_yandex_points(store, s, factory=lambda src, st: fy)) == {"skipped": "свежий обход"}
+
+
 def test_discover_2gis_all_tracks_settlements(store):
     s = Settings()
 

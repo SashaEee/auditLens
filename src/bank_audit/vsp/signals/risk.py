@@ -412,5 +412,36 @@ def react_list(stories: list[dict], *, now: datetime, days: int = 14) -> list[di
              "action": ACTIONS.get(s["actions"][0], ACTIONS["другое"])["label"]} for s in xs[:10]]
 
 
+def peer_norms(rows: list[dict], recs, stories: list[dict], *, now: datetime) -> dict[str, dict]:
+    """Нормы ГОСБ для сравнения в досье: медианы по отделениям с данными (10+ отзывов за 2 года).
+    Показатели: отзывов за год, доля жалоб 1–2★ за год, тяжёлых историй на 100 отзывов за 2 года."""
+    import statistics
+    year, two_y = now - timedelta(days=365), now - timedelta(days=730)
+    n12: Counter = Counter()
+    neg12: Counter = Counter()
+    n24: Counter = Counter()
+    for r in recs:
+        if r.at >= two_y:
+            n24[r.point] += 1
+            if r.at >= year:
+                n12[r.point] += 1
+                neg12[r.point] += r.rating is not None and r.rating <= 2
+    heavy: Counter = Counter()
+    for s in stories:
+        if s["severity"] >= 2 and s["at"] >= two_y:
+            heavy[s["point"]] += 1
+    by: dict[str, list] = defaultdict(list)
+    for row in rows:
+        p, g = row["point"], row["detail"].get("gosb")
+        if g and n24[p] >= MIN_DATA_2Y:
+            by[g].append((n12[p], neg12[p] / n12[p] if n12[p] else 0.0, 100 * heavy[p] / n24[p]))
+    out = {}
+    for g, xs in by.items():
+        out[g] = {"points": len(xs), "n_12m": statistics.median(x[0] for x in xs),
+                  "neg_share": round(statistics.median(x[1] for x in xs), 3),
+                  "heavy_per100": round(statistics.median(x[2] for x in xs), 2)}
+    return out
+
+
 def dumps(x) -> str:
     return json.dumps(x, ensure_ascii=False, default=str)
