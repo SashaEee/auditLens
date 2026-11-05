@@ -150,8 +150,10 @@ def main(argv: list[str] | None = None) -> int:
         from .pilot import run as pilot_run
         out = asyncio.run(pilot_run(store, settings, a.out, from_step=a.from_step))
     elif a.cmd == "match":
-        from .registry.apply import match_all
+        from .registry.apply import apply_formats, link_profiles, match_all
         out = match_all(store)
+        out["profiles"] = link_profiles(store)
+        out["formats"] = apply_formats(store)
     elif a.cmd == "report":
         from .report import completeness_report
         out = completeness_report(store, source=a.source, out=a.out)
