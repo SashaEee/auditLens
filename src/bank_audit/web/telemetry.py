@@ -17,11 +17,16 @@ import json
 import logging
 import os
 import re
+import statistics
+import threading
+import time
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import text
 
 from .. import db
+from ..clock import MSK
 
 log = logging.getLogger(__name__)
 
@@ -228,20 +233,48 @@ def _ppl(col: str = "username") -> str:
     return _PPL.format(col=col)
 
 
+def _msk_now() -> datetime:
+    return datetime.now(MSK)
+
+
+def _axis(n: int, today: date) -> list[date]:
+    """Ось n календарных дней МСК, старые → сегодня (как _SINCE с :days = n)."""
+    return [today - timedelta(days=n - 1 - i) for i in range(n)]
+
+
+def _is_off(d: date) -> bool:
+    """Нерабочий день: выходные и праздники из DIGEST_HOLIDAYS — то же правило, что у
+    «Новостных обзоров» (newsflow.is_workday)."""
+    try:
+        from ..digest import newsflow
+        return not newsflow.is_workday(d)
+    except Exception:
+        log.debug("[telemetry] newsflow.is_workday недоступен", exc_info=True)
+        return d.weekday() >= 5
+
+
+def _int(v: Any) -> int:
+    try:
+        return int(v or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _retention_calc(daily: dict, first: dict, today, *, last_page: dict | None = None,
                     ai: dict | None = None, names: dict | None = None) -> dict:
     """Удержание по дням активности (аудит 03.10, ПУЛ-01): «38 активных»
     скрывали, что половина заходила один день, а 63 человека ушли в августе.
 
     daily: {логин: set(дат МСК с просмотром страниц)}; first: {логин: дата
-    первого захода}; today — дата МСК. Чистая функция — тестируется без БД."""
-    from datetime import timedelta
+    первого захода}; today — дата МСК. Чистая функция — тестируется без БД.
+    seg_of — сегмент каждого человека из тех же правил (кто не попал — давно не заходит)."""
     last_page, ai, names = last_page or {}, ai or {}, names or {}
 
     def n_in(days, a, b):          # дней активности в окне [today-b, today-a]
         lo, hi = today - timedelta(days=b), today - timedelta(days=a)
         return sum(1 for d in days if lo <= d <= hi)
     seg = {"core": 0, "regular": 0, "once": 0, "churned": 0, "new": 0}
+    seg_of: dict[str, str] = {}
     at_risk, churned = [], []
     w7 = w7prev = 0
     for u, days in daily.items():
@@ -253,14 +286,11 @@ def _retention_calc(daily: dict, first: dict, today, *, last_page: dict | None =
         f = first.get(u) or min(days)
         if (today - f).days <= 29:
             seg["new"] += 1
-        if cur >= 8:
-            seg["core"] += 1
-        elif cur >= 3:
-            seg["regular"] += 1
-        elif cur >= 1:
-            seg["once"] += 1
-        elif prev:
-            seg["churned"] += 1
+        key = ("core" if cur >= 8 else "regular" if cur >= 3 else "once" if cur >= 1
+               else "churned" if prev else None)
+        if key:
+            seg[key] += 1
+            seg_of[u] = key
         w7 += n_in(days, 0, 6) > 0
         w7prev += n_in(days, 7, 13) > 0
         row = {"username": u, "name": names.get(u) or u, "last": last.isoformat(),
@@ -290,13 +320,12 @@ def _retention_calc(daily: dict, first: dict, today, *, last_page: dict | None =
             c["w4"] += any(21 <= (d - f).days <= 27 for d in days)
     at_risk.sort(key=lambda r: (-r["days_60"], r["gap_days"]))
     churned.sort(key=lambda r: (-r["days_prev"], r["last"]))
-    return {"segments": seg, "active_7d": w7, "active_prev_7d": w7prev,
+    return {"segments": seg, "seg_of": seg_of, "active_7d": w7, "active_prev_7d": w7prev,
             "cohorts": [weeks[k] for k in sorted(weeks)],
             "at_risk": at_risk[:30], "churned": churned[:40], "churned_total": len(churned)}
 
 
 def _retention(ex: list[str]) -> dict:
-    from datetime import datetime, timedelta, timezone
     p = {"ex": ex}
     P = _ppl()
     daily: dict = {}
@@ -322,7 +351,7 @@ def _retention(ex: list[str]) -> dict:
              GROUP BY 1""", p)}
     names = {r["username"]: r["name"] for r in _rows(
         "SELECT username, display_name AS name FROM app_user WHERE display_name IS NOT NULL")}
-    today = (datetime.now(timezone.utc) + timedelta(hours=3)).date()
+    today = _msk_now().date()
     out = _retention_calc(daily, first, today, last_page=last_page, ai=ai, names=names)
     # кого вернуло письмо-выпуск: первый просмотр после перехода из письма
     out["from_mail_7d"] = int(_scalar(f"""
@@ -371,6 +400,11 @@ def metrics(days: int = 14, exclude: list[str] | None = None) -> dict:
             WHERE kind = 'page_view' AND created_at >= {_SINCE} AND username IS NOT NULL AND {P}
             GROUP BY 1) u ON u.day = d.day
         ORDER BY d.day""", p)
+    for r in dau:                    # бледные выходные и праздники на графике аудитории
+        try:
+            r["off"] = _is_off(date.fromisoformat(str(r.get("d"))))
+        except ValueError:
+            r["off"] = False
 
     new_users = _rows(f"""
         SELECT to_char(created_at AT TIME ZONE 'Europe/Moscow', 'YYYY-MM-DD') AS d, count(*) AS n
@@ -416,6 +450,17 @@ def metrics(days: int = 14, exclude: list[str] | None = None) -> dict:
                count(*) FILTER (WHERE kind = 'report_open') AS report_opens
           FROM user_event WHERE {P} AND ts >= {_SINCE}""", p)
     ev = ev[0] if ev else {}
+    # прошлый такой же период — для сравнения в плитках «Сводки» (тот же фильтр людей);
+    # запрос не прошёл — None («нет данных»), а не 0
+    prev = _rows(f"""
+        SELECT (SELECT count(*) FROM user_event
+                 WHERE kind = 'ai_query' AND {P}
+                   AND ts >= {_SINCE} - :days * interval '1 day' AND ts < {_SINCE}) AS ai,
+               (SELECT count(*) FROM report
+                 WHERE COALESCE(payload->>'mode', 'deep') <> 'quick' AND {P}
+                   AND created_at >= {_SINCE} - :days * interval '1 day'
+                   AND created_at < {_SINCE}) AS reports""", p)
+    prev = prev[0] if prev else {}
     # итоги прогонов ИИ-помощника (событие ai_run_end с 04.10): заказ ≠ отчёт —
     # сорванные и остановленные прогоны раньше не было видно нигде (ПУЛ-02)
     runs = _rows(f"""
@@ -443,6 +488,8 @@ def metrics(days: int = 14, exclude: list[str] | None = None) -> dict:
         "quick_saved": int(rep.get("quick") or 0),
         "shares": int(ev.get("shares") or 0),
         "ai_total": int(ev.get("ai_total") or 0),
+        "ai_total_prev": int(prev["ai"]) if prev.get("ai") is not None else None,
+        "reports_prev": int(prev["reports"]) if prev.get("reports") is not None else None,
         "ai_deep": int(ev.get("ai_deep") or 0),
         "runs_ok": int(runs.get("ok") or 0),
         "runs_failed": int(runs.get("failed") or 0),
@@ -594,7 +641,8 @@ def metrics(days: int = 14, exclude: list[str] | None = None) -> dict:
             "eval": _eval_brief(),
             "inbox": _inbox_brief(),
             "mail": _mail_brief(days, ex),
-            "slice_canary": _slice_canary()}
+            "slice_canary": _slice_canary(),
+            "health": _health()}
 
 
 def _slice_canary() -> list:
@@ -863,18 +911,25 @@ def _ai_feedback(days: int, ex: list[str] | None = None, limit: int = 20) -> dic
             "reasons": [AIFB_REASON_RU.get(x, x) for x in reasons],
             "created_at": str(r.get("created_at") or ""),
         })
-    # счётчики — по всему периоду, а не по 20 последним строкам журнала
-    cnt = _rows(f"""
-        SELECT count(*) FILTER (WHERE verdict > 0) AS likes,
-               count(*) FILTER (WHERE verdict < 0) AS dislikes
+    # счётчики — по всему периоду, а не по 20 последним строкам журнала; по дням — для
+    # точек «хорошо / плохо» в «Качестве ИИ». День — дата ПОСЛЕДНЕГО нажатия: смена оценки
+    # переписывает created_at, снятие удаляет строку, поэтому прошлые дни могут меняться
+    per_day = _rows(f"""
+        SELECT to_char(f.created_at AT TIME ZONE 'Europe/Moscow', 'YYYY-MM-DD') AS d,
+               count(*) FILTER (WHERE f.verdict > 0) AS good,
+               count(*) FILTER (WHERE f.verdict < 0) AS bad
           FROM item_feedback f
-         WHERE f.kind = 'ai_answer' AND {P} AND f.created_at >= {_SINCE}""", p)
-    likes = int((cnt[0] if cnt else {}).get("likes") or 0)
-    dislikes = int((cnt[0] if cnt else {}).get("dislikes") or 0)
+         WHERE f.kind = 'ai_answer' AND {P} AND f.created_at >= {_SINCE}
+         GROUP BY 1""", p)
+    likes = sum(_int(r.get("good")) for r in per_day)
+    dislikes = sum(_int(r.get("bad")) for r in per_day)
+    by = {str(r.get("d")): r for r in per_day}
+    by_day = [{"d": k, "good": _int(by.get(k, {}).get("good")), "bad": _int(by.get(k, {}).get("bad"))}
+              for k in (x.isoformat() for x in _axis(days, _msk_now().date()))]
     # Знаменатель покрытия: сколько ответов вообще выдали за период.
     answers = int(_scalar(f"""SELECT count(*) FROM user_event WHERE kind = 'ai_query'
                               AND {_ppl()} AND ts >= {_SINCE}""", p) or 0)
-    return {"items": out, "likes": likes, "dislikes": dislikes,
+    return {"items": out, "likes": likes, "dislikes": dislikes, "by_day": by_day,
             "answers": answers,
             "reasons": sorted(({"key": k, "label": AIFB_REASON_RU.get(k, k), "n": v}
                                for k, v in counts.items()), key=lambda x: -x["n"])}
@@ -1102,6 +1157,10 @@ def _search_health(days: int) -> dict:
     return {"backends": list(out.values()), "gateway": gw}
 
 
+# «не дошло» — требует вмешательства (в отличие от дубля или пустой страницы)
+_COLLECT_HARD = frozenset({"captcha", "fetch_failed", "empty_after_parse", "antibot_stub"})
+
+
 def _collect_health(days: int) -> dict:
     """Что не доехало до базы знаний. Две группы, а не одна: «не дошло»
     (капча, сеть) и «дошло, но индексировать нечего» (дубль, пустая страница).
@@ -1111,7 +1170,7 @@ def _collect_health(days: int) -> dict:
           FROM document_origin
          WHERE created_at > now() - (:days || ' days')::interval
          GROUP BY 1 ORDER BY 2 DESC""", {"days": days})
-    HARD = {"captcha", "fetch_failed", "empty_after_parse", "antibot_stub"}
+    HARD = _COLLECT_HARD
     RU = {"ok": "проиндексировано", "duplicate": "уже было",
           "captcha": "капча", "fetch_failed": "не загрузилось",
           "empty_after_parse": "пустая страница", "no_chunks": "нечего индексировать",
@@ -1142,6 +1201,383 @@ def _team_topics(days: int, ex: list[str] | None = None) -> dict:
          WHERE r.created_at >= {_SINCE} AND {_ppl('r.username')}
          GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 8""", {"days": days, "ex": _ex(ex)})
     return {"banks": banks}
+
+
+# ── Состояние служб за 14 дней: ленты «Систем» и «Сводки» ────────────────────
+# Ячейка — день МСК: 'o' в норме, 'w' были сбои, 'b' не работало, 'n' нет данных.
+# Это техника, а не люди: считается по всем учёткам, без фильтра _ppl. История
+# восстанавливается из таблиц, где она есть; правило дня — чистая функция _day_<служба>
+# (тестируется без БД). Сегодняшнюю ячейку фронт подменяет своим расчётом по живым полям
+# (puSignals) — одно правило у очереди «Требует внимания» и у ленты; здесь сегодня
+# считается так же, как прошлые дни. _rows глотает ошибки, поэтому пустой или упавший
+# запрос даёт «нет данных», а не «в норме»: где пустой ответ что-то значит (выпуска не
+# было, хвоста разметки нет), запрос несёт строку-признак успеха.
+# Страница опрашивает «Пульс» раз в минуту — ленты кэшируются на _HEALTH_TTL секунд.
+
+_HEALTH_KEYS = ("server", "digest", "reviews", "news", "slices", "rsearch", "web", "ingest")
+_HEALTH_TTL = 150
+_HEALTH_CACHE: dict[str, tuple[float, dict]] = {}
+_HEALTH_LOCK = threading.Lock()
+_RSEARCH_SINCE = date(2026, 11, 4)          # событие reviews_search пишется с 04.11.2026
+_DIGEST_DUE_HOUR = 8                        # выпуск собирается в 07:00 МСК, с 08:00 его ждём
+_REVIEW_STREAMS = ("banki_reviews", "sravni_reviews", "finuslugi_reviews", "bankiros_reviews")
+
+
+def _worst(states) -> str:
+    """Худшее из состояний: не работало > были сбои > в норме > нет данных."""
+    st = set(states)
+    return next((s for s in ("b", "w", "o") if s in st), "n")
+
+
+def _day_server(req: int, err: int) -> str:
+    """Сайт и сервер — пороги пункта очереди: 1–9 ошибок за день — сбои, от 10 — не
+    работало. Ни одного запроса и ни одной ошибки — нет данных."""
+    if not req and not err:
+        return "n"
+    return "b" if err >= 10 else "w" if err else "o"
+
+
+def _day_digest(statuses: list, archived_bad: bool, known: bool, due: bool) -> str:
+    """Ежедневный выпуск. Раздел не «ok» — не работало (как пункт «Выпуск вышел без
+    раздела»); выпуска нет, хотя он уже должен быть (known — выпуски тогда уже
+    собирались, due — день прошёл или 08:00 наступило), — тоже. Сбой, исправленный
+    пересборкой (прежняя версия в daily_digest_archive), — были сбои: строки
+    daily_digest перезаписываются, и утренний сбой иначе пропал бы бесследно."""
+    if not statuses:
+        return "b" if known and due else "n"
+    if any((x or "ok") != "ok" for x in statuses):
+        return "b"
+    return "w" if archived_bad else "o"
+
+
+def _day_review_source(week: int, norm: float) -> str:
+    """Площадка отзывов: неделя против нормы — правило source_health. Норма меньше 5 в
+    неделю — малый поток, не поломка; ноль или ниже 60 % нормы — встал / просел (не
+    работало, как пункт очереди); больше трёх норм — всплеск (были сбои)."""
+    if norm < 5:
+        return "o"
+    if week == 0 or week < 0.6 * norm:
+        return "b"
+    return "w" if week > 3 * norm else "o"
+
+
+def _day_news(total: int, silent: int, history: bool, full: bool) -> str:
+    """Новостной поток. За полный день ни одной новости, хотя поток уже работал, — не
+    работало; замолчала лента, которая в такие дни (будни или выходные) обычно даёт от
+    трёх новостей, — были сбои (ошибки лент истории не имеют, тишина — их след).
+    Сегодня день не кончился: только «новости есть» или «нет данных»."""
+    if not total:
+        return "b" if history and full else "n"
+    return "w" if silent and full else "o"
+
+
+def _day_slices(pending: int | None, alert: bool, canary_age: float | None) -> str:
+    """Разметка жалоб: больше 50 жалоб ждут разметки дольше 6 часов или канарейка срезов
+    подняла тревогу — не работало; канарейка не запускалась больше 9 дней — были сбои.
+    Хвост разметки неизвестен — нет данных. Склейка копий, «Сюжеты» и готовность срезов
+    хранят одну перезаписываемую отметку — в истории их нет."""
+    if pending is None:
+        return "n"
+    if pending > 50 or alert:
+        return "b"
+    return "w" if canary_age is not None and canary_age > 9 else "o"
+
+
+def _day_rsearch(n: int, failed: int, logged: bool) -> str:
+    """Поиск по жалобам: хоть один сбой — были сбои. Поисков не было или событие ещё
+    не писалось (до 04.11.2026) — нет данных."""
+    if not logged or not n:
+        return "n"
+    return "w" if failed else "o"
+
+
+def _day_web(gw: int, gw_bad: int, chain: int, chain_ok: int, rd: int, rd_bad: int) -> str:
+    """Веб-поиск. Шлюз отказал в половине запросов (размыкатель держал его выключенным)
+    или цепочка поиска за день ни разу ничего не нашла — не работало; шлюз размыкался
+    (от трёх отказов) или сорвалась половина чтений копий страниц — были сбои."""
+    if not (gw or chain or rd):
+        return "n"
+    if (chain >= 5 and not chain_ok) or (gw >= 5 and 2 * gw_bad >= gw):
+        return "b"
+    if gw_bad >= 3 or (rd >= 5 and 2 * rd_bad >= rd):
+        return "w"
+    return "o"
+
+
+def _day_ingest(ing: int, orig: int, hard: int) -> str:
+    """Индексация и база знаний. Счётчики очереди живут в памяти процесса и истории не
+    имеют, поэтому день судим по журналам: rag_ingest (документ дошёл до индексации) и
+    document_origin (что пытались загрузить). Из пяти и больше попыток ни одна не дошла
+    (капча, сеть, заглушка антибота) и индексировать нечего — не работало; не дошла
+    половина — были сбои. Попыток не было — нет данных."""
+    if not ing and not orig:
+        return "n"
+    if orig >= 5 and hard >= orig and not ing:
+        return "b"
+    return "w" if orig >= 5 and 2 * hard >= orig else "o"
+
+
+def _ts(v: Any, tz=UTC) -> datetime | None:
+    """Метка времени из строки ISO или datetime; без пояса — в поясе tz."""
+    if isinstance(v, str):
+        try:
+            v = datetime.fromisoformat(v)
+        except ValueError:
+            return None
+    if isinstance(v, datetime):
+        return v if v.tzinfo else v.replace(tzinfo=tz)
+    return None
+
+
+def _health_calc(raw: dict, today: date, now: datetime, disabled=frozenset()) -> dict:
+    """Ленты состояния служб за 14 дней из сырых строк (_health_raw). Чистая функция.
+
+    disabled — площадки отзывов, выключенные в config/sources.yaml (в оценку не идут)."""
+    now = now.astimezone(MSK)
+    days = _axis(14, today)
+    keys = [d.isoformat() for d in days]
+    off = {d: _is_off(d) for d in _axis(14 + 28, today)}
+    out: dict = {"days": keys, "off": [i for i, d in enumerate(days) if off[d]]}
+
+    def end_of(d: date) -> datetime:        # конец дня МСК; у сегодняшнего — «сейчас»
+        return min(now, datetime(d.year, d.month, d.day, tzinfo=MSK) + timedelta(days=1))
+
+    def by_day(name: str) -> dict:
+        return {str(r.get("d")): r for r in raw.get(name) or []}
+
+    srv = by_day("server")
+    out["server"] = [_day_server(_int(srv.get(k, {}).get("req")), _int(srv.get(k, {}).get("err")))
+                     for k in keys]
+
+    # выпуск: строка 'first' (дата первого выпуска) приходит и при пустой таблице
+    dg = raw.get("digest") or []
+    first = next((str(r["d"]) for r in dg if r.get("v") == "first" and r.get("d")), None)
+    cur: dict[str, list] = {}
+    for r in dg:
+        if r.get("v") == "cur":
+            cur.setdefault(str(r.get("d")), []).append(r.get("status"))
+    arc = {str(r.get("d")) for r in raw.get("digest_arc") or [] if (r.get("status") or "ok") != "ok"}
+    out["digest"] = [_day_digest(cur.get(k, []), k in arc, bool(first) and k >= first,
+                                 d < today or now.hour >= _DIGEST_DUE_HOUR)
+                     for d, k in zip(days, keys)]
+
+    # площадки отзывов: неделя до дня (7 полных дней, как source_health «сегодня») против
+    # медианы 8 недель до неё. Корпус banki.ru приходит с опозданием и догружается задним
+    # числом: дни, неделя которых выходит за его свежесть, корпус не оценивают
+    cnt: dict[str, dict[str, int]] = {}
+    for r in raw.get("reviews") or []:
+        cnt.setdefault(str(r.get("source")), {})[str(r.get("d"))] = _int(r.get("n"))
+    fresh = max((k for k, n in (cnt.get("bankiru") or {}).items() if n), default=None)
+
+    def week(c: dict, end: date) -> int:
+        return sum(c.get((end - timedelta(days=j)).isoformat(), 0) for j in range(1, 8))
+    rev = []
+    for d in days:
+        st = []
+        for src, c in cnt.items():
+            if src in disabled or (src == "bankiru"
+                                   and not (fresh and fresh >= (d - timedelta(days=1)).isoformat())):
+                continue
+            weeks = [week(c, d - timedelta(days=7 * k)) for k in range(9)]
+            if any(weeks):
+                st.append(_day_review_source(weeks[0], statistics.median(weeks[1:])))
+        rev.append(_worst(st))
+    out["reviews"] = rev
+
+    # новостной поток: лента молчит в день, когда в такие же дни (будни / выходные)
+    # за 4 недели до него она давала медиану от трёх новостей
+    nw: dict[str, dict[str, int]] = {}
+    for r in raw.get("news") or []:
+        nw.setdefault(str(r.get("source")), {})[str(r.get("d"))] = _int(r.get("n"))
+    news_first = min((k for c in nw.values() for k, n in c.items() if n), default=None)
+    news = []
+    for d, k in zip(days, keys):
+        total = sum(c.get(k, 0) for c in nw.values())
+        silent = 0
+        if d < today:
+            same = [(d - timedelta(days=j)).isoformat() for j in range(1, 29)
+                    if off[d - timedelta(days=j)] == off[d]]
+            for c in nw.values():
+                base = [c.get(x, 0) for x in same]
+                silent += len(base) >= 4 and statistics.median(base) >= 3 and not c.get(k)
+        news.append(_day_news(total, silent, bool(news_first) and news_first < k, d < today))
+    out["news"] = news
+
+    # разметка жалоб: хвост на конец дня — нижняя оценка по жалобам, которые не размечены
+    # и сейчас (ann_at переписывается повторной разметкой, по нему хвост прошлых дней
+    # завысился бы); строка 'ok' — запрос прошёл. Канарейка — тревога и давность последнего
+    # прогона к концу дня, если эталон уже был загружен
+    bl = raw.get("backlog") or []
+    known = any(r.get("k") == "ok" for r in bl)
+    pend = [(_ts(r.get("dt_h"), MSK), _ts(r.get("ing_h"), MSK), _int(r.get("n")))
+            for r in bl if r.get("k") == "row"]
+    pend = [(a, b or a, n) for a, b, n in pend if a]
+    gold = (raw.get("gold") or [{}])[0] or {}
+    gold_since = _ts(gold.get("since")) if _int(gold.get("gold")) else None
+    runs = sorted((_ts(r.get("run_at")), bool(r.get("alert"))) for r in raw.get("canary") or []
+                  if _ts(r.get("run_at")))
+    sl = []
+    for d in days:
+        end = end_of(d)
+        pending = None
+        if known:
+            lo, hi = end - timedelta(days=30), end - timedelta(hours=6)
+            pending = sum(n for a, b, n in pend if lo <= a < hi and b < hi)
+        alert, age = False, None
+        if gold_since and gold_since <= end:
+            last = [x for x in runs if x[0] <= end]
+            alert = bool(last and last[-1][1])
+            age = (end - (last[-1][0] if last else gold_since)).total_seconds() / 86400
+        sl.append(_day_slices(pending, alert, age))
+    out["slices"] = sl
+
+    rq = by_day("rsearch")
+    out["rsearch"] = [_day_rsearch(_int(rq.get(k, {}).get("n")), _int(rq.get(k, {}).get("failed")),
+                                   d >= _RSEARCH_SINCE) for d, k in zip(days, keys)]
+
+    web = by_day("web")
+    out["web"] = [_day_web(*(_int(web.get(k, {}).get(f))
+                             for f in ("gw", "gw_bad", "chain", "chain_ok", "rd", "rd_bad")))
+                  for k in keys]
+
+    ing = by_day("ingest")
+    out["ingest"] = [_day_ingest(*(_int(ing.get(k, {}).get(f)) for f in ("ing", "orig", "hard")))
+                     for k in keys]
+    return out
+
+
+def _health_raw() -> dict:
+    """Сырые строки для лент: по всем учёткам, дни МСК. Каждая служба — отдельный запрос:
+    сбой одного не прячет остальные."""
+    p14 = {"days": 14}
+    raw: dict = {}
+    raw["server"] = _rows(f"""
+        SELECT to_char(created_at AT TIME ZONE 'Europe/Moscow', 'YYYY-MM-DD') AS d,
+               count(*) FILTER (WHERE kind = 'api_request') AS req,
+               count(*) FILTER (WHERE kind IN ('api_error', 'client_error')) AS err
+          FROM usage_event
+         WHERE kind IN ('api_request', 'api_error', 'client_error') AND created_at >= {_SINCE}
+         GROUP BY 1""", p14)
+    raw["digest"] = _rows("""
+        SELECT 'cur' AS v, to_char(digest_date, 'YYYY-MM-DD') AS d, section, status
+          FROM daily_digest
+         WHERE digest_date > (now() AT TIME ZONE 'Europe/Moscow')::date - :days
+        UNION ALL
+        SELECT 'first', to_char(min(digest_date), 'YYYY-MM-DD'), NULL, NULL FROM daily_digest""", p14)
+    raw["digest_arc"] = _rows("""
+        SELECT to_char(digest_date, 'YYYY-MM-DD') AS d, section, status
+          FROM daily_digest_archive
+         WHERE digest_date > (now() AT TIME ZONE 'Europe/Moscow')::date - :days
+           AND COALESCE(status, 'ok') <> 'ok'""", p14)
+    # review_index.dt — время площадки без пояса (МСК), review.posted_at — с поясом;
+    # 14 дней ленты + 9 недель на неделю и норму
+    raw["reviews"] = _rows(f"""
+        SELECT 'bankiru' AS source, to_char(dt, 'YYYY-MM-DD') AS d, count(*) AS n
+          FROM review_index
+         WHERE source = 'bankiru' AND dt <= now() AT TIME ZONE 'Europe/Moscow'
+           AND dt >= date_trunc('day', now() AT TIME ZONE 'Europe/Moscow') - (:days - 1) * interval '1 day'
+         GROUP BY 2
+        UNION ALL
+        SELECT source, to_char(posted_at AT TIME ZONE 'Europe/Moscow', 'YYYY-MM-DD'), count(*)
+          FROM review
+         WHERE source = ANY(:src) AND posted_at >= {_SINCE} AND posted_at <= now()
+         GROUP BY 1, 2""", {"days": 14 + 63, "src": list(_REVIEW_STREAMS)})
+    raw["news"] = _rows(f"""
+        SELECT source, to_char(first_seen AT TIME ZONE 'Europe/Moscow', 'YYYY-MM-DD') AS d, count(*) AS n
+          FROM news_item WHERE first_seen >= {_SINCE}
+         GROUP BY 1, 2""", {"days": 14 + 28})
+    # не размечены и сейчас: dt и время попадания в индекс — по часам, в МСК
+    raw["backlog"] = _rows("""
+        SELECT 'row' AS k, to_char(date_trunc('hour', dt), 'YYYY-MM-DD HH24:00') AS dt_h,
+               to_char(date_trunc('hour', COALESCE(ingested_at AT TIME ZONE 'Europe/Moscow', dt)),
+                       'YYYY-MM-DD HH24:00') AS ing_h,
+               count(*) AS n
+          FROM review_index
+         WHERE kind IS NULL AND dt <= now() AT TIME ZONE 'Europe/Moscow'
+           AND dt >= date_trunc('day', now() AT TIME ZONE 'Europe/Moscow') - (:days + 30) * interval '1 day'
+         GROUP BY 2, 3
+        UNION ALL
+        SELECT 'ok', NULL, NULL, 0""", p14)
+    raw["gold"] = _rows("SELECT count(*) AS gold, min(added_at) AS since FROM review_slice_gold")
+    raw["canary"] = _canary_runs()
+    raw["rsearch"] = _rows(f"""
+        SELECT to_char(ts AT TIME ZONE 'Europe/Moscow', 'YYYY-MM-DD') AS d, count(*) AS n,
+               count(*) FILTER (WHERE payload->>'words_failed' = 'true' OR payload->>'failed' IS NOT NULL
+                                   OR payload->>'error' IS NOT NULL) AS failed
+          FROM user_event WHERE kind = 'reviews_search' AND ts >= {_SINCE}
+         GROUP BY 1""", p14)
+    raw["web"] = _rows(f"""
+        SELECT to_char(created_at AT TIME ZONE 'Europe/Moscow', 'YYYY-MM-DD') AS d,
+               count(*) FILTER (WHERE kind = 'web_search') AS gw,
+               count(*) FILTER (WHERE kind = 'web_search' AND payload->>'status' IN ('down', 'error')) AS gw_bad,
+               count(*) FILTER (WHERE kind = 'web_search_chain') AS chain,
+               count(*) FILTER (WHERE kind = 'web_search_chain' AND payload->>'status' = 'ok') AS chain_ok,
+               count(*) FILTER (WHERE kind = 'web_read') AS rd,
+               count(*) FILTER (WHERE kind = 'web_read' AND payload->>'status' IN ('down', 'error')) AS rd_bad
+          FROM usage_event
+         WHERE kind IN ('web_search', 'web_read', 'web_search_chain') AND created_at >= {_SINCE}
+         GROUP BY 1""", p14)
+    raw["ingest"] = _rows(f"""
+        SELECT d, sum(ing) AS ing, sum(orig) AS orig, sum(hard) AS hard
+          FROM (SELECT to_char(created_at AT TIME ZONE 'Europe/Moscow', 'YYYY-MM-DD') AS d,
+                       count(*) AS ing, 0 AS orig, 0 AS hard
+                  FROM usage_event WHERE kind = 'rag_ingest' AND created_at >= {_SINCE}
+                 GROUP BY 1
+                UNION ALL
+                SELECT to_char(created_at AT TIME ZONE 'Europe/Moscow', 'YYYY-MM-DD'), 0, count(*),
+                       count(*) FILTER (WHERE skipped_reason = ANY(:hard))
+                  FROM document_origin WHERE created_at >= {_SINCE}
+                 GROUP BY 1) x
+         GROUP BY 1""", {"days": 14, "hard": sorted(_COLLECT_HARD)})
+    return raw
+
+
+def _canary_runs() -> list:
+    """Прогоны канарейки срезов с тревогой каждого (против предыдущего прогона)."""
+    try:
+        from ..rag import review_slices_canary
+        return review_slices_canary.history(8)
+    except Exception:
+        log.debug("[telemetry] canary history unavailable", exc_info=True)
+        return []
+
+
+def _review_disabled() -> frozenset:
+    """Площадки отзывов, выключенные в config/sources.yaml, — как в source_health:
+    banki_reviews и sravni_reviews там тоже enabled: false, но их собирает review_streams."""
+    try:
+        from ..config import load_sources
+        cfg = load_sources()
+    except Exception:
+        log.debug("[telemetry] sources config unavailable", exc_info=True)
+        return frozenset()
+    return frozenset(k for k, v in cfg.items()
+                     if not (v or {}).get("enabled", True) and k not in ("banki_reviews", "sravni_reviews"))
+
+
+def _health() -> dict:
+    """Ленты состояния служб — из кэша, не чаще раза в _HEALTH_TTL секунд."""
+    now = _msk_now()
+    key = now.date().isoformat()
+    hit = _HEALTH_CACHE.get(key)
+    if hit and time.monotonic() - hit[0] < _HEALTH_TTL:
+        return hit[1]
+    if not _HEALTH_LOCK.acquire(blocking=hit is None):
+        return hit[1]                    # считает другой запрос — пока прежние ленты
+    try:
+        hit = _HEALTH_CACHE.get(key)
+        if hit and time.monotonic() - hit[0] < _HEALTH_TTL:
+            return hit[1]
+        try:
+            res = _health_calc(_health_raw(), now.date(), now, _review_disabled())
+        except Exception:
+            log.warning("[telemetry] health failed", exc_info=True)
+            res = _health_calc({}, now.date(), now)
+        _HEALTH_CACHE.clear()
+        _HEALTH_CACHE[key] = (time.monotonic(), res)
+        return res
+    finally:
+        _HEALTH_LOCK.release()
 
 
 # ── Люди: директория и карточка ──────────────────────────────────────────────
@@ -1237,11 +1673,56 @@ _DIRECTORY = f"""
 """
 
 
+# Полоса «активность за 14 дней» в строке человека — всегда 14 дней, какой бы период ни
+# был у страницы (_SINCE привязан к :days, поэтому свой запрос со своими параметрами).
+_ACT14 = f"""
+    SELECT username, d, sum(views) AS views, sum(time_s) AS time_s, sum(ai) AS ai
+      FROM (SELECT username, to_char(created_at AT TIME ZONE 'Europe/Moscow', 'YYYY-MM-DD') AS d,
+                   count(*) FILTER (WHERE kind = 'page_view') AS views,
+                   COALESCE(sum(dur_ms) FILTER (WHERE kind = 'page_leave'), 0) / 1000.0 AS time_s,
+                   0 AS ai
+              FROM usage_event
+             WHERE username IS NOT NULL AND kind IN ('page_view', 'page_leave')
+               AND created_at >= {_SINCE}
+             GROUP BY 1, 2
+            UNION ALL
+            SELECT username, to_char(ts AT TIME ZONE 'Europe/Moscow', 'YYYY-MM-DD'), 0, 0, count(*)
+              FROM user_event
+             WHERE username IS NOT NULL AND kind = 'ai_query' AND ts >= {_SINCE}
+             GROUP BY 1, 2) x
+     GROUP BY 1, 2"""
+
+
+def _act_level(views: int, ai: int, time_s: float) -> int:
+    """Уровень дня 0–3: 0 — не заходил; 3 — от 30 просмотров, от 5 вопросов ИИ или от
+    30 минут на страницах; 2 — больше 5 просмотров или хотя бы один вопрос ИИ; иначе 1."""
+    if views <= 0 and ai <= 0 and time_s <= 0:
+        return 0
+    if views >= 30 or ai >= 5 or time_s >= 1800:
+        return 3
+    return 2 if views > 5 or ai >= 1 else 1
+
+
+def _act14_calc(rows: list[dict], days: list[str]) -> dict[str, str]:
+    """{логин: '00123…'} — уровень каждого дня из days (старые → сегодня)."""
+    per: dict[str, dict[str, list]] = {}
+    for r in rows:
+        if not r.get("username"):
+            continue
+        c = per.setdefault(r["username"], {}).setdefault(str(r.get("d")), [0, 0, 0.0])
+        c[0] += _int(r.get("views"))
+        c[1] += _int(r.get("ai"))
+        c[2] += float(r.get("time_s") or 0)
+    return {u: "".join(str(_act_level(*m.get(d, (0, 0, 0)))) for d in days)
+            for u, m in per.items()}
+
+
 def users_directory(days: int = 30, exclude: list[str] | None = None) -> dict:
     """ВСЕ пользователи со сводкой по каждому — основа вкладки «Люди».
 
     Служебные учётки и сам владелец (exclude) остаются в списке — иначе пометку
-    «служебная» не снять, — но идут в конце и не входят в итоги."""
+    «служебная» не снять, — но идут в конце и не входят в итоги. act14 — уровни
+    активности за 14 дней (act_days), act_off — индексы нерабочих дней."""
     days = max(1, min(int(days or 30), 365))
     exs = set(exclude or [])
     rows = _rows(_DIRECTORY + """
@@ -1249,11 +1730,15 @@ def users_directory(days: int = 30, exclude: list[str] | None = None) -> dict:
                   + COALESCE(q.ai, 0) * 15 + COALESCE(r.deep, 0) * 30
                   + COALESCE(fb.likes, 0) * 5 + COALESCE(fb.dislikes, 0) * 5) DESC,
                  greatest(au.last_seen_at, la.at) DESC""", {"days": days})
+    axis = _axis(14, _msk_now().date())
+    act_days = [d.isoformat() for d in axis]
+    act = _act14_calc(_rows(_ACT14, {"days": 14}), act_days)
     for r in rows:
         r["top_pages"] = [x for x in (r.get("top_pages") or "").split(",") if x]
         r["online"] = (r.get("last_seen_ago_s") or 10 ** 9) < 900
         r["today"] = bool(r.get("today_views"))
         r["excluded"] = r["username"] in exs
+        r["act14"] = act.get(r["username"], "0" * 14)
     rows.sort(key=lambda r: r["excluded"])          # стабильно: внутри групп — прежний порядок
     ppl = [r for r in rows if not r["excluded"]]
     return {"days": days, "users": rows,
@@ -1261,7 +1746,8 @@ def users_directory(days: int = 30, exclude: list[str] | None = None) -> dict:
             "active": sum(1 for r in ppl if r["days_active"]),
             "today": sum(1 for r in ppl if r["today"]),
             "online": sum(1 for r in ppl if r["online"]),
-            "silent": sum(1 for r in ppl if not r["days_active"])}
+            "silent": sum(1 for r in ppl if not r["days_active"]),
+            "act_days": act_days, "act_off": [i for i, d in enumerate(axis) if _is_off(d)]}
 
 
 def user_card(username: str, days: int = 30) -> dict:
