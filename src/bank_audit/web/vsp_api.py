@@ -28,7 +28,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
-from sqlalchemy import and_, create_engine, event, func, or_, select
+from sqlalchemy import and_, case, create_engine, event, func, or_, select
 
 from ..vsp.regions import BY_CODE, subject_name
 from ..vsp.signals.risks import BY_KEY as RISK, TYPES as RISK_TYPES
@@ -996,6 +996,13 @@ def _progress() -> dict:
         v["reviews"] = {s: n for s, n in c.execute(select(reviews.c.source, func.count()).group_by(reviews.c.source))}
         v["cards"] = {s: n for s, n in c.execute(select(source_branches.c.source, func.count())
                                                   .group_by(source_branches.c.source))}
+        # сколько отзывов площадка заявляет на найденных карточках и у скольких они уже скачаны
+        v["declared"] = {s: int(n or 0) for s, n in c.execute(select(
+            source_branches.c.source, func.sum(case((source_branches.c.declared_reviews > 600, 600),
+                                                    else_=func.coalesce(source_branches.c.declared_reviews, 0))))
+            .group_by(source_branches.c.source))}
+        v["synced"] = {s: n for s, n in c.execute(select(sync_state.c.source, func.count()).where(
+            sync_state.c.status == "done").group_by(sync_state.c.source))}
         # знаменатель — как отбор модели: текст от 60 знаков, без массовых аккаунтов-рассыльщиков
         from ..vsp.signals.llm_read import MIN_CHARS, SPAM_AUTHOR_MIN
         spam = select(reviews.c.author_ref).where(reviews.c.author_ref.isnot(None), reviews.c.review_text.isnot(None)) \
