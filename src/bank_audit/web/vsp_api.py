@@ -927,7 +927,8 @@ def _listed(run, subject=None, gosb=None, only: set | None = None) -> list[dict]
              "benign": p["risk"]["benign"], "red": p["risk"]["red"], "severity": p["risk"]["severity"],
              "signals": len(p["risk"]["signals"]), "action": p["risk"]["action_label"],
              "heavy_clients": p["risk"].get("heavy_clients"), "vol_2y": p["risk"].get("vol_2y"),
-             "people": p["risk"].get("people") or [], "tier": p["risk"].get("tier") or "watch",
+             "people": [{**pp, "name": _nom(pp.get("name"))} for pp in p["risk"].get("people") or []],
+             "tier": p["risk"].get("tier") or "watch",
              "lead": p["risk"].get("lead") or {}, "flags": p["risk"].get("flags") or {},
              "acts": p["risk"].get("acts") or [], "ratio": p["risk"].get("ratio")} for _, p in rows]
 
@@ -1255,6 +1256,33 @@ def table(subject: Optional[str] = None, gosb: Optional[str] = None, action: Opt
     return {"total": len(rows), "items": rows[off:off + min(max(limit, 1), 1000)], "offset": off, "sort": key}
 
 
+_MALE_EI = {"алексей", "сергей", "андрей", "матвей", "тимофей", "корней", "евсей", "моисей", "гордей", "елисей"}
+
+
+def _nom_word(w: str) -> str:
+    """Имя — как обычно пишут в начальной форме. Клиенты пишут «спасибо Анне», «со Светланой»;
+    без морфологической библиотеки — только надёжные женские окончания, мужские имена не трогаем."""
+    lw = w.lower()
+    if len(w) < 4 or not w[:1].isupper() or lw in _MALE_EI:
+        return w
+    for end, rep in (("ьей", "ья"), ("ией", "ия"), ("ой", "а"), ("ье", "ья"), ("ии", "ия")):
+        if lw.endswith(end):
+            return w[: len(w) - len(end)] + rep
+    if lw.endswith("е") and not lw.endswith(("ее", "ие", "ые", "ое")):
+        return w[:-1] + "а"
+    return w
+
+
+def _nom(name: str | None) -> str:
+    return " ".join(_nom_word(w) for w in (name or "").split())
+
+
+def _split_people(name: str | None) -> list[str]:
+    """«Иванова Анна, Петрова Ольга» и «Анна и Ольга» — это два человека."""
+    import re as _re
+    return [x.strip() for x in _re.split(r",|;|\s+и\s+", name or "") if len(x.strip()) >= 3]
+
+
 # ── «Люди»: сотрудники, которых называют разные клиенты; похвала от новых аккаунтов; посредники ─
 
 @router.get("/staff")
@@ -1267,9 +1295,10 @@ def staff(subject: Optional[str] = None, gosb: Optional[str] = None, user: Curre
     # 1) имя в историях модели: одно отделение, разные клиенты
     named: dict[tuple, list[dict]] = defaultdict(list)
     for x in _stories(run):
-        e = (x.get("employee") or "").strip()
-        if e and inscope(x["point"]):
-            named[(x["point"], e.lower().replace("ё", "е"))].append(x)
+        if not inscope(x["point"]):
+            continue
+        for e in _split_people(x.get("employee")):
+            named[(x["point"], _nom(e).lower().replace("ё", "е"))].append({**x, "employee": _nom(e)})
     model_rows = []
     for (pt, _), ss in named.items():
         clients = len({x.get("author") or x["rid"] for x in ss})
@@ -1284,9 +1313,9 @@ def staff(subject: Optional[str] = None, gosb: Optional[str] = None, user: Curre
     for x in run["persons"]:
         if not inscope(x["point"]):
             continue
-        row = {"id": x["id"], "name": x["name"], "n": x["n"], "authors": x["authors"],
+        row = {"id": x["id"], "name": _nom(x["name"]), "n": x["n"], "authors": x["authors"],
                "first": _iso(x["first_at"]), "last": _iso(x["last_at"]),
-               "oneoff": x["detail"].get("oneoff"), "full_name": x["detail"].get("full_name"),
+               "oneoff": x["detail"].get("oneoff"), "full_name": _nom(x["detail"].get("full_name")) or None,
                "types": [RISK[k].label if k in RISK else k for k in (x["detail"].get("types") or {})],
                "heavy_here": heavy_by_pt.get(x["point"], 0), "place": _place(pts.get(x["point"]))}
         (comp if x["kind"] == "complaints" else praise).append(row)

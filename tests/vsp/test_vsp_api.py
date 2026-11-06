@@ -173,3 +173,10 @@ def test_evidence_passport_links_meta(client):
     assert t1["total"] >= 2 and t1["items"][0]["point"] != t2["items"][0]["point"]
     r = client.get("/api/vsp/export/justification.xlsx", params={"gosb": "x", "action": "посредник"})
     assert r.status_code == 200
+
+
+def test_people_names_in_nominative_and_split():
+    from bank_audit.web.vsp_api import _nom, _split_people
+    assert [_nom(x) for x in ("Светланой", "Анне Петровне", "Натальей", "Алексей", "Сергей", "Иван")] == \
+        ["Светлана", "Анна Петровна", "Наталья", "Алексей", "Сергей", "Иван"]
+    assert _split_people("Таласпаева Улбасым, Кух Юлия") == ["Таласпаева Улбасым", "Кух Юлия"]
