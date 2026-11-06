@@ -921,13 +921,18 @@ def _listed(run, subject=None, gosb=None, only: set | None = None) -> list[dict]
         if (subject and p.get("subject") != subject) or (gosb and p.get("gosb") != gosb) or \
                 (only is not None and p["point"] not in only):
             continue
-        rows.append((order_key(a), p))
+        rows.append(((TIER_RANK.get(a.get("tier"), 2),) + tuple(order_key(a)), p))
     rows.sort(key=lambda t: t[0])
     return [{**_place(p), "why": p["risk"]["why"], "quote": p["risk"]["quote"], "confidence": p["risk"]["confidence"],
              "benign": p["risk"]["benign"], "red": p["risk"]["red"], "severity": p["risk"]["severity"],
              "signals": len(p["risk"]["signals"]), "action": p["risk"]["action_label"],
              "heavy_clients": p["risk"].get("heavy_clients"), "vol_2y": p["risk"].get("vol_2y"),
-             "people": p["risk"].get("people") or []} for _, p in rows]
+             "people": p["risk"].get("people") or [], "tier": p["risk"].get("tier") or "watch",
+             "lead": p["risk"].get("lead") or {}, "flags": p["risk"].get("flags") or {},
+             "acts": p["risk"].get("acts") or [], "ratio": p["risk"].get("ratio")} for _, p in rows]
+
+
+TIER_RANK = {"urgent": 0, "converged": 1, "watch": 2}
 
 
 def _gosb_table(run, subject=None) -> list[dict]:
@@ -1080,7 +1085,7 @@ def home(subject: Optional[str] = None, gosb: Optional[str] = None, action: Opti
     return {"run": {"id": run["id"], "finished_at": _iso(run["finished_at"])},
             "source": net.get("story_source"), "react": _attach_src(react), "tiles": tiles,
             "network_share": rmap.get("network_share"), "list": lst, "total": len(full), "in_scope": len(scope),
-            "filtered": filtered,
+            "filtered": filtered, "tiers": dict(Counter(x["tier"] for x in lst)),
             "gosbs": [{"gosb": g, "n": n} for g, n in gosbs.most_common()],
             "gosb_table": _gosb_table(run, subject),
             "summary": {"heavy_year": len(heavy_year), "heavy_prev": len(heavy_prev),

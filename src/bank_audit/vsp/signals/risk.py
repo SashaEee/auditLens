@@ -172,12 +172,12 @@ def stories_from(recs, llm: dict[str, dict], rule_cases: list[dict]) -> tuple[li
                     w.lower().replace("ё", "е")[:4] in low for w in emp.split()[:2]):
                 emp = ""                                     # имя должно быть в самом отзыве
             out.append(_story(r, severity=int(d.get("severity") or 0), fault=fault, actions=acts,
-                              quote=d.get("quote") or "", quote_ok=llm_quote_ok(d.get("quote") or "", r.text or ""),
+                              quote=d.get("quote") or "", quote_ok=llm_quote_ok(d.get("quote") or "", (r.extra or {}).get("raw_text") or r.text or ""),
                               episode=d.get("episode") or "", scheme=d.get("scheme_free") or "",
                               vulnerable=bool(d.get("vulnerability")), employee=emp,
                               money=d.get("money_rub"), products=d.get("products") or [], source="модель",
                               intermediary="посредник" in acts))
-        return out, "модель"
+        return _mark_dups(out), "модель"
     by: dict[str, list[dict]] = defaultdict(list)
     for c in rule_cases:
         by[c["review_id"]].append(c)
@@ -191,7 +191,22 @@ def stories_from(recs, llm: dict[str, dict], rule_cases: list[dict]) -> tuple[li
         out.append(_story(r, severity=sev, fault="неясно", actions=acts, quote=top["quote"], quote_ok=True,
                           episode="", scheme="", vulnerable=any(c["type"] == "vulnerable" for c in cs),
                           employee="", money=None, products=[], source="слова", intermediary=False))
-    return out, "слова"
+    return _mark_dups(out), "слова"
+
+
+def _mark_dups(stories: list[dict]) -> list[dict]:
+    """Один и тот же текст у нескольких отделений (автор разослал жалобу по карточкам или карточка
+    привязана не к тому ВСП): dup_points — у скольких ЕЩЁ отделений есть такая же история."""
+    import re
+    key = lambda s: re.sub(r"[^а-яёa-z0-9]+", " ", (s.get("quote") or "").lower()).strip()[:160]
+    pts: dict[str, set] = defaultdict(set)
+    for s in stories:
+        k = key(s)
+        if len(k) >= 40:
+            pts[k].add(s["point"])
+    for s in stories:
+        s["dup_points"] = max(0, len(pts.get(key(s), ())) - 1)
+    return stories
 
 
 def _story(r, **kw) -> dict:
@@ -311,14 +326,22 @@ def assess(points: dict[str, dict], stories: list[dict], recs, people_rows: list
             if sgl["key"] == "C":
                 why.append(f"{sgl['n']} разных клиента называют одного сотрудника ({sgl['name']})")
             if sgl["key"] == "D":
-                exp = f"{max(sgl['expected'], 0.1):.1f}".replace(".", ",")
-                why.append(f"у похожих отделений ГОСБ при таком потоке отзывов таких клиентов обычно около {exp}"
-                           f" — здесь {n_h}")
+                if sgl["expected"] < 1:
+                    why.append(f"в похожих отделениях ГОСБ таких клиентов обычно нет и одного — здесь {n_h}")
+                else:
+                    exp = f"{sgl['expected']:.1f}".replace(".", ",")
+                    why.append(f"в похожих отделениях ГОСБ таких клиентов обычно около {exp} — здесь {n_h}")
             if sgl["key"] == "E":
                 why.append("вокруг отделения посредники или одни и те же люди хвалят сотрудника, которого называют в жалобах")
         why = [w for w in why if not FORBIDDEN.search(w)]
         main = hv or ss
-        best = max(main, key=lambda s: (s["severity"], s.get("quote_ok", False), s["at"]))
+        best = max(main, key=lambda s: (s["severity"], bool(s.get("vulnerable")), bool(s.get("money")),
+                                        s.get("quote_ok", False), s["at"]))
+        recent = now - timedelta(days=180)
+        hot = [s for s in hv if s["at"] >= recent and (s["severity"] >= 3 or s.get("vulnerable")
+                                                       or (s.get("money") or 0) >= 10000)]
+        tier = "urgent" if hot else "converged" if len(signals) >= 3 else "watch"
+        moneys = [float(s["money"]) for s in hv if isinstance(s.get("money"), (int, float)) and s["money"] > 0]
         act_main = top_act or (best["actions"][0] if best["actions"] else "другое")
         info = ACTIONS.get(act_main, ACTIONS["другое"])
         request, check, seen = [], [], set()
@@ -342,6 +365,16 @@ def assess(points: dict[str, dict], stories: list[dict], recs, people_rows: list
             "people": [{"name": v[0]["employee"], "clients": len({s["author"] for s in v})}
                        for v in sorted(names.values(), key=lambda v: -len(v))][:4],
             "vol_2y": vol[p], "ratio": round(ratio, 1) if ratio else None, "source": source,
+            "tier": tier,
+            "lead": {"episode": best.get("episode") or "", "severity": best["severity"],
+                     "vulnerable": bool(best.get("vulnerable")), "money": best.get("money"),
+                     "employee": best.get("employee") or "", "quote_ok": bool(best.get("quote_ok", True)),
+                     "dup_points": best.get("dup_points", 0),
+                     "labels": [ACTIONS.get(a, ACTIONS["другое"])["short"] for a in best["actions"]][:2]},
+            "flags": {"very": sum(1 for s in hv if s["severity"] >= 3), "vulnerable": vul,
+                      "named": sum(1 for s in hv if (s.get("employee") or "").strip()),
+                      "money_max": max(moneys) if moneys else None, "heavy": len(hv)},
+            "acts": [{"short": ACTIONS[a]["short"], "n": n} for a, n in acts.most_common(4)],
         }
     return out
 

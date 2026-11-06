@@ -394,7 +394,7 @@ def compute(store: Store, *, now=None) -> dict:
                      "products": x.get("products") or [], "fault": x.get("fault"), "source": x.get("source"),
                      "rating": x["rating"], "intermediary": bool(x.get("intermediary")),
                      "scheme": x.get("scheme") or "", "author": x.get("author"),
-                     "quote_ok": bool(x.get("quote_ok", True)),
+                     "quote_ok": bool(x.get("quote_ok", True)), "dup_points": x.get("dup_points", 0),
                      "new_author": (x.get("author_total") or 0) <= 1} for x in stories],
         "peers": rk.peer_norms(rows, recs, stories, now=now),
         "risk_react": rk.react_list(stories, now=now),

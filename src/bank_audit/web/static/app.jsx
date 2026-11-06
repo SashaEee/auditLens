@@ -10824,7 +10824,8 @@ const vAddr=a=>{if(!a)return"";const parts=a.split("#")[0].split(",").map(x=>x.t
   return t.toLowerCase().split(" ").map(w=>{const m=w.match(/^([а-яё][а-яё-]*)(,?)$/);
     return m&&m[1].length>=3&&!ABBR.has(m[1])?w[0].toUpperCase()+w.slice(1):w;}).join(" ");};
 const vPlace=p=>p?[p.city,vAddr(p.address)].filter(Boolean).join(", ")||p.name||"Отделение":"Отделение";
-const vCode=p=>p&&p.name?String(p.name).replace(/^№\s*/,"ВСП "):"";
+const vCode=p=>{ if(!p||!p.name) return ""; const nm=String(p.name).trim();
+  const m=nm.match(/^(?:ВСП\s*)?№?\s*(\d{2,4}\s*\/\s*\d{1,5})/); return m?"ВСП "+m[1].replace(/\s+/g,""):nm; };
 
 function VMark({text,q}){
   if(!text)return null;
@@ -11006,23 +11007,55 @@ function VFilters({f,setF,tiles,show}){
 }
 
 // ── строка списка «Где стоит проверить» ─────────────────────────────────────
+// Заголовок — что произошло (пересказ самой тяжёлой истории), метки — тяжесть, пожилой клиент,
+// сумма, сотрудник, сколько клиентов и насколько чаще соседей; оговорки «может быть безобидно» — в досье.
+const vLead=t=>{ if(!t)return""; let s=t.trim().replace(/^(по словам клиента|клиент(ка)?\s+(пишет|сообщает|рассказывает)),?:?\s*/i,"");
+  const m=s.match(/^(.{40,190}?[.!?])(\s|$)/); s=m?m[1]:s.length>190?s.slice(0,187).replace(/\s+\S*$/,"")+"…":s;
+  return s.charAt(0).toUpperCase()+s.slice(1); };
+const vRub=x=>x?vN(Math.round(x))+"\u00a0₽":"";
 function VRow({x,plan,onOpen}){
   const ev=useContext(VEv);
+  const L=x.lead||{}, F=x.flags||{};
   const ppl=(x.people||[]).filter(p=>p.clients>1).slice(0,2);
-  return <div className="vrow v2" role="button" tabIndex={0} onClick={()=>onOpen(x.point)} onKeyDown={vEnter(()=>onOpen(x.point))}>
-    <div>
+  const n=x.heavy_clients||0, r=x.ratio;
+  const head=vLead(L.episode)||(x.why||[])[0]||x.action||"";
+  const tags=[];
+  if(L.severity>=3||F.very) tags.push(["очень тяжёлая","bad"]); else if(L.severity>=2) tags.push(["тяжёлая",""]);
+  if(F.vulnerable) tags.push([L.vulnerable?"пожилой или уязвимый клиент":`пожилые и уязвимые · ${F.vulnerable}`,"bad"]);
+  if(F.money_max) tags.push([(L.money&&+L.money===+F.money_max?"":"до ")+vRub(F.money_max),""]);
+  if(ppl.length) tags.push([`${ppl[0].name}: ${ppl[0].clients} ${vPl(ppl[0].clients,"клиент","клиента","клиентов")}`,"bad"]);
+  else if(F.named) tags.push(["назван сотрудник",""]);
+  if(n>=2) tags.push([`${n} ${vPl(n,"клиент","клиента","клиентов")}`+(r&&r>=10?" · у соседей таких почти нет":r&&r>=2?` · в ${Math.round(r)} ${vTimes(Math.round(r))} чаще соседей`:""),""]);
+  const acts=(x.acts||[]).filter(a=>a.n>0);
+  return <div className={"vrow v2 vrow-"+(x.tier||"watch")} role="button" tabIndex={0} onClick={()=>onOpen(x.point)} onKeyDown={vEnter(()=>onOpen(x.point))}>
+    <div className="vrow-b">
       <div className="vrow-h"><VDot on={x.red}/><b>{vPlace(x)}</b><span className="note">{vCode(x)}{x.gosb?` · ГОСБ ${x.gosb}`:""}{x.subject_name?` · ${x.subject_name}`:""}</span>
         {x.formats&&(x.formats.sber_first||x.formats.private)&&<span className="chip">{x.formats.private?"Private Banking":"СберПервый"}</span>}</div>
-      {x.why.slice(0,2).map((w,i)=><div key={i} className="vrow-why">{w}</div>)}
+      {tags.length>0&&<div className="vtags">{tags.map(([t,c],i)=><span key={i} className={"vtag"+(c?" "+c:"")}>{t}</span>)}</div>}
+      <div className="vrow-lead">{head}</div>
       {x.quote&&x.quote.text&&<div className="vrow-q">«{x.quote.text}» <span className="note">· {x.quote.date}</span>{" "}
-        <button className="vlink" onClick={e=>{e.stopPropagation();ev.open(x.quote.rid);}} onKeyDown={e=>e.stopPropagation()}>полный отзыв и проверка</button></div>}
-      <div className="note">Уверенность {x.confidence.level} — {x.confidence.reason}
-        {ppl.length?` · называют: ${ppl.map(p=>`${p.name} (${p.clients} ${vPl(p.clients,"клиент","клиента","клиентов")})`).join(", ")}`:""}
-        {x.benign&&x.benign.text?` · может быть безобидно: ${x.benign.text}`:""}</div>
+        <button className="vlink" onClick={e=>{e.stopPropagation();ev.open(x.quote.rid);}} onKeyDown={e=>e.stopPropagation()}>полный отзыв и проверка</button>
+        {L.dup_points>0&&<span className="note"> · этот же текст оставлен ещё у {L.dup_points} {vPl(L.dup_points,"отделения","отделений","отделений")}</span>}</div>}
+      <div className="note vrow-foot">{acts.length>0&&<>Здесь: {acts.map((a,i)=><React.Fragment key={i}>{i?", ":""}{a.short}{a.n>1?` ×${a.n}`:""}</React.Fragment>)} · </>}
+        <span title={x.confidence.reason}>уверенность {x.confidence.level}</span></div>
     </div>
     {plan?<VPlanBtn x={x} plan={plan} small/>:<span/>}
     <span className="vrow-go" aria-hidden="true">→</span>
   </div>;
+}
+
+const V_TIERS=[["urgent","Срочно","свежие очень тяжёлые случаи, пожилые клиенты, крупные суммы — за полгода"],
+  ["converged","Сошлось несколько признаков","разные клиенты, одна схема, необычно для ГОСБ"],
+  ["watch","Стоит посмотреть","признаки есть, но слабее"]];
+function VTierList({list,plan,openPoint}){
+  const[more,setMore]=useState({});
+  return <div className="vtiers">{V_TIERS.map(([k,title,sub])=>{const xs=list.filter(x=>(x.tier||"watch")===k); if(!xs.length) return null;
+    const lim=more[k]||(k==="watch"?10:30);
+    return <section key={k} className={"vtier vtier-"+k}>
+      <div className="vtier-h"><b>{title}</b> <span className="vtier-n">{vN(xs.length)}</span> <span className="note">— {sub}</span></div>
+      <div className="vlist">{xs.slice(0,lim).map(x=><VRow key={x.point} x={x} plan={plan} onOpen={openPoint}/>)}</div>
+      {xs.length>lim&&<div style={{textAlign:"center",margin:"8px 0"}}><button className="btn btn-ghost" onClick={()=>setMore(m=>({...m,[k]:lim+30}))}>Показать ещё ({vN(xs.length-lim)})</button></div>}
+    </section>;})}</div>;
 }
 
 function VReact({items,onOpen}){
@@ -11130,7 +11163,9 @@ function VspHome3({f,setF,openPoint,plan}){
   if(d.err)return <ErrState msg={d.err.includes("404")?"Расчёт ещё не готов — он идёт ночью.":"Не удалось загрузить"}/>;
   const subj=f.subject?(d.tiles.find(t=>t.code===f.subject)||{}).name:null;
   const scope=[subj,f.gosb?`ГОСБ ${f.gosb}`:null].filter(Boolean).join(" · ");
-  const val=t=>t.few&&!t.n?null:(t.share==null?null:Math.min(1,0.08+t.share*4.5));
+  const shares=d.tiles.filter(t=>t.n>=15&&t.share!=null).map(t=>t.share).sort((p,q)=>p-q);
+  const rank=v=>{let i=0;while(i<shares.length&&shares[i]<=v)i++;return shares.length?i/shares.length:0;};
+  const val=t=>t.share==null||(t.few&&!t.n)?null:t.n<15?0.1:0.1+0.8*rank(t.share);
   const just="/api/vsp/export/justification.xlsx?"+vQS({subject:f.subject,gosb:f.gosb,action:f.action,vulnerable:f.vulnerable,named:f.named,fresh:f.fresh,fmt:f.fmt});
   return <div className="view" style={{display:"grid",gap:16}}>
     {d.source==="слова"&&<div className="box" style={{fontSize:13.5}}>Предварительно: истории пока найдены по словам. Модель читает все отзывы — список станет точнее по ходу чтения.</div>}
@@ -11143,8 +11178,8 @@ function VspHome3({f,setF,openPoint,plan}){
             {subj&&<> ▸ <b>{subj}</b> <button className="vx" aria-label="Снять регион" onClick={()=>setF({subject:"",gosb:""})}>✕</button></>}</div></div>
         <VMap tiles={d.tiles} picked={f.subject} onPick={c=>setF({subject:c,gosb:""})} value={val}
           hint={t=>t.n?` · в списке ${t.listed} · клиенты описали нарушение в ${t.hit} из ${t.n} отделений с данными (${vP(t.share)})`:" · мало данных"}
-          legend={<><span>Доля отделений, где клиенты описали нарушение (по сети {vP(d.network_share)}):</span>
-            <span className="ramp">{[0.15,0.35,0.55,0.75].map(x=><i key={x} style={{background:`color-mix(in oklch,var(--accent) ${x*100}%,var(--surface))`}}/>)}</span>
+          legend={<><span>Светлее — реже, темнее — чаще, чем в других регионах (по сети истории есть у {vP(d.network_share)} отделений с данными):</span>
+            <span className="ramp">{[0.15,0.35,0.55,0.8].map(x=><i key={x} style={{background:`color-mix(in oklch,var(--accent) ${x*100}%,var(--surface))`}}/>)}</span>
             <span><span className="sw" style={{boxShadow:"inset 0 0 0 1.5px var(--ink)"}}/>выше сети с учётом объёма</span>
             <span><span className="sw" style={{background:"repeating-linear-gradient(135deg,var(--surface) 0 3px,var(--paper-2) 3px 6px)",boxShadow:"inset 0 0 0 1px var(--hair)"}}/>мало данных</span>
             <span className="note">Карта показывает, где искать, а не где хуже. Нажмите на регион — вкладки отфильтруются по нему.</span></>}/>
@@ -11160,9 +11195,8 @@ function VspHome3({f,setF,openPoint,plan}){
         <a className="btn btn-ghost" href={just} download title="Отделения из списка с учётом выбранных фильтров">Скачать обоснование</a></div>
       {d.filtered&&view==="list"&&<p className="note">Фильтр: отделения из списка, где за {f.fresh?"3 месяца":"год"} есть такие тяжёлые истории.</p>}
       {view==="list"?<>
-        {d.list.length?<div className="vlist">{d.list.slice(0,lim).map(x=><VRow key={x.point} x={x} plan={plan} onOpen={openPoint}/>)}</div>
+        {d.list.length?<VTierList list={d.list} plan={plan} openPoint={openPoint}/>
           :<div className="vempty">Здесь отделений со сходящимися признаками нет. Посмотрите «Все отделения» — там каждое отделение с историями.</div>}
-        {d.list.length>lim&&<div style={{textAlign:"center",margin:"10px 0"}}><button className="btn btn-ghost" onClick={()=>setLim(lim+30)}>Показать ещё</button></div>}
       </>:<VTable f={f} openPoint={openPoint} plan={plan}/>}
       <p className="note" style={{margin:"10px 0 4px"}}>Отзывы за год есть у {vP(d.with_data/Math.max(1,d.points))} отделений — об остальных вкладка молчит, это не значит «всё в порядке».</p>
     </section>

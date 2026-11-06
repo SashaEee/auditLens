@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 e6f79f474be9b0324f792f44b5f021a74e118483ec0cab1aa584e99892a4626b): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 7a17fea7ec4243d4ac58a80fac374f72fb5a14af673bfda59326aff8b4772285): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -21185,7 +21185,12 @@ const vAddr = a => {
   }).join(" ");
 };
 const vPlace = p => p ? [p.city, vAddr(p.address)].filter(Boolean).join(", ") || p.name || "Отделение" : "Отделение";
-const vCode = p => p && p.name ? String(p.name).replace(/^№\s*/, "ВСП ") : "";
+const vCode = p => {
+  if (!p || !p.name) return "";
+  const nm = String(p.name).trim();
+  const m = nm.match(/^(?:ВСП\s*)?№?\s*(\d{2,4}\s*\/\s*\d{1,5})/);
+  return m ? "ВСП " + m[1].replace(/\s+/g, "") : nm;
+};
 function VMark({
   text,
   q
@@ -21726,20 +21731,44 @@ function VFilters({
 }
 
 // ── строка списка «Где стоит проверить» ─────────────────────────────────────
+// Заголовок — что произошло (пересказ самой тяжёлой истории), метки — тяжесть, пожилой клиент,
+// сумма, сотрудник, сколько клиентов и насколько чаще соседей; оговорки «может быть безобидно» — в досье.
+const vLead = t => {
+  if (!t) return "";
+  let s = t.trim().replace(/^(по словам клиента|клиент(ка)?\s+(пишет|сообщает|рассказывает)),?:?\s*/i, "");
+  const m = s.match(/^(.{40,190}?[.!?])(\s|$)/);
+  s = m ? m[1] : s.length > 190 ? s.slice(0, 187).replace(/\s+\S*$/, "") + "…" : s;
+  return s.charAt(0).toUpperCase() + s.slice(1);
+};
+const vRub = x => x ? vN(Math.round(x)) + "\u00a0₽" : "";
 function VRow({
   x,
   plan,
   onOpen
 }) {
   const ev = useContext(VEv);
+  const L = x.lead || {},
+    F = x.flags || {};
   const ppl = (x.people || []).filter(p => p.clients > 1).slice(0, 2);
+  const n = x.heavy_clients || 0,
+    r = x.ratio;
+  const head = vLead(L.episode) || (x.why || [])[0] || x.action || "";
+  const tags = [];
+  if (L.severity >= 3 || F.very) tags.push(["очень тяжёлая", "bad"]);else if (L.severity >= 2) tags.push(["тяжёлая", ""]);
+  if (F.vulnerable) tags.push([L.vulnerable ? "пожилой или уязвимый клиент" : `пожилые и уязвимые · ${F.vulnerable}`, "bad"]);
+  if (F.money_max) tags.push([(L.money && +L.money === +F.money_max ? "" : "до ") + vRub(F.money_max), ""]);
+  if (ppl.length) tags.push([`${ppl[0].name}: ${ppl[0].clients} ${vPl(ppl[0].clients, "клиент", "клиента", "клиентов")}`, "bad"]);else if (F.named) tags.push(["назван сотрудник", ""]);
+  if (n >= 2) tags.push([`${n} ${vPl(n, "клиент", "клиента", "клиентов")}` + (r && r >= 10 ? " · у соседей таких почти нет" : r && r >= 2 ? ` · в ${Math.round(r)} ${vTimes(Math.round(r))} чаще соседей` : ""), ""]);
+  const acts = (x.acts || []).filter(a => a.n > 0);
   return /*#__PURE__*/React.createElement("div", {
-    className: "vrow v2",
+    className: "vrow v2 vrow-" + (x.tier || "watch"),
     role: "button",
     tabIndex: 0,
     onClick: () => onOpen(x.point),
     onKeyDown: vEnter(() => onOpen(x.point))
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "vrow-b"
+  }, /*#__PURE__*/React.createElement("div", {
     className: "vrow-h"
   }, /*#__PURE__*/React.createElement(VDot, {
     on: x.red
@@ -21747,10 +21776,14 @@ function VRow({
     className: "note"
   }, vCode(x), x.gosb ? ` · ГОСБ ${x.gosb}` : "", x.subject_name ? ` · ${x.subject_name}` : ""), x.formats && (x.formats.sber_first || x.formats.private) && /*#__PURE__*/React.createElement("span", {
     className: "chip"
-  }, x.formats.private ? "Private Banking" : "СберПервый")), x.why.slice(0, 2).map((w, i) => /*#__PURE__*/React.createElement("div", {
+  }, x.formats.private ? "Private Banking" : "СберПервый")), tags.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "vtags"
+  }, tags.map(([t, c], i) => /*#__PURE__*/React.createElement("span", {
     key: i,
-    className: "vrow-why"
-  }, w)), x.quote && x.quote.text && /*#__PURE__*/React.createElement("div", {
+    className: "vtag" + (c ? " " + c : "")
+  }, t))), /*#__PURE__*/React.createElement("div", {
+    className: "vrow-lead"
+  }, head), x.quote && x.quote.text && /*#__PURE__*/React.createElement("div", {
     className: "vrow-q"
   }, "\xAB", x.quote.text, "\xBB ", /*#__PURE__*/React.createElement("span", {
     className: "note"
@@ -21761,9 +21794,15 @@ function VRow({
       ev.open(x.quote.rid);
     },
     onKeyDown: e => e.stopPropagation()
-  }, "\u043F\u043E\u043B\u043D\u044B\u0439 \u043E\u0442\u0437\u044B\u0432 \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0430")), /*#__PURE__*/React.createElement("div", {
+  }, "\u043F\u043E\u043B\u043D\u044B\u0439 \u043E\u0442\u0437\u044B\u0432 \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0430"), L.dup_points > 0 && /*#__PURE__*/React.createElement("span", {
     className: "note"
-  }, "\u0423\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0441\u0442\u044C ", x.confidence.level, " \u2014 ", x.confidence.reason, ppl.length ? ` · называют: ${ppl.map(p => `${p.name} (${p.clients} ${vPl(p.clients, "клиент", "клиента", "клиентов")})`).join(", ")}` : "", x.benign && x.benign.text ? ` · может быть безобидно: ${x.benign.text}` : "")), plan ? /*#__PURE__*/React.createElement(VPlanBtn, {
+  }, " \xB7 \u044D\u0442\u043E\u0442 \u0436\u0435 \u0442\u0435\u043A\u0441\u0442 \u043E\u0441\u0442\u0430\u0432\u043B\u0435\u043D \u0435\u0449\u0451 \u0443 ", L.dup_points, " ", vPl(L.dup_points, "отделения", "отделений", "отделений"))), /*#__PURE__*/React.createElement("div", {
+    className: "note vrow-foot"
+  }, acts.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, "\u0417\u0434\u0435\u0441\u044C: ", acts.map((a, i) => /*#__PURE__*/React.createElement(React.Fragment, {
+    key: i
+  }, i ? ", " : "", a.short, a.n > 1 ? ` ×${a.n}` : "")), " \xB7 "), /*#__PURE__*/React.createElement("span", {
+    title: x.confidence.reason
+  }, "\u0443\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0441\u0442\u044C ", x.confidence.level))), plan ? /*#__PURE__*/React.createElement(VPlanBtn, {
     x: x,
     plan: plan,
     small: true
@@ -21771,6 +21810,49 @@ function VRow({
     className: "vrow-go",
     "aria-hidden": "true"
   }, "\u2192"));
+}
+const V_TIERS = [["urgent", "Срочно", "свежие очень тяжёлые случаи, пожилые клиенты, крупные суммы — за полгода"], ["converged", "Сошлось несколько признаков", "разные клиенты, одна схема, необычно для ГОСБ"], ["watch", "Стоит посмотреть", "признаки есть, но слабее"]];
+function VTierList({
+  list,
+  plan,
+  openPoint
+}) {
+  const [more, setMore] = useState({});
+  return /*#__PURE__*/React.createElement("div", {
+    className: "vtiers"
+  }, V_TIERS.map(([k, title, sub]) => {
+    const xs = list.filter(x => (x.tier || "watch") === k);
+    if (!xs.length) return null;
+    const lim = more[k] || (k === "watch" ? 10 : 30);
+    return /*#__PURE__*/React.createElement("section", {
+      key: k,
+      className: "vtier vtier-" + k
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "vtier-h"
+    }, /*#__PURE__*/React.createElement("b", null, title), " ", /*#__PURE__*/React.createElement("span", {
+      className: "vtier-n"
+    }, vN(xs.length)), " ", /*#__PURE__*/React.createElement("span", {
+      className: "note"
+    }, "\u2014 ", sub)), /*#__PURE__*/React.createElement("div", {
+      className: "vlist"
+    }, xs.slice(0, lim).map(x => /*#__PURE__*/React.createElement(VRow, {
+      key: x.point,
+      x: x,
+      plan: plan,
+      onOpen: openPoint
+    }))), xs.length > lim && /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "center",
+        margin: "8px 0"
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost",
+      onClick: () => setMore(m => ({
+        ...m,
+        [k]: lim + 30
+      }))
+    }, "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0435\u0449\u0451 (", vN(xs.length - lim), ")")));
+  }));
 }
 function VReact({
   items,
@@ -22086,7 +22168,13 @@ function VspHome3({
   });
   const subj = f.subject ? (d.tiles.find(t => t.code === f.subject) || {}).name : null;
   const scope = [subj, f.gosb ? `ГОСБ ${f.gosb}` : null].filter(Boolean).join(" · ");
-  const val = t => t.few && !t.n ? null : t.share == null ? null : Math.min(1, 0.08 + t.share * 4.5);
+  const shares = d.tiles.filter(t => t.n >= 15 && t.share != null).map(t => t.share).sort((p, q) => p - q);
+  const rank = v => {
+    let i = 0;
+    while (i < shares.length && shares[i] <= v) i++;
+    return shares.length ? i / shares.length : 0;
+  };
+  const val = t => t.share == null || t.few && !t.n ? null : t.n < 15 ? 0.1 : 0.1 + 0.8 * rank(t.share);
   const just = "/api/vsp/export/justification.xlsx?" + vQS({
     subject: f.subject,
     gosb: f.gosb,
@@ -22149,9 +22237,9 @@ function VspHome3({
     }),
     value: val,
     hint: t => t.n ? ` · в списке ${t.listed} · клиенты описали нарушение в ${t.hit} из ${t.n} отделений с данными (${vP(t.share)})` : " · мало данных",
-    legend: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "\u0414\u043E\u043B\u044F \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439, \u0433\u0434\u0435 \u043A\u043B\u0438\u0435\u043D\u0442\u044B \u043E\u043F\u0438\u0441\u0430\u043B\u0438 \u043D\u0430\u0440\u0443\u0448\u0435\u043D\u0438\u0435 (\u043F\u043E \u0441\u0435\u0442\u0438 ", vP(d.network_share), "):"), /*#__PURE__*/React.createElement("span", {
+    legend: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "\u0421\u0432\u0435\u0442\u043B\u0435\u0435 \u2014 \u0440\u0435\u0436\u0435, \u0442\u0435\u043C\u043D\u0435\u0435 \u2014 \u0447\u0430\u0449\u0435, \u0447\u0435\u043C \u0432 \u0434\u0440\u0443\u0433\u0438\u0445 \u0440\u0435\u0433\u0438\u043E\u043D\u0430\u0445 (\u043F\u043E \u0441\u0435\u0442\u0438 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u0435\u0441\u0442\u044C \u0443 ", vP(d.network_share), " \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439 \u0441 \u0434\u0430\u043D\u043D\u044B\u043C\u0438):"), /*#__PURE__*/React.createElement("span", {
       className: "ramp"
-    }, [0.15, 0.35, 0.55, 0.75].map(x => /*#__PURE__*/React.createElement("i", {
+    }, [0.15, 0.35, 0.55, 0.8].map(x => /*#__PURE__*/React.createElement("i", {
       key: x,
       style: {
         background: `color-mix(in oklch,var(--accent) ${x * 100}%,var(--surface))`
@@ -22211,24 +22299,13 @@ function VspHome3({
     title: "\u041E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u0438\u0437 \u0441\u043F\u0438\u0441\u043A\u0430 \u0441 \u0443\u0447\u0451\u0442\u043E\u043C \u0432\u044B\u0431\u0440\u0430\u043D\u043D\u044B\u0445 \u0444\u0438\u043B\u044C\u0442\u0440\u043E\u0432"
   }, "\u0421\u043A\u0430\u0447\u0430\u0442\u044C \u043E\u0431\u043E\u0441\u043D\u043E\u0432\u0430\u043D\u0438\u0435")), d.filtered && view === "list" && /*#__PURE__*/React.createElement("p", {
     className: "note"
-  }, "\u0424\u0438\u043B\u044C\u0442\u0440: \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u0438\u0437 \u0441\u043F\u0438\u0441\u043A\u0430, \u0433\u0434\u0435 \u0437\u0430 ", f.fresh ? "3 месяца" : "год", " \u0435\u0441\u0442\u044C \u0442\u0430\u043A\u0438\u0435 \u0442\u044F\u0436\u0451\u043B\u044B\u0435 \u0438\u0441\u0442\u043E\u0440\u0438\u0438."), view === "list" ? /*#__PURE__*/React.createElement(React.Fragment, null, d.list.length ? /*#__PURE__*/React.createElement("div", {
-    className: "vlist"
-  }, d.list.slice(0, lim).map(x => /*#__PURE__*/React.createElement(VRow, {
-    key: x.point,
-    x: x,
+  }, "\u0424\u0438\u043B\u044C\u0442\u0440: \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u0438\u0437 \u0441\u043F\u0438\u0441\u043A\u0430, \u0433\u0434\u0435 \u0437\u0430 ", f.fresh ? "3 месяца" : "год", " \u0435\u0441\u0442\u044C \u0442\u0430\u043A\u0438\u0435 \u0442\u044F\u0436\u0451\u043B\u044B\u0435 \u0438\u0441\u0442\u043E\u0440\u0438\u0438."), view === "list" ? /*#__PURE__*/React.createElement(React.Fragment, null, d.list.length ? /*#__PURE__*/React.createElement(VTierList, {
+    list: d.list,
     plan: plan,
-    onOpen: openPoint
-  }))) : /*#__PURE__*/React.createElement("div", {
+    openPoint: openPoint
+  }) : /*#__PURE__*/React.createElement("div", {
     className: "vempty"
-  }, "\u0417\u0434\u0435\u0441\u044C \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439 \u0441\u043E \u0441\u0445\u043E\u0434\u044F\u0449\u0438\u043C\u0438\u0441\u044F \u043F\u0440\u0438\u0437\u043D\u0430\u043A\u0430\u043C\u0438 \u043D\u0435\u0442. \u041F\u043E\u0441\u043C\u043E\u0442\u0440\u0438\u0442\u0435 \xAB\u0412\u0441\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F\xBB \u2014 \u0442\u0430\u043C \u043A\u0430\u0436\u0434\u043E\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0435 \u0441 \u0438\u0441\u0442\u043E\u0440\u0438\u044F\u043C\u0438."), d.list.length > lim && /*#__PURE__*/React.createElement("div", {
-    style: {
-      textAlign: "center",
-      margin: "10px 0"
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-ghost",
-    onClick: () => setLim(lim + 30)
-  }, "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0435\u0449\u0451"))) : /*#__PURE__*/React.createElement(VTable, {
+  }, "\u0417\u0434\u0435\u0441\u044C \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439 \u0441\u043E \u0441\u0445\u043E\u0434\u044F\u0449\u0438\u043C\u0438\u0441\u044F \u043F\u0440\u0438\u0437\u043D\u0430\u043A\u0430\u043C\u0438 \u043D\u0435\u0442. \u041F\u043E\u0441\u043C\u043E\u0442\u0440\u0438\u0442\u0435 \xAB\u0412\u0441\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F\xBB \u2014 \u0442\u0430\u043C \u043A\u0430\u0436\u0434\u043E\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0435 \u0441 \u0438\u0441\u0442\u043E\u0440\u0438\u044F\u043C\u0438.")) : /*#__PURE__*/React.createElement(VTable, {
     f: f,
     openPoint: openPoint,
     plan: plan
