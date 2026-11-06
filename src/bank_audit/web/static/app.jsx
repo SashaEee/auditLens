@@ -11045,8 +11045,8 @@ function VRow({x,plan,onOpen}){
 }
 
 const V_TIERS=[["urgent","Срочно","свежие очень тяжёлые случаи, пожилые клиенты, крупные суммы — за полгода"],
-  ["converged","Сошлось несколько признаков","разные клиенты, одна схема, необычно для ГОСБ"],
-  ["watch","Стоит посмотреть","признаки есть, но слабее"]];
+  ["converged","Сошлось несколько признаков","разные клиенты, одна схема, необычно для ГОСБ, очень тяжёлые случаи"],
+  ["watch","Ещё стоит посмотреть","давние истории или один-два признака"]];
 function VTierList({list,plan,openPoint}){
   const[more,setMore]=useState({});
   return <div className="vtiers">{V_TIERS.map(([k,title,sub])=>{const xs=list.filter(x=>(x.tier||"watch")===k); if(!xs.length) return null;

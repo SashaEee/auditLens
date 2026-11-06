@@ -198,7 +198,10 @@ def _mark_dups(stories: list[dict]) -> list[dict]:
     """Один и тот же текст у нескольких отделений (автор разослал жалобу по карточкам или карточка
     привязана не к тому ВСП): dup_points — у скольких ЕЩЁ отделений есть такая же история."""
     import re
-    key = lambda s: re.sub(r"[^а-яёa-z0-9]+", " ", (s.get("quote") or "").lower()).strip()[:160]
+    # по самому тексту отзыва (s["text"] — нормализованный: слова, нижний регистр): копии одного отзыва
+    # на разных карточках модель цитирует разными кусками, а текст у них один
+    key = lambda s: (s.get("text") or "")[:160] if len(s.get("text") or "") >= 60 else \
+        re.sub(r"[^а-яёa-z0-9]+", " ", (s.get("quote") or "").lower()).strip()[:160]
     pts: dict[str, set] = defaultdict(set)
     for s in stories:
         k = key(s)
@@ -340,7 +343,9 @@ def assess(points: dict[str, dict], stories: list[dict], recs, people_rows: list
         recent = now - timedelta(days=180)
         hot = [s for s in hv if s["at"] >= recent and (s["severity"] >= 3 or s.get("vulnerable")
                                                        or (s.get("money") or 0) >= 10000)]
-        tier = "urgent" if hot else "converged" if len(signals) >= 3 else "watch"
+        very = [s for s in hv if s["severity"] >= 3]
+        tier = ("urgent" if hot else "converged" if len(signals) >= 3 or (len(signals) >= 2 and very)
+                else "watch")
         moneys = [float(s["money"]) for s in hv if isinstance(s.get("money"), (int, float)) and s["money"] > 0]
         act_main = top_act or (best["actions"][0] if best["actions"] else "другое")
         info = ACTIONS.get(act_main, ACTIONS["другое"])

@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 7a17fea7ec4243d4ac58a80fac374f72fb5a14af673bfda59326aff8b4772285): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 96f4bc4277f96f8383eb8509fb0f28ed14fa38d65f741fb0c27b6131d83ed0d1): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -21811,7 +21811,7 @@ function VRow({
     "aria-hidden": "true"
   }, "\u2192"));
 }
-const V_TIERS = [["urgent", "Срочно", "свежие очень тяжёлые случаи, пожилые клиенты, крупные суммы — за полгода"], ["converged", "Сошлось несколько признаков", "разные клиенты, одна схема, необычно для ГОСБ"], ["watch", "Стоит посмотреть", "признаки есть, но слабее"]];
+const V_TIERS = [["urgent", "Срочно", "свежие очень тяжёлые случаи, пожилые клиенты, крупные суммы — за полгода"], ["converged", "Сошлось несколько признаков", "разные клиенты, одна схема, необычно для ГОСБ, очень тяжёлые случаи"], ["watch", "Ещё стоит посмотреть", "давние истории или один-два признака"]];
 function VTierList({
   list,
   plan,

@@ -82,3 +82,13 @@ def test_rules_fallback_marks_preliminary(db_url):
         d = json.loads(c.execute(select(branch_stats.c.detail_json).where(
             branch_stats.c.run_id == rid, branch_stats.c.point == f"b{ids['2']}")).scalar())
     assert "модель ещё читает" in d["risk"]["confidence"]["reason"]
+
+
+def test_same_review_on_two_branches_is_marked_even_with_different_quotes():
+    from bank_audit.vsp.signals.risk import _mark_dups
+    t = "мою маму пенсионерку обманули на 59 500 продали не ту услугу за которой она пришла деньги не возвращают"
+    xs = [{"point": "b1", "text": t, "quote": "Мою маму пенсионерку обманули на 59.500"},
+          {"point": "b2", "text": t, "quote": "продали не ту услугу за которой она пришла"},
+          {"point": "b3", "text": "совсем другой отзыв про кассу где недодали деньги при размене крупной купюры", "quote": "x"}]
+    out = _mark_dups(xs)
+    assert [s["dup_points"] for s in out] == [1, 1, 0]
