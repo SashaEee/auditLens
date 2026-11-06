@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 96f4bc4277f96f8383eb8509fb0f28ed14fa38d65f741fb0c27b6131d83ed0d1): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 66505f6befe588288bef5aea2eeb253ebea1a550f86163f1d505e4ab9ab16598): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -22745,7 +22745,7 @@ function VspStaff({
     className: "vrow-h"
   }, /*#__PURE__*/React.createElement(VDot, {
     on: (r.heavy || 0) > 0
-  }), /*#__PURE__*/React.createElement("b", null, r.full_name || r.name), /*#__PURE__*/React.createElement("span", {
+  }), /*#__PURE__*/React.createElement("b", null, r.name), /*#__PURE__*/React.createElement("span", {
     className: "note"
   }, where(r.place))), /*#__PURE__*/React.createElement("div", {
     className: "vrow-why"
@@ -22769,7 +22769,7 @@ function VspStaff({
     className: "vrow-h"
   }, /*#__PURE__*/React.createElement(VDot, {
     on: true
-  }), /*#__PURE__*/React.createElement("b", null, r.full_name || r.name), /*#__PURE__*/React.createElement("span", {
+  }), /*#__PURE__*/React.createElement("b", null, r.name), /*#__PURE__*/React.createElement("span", {
     className: "note"
   }, where(r.place))), /*#__PURE__*/React.createElement("div", {
     className: "vrow-why"

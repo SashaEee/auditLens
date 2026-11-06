@@ -11320,7 +11320,7 @@ function VspStaff({f,openPoint}){
       {d.source==="слова"?" Пока модель не дочитала отзывы, имена ищутся по словам — часть историй без имён.":""}</p>
     {sec("multi","Одного сотрудника называют разные клиенты","Один и тот же человек в жалобах нескольких независимых клиентов одного отделения — главный сигнал для проверки конкретного сотрудника.",multi,
       r=>row(r._k+r.place.point+r.name,r,<>
-        <div className="vrow-h"><VDot on={(r.heavy||0)>0}/><b>{r.full_name||r.name}</b><span className="note">{where(r.place)}</span></div>
+        <div className="vrow-h"><VDot on={(r.heavy||0)>0}/><b>{r.name}</b><span className="note">{where(r.place)}</span></div>
         <div className="vrow-why">Называют {r._n} {vPl(r._n,"разный клиент","разных клиента","разных клиентов")}{r._k==="m"?` · тяжёлых историй ${r.heavy}`:` · ${r.n} ${vPl(r.n,"отзыв","отзыва","отзывов")}`}
           {(r.actions||r.types||[]).length?` · ${(r.actions||r.types).join(", ")}`:""}</div>
         {r.quote&&<div className="vrow-q">«{r.quote}» <span className="note">· {r.last}</span></div>}
@@ -11332,7 +11332,7 @@ function VspStaff({f,openPoint}){
         {r.quote&&<div className="vrow-q">«{r.quote}» <span className="note">· {r.last}</span></div>}</>,r.id))}
     {sec("praise","Хвалят по имени там, где у отделения есть тяжёлые истории","Сама похвала не нарушение. Но волна похвал одному сотруднику от аккаунтов без других отзывов рядом с жалобами может прятать или «закрывать» жалобы.",d.praise,
       r=>row("p"+r.id,r,<>
-        <div className="vrow-h"><VDot on/><b>{r.full_name||r.name}</b><span className="note">{where(r.place)}</span></div>
+        <div className="vrow-h"><VDot on/><b>{r.name}</b><span className="note">{where(r.place)}</span></div>
         <div className="vrow-why">{vN(r.n)} {vPl(r.n,"отзыв","отзыва","отзывов")} с именем · {vN(r.oneoff)} из них — от аккаунтов без других отзывов ·{" "}
           <span className="flag risk">в отделении {r.heavy_here} {vPl(r.heavy_here,"тяжёлая история","тяжёлые истории","тяжёлых историй")}</span></div>
         <div className="note">{vD(r.first)} — {vD(r.last)}</div></>,r.id))}

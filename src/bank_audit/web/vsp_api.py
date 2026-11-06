@@ -1315,7 +1315,7 @@ def staff(subject: Optional[str] = None, gosb: Optional[str] = None, user: Curre
             continue
         row = {"id": x["id"], "name": _nom(x["name"]), "n": x["n"], "authors": x["authors"],
                "first": _iso(x["first_at"]), "last": _iso(x["last_at"]),
-               "oneoff": x["detail"].get("oneoff"), "full_name": _nom(x["detail"].get("full_name")) or None,
+               "oneoff": x["detail"].get("oneoff"), "full_name": bool(x["detail"].get("full_name")),
                "types": [RISK[k].label if k in RISK else k for k in (x["detail"].get("types") or {})],
                "heavy_here": heavy_by_pt.get(x["point"], 0), "place": _place(pts.get(x["point"]))}
         (comp if x["kind"] == "complaints" else praise).append(row)
@@ -1332,7 +1332,7 @@ def staff(subject: Optional[str] = None, gosb: Optional[str] = None, user: Curre
                   and _stems(mr["name"]) & pk), None)
         if m is not None:
             m.setdefault("id", r["id"])
-            m.setdefault("full_name", r.get("full_name"))
+            m.setdefault("full_name", bool(r.get("full_name")))
             m["authors"] = max(m.get("authors") or 0, r["authors"])
             m["clients"] = max(m["clients"], r["authors"])
         elif (r["name"] or "").strip():
