@@ -2084,13 +2084,15 @@ def _notify_waves(run) -> None:
                 return
             known = set(seen.get("keys") or [])
             fresh = [w for w in ups if w["key"] not in known]
-            # почерк важнее своего типа; в первый раз — не больше трёх строк, чтобы не засыпать
+            # почерк важнее своего типа
             motif_kinds = {w["kind"] for w in fresh if w["level"] == "motif"}
             fresh = [w for w in fresh if not (w["level"] == "kind" and w["kind"] in motif_kinds)]
-            if not seen:
-                fresh = fresh[:3]
-            users = set(beta_users()) | {u.strip() for u in os.getenv("VSP_USERS", "").split(",") if u.strip()} \
-                | {u.strip() for u in os.getenv("ADMIN_USERS", "").split(",") if u.strip()}
+            admins = {u.strip() for u in os.getenv("ADMIN_USERS", "").split(",") if u.strip()}
+            users = set(beta_users()) | {u.strip() for u in os.getenv("VSP_USERS", "").split(",") if u.strip()} | admins
+            if not known:
+                # первый расчёт с волнами: всё «новое» разом. Не засыпаем коллег — три строки и только владельцу;
+                # остальным уведомления пойдут со следующих изменений
+                fresh, users = fresh[:3], admins
             for w in fresh:
                 t = _wave_text(w)
                 notices.notify(users, "vsp_wave", link=f"#vsp?s=schemes&scheme={w['id']}",

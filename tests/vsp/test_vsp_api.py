@@ -1,6 +1,7 @@
 """API вкладки «Аудит сети ВСП» на синтетической сети: доступ, обзор, сигналы, профиль, отзывы, выгрузки."""
 from __future__ import annotations
 
+import json
 import random
 from datetime import datetime, timezone
 
@@ -344,3 +345,61 @@ def test_beta_invite_letter():
     assert "Фукс" not in m["html"]                                          # обращение только по имени
     assert "способов действия растут" in m["html"] and "срочно" not in m["html"] + m["text"]
     assert "None" not in vsp_invite.render(None, {"read": 1, "stories": 1, "reviews": 1})["text"]
+
+
+def test_wave_notice_first_run_goes_to_owner_only(monkeypatch):
+    """Колокольчик о волнах: в первый раз — только владельцу и не больше трёх строк; дальше — всем, кому открыт
+    раздел, и только о том, что стало «новым» или «растёт» с прошлого расчёта."""
+    import contextlib
+    import time
+    from bank_audit import db
+    from bank_audit.web import notices
+    store, sent = {}, []
+
+    class Sess:
+        def execute(self, sql, params=None):
+            q = str(sql)
+            if q.strip().startswith("SELECT"):
+                return type("R", (), {"scalar": lambda _s: store.get("v")})()
+            store["v"] = json.loads(params["v"])
+
+        def commit(self):
+            pass
+
+    @contextlib.contextmanager
+    def session():
+        yield Sess()
+
+    monkeypatch.setattr(db, "session", session)
+    monkeypatch.setattr(notices, "notify", lambda users, kind, **kw: sent.append((sorted(users), kind, kw["ref"]["key"], kw["link"])))
+    monkeypatch.setattr(vsp_api, "beta_users", lambda: ["colleague"])
+    monkeypatch.setenv("ADMIN_USERS", "owner")
+    monkeypatch.delenv("VSP_USERS", raising=False)
+
+    def wave(key, status, level="kind", kind=5):
+        return {"key": key, "status": status, "level": level, "kind": kind, "name": key, "clause": "", "year": 9,
+                "prev_year": 2, "recent": 5, "recent_expected": 1.0, "horizon": "year", "peak_year": 2024}
+
+    def fire(run_id, waves):
+        run_ = {"id": run_id, "network": {"waves": waves, "hotspots": []}, "points": {}}
+        vsp_api._NOTIFIED["run"] = None
+        vsp_api._notify_waves(run_)
+        for _ in range(100):
+            if (store.get("v") or {}).get("run") == run_id:
+                break
+            time.sleep(0.02)
+
+    fire(1, [])                                              # расчёт старого формата: волн нет — никому ничего
+    assert sent == [] and store["v"] == {"run": 1, "keys": []}
+    ws = [wave("k:5", "rising"), wave("m:m0501", "new", "motif"), wave("k:8", "new", kind=8), wave("k:9", "rising", kind=9),
+          wave("k:7", "steady", kind=7)]
+    fire(2, ws)
+    assert [x[0] for x in sent] == [["owner"]] * 3           # первый раз — только владельцу, три строки
+    assert "k:5" not in [x[2] for x in sent]                 # тип не дублирует свой почерк
+    assert sent[0][1] == "vsp_wave" and sent[0][3].startswith("#vsp?s=schemes&scheme=")
+    sent.clear()
+    fire(3, ws + [wave("k:16", "rising", kind=16)])
+    assert sent == [(["colleague", "owner"], "vsp_wave", "k:16", "#vsp?s=schemes&scheme=k16")]   # только новое — и всем
+    sent.clear()
+    fire(3, ws)                                              # тот же расчёт повторно — тишина
+    assert sent == []
