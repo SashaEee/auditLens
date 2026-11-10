@@ -1,0 +1,12 @@
+# Выкатка кода поверх рабочего прод-образа: меняются только src и migrations, зависимости — ровно те,
+# что уже работают на проде. Зачем: в pyproject версии не закреплены, и сборка с нуля (после чистки кэша
+# сборки 10.11.2026) тянет новые мажорные версии (openai 3, starlette 1, sqlalchemy 2.1, langchain 1.4) —
+# риск сломать приложение в неожиданных местах. Конфиги и entrypoint остаются из образа: дерево
+# ~/auditlens на сервере бывает старым. Полную сборку включает файл ~/auditlens/FULL_BUILD.
+# Базовый образ auditlens:prod-prev — копия текущего прода, её ставит скрипт выкатки перед сборкой.
+FROM auditlens:prod-prev
+USER root
+COPY src ./src
+COPY migrations ./migrations
+RUN chown -R appuser:appuser /app/src /app/migrations
+USER appuser
