@@ -5392,7 +5392,6 @@ function ReviewsPage({params}){
   const[anomTry,setAnomTry]=useState(0);
   const[ix,setIx]=useState(null),[rf,setRf]=useState(null),[chg,setChg]=useState(null);
   const[flag,setFlag]=useState(P.flag||"");            // признак риска — фильтр ленты
-  const[casesN,setCasesN]=useState(null);              // сколько дел видно пользователю
   const[radarAll,setRadarAll]=useState(false);         // разбор радара целиком
   // «Удобно / Компактно»: руководителю — воздух, аудитору, который листает
   // сотню жалоб, — плотность. Запоминается в этом браузере.
@@ -5401,8 +5400,6 @@ function ReviewsPage({params}){
   const[fine,setFine]=useState(()=>window.matchMedia("(hover: hover) and (min-width: 761px)").matches);
   useEffect(()=>{ const m=window.matchMedia("(hover: hover) and (min-width: 761px)");
     const h=()=>setFine(m.matches); m.addEventListener("change",h); return ()=>m.removeEventListener("change",h); },[]);
-  const loadCasesN=()=>apiFetch("/api/cases").then(d=>setCasesN((d.cases||[]).filter(c=>!c.deleted).length)).catch(()=>{});
-  useEffect(()=>{loadCasesN();},[]);
   // состояние → адрес
   useEffect(()=>{ const sp=new URLSearchParams();
     if(tab!=="overview")sp.set("tab",tab); if(bank!=="Сбербанк")sp.set("bank",bank);
@@ -5581,7 +5578,7 @@ function ReviewsPage({params}){
   const loadCaseUrls=()=>apiFetch("/api/cases/review-urls").then(d=>setCaseUrls(d.urls||{})).catch(()=>{});
   useEffect(()=>{loadCaseUrls();},[]);
   // панель «Аудит-дела» общая для всего приложения: после неё обновляем «в деле» и счётчик
-  useEffect(()=>{ const h=()=>{loadCaseUrls();loadCasesN();};
+  useEffect(()=>{ const h=()=>{loadCaseUrls();};
     window.addEventListener("al-cases",h); window.addEventListener("al-case-items",h);
     return ()=>{ window.removeEventListener("al-cases",h); window.removeEventListener("al-case-items",h); }; },[]); // eslint-disable-line
   const openReader=(list,idx,ctx,src)=>{ setRd({list,idx,ctx,src}); if(src==="feed")setCur(idx); };
@@ -6264,9 +6261,6 @@ function ReviewsPage({params}){
                     :`Следить за сигналами: ${bank}${product?" · "+rvProd(product):" · все продукты"} — новые всплески придут в колокольчик и в «С прошлого визита»`}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill={sub?"currentColor":"none"} stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
           <span className="rv-hact-l">{sub?"Слежу":"Следить"}</span></button>}
-        <button className="rv-bell" onClick={()=>openCases()} aria-label="Аудит-дела"
-          data-tip="подборки доказательств под проверку — ваши и те, куда вас пригласили">
-          <RvICase s={14}/><span className="rv-hact-l">Аудит-дела</span>{casesN?<span className="rv-hact-n">{casesN}</span>:null}</button>
       </div>
     </div>
 

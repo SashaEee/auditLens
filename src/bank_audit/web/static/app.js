@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 beee030889ac11487e3da5270a8f6171bc54ce7084a810f6c129488add78d046): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 966bf5b081937a014eea1a29d76abc4e561674163fb0b9cccb8d84da2a3156e4): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -10866,7 +10866,6 @@ function ReviewsPage({
     [rf, setRf] = useState(null),
     [chg, setChg] = useState(null);
   const [flag, setFlag] = useState(P.flag || ""); // признак риска — фильтр ленты
-  const [casesN, setCasesN] = useState(null); // сколько дел видно пользователю
   const [radarAll, setRadarAll] = useState(false); // разбор радара целиком
   // «Удобно / Компактно»: руководителю — воздух, аудитору, который листает
   // сотню жалоб, — плотность. Запоминается в этом браузере.
@@ -10890,10 +10889,6 @@ function ReviewsPage({
     const h = () => setFine(m.matches);
     m.addEventListener("change", h);
     return () => m.removeEventListener("change", h);
-  }, []);
-  const loadCasesN = () => apiFetch("/api/cases").then(d => setCasesN((d.cases || []).filter(c => !c.deleted).length)).catch(() => {});
-  useEffect(() => {
-    loadCasesN();
   }, []);
   // состояние → адрес
   useEffect(() => {
@@ -11216,7 +11211,6 @@ function ReviewsPage({
   useEffect(() => {
     const h = () => {
       loadCaseUrls();
-      loadCasesN();
     };
     window.addEventListener("al-cases", h);
     window.addEventListener("al-case-items", h);
@@ -12695,18 +12689,7 @@ function ReviewsPage({
     d: "M10.3 21a1.94 1.94 0 0 0 3.4 0"
   })), /*#__PURE__*/React.createElement("span", {
     className: "rv-hact-l"
-  }, sub ? "Слежу" : "Следить")), /*#__PURE__*/React.createElement("button", {
-    className: "rv-bell",
-    onClick: () => openCases(),
-    "aria-label": "\u0410\u0443\u0434\u0438\u0442-\u0434\u0435\u043B\u0430",
-    "data-tip": "\u043F\u043E\u0434\u0431\u043E\u0440\u043A\u0438 \u0434\u043E\u043A\u0430\u0437\u0430\u0442\u0435\u043B\u044C\u0441\u0442\u0432 \u043F\u043E\u0434 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0443 \u2014 \u0432\u0430\u0448\u0438 \u0438 \u0442\u0435, \u043A\u0443\u0434\u0430 \u0432\u0430\u0441 \u043F\u0440\u0438\u0433\u043B\u0430\u0441\u0438\u043B\u0438"
-  }, /*#__PURE__*/React.createElement(RvICase, {
-    s: 14
-  }), /*#__PURE__*/React.createElement("span", {
-    className: "rv-hact-l"
-  }, "\u0410\u0443\u0434\u0438\u0442-\u0434\u0435\u043B\u0430"), casesN ? /*#__PURE__*/React.createElement("span", {
-    className: "rv-hact-n"
-  }, casesN) : null))), product && sliceNotes[product] && /*#__PURE__*/React.createElement("div", {
+  }, sub ? "Слежу" : "Следить")))), product && sliceNotes[product] && /*#__PURE__*/React.createElement("div", {
     className: "rv-slice-note",
     role: "note"
   }, sliceNotes[product]), /*#__PURE__*/React.createElement("div", {
