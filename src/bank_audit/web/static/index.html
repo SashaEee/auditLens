@@ -4942,6 +4942,82 @@ html.dark .vsp{--shadow-3:0 1px 0 oklch(0% 0 0 / .35),0 16px 48px oklch(0% 0 0 /
   .vr .vr-frow select.vsel{max-width:none;flex:1 1 100%}.vr .vr-head{gap:10px;position:static}.vr .vr-search .vin{min-width:0;width:100%}.vr .vr-search{flex:1 1 100%;order:5}
   .vr .vr-cases{grid-template-columns:minmax(0,1fr)}.vr .vr-sigc{grid-template-columns:repeat(2,minmax(0,1fr))}.vr .vr-cmp-r{grid-template-columns:minmax(0,1fr) 60px}
   .vr .vr-cmp-r .note{grid-column:1/-1}.vr-layer{margin:0;height:100%;border-radius:0;width:100%!important}.vr .vr-display{font-size:clamp(28px,7.5vw,34px)}}
+
+/* ── знакомство с вкладкой (VTour): приветствие, подсветка шагов, итог ── */
+.vr.vt-root{position:fixed;inset:0;z-index:400}
+.vt-root .vt-block{position:absolute}
+.vt-root .vt-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;animation:vrFade var(--dur-base) var(--ease-out)}
+.vt-root .vt-shade{fill:oklch(0% 0 0 / .52)}
+.vt-root .vt-mr{transition:x var(--dur-slow) var(--ease-spring),y var(--dur-slow) var(--ease-spring),width var(--dur-slow) var(--ease-spring),height var(--dur-slow) var(--ease-spring)}
+.vt-root .vt-hole{position:absolute;border-radius:12px;pointer-events:none;
+  box-shadow:0 0 0 2px var(--surface),0 0 0 6px color-mix(in oklab,var(--select) 45%,transparent);
+  transition:left var(--dur-slow) var(--ease-spring),top var(--dur-slow) var(--ease-spring),width var(--dur-slow) var(--ease-spring),height var(--dur-slow) var(--ease-spring)}
+.vt-root .vt-card{position:absolute;display:grid;gap:9px;padding:16px 18px 14px;border-radius:14px;background:var(--surface);color:var(--ink);
+  box-shadow:var(--shadow-3),inset 0 0 0 1px var(--hair);outline:none;font-size:14px;line-height:1.5;
+  transition:left var(--dur-base) var(--ease-spring),top var(--dur-base) var(--ease-spring);animation:vtIn var(--dur-base) var(--ease-spring)}
+.vt-root .vt-prog{display:flex;gap:4px}
+.vt-root .vt-prog i{flex:1;height:3px;border-radius:2px;background:var(--hair-2);transition:background var(--dur-base)}
+.vt-root .vt-prog i.done{background:var(--ink-3)}
+.vt-root .vt-prog i.cur{background:var(--ink)}
+.vt-root .vt-prog i.gap{margin-left:5px}
+.vt-root .vt-step{display:flex;gap:6px;align-items:baseline}
+.vt-root .vt-step span:first-child{color:var(--ink)}
+.vt-root .vt-all{margin-left:auto;font-weight:500;letter-spacing:0}
+.vt-root .vt-try{font-size:13px!important;color:var(--ink-2)!important;padding:8px 10px;border-radius:8px;background:var(--select-soft);box-shadow:inset 2px 0 0 var(--select)}
+.vt-root .vt-try b{color:var(--ink)}
+.vr .vt-sig-note{grid-column:1/-1;font-size:12px;color:var(--ink-3);line-height:1.45;margin-top:2px}
+.vt-root .vt-step{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.vt-root .vt-card h3{margin:0;font-family:'Source Serif 4',Georgia,serif;font-size:20px;line-height:1.25;font-weight:600;letter-spacing:-.01em;text-wrap:balance}
+.vt-root .vt-card p{margin:0;font-size:14px;line-height:1.55;color:var(--ink-2);text-wrap:pretty}
+.vt-root .vt-miss{font-size:12.5px!important;color:var(--ink-3)!important}
+.vt-root .vt-foot{display:flex;align-items:center;gap:8px;margin-top:4px}
+.vr .vt-skip{font-size:12.5px;color:var(--ink-3);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--hair-2);padding:6px 0}
+.vr .vt-skip:hover{color:var(--ink)}
+.vr .vt-ex{display:grid;gap:4px;padding:10px 12px;border-radius:8px;background:var(--paper-2);font-size:12.5px;color:var(--ink-2)}
+.vr .vt-ex-r{display:flex;align-items:center;gap:6px}
+.vr .vt-ex-r.note{padding-left:19px;margin-top:-2px;font-size:12px;color:var(--ink-3)}
+.vr .vt-sigs{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px}
+.vr .vt-sig{display:flex;align-items:center;gap:8px}
+.vr .vt-sig .vr-sigd span{display:none}
+.vr .vt-keys{display:flex;flex-wrap:wrap;gap:6px 16px}
+.vr .vt-keys span{display:inline-flex;align-items:center;gap:4px}
+.vr .vt-keys kbd{font:500 11px var(--f-mono);min-width:20px;height:20px;padding:0 5px;display:inline-grid;place-items:center;border-radius:5px;
+  background:var(--surface);box-shadow:inset 0 0 0 1px var(--hair-2),0 1px 0 var(--hair-2);color:var(--ink)}
+.vr.vt-wrap{position:fixed;inset:0;z-index:400;display:grid;place-items:center;padding:16px;background:oklch(0% 0 0 / .42);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);animation:vrFade var(--dur-base) var(--ease-out)}
+.vt-wrap .vt-modal{width:min(720px,100%);max-height:calc(100vh - 32px);overflow:auto;background:var(--surface);color:var(--ink);border-radius:18px;
+  box-shadow:var(--shadow-3),inset 0 0 0 1px var(--hair);outline:none;animation:vtIn var(--dur-slow) var(--ease-spring)}
+.vt-wrap .vt-m-top{padding:28px 32px 4px;display:grid;gap:10px}
+.vt-wrap .vt-display{margin:0;font-family:'Instrument Serif',Georgia,serif;font-weight:400;font-size:clamp(32px,5vw,42px);line-height:1.04;letter-spacing:-.012em;text-wrap:balance}
+.vt-wrap .vt-display.sm{font-size:clamp(28px,4vw,36px)}
+.vt-wrap .vt-display em{font-style:italic;color:var(--accent)}
+.vt-wrap .vt-lede{margin:0;font-family:'Source Serif 4',Georgia,serif;font-size:16.5px;line-height:1.55;color:var(--ink-2);text-wrap:pretty}
+.vt-wrap .vt-tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;padding:18px 32px 0}
+.vt-wrap .vt-tile{display:grid;gap:4px;align-content:start;padding-top:10px;border-top:2px solid var(--ink);font-size:13px;color:var(--ink-2);line-height:1.4}
+.vt-wrap .vt-tile b{font-size:14.5px;color:var(--ink)}
+.vt-wrap .vt-n{font-family:'Source Serif 4',Georgia,serif;font-size:13px;font-weight:600;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.vt-wrap .vt-reco{display:flex;gap:10px;align-items:flex-start;margin:20px 32px 0;padding:12px 14px;border-radius:10px;background:var(--select-soft);
+  box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--select) 22%,transparent);font-size:13.5px;line-height:1.5;color:var(--ink-2)}
+.vt-wrap .vt-reco svg{flex:none;margin-top:3px}
+.vt-wrap .vt-reco b{color:var(--ink)}
+.vt-wrap .vt-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:22px 32px 26px}
+.vt-wrap .vt-done{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:color-mix(in oklab,var(--pos) 14%,transparent)}
+.vt-wrap .vt-done svg{width:22px;height:22px}
+.vt-wrap .vt-rules{margin:14px 32px 0;padding:0;list-style:none;counter-reset:r;display:grid;gap:10px}
+.vt-wrap .vt-rules li{counter-increment:r;display:grid;grid-template-columns:28px minmax(0,1fr);gap:2px 10px;font-size:14px;line-height:1.5;color:var(--ink-2)}
+.vt-wrap .vt-rules li::before{content:"0" counter(r);font-family:'Source Serif 4',Georgia,serif;font-weight:600;color:var(--ink-3);font-variant-numeric:tabular-nums;grid-row:span 2}
+.vt-wrap .vt-rules b{color:var(--ink)}
+.vt-wrap .vt-note{margin:16px 32px 0;font-size:12.5px;color:var(--ink-3);text-wrap:pretty}
+.vr .vt-again{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 14px;margin:0 0 6px;border-radius:10px;background:var(--select-soft)}
+.vr .vt-again>div{flex:1;display:grid;gap:2px}
+.vr .vt-again .note{font-size:12.5px}
+.vr .vr-htools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+@keyframes vtIn{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.vt-root .vt-hole,.vt-root .vt-card,.vt-root .vt-mr{transition:none}.vt-root .vt-card,.vt-wrap .vt-modal,.vr.vt-wrap,.vt-root .vt-svg{animation:none}}
+@media (max-width:760px){.vt-wrap .vt-m-top{padding:22px 20px 2px}.vt-wrap .vt-tiles{grid-template-columns:repeat(2,minmax(0,1fr));padding:14px 20px 0}
+  .vt-wrap .vt-reco{margin:16px 20px 0}.vt-wrap .vt-actions{padding:18px 20px 20px}.vt-wrap .vt-rules{margin:12px 20px 0}.vt-wrap .vt-note{margin:14px 20px 0}
+  .vr .vr-htools{flex:1 1 100%}.vr .vr-htools .vr-search{flex:1}.vt-root .vt-card{max-height:64vh;overflow:auto;padding-bottom:0}
+  .vt-root .vt-foot{position:sticky;bottom:0;margin:4px -18px 0;padding:10px 18px 12px;background:var(--surface);box-shadow:0 -1px 0 var(--hair)}}
 </style>
 </head>
 <body>

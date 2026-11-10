@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 966bf5b081937a014eea1a29d76abc4e561674163fb0b9cccb8d84da2a3156e4): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 e95b455dacc8cd8e5a27a7b9ea04bcc33abb70527ebdc49c0c33621b80d09480): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -21651,6 +21651,7 @@ function VCaseCard({
   }, vPlace(P)), !hidePlace && sz !== "row" && /*#__PURE__*/React.createElement("span", null, vCode(P), P.gosb ? ` · ГОСБ ${P.gosb}` : ""), /*#__PURE__*/React.createElement("span", null, vDay(c.date || c.at)));
   if (sz === "row") return /*#__PURE__*/React.createElement("div", {
     className: "vr-case row",
+    "data-rid": c.rid,
     role: "button",
     tabIndex: 0,
     onClick: open,
@@ -21662,7 +21663,8 @@ function VCaseCard({
   }, facts.join(" · ")));
   const q = c.quote && c.episode ? sz === "list" ? vCut(c.quote, 260) : c.quote : null;
   return /*#__PURE__*/React.createElement("article", {
-    className: "vr-case " + sz
+    className: "vr-case " + sz,
+    "data-rid": c.rid
   }, meta, /*#__PURE__*/React.createElement("h3", {
     className: "vr-chead"
   }, head), facts.length > 0 && /*#__PURE__*/React.createElement("div", {
@@ -21819,7 +21821,8 @@ function VFilterBar({
     })
   }, l);
   return /*#__PURE__*/React.createElement("div", {
-    className: "vr-fbar" + (open ? " open" : "")
+    className: "vr-fbar" + (open ? " open" : ""),
+    "data-tour": "filters"
   }, /*#__PURE__*/React.createElement("button", {
     className: "vr-tg vr-ftoggle",
     "aria-expanded": open,
@@ -22290,7 +22293,8 @@ function VMain({
   }, /*#__PURE__*/React.createElement("div", {
     className: "vr-main-l"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "vr-scope"
+    className: "vr-scope",
+    "data-tour": "scope"
   }, /*#__PURE__*/React.createElement("span", {
     className: "eyebrow"
   }, "\u0413\u043B\u0430\u0432\u043D\u043E\u0435", P ? ` · ${P.days === 90 ? "последние три месяца" : "последние полгода"}` : ""), /*#__PURE__*/React.createElement("label", {
@@ -22308,17 +22312,20 @@ function VMain({
     key: r.code,
     value: r.code
   }, r.name))))), /*#__PURE__*/React.createElement("h2", {
-    className: "vr-display"
+    className: "vr-display",
+    "data-tour": "headline"
   }, P ? /*#__PURE__*/React.createElement(React.Fragment, null, P.text, P.accent ? /*#__PURE__*/React.createElement(React.Fragment, null, " \u2014 ", /*#__PURE__*/React.createElement("em", null, P.accent)) : null) : /*#__PURE__*/React.createElement(React.Fragment, null, "\u0417\u0430 \u0433\u043E\u0434 \u2014 ", vN(k.heavy_year), " ", vPl(k.heavy_year, "тяжёлая история", "тяжёлые истории", "тяжёлых историй"), " \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432 \u0432 ", vN(k.points_year), " ", vPl(k.points_year, "отделении", "отделениях", "отделениях"))), /*#__PURE__*/React.createElement("p", {
     className: "vr-lede"
   }, P && P.examples.length > 1 ? /*#__PURE__*/React.createElement(React.Fragment, null, "\u041D\u0430\u043F\u0440\u0438\u043C\u0435\u0440: ", P.examples.map((e, i) => /*#__PURE__*/React.createElement(React.Fragment, {
     key: e.rid
-  }, i ? "; " : "", (e.place || {}).city, ", ", vDay(e.date))), ". ") : null, k.heavy_year != null && /*#__PURE__*/React.createElement(React.Fragment, null, "\u0417\u0430 \u0433\u043E\u0434 \u0442\u044F\u0436\u0451\u043B\u044B\u0445 \u0438\u0441\u0442\u043E\u0440\u0438\u0439 ", vN(k.heavy_year), scopeName ? ` (${scopeName})` : "", ", \u0438\u0437 \u043D\u0438\u0445 ", vN(k.vulnerable_year), " \u2014 \u043E \u043F\u043E\u0436\u0438\u043B\u044B\u0445 \u0438 \u0443\u044F\u0437\u0432\u0438\u043C\u044B\u0445. ", yTxt ? /*#__PURE__*/React.createElement(React.Fragment, null, "\u042D\u0442\u043E ", yTxt, hTxt, ".") : null)), hero && /*#__PURE__*/React.createElement(VCaseCard, {
+  }, i ? "; " : "", (e.place || {}).city, ", ", vDay(e.date))), ". ") : null, k.heavy_year != null && /*#__PURE__*/React.createElement(React.Fragment, null, "\u0417\u0430 \u0433\u043E\u0434 \u0442\u044F\u0436\u0451\u043B\u044B\u0445 \u0438\u0441\u0442\u043E\u0440\u0438\u0439 ", vN(k.heavy_year), scopeName ? ` (${scopeName})` : "", ", \u0438\u0437 \u043D\u0438\u0445 ", vN(k.vulnerable_year), " \u2014 \u043E \u043F\u043E\u0436\u0438\u043B\u044B\u0445 \u0438 \u0443\u044F\u0437\u0432\u0438\u043C\u044B\u0445. ", yTxt ? /*#__PURE__*/React.createElement(React.Fragment, null, "\u042D\u0442\u043E ", yTxt, hTxt, ".") : null)), hero && /*#__PURE__*/React.createElement("div", {
+    "data-tour": "case"
+  }, /*#__PURE__*/React.createElement(VCaseCard, {
     c: hero,
     size: "lead",
     openPoint: openPoint,
     plan: plan
-  }), P && P.examples.length > 1 && /*#__PURE__*/React.createElement("div", {
+  })), P && P.examples.length > 1 && /*#__PURE__*/React.createElement("div", {
     className: "vr-same"
   }, /*#__PURE__*/React.createElement("div", {
     className: "vr-same-h"
@@ -22337,7 +22344,8 @@ function VMain({
     size: "row",
     openPoint: openPoint
   })))), /*#__PURE__*/React.createElement("aside", {
-    className: "vr-aside"
+    className: "vr-aside",
+    "data-tour": "check"
   }, /*#__PURE__*/React.createElement("div", {
     className: "eyebrow"
   }, "\u0427\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C"), /*#__PURE__*/React.createElement("div", {
@@ -22392,7 +22400,9 @@ function VMain({
     className: "note"
   }, "\u0447\u0442\u043E \u0434\u0435\u043B\u0430\u044E\u0442 \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u0438, \u0430 \u043D\u0435 \u0431\u0430\u043D\u043A \xB7 \u0442\u044F\u0436\u0451\u043B\u044B\u0435 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u0437\u0430 \u0433\u043E\u0434")), /*#__PURE__*/React.createElement("div", {
     className: "vr-grid2"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h4", {
+  }, /*#__PURE__*/React.createElement("div", {
+    "data-tour": "insiders"
+  }, /*#__PURE__*/React.createElement("h4", {
     className: "vr-h4"
   }, "\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u044F \xAB\u0438\u0437\u043D\u0443\u0442\u0440\u0438\xBB"), /*#__PURE__*/React.createElement(VBarList, {
     items: b.insiders,
@@ -22731,7 +22741,8 @@ function VQueue({
     watch: "Давние истории или один-два признака."
   }[tier];
   return /*#__PURE__*/React.createElement("div", {
-    className: "vr-queue"
+    className: "vr-queue",
+    "data-tour": "queue"
   }, /*#__PURE__*/React.createElement("div", {
     className: "vr-q-l"
   }, /*#__PURE__*/React.createElement("div", {
@@ -22874,7 +22885,8 @@ function VWhere({
   }, sigR.length > 1 ? /*#__PURE__*/React.createElement(React.Fragment, null, "\u0417\u0430\u043C\u0435\u0442\u043D\u043E \u0432\u044B\u0448\u0435 \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u043E\u0433\u043E \u0435\u0449\u0451 ", sigR.length - 1, " ", vPl(sigR.length - 1, "регион", "региона", "регионов"), ": ", sigR.slice(1, 6).map(r => `${vRegionShort(r.name)} (×${vX(r.ratio)})`).join(", "), ". ") : null, "\u041E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 \u2014 ", vX(m.net_per100), " \u0442\u044F\u0436\u0451\u043B\u043E\u0439 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u043D\u0430 100 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u0437\u0430 \u0433\u043E\u0434, \u043A\u0430\u043A \u0432 \u0441\u0440\u0435\u0434\u043D\u0435\u043C \u043F\u043E \u0441\u0435\u0442\u0438.")), /*#__PURE__*/React.createElement("div", {
     className: "vr-mapgrid"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "vr-card"
+    className: "vr-card",
+    "data-tour": "map"
   }, /*#__PURE__*/React.createElement("div", {
     className: "vr-maphead"
   }, /*#__PURE__*/React.createElement("span", {
@@ -22981,7 +22993,8 @@ function VWhere({
   }, "\xD7", vX(r.ratio))))) : /*#__PURE__*/React.createElement("div", {
     className: "vempty"
   }, "\u041D\u0435\u0442")))), /*#__PURE__*/React.createElement("div", {
-    className: "vr-grid2 gosb"
+    className: "vr-grid2 gosb",
+    "data-tour": "gosb"
   }, /*#__PURE__*/React.createElement("div", {
     className: "vr-card"
   }, /*#__PURE__*/React.createElement("h4", {
@@ -23136,7 +23149,8 @@ function VStoriesAll({
   return /*#__PURE__*/React.createElement("div", {
     className: "vr-stories"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "vr-tools"
+    className: "vr-tools",
+    "data-tour": "stools"
   }, /*#__PURE__*/React.createElement("label", {
     className: "vin",
     style: {
@@ -23406,7 +23420,8 @@ function VStoriesHub({
   const [facets, setFacets] = useState(null);
   const V = [["all", "Все"], ["people", "По сотрудникам"], ["schemes", "По схемам"]];
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "vr-hubtop"
+    className: "vr-hubtop",
+    "data-tour": "views"
   }, /*#__PURE__*/React.createElement("div", {
     className: "vr-seg2",
     role: "tablist",
@@ -23603,7 +23618,8 @@ function VEvidenceBody({
     actions: s.actions || []
   }, true);
   return /*#__PURE__*/React.createElement("div", {
-    className: "vr-ev"
+    className: "vr-ev",
+    "data-tour": "evidence"
   }, /*#__PURE__*/React.createElement("div", {
     className: "vr-meta"
   }, /*#__PURE__*/React.createElement("span", {
@@ -23992,7 +24008,8 @@ function VDossierLayer({
   }) : d.err ? /*#__PURE__*/React.createElement(ErrState, {
     msg: "\u0414\u043E\u0441\u044C\u0435 \u043D\u0435 \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u043B\u043E\u0441\u044C"
   }) : /*#__PURE__*/React.createElement("article", {
-    className: "vdos vr-dos"
+    className: "vdos vr-dos",
+    "data-tour": "dossier"
   }, /*#__PURE__*/React.createElement("div", {
     className: "note"
   }, d.vol_2y != null ? `${vN(d.vol_2y)} ${vPl(d.vol_2y, "отзыв", "отзыва", "отзывов")} за 2 года` : "", stories.length ? ` · историй ${stories.length}, тяжёлых ${heavy.length}` : ""), /*#__PURE__*/React.createElement("div", {
@@ -24444,6 +24461,629 @@ function VSearchBox({
   }, "\u041D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u043D\u0430\u0448\u043B\u043E\u0441\u044C")));
 }
 
+// ── знакомство с вкладкой: приветствие, 15 шагов по главам с подсветкой, итог ─
+// Учит работать, а не описывает экран: как читать случай и признаки, что делает каждый
+// фильтр, как пользоваться картой, очередью, досье и проверкой отзыва. Показывается один
+// раз каждому, у кого есть доступ (и владельцу); где остановились — в профиле (prefs.vsp_tour).
+// Пройти снова — «Знакомство» в шапке раздела или в «Как это работает».
+// open — что открыть перед шагом (досье первого отделения очереди, затем его первую историю);
+// в подсвеченной области можно нажимать — «Попробуйте» подсказывает, что именно.
+const V_TOUR_CH = [["Главное", 5], ["Где проверить", 4], ["Досье и проверка", 2], ["Истории", 2], ["Работа", 2]];
+const V_TOUR = [{
+  ch: 0,
+  s: "main",
+  sel: "scope",
+  t: "Сводка — по сети или по своему региону",
+  x: "«Сводка по» пересчитывает всю страницу под выбранный регион: заголовок, главный случай, «Что проверить» и графики. Выбранный регион сохранится и в разделах «Где проверить» и «Истории».",
+  tr: "выберите свой регион, посмотрите, как поменялся заголовок, и верните «вся сеть»."
+}, {
+  ch: 0,
+  s: "main",
+  sel: "headline",
+  t: "Заголовок — схема, которая повторяется",
+  x: "Код берёт истории за последние три месяца и ищет одно и то же действие у клиентов трёх и больше разных отделений. Первыми идут действия «изнутри»: работа в телефоне клиента, касса, утечка данных. Красный курсив — кто чаще пострадал. Ниже — города примеров и как меняется число тяжёлых историй."
+}, {
+  ch: 0,
+  s: "main",
+  sel: "case",
+  t: "Как читать случай",
+  ex: "verbatim",
+  x: "Красная точка — очень тяжёлая история, серая — тяжёлая; дальше место, код ВСП, ГОСБ и дата. Заголовок — пересказ модели, под ним всегда в одном порядке: кто пострадал · что сделали · сумма по словам клиента. Цитата — слова клиента."
+}, {
+  ch: 0,
+  s: "main",
+  sel: "check",
+  t: "Уровни и пять признаков",
+  ex: "sig",
+  x: "«Срочно» — за полгода есть очень тяжёлая история, пострадал пожилой или уязвимый клиент или названа сумма от 10 000 ₽. «Сходятся признаки» — сработали три признака и больше. «Под наблюдением» — остальные. Квадраты под отделением — пять признаков, закрашен — сработал."
+}, {
+  ch: 0,
+  s: "main",
+  sel: "insiders",
+  t: "Каждая строка ведёт в истории",
+  x: "Блоки «Главного» — не просто графики. Строка «доступ к телефону клиента» откроет все такие истории за год, имя справа — досье отделения, клетка «пенсионер × без согласия» ниже — истории пенсионеров с этим действием, регион в «Почему мы так думаем» — его отделения. Числа везде — тяжёлые истории.",
+  tr: "нажмите строку — откроется раздел «Истории» уже с этим фильтром."
+}, {
+  ch: 1,
+  s: "where",
+  sel: "filters",
+  t: "Фильтры: сузить до своего вопроса",
+  ex: "filters",
+  x: "Регион и ГОСБ — где искать. «Что сделали» — тип нарушения, рядом число историй. «Пожилые и уязвимые» и «назван сотрудник» оставляют отделения, где за год были такие тяжёлые истории; «за 3 месяца» — только свежие. Формат — например, только отделения со СберПервым.",
+  tr: "включите «пожилые и уязвимые» — под фильтрами появится строка «Показано» с крестиком."
+}, {
+  ch: 1,
+  s: "where",
+  sel: "map",
+  t: "Карта: где больше, чем ожидалось",
+  ex: "ramp",
+  x: d => `Для каждого региона код считает ожидание — сколько тяжёлых историй было бы при среднем по сети${d.net ? `: ${vX(d.net)} на 100 отзывов` : ""}. Цвет — во сколько раз факт больше. Красный — превышение не похоже на случайность: шанс получить столько случайно меньше 1 %. Штриховка — меньше 300 отзывов за год, выводов не делаем.`,
+  tr: "нажмите регион — справа появятся его ГОСБ и отделения; «К прошлому году» покажет, где стало больше."
+}, {
+  ch: 1,
+  s: "where",
+  sel: "gosb",
+  t: "ГОСБ сверх своего размера",
+  x: "Точка — ГОСБ: по горизонтали — сколько тяжёлых историй ожидалось по числу отзывов, по вертикали — сколько есть. Выше частого пунктира — больше ожидаемого, выше редкого — вдвое больше. Красные точки и строки таблицы — значимые. Нажатие ставит фильтр на этот ГОСБ, повторное — снимает."
+}, {
+  ch: 1,
+  s: "where",
+  sel: "queue",
+  t: "Очередь: список и доказательство рядом",
+  ex: "keys",
+  x: "Вкладки «Срочно / Сходятся / Наблюдать» — уровни с числом отделений. В строке — место, дата главной истории, пересказ, сколько клиентов, сумма и признаки. Справа уже открыто: каждый признак с цифрами, главная история целиком с подсветкой цитаты и безобидное объяснение с тем, что его исключит.",
+  tr: "«Таблица» над очередью — все отделения с сортировкой по столбцам, «Обоснование» — Excel по текущим фильтрам."
+}, {
+  ch: 2,
+  s: "where",
+  sel: "dossier",
+  open: "point",
+  t: "Досье отделения",
+  x: "Всё об одном ВСП: паспорт и карточки на площадках, почему в списке, хроника историй с фильтром по типам, сравнение с похожими отделениями ГОСБ, люди, что запросить (у ГОСБ, в центре или у ВСП) и что проверить, все отзывы с фильтрами. Сверху — «+ В план» и «Лист проверки» в Word.",
+  tr: "прокрутите досье — у него своя ссылка, её можно отправить коллеге."
+}, {
+  ch: 2,
+  s: "where",
+  sel: "evidence",
+  open: "story",
+  t: "Проверка истории",
+  ex: "verbatim",
+  x: "Отзыв целиком, слова клиента подсвечены. Ниже — проверки кодом: дословна ли цитата, написано ли названное имя в тексте. Площадки не дают ссылку на отдельный отзыв, поэтому «Оригинал» открывает отзывы отделения, а «Скопировать начало отзыва» помогает найти его поиском по странице. «Что поняла модель» — пересказ, сверяйте с текстом."
+}, {
+  ch: 3,
+  s: "stories",
+  sel: "stools",
+  t: "Истории: поиск и выгрузка",
+  x: "Здесь те же фильтры, что в «Где проверить», плюс тяжесть, период и «названа сумма». Поиск ищет по словам клиента, имени сотрудника и продукту, можно часть слова. Порядок — сначала новые или сначала тяжёлые. «Выгрузить в Excel» выгружает ровно то, что на экране.",
+  tr: "наберите «страховк» — найдутся «страховка», «страховку», «страхование»."
+}, {
+  ch: 3,
+  s: "stories",
+  sel: "views",
+  t: "По сотрудникам и по схемам",
+  x: "«По сотрудникам» — кого называют несколько разных клиентов одного отделения, кого назвал один клиент в тяжёлой истории, посредники и «по знакомству». Имена — как написали клиенты; тёзки в разных ВСП не связываются. «По схемам» — группы похожих историй по смыслу: где встречаются и что проверить по теме."
+}, {
+  ch: 4,
+  s: "stories",
+  sel: "tools",
+  t: "Найти и отложить",
+  ex: "kbd",
+  x: "Поиск — по коду ВСП, адресу, имени или фразе из отзыва. «+ В план» есть в каждом случае, строке очереди и досье, добавление можно отменить. В «Плане проверки» — листы проверки по всем отделениям одним файлом Word, обоснование и истории в Excel. План хранится в этом браузере."
+}, {
+  ch: 4,
+  s: "stories",
+  sel: "help",
+  t: "Методика и обратная связь",
+  x: "«Как это работает» — как считаются уровни, признаки и карта и чего не видно в данных. «Обучение» рядом — пройти эти шаги ещё раз. Нашли ошибку или интересный случай — «Обратная связь» внизу меню: читаем всё."
+}];
+const vReduced = () => {
+  try {
+    return matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch (e) {
+    return false;
+  }
+};
+const vToday = () => new Date().toISOString().slice(0, 10);
+function VTourExtra({
+  k
+}) {
+  if (k === "verbatim") return /*#__PURE__*/React.createElement("div", {
+    className: "vt-ex"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "vt-ex-r"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "vr-ok",
+    style: {
+      padding: 0
+    }
+  }, /*#__PURE__*/React.createElement(VCheck, null), "\u0434\u043E\u0441\u043B\u043E\u0432\u043D\u043E \xB7 \u042F\u043D\u0434\u0435\u043A\u0441 \u041A\u0430\u0440\u0442\u044B, 6 \u043D\u043E\u044F\u0431\u0440\u044F")), /*#__PURE__*/React.createElement("div", {
+    className: "vt-ex-r note"
+  }, "\u043A\u043E\u0434 \u043D\u0430\u0448\u0451\u043B \u0446\u0438\u0442\u0430\u0442\u0443 \u0432 \u0442\u0435\u043A\u0441\u0442\u0435 \u043E\u0442\u0437\u044B\u0432\u0430"), /*#__PURE__*/React.createElement("div", {
+    className: "vt-ex-r"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "vr-ok",
+    style: {
+      padding: 0
+    }
+  }, "\u043D\u0435 \u0434\u043E\u0441\u043B\u043E\u0432\u043D\u043E \u2014 \u043F\u0435\u0440\u0435\u0441\u043A\u0430\u0437 \u043C\u043E\u0434\u0435\u043B\u0438")), /*#__PURE__*/React.createElement("div", {
+    className: "vt-ex-r note"
+  }, "\u0446\u0438\u0442\u0430\u0442\u0443 \u043D\u0435 \u043D\u0430\u0448\u043B\u0438 \u2014 \u0440\u0435\u0448\u0430\u0439\u0442\u0435 \u043F\u043E \u043F\u043E\u043B\u043D\u043E\u043C\u0443 \u0442\u0435\u043A\u0441\u0442\u0443"));
+  if (k === "sig") return /*#__PURE__*/React.createElement("div", {
+    className: "vt-ex vt-sigs"
+  }, V_SIG.map(([key, l, off], i) => /*#__PURE__*/React.createElement("div", {
+    key: key,
+    className: "vt-sig"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "vr-sigd"
+  }, V_SIG.map(([k2], j) => /*#__PURE__*/React.createElement("i", {
+    key: k2,
+    className: j === i ? "on" : ""
+  }))), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, l)))), /*#__PURE__*/React.createElement("div", {
+    className: "vt-sig-note"
+  }, "\u0440\u0430\u0437\u043D\u044B\u0435 \u043A\u043B\u0438\u0435\u043D\u0442\u044B \u0441 \u0442\u044F\u0436\u0451\u043B\u044B\u043C\u0438 \u0438\u0441\u0442\u043E\u0440\u0438\u044F\u043C\u0438 \xB7 \u043E\u0434\u043D\u043E \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435 \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u0435\u0442\u0441\u044F \xB7 \u043E\u0434\u043D\u043E \u0438\u043C\u044F \u0443 \u0440\u0430\u0437\u043D\u044B\u0445 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432 \xB7 \u0431\u043E\u043B\u044C\u0448\u0435, \u0447\u0435\u043C \u043E\u0436\u0438\u0434\u0430\u043B\u043E\u0441\u044C \u0434\u043B\u044F \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u0442\u0430\u043A\u043E\u0433\u043E \u0440\u0430\u0437\u043C\u0435\u0440\u0430 \xB7 \u043F\u043E\u0441\u0440\u0435\u0434\u043D\u0438\u043A\u0438 \u0438\u043B\u0438 \u0432\u043E\u043B\u043D\u0430 \u043F\u043E\u0445\u0432\u0430\u043B\u044B \u0442\u043E\u043C\u0443, \u043D\u0430 \u043A\u043E\u0433\u043E \u0436\u0430\u043B\u0443\u044E\u0442\u0441\u044F"));
+  if (k === "ramp") return /*#__PURE__*/React.createElement("div", {
+    className: "vt-ex"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "vr-legend",
+    style: {
+      borderTop: 0,
+      paddingTop: 0
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "vr-ramp"
+  }, /*#__PURE__*/React.createElement("i", {
+    className: "low"
+  }), /*#__PURE__*/React.createElement("i", {
+    className: "avg"
+  }), /*#__PURE__*/React.createElement("i", {
+    className: "mid"
+  }), /*#__PURE__*/React.createElement("i", {
+    className: "hi"
+  }), "\u043C\u0435\u043D\u044C\u0448\u0435 \u2192 \u0431\u043E\u043B\u044C\u0448\u0435 \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u043E\u0433\u043E"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("i", {
+    className: "vr-sw sig"
+  }), "\u043D\u0435 \u043F\u043E\u0445\u043E\u0436\u0435 \u043D\u0430 \u0441\u043B\u0443\u0447\u0430\u0439\u043D\u043E\u0441\u0442\u044C"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("i", {
+    className: "vr-sw few"
+  }), "\u043C\u0430\u043B\u043E \u043E\u0442\u0437\u044B\u0432\u043E\u0432")));
+  if (k === "filters") return /*#__PURE__*/React.createElement("div", {
+    className: "vt-ex"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "vt-ex-r"
+  }, "\u0412\u0441\u0451 \u0432\u043A\u043B\u044E\u0447\u0451\u043D\u043D\u043E\u0435 \u2014 \u0432 \u0441\u0442\u0440\u043E\u043A\u0435 ", /*#__PURE__*/React.createElement("span", {
+    className: "vr-fchip",
+    style: {
+      height: 22
+    }
+  }, "\u043F\u043E\u0436\u0438\u043B\u044B\u0435 \u0438 \u0443\u044F\u0437\u0432\u0438\u043C\u044B\u0435", /*#__PURE__*/React.createElement("button", {
+    tabIndex: -1,
+    "aria-hidden": "true"
+  }, "\u2715"))), /*#__PURE__*/React.createElement("div", {
+    className: "vt-ex-r note",
+    style: {
+      paddingLeft: 0
+    }
+  }, "\u0424\u0438\u043B\u044C\u0442\u0440\u044B \u0445\u0440\u0430\u043D\u044F\u0442\u0441\u044F \u0432 \u0430\u0434\u0440\u0435\u0441\u0435 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B: \u0441\u043A\u043E\u043F\u0438\u0440\u0443\u0439\u0442\u0435 \u0435\u0433\u043E \u2014 \u043A\u043E\u043B\u043B\u0435\u0433\u0430 \u0443\u0432\u0438\u0434\u0438\u0442 \u0440\u043E\u0432\u043D\u043E \u044D\u0442\u043E\u0442 \u0441\u0440\u0435\u0437."));
+  if (k === "keys") return /*#__PURE__*/React.createElement("div", {
+    className: "vt-ex vt-keys"
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("kbd", null, "\u2191"), /*#__PURE__*/React.createElement("kbd", null, "\u2193"), " \u043F\u043E \u0441\u043F\u0438\u0441\u043A\u0443"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("kbd", null, "Enter"), " \u0434\u043E\u0441\u044C\u0435"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("kbd", null, "Esc"), " \u0437\u0430\u043A\u0440\u044B\u0442\u044C \u0441\u043B\u043E\u0439"));
+  if (k === "kbd") return /*#__PURE__*/React.createElement("div", {
+    className: "vt-ex vt-keys"
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("kbd", null, "\u2318"), /*#__PURE__*/React.createElement("kbd", null, "K"), " \u0438\u043B\u0438 ", /*#__PURE__*/React.createElement("kbd", null, "Ctrl"), /*#__PURE__*/React.createElement("kbd", null, "K"), " \u2014 \u043F\u043E\u0438\u0441\u043A"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("kbd", null, "+ \u0412 \u043F\u043B\u0430\u043D"), " \u2014 \u043E\u0442\u043B\u043E\u0436\u0438\u0442\u044C \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0435"));
+  return null;
+}
+function VTourWelcome({
+  stats,
+  onStart,
+  onLater,
+  onSkip
+}) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        ref.current && ref.current.focus();
+      } catch (e) {}
+    }, 40);
+    return () => clearTimeout(t);
+  }, []);
+  const k = v => {
+    if (v < 1e3) return vN(v);
+    const t = Math.round(v / 1e3);
+    return vN(t) + " " + vPl(t, "тысяча", "тысячи", "тысяч");
+  };
+  const T = [["Главное", "как читать случай, уровни и признаки, сводка по своему региону"], ["Где проверить", "каждый фильтр, карта «больше ожидаемого», ГОСБ, очередь"], ["Досье и проверка", "досье отделения и как найти отзыв на площадке"], ["Истории и работа", "поиск, сотрудники, схемы, план и выгрузки"]];
+  return ReactDOM.createPortal(/*#__PURE__*/React.createElement("div", {
+    className: "vsp vr vt-wrap",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-labelledby": "vt-w-title"
+  }, /*#__PURE__*/React.createElement("section", {
+    className: "vt-modal",
+    ref: ref,
+    tabIndex: -1
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "vt-m-top"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "eyebrow"
+  }, "\u041D\u043E\u0432\u044B\u0439 \u0440\u0430\u0437\u0434\u0435\u043B \xB7 \u0431\u0435\u0442\u0430 \xB7 \u043E\u0431\u0443\u0447\u0435\u043D\u0438\u0435"), /*#__PURE__*/React.createElement("h2", {
+    id: "vt-w-title",
+    className: "vt-display"
+  }, "\u0417\u043D\u0430\u043A\u043E\u043C\u0441\u0442\u0432\u043E \u0441 ", /*#__PURE__*/React.createElement("em", null, "\u0410\u0443\u0434\u0438\u0442\u043E\u043C \u0441\u0435\u0442\u0438 \u0412\u0421\u041F")), /*#__PURE__*/React.createElement("p", {
+    className: "vt-lede"
+  }, stats && stats.read ? /*#__PURE__*/React.createElement(React.Fragment, null, "\u041C\u043E\u0434\u0435\u043B\u044C \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043B\u0430 ", k(stats.read), " \u043E\u0442\u0437\u044B\u0432\u043E\u0432", stats.points ? ` о ${vN(stats.points)} отделениях` : "", " \u0438 \u043D\u0430\u0448\u043B\u0430 ", k(stats.stories), " ", vPl(stats.stories, "историю", "истории", "историй"), ", \u0433\u0434\u0435 \u043A\u043B\u0438\u0435\u043D\u0442\u044B \u043E\u043F\u0438\u0441\u044B\u0432\u0430\u044E\u0442 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u043E\u0432. ") : null, "\u0412\u043A\u043B\u0430\u0434\u043A\u0430 \u043F\u043E\u0434\u0441\u043A\u0430\u0437\u044B\u0432\u0430\u0435\u0442, \u0447\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C, \u0438 \u043A \u043A\u0430\u0436\u0434\u043E\u043C\u0443 \u0432\u044B\u0432\u043E\u0434\u0443 \u0434\u0430\u0451\u0442 \u0434\u043E\u043A\u0430\u0437\u0430\u0442\u0435\u043B\u044C\u0441\u0442\u0432\u043E \u2014 \u0434\u043E\u0441\u043B\u043E\u0432\u043D\u0443\u044E \u0446\u0438\u0442\u0430\u0442\u0443 \u0438 \u0441\u0441\u044B\u043B\u043A\u0443 \u043D\u0430 \u043E\u0440\u0438\u0433\u0438\u043D\u0430\u043B.")), /*#__PURE__*/React.createElement("div", {
+    className: "vt-tiles"
+  }, T.map(([t, x], i) => /*#__PURE__*/React.createElement("div", {
+    key: t,
+    className: "vt-tile"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "vt-n"
+  }, "0", i + 1), /*#__PURE__*/React.createElement("b", null, t), /*#__PURE__*/React.createElement("span", null, x)))), /*#__PURE__*/React.createElement("div", {
+    className: "vt-reco"
+  }, /*#__PURE__*/React.createElement(VCheck, null), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0421\u043E\u0432\u0435\u0442\u0443\u0435\u043C \u043F\u0440\u043E\u0439\u0442\u0438 \u043E\u0431\u0443\u0447\u0435\u043D\u0438\u0435 \u0434\u043E \u043D\u0430\u0447\u0430\u043B\u0430 \u0440\u0430\u0431\u043E\u0442\u044B."), " ", V_TOUR.length, " \u0448\u0430\u0433\u043E\u0432 \u043F\u0440\u044F\u043C\u043E \u043D\u0430 \u0436\u0438\u0432\u044B\u0445 \u0434\u0430\u043D\u043D\u044B\u0445 \u2014 \u043E\u043A\u043E\u043B\u043E \u043F\u044F\u0442\u0438 \u043C\u0438\u043D\u0443\u0442, \u043C\u043E\u0436\u043D\u043E \u043F\u0440\u0435\u0440\u0432\u0430\u0442\u044C\u0441\u044F \u0438 \u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0438\u0442\u044C \u0437\u0430\u0432\u0442\u0440\u0430. \u0414\u0430\u043B\u044C\u0448\u0435 \u0431\u0443\u0434\u0435\u0442 \u043C\u0435\u043D\u044C\u0448\u0435 \u0432\u043E\u043F\u0440\u043E\u0441\u043E\u0432: \u0447\u0442\u043E \u0437\u043D\u0430\u0447\u0438\u0442 \u043A\u0430\u0436\u0434\u044B\u0439 \u043F\u0440\u0438\u0437\u043D\u0430\u043A \u0438 \u0444\u0438\u043B\u044C\u0442\u0440, \u043E\u0442\u043A\u0443\u0434\u0430 \u0446\u0438\u0444\u0440\u044B \u0438 \u043A\u0430\u043A \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C \u043B\u044E\u0431\u0443\u044E \u0438\u0441\u0442\u043E\u0440\u0438\u044E.")), /*#__PURE__*/React.createElement("div", {
+    className: "vt-actions"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary",
+    onClick: onStart
+  }, "\u041D\u0430\u0447\u0430\u0442\u044C \u043E\u0431\u0443\u0447\u0435\u043D\u0438\u0435 \u2192"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: onLater
+  }, "\u041D\u0430\u043F\u043E\u043C\u043D\u0438\u0442\u044C \u0437\u0430\u0432\u0442\u0440\u0430"), /*#__PURE__*/React.createElement("span", {
+    className: "sp"
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "vt-skip",
+    onClick: onSkip
+  }, "\u041F\u0440\u043E\u043F\u0443\u0441\u0442\u0438\u0442\u044C")))), document.body);
+}
+function VTourFinal({
+  onClose,
+  onAgain
+}) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        ref.current && ref.current.focus();
+      } catch (e) {}
+    }, 40);
+    return () => clearTimeout(t);
+  }, []);
+  return ReactDOM.createPortal(/*#__PURE__*/React.createElement("div", {
+    className: "vsp vr vt-wrap",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-labelledby": "vt-f-title"
+  }, /*#__PURE__*/React.createElement("section", {
+    className: "vt-modal vt-final",
+    ref: ref,
+    tabIndex: -1
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "vt-m-top"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "vt-done",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement(VCheck, null)), /*#__PURE__*/React.createElement("h2", {
+    id: "vt-f-title",
+    className: "vt-display sm"
+  }, "\u0413\u043E\u0442\u043E\u0432\u043E \u2014 \u043C\u043E\u0436\u043D\u043E ", /*#__PURE__*/React.createElement("em", null, "\u0440\u0430\u0431\u043E\u0442\u0430\u0442\u044C")), /*#__PURE__*/React.createElement("p", {
+    className: "vt-lede"
+  }, "\u0422\u0440\u0438 \u043F\u0440\u0430\u0432\u0438\u043B\u0430, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u0441\u0442\u043E\u0438\u0442 \u0434\u0435\u0440\u0436\u0430\u0442\u044C \u0432 \u0433\u043E\u043B\u043E\u0432\u0435:")), /*#__PURE__*/React.createElement("ol", {
+    className: "vt-rules"
+  }, /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("b", null, "\u041E\u0442\u0437\u044B\u0432\u044B \u2014 \u0441\u043B\u043E\u0432\u0430 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432, \u0430 \u043D\u0435 \u0443\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043D\u044B\u0435 \u0444\u0430\u043A\u0442\u044B."), " \u041F\u043E\u044D\u0442\u043E\u043C\u0443 \u0443 \u043A\u0430\u0436\u0434\u043E\u0439 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u0435\u0441\u0442\u044C \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0430: \u043F\u043E\u043B\u043D\u044B\u0439 \u0442\u0435\u043A\u0441\u0442, \u043F\u043E\u0434\u0441\u0432\u0435\u0447\u0435\u043D\u043D\u0430\u044F \u0446\u0438\u0442\u0430\u0442\u0430 \u0438 \u043E\u0440\u0438\u0433\u0438\u043D\u0430\u043B."), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("b", null, "\u0418\u043C\u0435\u043D\u0430 \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u043E\u0432 \u2014 \u0442\u043E\u043B\u044C\u043A\u043E \u0432\u043D\u0443\u0442\u0440\u0438 \u043E\u0434\u043D\u043E\u0433\u043E \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F."), " \u0422\u0451\u0437\u043A\u0438 \u0432 \u0440\u0430\u0437\u043D\u044B\u0445 \u0412\u0421\u041F \u043D\u0435 \u0441\u0432\u044F\u0437\u044B\u0432\u0430\u044E\u0442\u0441\u044F."), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("b", null, "\u0421\u0443\u043C\u043C\u044B \u2014 \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432."), " \u042D\u0442\u043E \u043F\u043E\u0432\u043E\u0434 \u0437\u0430\u043F\u0440\u043E\u0441\u0438\u0442\u044C \u043E\u043F\u0435\u0440\u0430\u0446\u0438\u0438, \u0430 \u043D\u0435 \u0440\u0430\u0437\u043C\u0435\u0440 \u0443\u0449\u0435\u0440\u0431\u0430.")), /*#__PURE__*/React.createElement("p", {
+    className: "vt-note"
+  }, "\u041C\u0435\u0442\u043E\u0434\u0438\u043A\u0430 \u2014 \xAB\u041A\u0430\u043A \u044D\u0442\u043E \u0440\u0430\u0431\u043E\u0442\u0430\u0435\u0442\xBB \u0432 \u0448\u0430\u043F\u043A\u0435 \u0440\u0430\u0437\u0434\u0435\u043B\u0430; \u043F\u0440\u043E\u0439\u0442\u0438 \u043E\u0431\u0443\u0447\u0435\u043D\u0438\u0435 \u0435\u0449\u0451 \u0440\u0430\u0437 \u2014 \xAB\u041E\u0431\u0443\u0447\u0435\u043D\u0438\u0435\xBB \u0440\u044F\u0434\u043E\u043C. \u0412\u043E\u043F\u0440\u043E\u0441\u044B \u0438 \u043D\u0430\u0445\u043E\u0434\u043A\u0438 \u2014 \xAB\u041E\u0431\u0440\u0430\u0442\u043D\u0430\u044F \u0441\u0432\u044F\u0437\u044C\xBB \u0432\u043D\u0438\u0437\u0443 \u043C\u0435\u043D\u044E."), /*#__PURE__*/React.createElement("div", {
+    className: "vt-actions"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary",
+    onClick: onClose
+  }, "\u041D\u0430\u0447\u0430\u0442\u044C \u0440\u0430\u0431\u043E\u0442\u0443 \u2192"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: onAgain
+  }, "\u041F\u0440\u043E\u0439\u0442\u0438 \u0435\u0449\u0451 \u0440\u0430\u0437")))), document.body);
+}
+function VTourStep({
+  idx,
+  onNext,
+  onBack,
+  onSkip,
+  goTour,
+  openTour,
+  ctx
+}) {
+  const step = V_TOUR[idx];
+  const [rect, setRect] = useState(null);
+  const [miss, setMiss] = useState(false);
+  const [ch, setCh] = useState(280);
+  const cardRef = useRef(null);
+  const measure = () => {
+    const el = document.querySelector(`[data-tour="${step.sel}"]`);
+    if (!el) return;
+    const r = el.getBoundingClientRect(),
+      p = 8,
+      vh = window.innerHeight;
+    const top = Math.max(r.top - p, 8),
+      bottom = Math.min(r.bottom + p, vh - 8);
+    setRect({
+      x: Math.max(4, r.left - p),
+      y: top,
+      w: Math.min(window.innerWidth - 8 - Math.max(4, r.left - p), r.width + 2 * p),
+      h: Math.max(36, bottom - top)
+    });
+  };
+  // перейти в раздел шага (и открыть досье или историю), дождаться элемента, прокрутить и подсветить
+  useEffect(() => {
+    let alive = true,
+      timer,
+      opened = !step.open;
+    const t0 = Date.now();
+    setMiss(false);
+    goTour(step.s, !!step.open);
+    const find = () => {
+      if (!alive) return;
+      if (!opened) opened = openTour(step.open);
+      const el = opened && document.querySelector(`[data-tour="${step.sel}"]`);
+      if (el && el.getBoundingClientRect().height > 0) {
+        const inLayer = !!el.closest(".vr-layer"),
+          r = el.getBoundingClientRect(),
+          vh = window.innerHeight,
+          head = 150;
+        const sticky = el.closest(".vr-head") || inLayer;
+        if (!sticky) {
+          const want = r.height < vh - head - 300 ? window.scrollY + r.top - head - Math.max(0, (vh - head - 300 - r.height) / 2) : window.scrollY + r.top - head;
+          try {
+            window.scrollTo({
+              top: Math.max(0, want),
+              behavior: vReduced() ? "auto" : "smooth"
+            });
+          } catch (e) {}
+        }
+        timer = setTimeout(() => {
+          if (alive) measure();
+        }, vReduced() ? 40 : 480);
+      } else if (Date.now() - t0 < 8000) timer = setTimeout(find, 140);else {
+        setRect(null);
+        setMiss(true);
+      }
+    };
+    timer = setTimeout(find, 80);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [idx]);
+  useEffect(() => {
+    let raf = 0;
+    const on = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(measure);
+    };
+    window.addEventListener("resize", on);
+    window.addEventListener("scroll", on, true);
+    return () => {
+      window.removeEventListener("resize", on);
+      window.removeEventListener("scroll", on, true);
+      cancelAnimationFrame(raf);
+    };
+  }, [idx]);
+  useEffect(() => {
+    if (cardRef.current) setCh(cardRef.current.offsetHeight || 280);
+    try {
+      cardRef.current && cardRef.current.focus({
+        preventScroll: true
+      });
+    } catch (e) {}
+  }, [idx, rect && rect.h]);
+  // где карточка: под подсветкой, над ней, справа, слева — иначе в правом нижнем углу
+  const vw = window.innerWidth,
+    vh = window.innerHeight,
+    cw = Math.min(408, vw - 24),
+    g = 16;
+  let pos;
+  if (vw < 760) pos = {
+    left: 12,
+    right: 12,
+    bottom: 12
+  };else if (!rect) pos = {
+    left: (vw - cw) / 2,
+    top: Math.max(80, (vh - ch) / 2)
+  };else {
+    const clampX = x => Math.min(Math.max(12, x), vw - cw - 12),
+      clampY = y => Math.min(Math.max(12, y), vh - ch - 12);
+    if (rect.y + rect.h + g + ch < vh - 12) pos = {
+      left: clampX(rect.x),
+      top: rect.y + rect.h + g
+    };else if (rect.y - g - ch > 12) pos = {
+      left: clampX(rect.x),
+      top: rect.y - g - ch
+    };else if (rect.x - g - cw > 12) pos = {
+      left: rect.x - g - cw,
+      top: clampY(rect.y + 24)
+    };else if (rect.x + rect.w + g + cw < vw - 12) pos = {
+      left: rect.x + rect.w + g,
+      top: clampY(rect.y + 24)
+    };else pos = {
+      left: vw - cw - 24,
+      top: vh - ch - 24
+    };
+  }
+  const n = V_TOUR.length,
+    last = idx === n - 1;
+  const chap = V_TOUR_CH[step.ch];
+  const inCh = V_TOUR.slice(0, idx + 1).filter(x => x.ch === step.ch).length;
+  const text = typeof step.x === "function" ? step.x(ctx || {}) : step.x;
+  // вокруг подсветки — четыре «заглушки»: внутри неё можно нажимать
+  const blk = rect ? [{
+    left: 0,
+    top: 0,
+    width: vw,
+    height: rect.y
+  }, {
+    left: 0,
+    top: rect.y + rect.h,
+    width: vw,
+    height: Math.max(0, vh - rect.y - rect.h)
+  }, {
+    left: 0,
+    top: rect.y,
+    width: rect.x,
+    height: rect.h
+  }, {
+    left: rect.x + rect.w,
+    top: rect.y,
+    width: Math.max(0, vw - rect.x - rect.w),
+    height: rect.h
+  }] : [{
+    left: 0,
+    top: 0,
+    width: vw,
+    height: vh
+  }];
+  return ReactDOM.createPortal(/*#__PURE__*/React.createElement("div", {
+    className: "vsp vr vt-root"
+  }, blk.map((b, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    className: "vt-block",
+    style: b
+  })), /*#__PURE__*/React.createElement("svg", {
+    className: "vt-svg",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("defs", null, /*#__PURE__*/React.createElement("mask", {
+    id: "vt-mask"
+  }, /*#__PURE__*/React.createElement("rect", {
+    width: "100%",
+    height: "100%",
+    fill: "white"
+  }), rect && /*#__PURE__*/React.createElement("rect", {
+    className: "vt-mr",
+    x: rect.x,
+    y: rect.y,
+    width: rect.w,
+    height: rect.h,
+    rx: "12",
+    ry: "12",
+    fill: "black"
+  }))), /*#__PURE__*/React.createElement("rect", {
+    className: "vt-shade",
+    width: "100%",
+    height: "100%",
+    mask: "url(#vt-mask)"
+  })), rect && /*#__PURE__*/React.createElement("div", {
+    className: "vt-hole",
+    style: {
+      left: rect.x,
+      top: rect.y,
+      width: rect.w,
+      height: rect.h
+    }
+  }), /*#__PURE__*/React.createElement("section", {
+    className: "vt-card",
+    ref: cardRef,
+    tabIndex: -1,
+    role: "dialog",
+    "aria-modal": "false",
+    "aria-labelledby": "vt-s-title",
+    style: {
+      ...pos,
+      width: vw < 760 ? undefined : cw
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "vt-prog",
+    "aria-hidden": "true"
+  }, V_TOUR.map((x, i) => /*#__PURE__*/React.createElement("i", {
+    key: i,
+    className: (i < idx ? "done" : i === idx ? "cur" : "") + (i > 0 && V_TOUR[i - 1].ch !== x.ch ? " gap" : "")
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "vt-step"
+  }, /*#__PURE__*/React.createElement("span", null, chap[0]), " \xB7 \u0448\u0430\u0433 ", inCh, " \u0438\u0437 ", chap[1], /*#__PURE__*/React.createElement("span", {
+    className: "vt-all"
+  }, idx + 1, " / ", n)), /*#__PURE__*/React.createElement("h3", {
+    id: "vt-s-title"
+  }, step.t), /*#__PURE__*/React.createElement("p", {
+    "aria-live": "polite"
+  }, text), step.ex && /*#__PURE__*/React.createElement(VTourExtra, {
+    k: step.ex
+  }), step.tr && /*#__PURE__*/React.createElement("p", {
+    className: "vt-try"
+  }, /*#__PURE__*/React.createElement("b", null, "\u041F\u043E\u043F\u0440\u043E\u0431\u0443\u0439\u0442\u0435:"), " ", step.tr), miss && /*#__PURE__*/React.createElement("p", {
+    className: "vt-miss"
+  }, "\u042D\u0442\u043E\u0442 \u0431\u043B\u043E\u043A \u0435\u0449\u0451 \u0437\u0430\u0433\u0440\u0443\u0436\u0430\u0435\u0442\u0441\u044F \u2014 \u0435\u0433\u043E \u043C\u043E\u0436\u043D\u043E \u043F\u043E\u0441\u043C\u043E\u0442\u0440\u0435\u0442\u044C \u043F\u043E\u0437\u0436\u0435, \u043E\u0431\u0443\u0447\u0435\u043D\u0438\u0435 \u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0438\u0442\u0441\u044F."), /*#__PURE__*/React.createElement("div", {
+    className: "vt-foot"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "vt-skip",
+    onClick: onSkip
+  }, "\u041F\u0440\u043E\u043F\u0443\u0441\u0442\u0438\u0442\u044C"), /*#__PURE__*/React.createElement("span", {
+    className: "sp"
+  }), idx > 0 && /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost vsm",
+    onClick: onBack
+  }, "\u041D\u0430\u0437\u0430\u0434"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary vsm",
+    onClick: onNext
+  }, last ? "Готово" : "Дальше →")))), document.body);
+}
+
+// управляет показом: приветствие → шаги → итог; пишет, где человек остановился
+function VTour({
+  ctl,
+  stats,
+  ctx
+}) {
+  const {
+    phase,
+    idx
+  } = ctl.t;
+  useEffect(() => {
+    if (phase !== "step") return;
+    const k = e => {
+      const tag = e.target && e.target.tagName || "";
+      if (/INPUT|SELECT|TEXTAREA/.test(tag)) return; // в поле — печатаем, а не листаем
+      if (e.key === "ArrowRight" || e.key === "Enter" && tag !== "BUTTON" && tag !== "A") {
+        e.preventDefault();
+        ctl.next();
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        ctl.back();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        ctl.later();
+      }
+    };
+    window.addEventListener("keydown", k, true);
+    return () => window.removeEventListener("keydown", k, true);
+  }, [phase, idx]);
+  useEffect(() => {
+    if (phase !== "welcome" && phase !== "final") return;
+    const k = e => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        phase === "welcome" ? ctl.later() : ctl.close();
+      }
+    };
+    window.addEventListener("keydown", k, true);
+    return () => window.removeEventListener("keydown", k, true);
+  }, [phase]);
+  if (phase === "welcome") return /*#__PURE__*/React.createElement(VTourWelcome, {
+    stats: stats,
+    onStart: ctl.start,
+    onLater: ctl.later,
+    onSkip: ctl.skip
+  });
+  if (phase === "step") return /*#__PURE__*/React.createElement(VTourStep, {
+    idx: idx,
+    onNext: ctl.next,
+    onBack: ctl.back,
+    onSkip: ctl.skip,
+    goTour: ctl.goTour,
+    openTour: ctl.open,
+    ctx: ctx
+  });
+  if (phase === "final") return /*#__PURE__*/React.createElement(VTourFinal, {
+    onClose: ctl.close,
+    onAgain: ctl.again
+  });
+  return null;
+}
+
 // ── страница: три раздела, слои по адресу, план, уведомление с отменой ───────
 function VspPage() {
   const me = useMe();
@@ -24561,6 +25201,186 @@ function VspPage() {
   const evCtx = useMemo(() => ({
     open: rid => openLayer("story", rid)
   }), []);
+  // знакомство: один раз каждому, у кого есть доступ; где остановились — в профиле
+  const [tour, setTour] = useState({
+    phase: null,
+    idx: 0
+  });
+  const [tourPref, setTourPref] = useState(null);
+  const tourShown = useRef(false);
+  const tourTrk = (a, x) => {
+    try {
+      trkEvent({
+        kind: "ui",
+        page: "vsp",
+        payload: {
+          action: "vsp_tour",
+          step: a,
+          ...(x || {})
+        }
+      });
+    } catch (e) {}
+  };
+  const tourSave = (state, step) => {
+    const v = {
+      state,
+      at: vToday(),
+      step
+    };
+    setTourPref(v);
+    apiPut("/api/me", {
+      prefs: {
+        vsp_tour: v
+      }
+    }).catch(() => {});
+  };
+  const tourCtl = {
+    t: tour,
+    goTour: (s, keep) => {
+      const c = stRef.current;
+      if (c.s !== s) commit({
+        ...c,
+        s,
+        L: keep ? c.L : {}
+      }, false);else if (!keep && Object.keys(c.L).length) commit({
+        ...c,
+        L: {}
+      }, false);
+    },
+    // открыть досье первого отделения очереди или первую историю досье — для шагов «Досье и проверка»
+    open: kind => {
+      const c = stRef.current;
+      const pt = () => {
+        const el = document.querySelector('[data-tour="queue"] [data-pt]') || document.querySelector('[data-pt]');
+        return el && el.getAttribute("data-pt");
+      };
+      if (kind === "point") {
+        if (c.L.point) return true;
+        const p = pt();
+        if (!p) return false;
+        commit({
+          ...c,
+          L: {
+            point: p
+          }
+        }, false);
+        return true;
+      }
+      if (kind === "story") {
+        if (c.L.story) return true;
+        if (!c.L.point) {
+          const p = pt();
+          if (p) commit({
+            ...c,
+            L: {
+              point: p
+            }
+          }, false);
+          return false;
+        }
+        const r = document.querySelector('[data-tour="dossier"] [data-rid]');
+        if (!r) return false;
+        commit({
+          ...c,
+          L: {
+            ...c.L,
+            story: r.getAttribute("data-rid")
+          }
+        }, false);
+        return true;
+      }
+      return true;
+    },
+    start: () => {
+      setTour({
+        phase: "step",
+        idx: 0
+      });
+      tourTrk("start");
+    },
+    next: () => setTour(t => {
+      if (t.idx < V_TOUR.length - 1) {
+        tourTrk("step", {
+          n: t.idx + 2
+        });
+        return {
+          phase: "step",
+          idx: t.idx + 1
+        };
+      }
+      tourSave("done", V_TOUR.length);
+      tourTrk("done");
+      return {
+        phase: "final",
+        idx: t.idx
+      };
+    }),
+    back: () => setTour(t => ({
+      phase: "step",
+      idx: Math.max(0, t.idx - 1)
+    })),
+    later: () => {
+      tourSave("later", tour.idx);
+      tourTrk("later", {
+        n: tour.idx + 1,
+        from: tour.phase
+      });
+      setTour({
+        phase: null,
+        idx: 0
+      });
+    },
+    skip: () => {
+      tourSave("skipped", tour.idx);
+      tourTrk("skip", {
+        n: tour.idx + 1,
+        from: tour.phase
+      });
+      setTour({
+        phase: null,
+        idx: 0
+      });
+    },
+    close: () => {
+      setTour({
+        phase: null,
+        idx: 0
+      });
+      const c = stRef.current;
+      commit({
+        ...c,
+        s: "main",
+        L: {}
+      }, false);
+      try {
+        window.scrollTo({
+          top: 0,
+          behavior: "smooth"
+        });
+      } catch (e) {}
+    },
+    again: () => {
+      setTour({
+        phase: "step",
+        idx: 0
+      });
+      tourTrk("again");
+    }
+  };
+  const startTour = () => {
+    const c = stRef.current;
+    if (Object.keys(c.L).length) commit({
+      ...c,
+      L: {}
+    }, false);
+    setTour({
+      phase: "step",
+      idx: 0
+    });
+    tourTrk("start", {
+      manual: 1
+    });
+  };
   // Esc закрывает верхний слой
   const order = ["point", "scheme", "person", "method", "plan", "story"];
   const openL = order.filter(k => st.L[k]);
@@ -24576,6 +25396,21 @@ function VspPage() {
   }, [openL.join(",")]);
   const tiles = meta && !meta.err ? meta.tiles : null;
   const regions = useMemo(() => (tiles || []).filter(t => t.n > 0).slice().sort((a, b) => a.name.localeCompare(b.name, "ru")), [tiles]);
+  useEffect(() => {
+    if (tourShown.current || tour.phase || !me || !me.can_vsp || !meta || meta.err) return;
+    const pr = tourPref || me.prefs && me.prefs.vsp_tour || null;
+    if (pr && (pr.state === "done" || pr.state === "skipped" || pr.state === "later" && pr.at === vToday())) return;
+    if (Object.keys(stRef.current.L).length) return; // пришли по ссылке на досье — не мешаем
+    tourShown.current = true;
+    const t = setTimeout(() => {
+      setTour({
+        phase: "welcome",
+        idx: 0
+      });
+      tourTrk("shown");
+    }, 900);
+    return () => clearTimeout(t);
+  }, [me, meta]);
   if (me && !me.can_vsp) return /*#__PURE__*/React.createElement(ErrState, {
     msg: "\u0420\u0430\u0437\u0434\u0435\u043B \u043E\u0442\u043A\u0440\u044B\u0442 \u0442\u043E\u043B\u044C\u043A\u043E \u0432\u043B\u0430\u0434\u0435\u043B\u044C\u0446\u0443 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0430."
   });
@@ -24596,7 +25431,8 @@ function VspPage() {
   }, /*#__PURE__*/React.createElement("h1", null, "\u0410\u0443\u0434\u0438\u0442 \u0441\u0435\u0442\u0438 \u0412\u0421\u041F"), /*#__PURE__*/React.createElement("div", {
     className: "vr-tabs",
     role: "tablist",
-    "aria-label": "\u0420\u0430\u0437\u0434\u0435\u043B\u044B"
+    "aria-label": "\u0420\u0430\u0437\u0434\u0435\u043B\u044B",
+    "data-tour": "tabs"
   }, S.map(([k, l]) => /*#__PURE__*/React.createElement("button", {
     key: k,
     role: "tab",
@@ -24607,19 +25443,26 @@ function VspPage() {
     className: "vr-tabn"
   }, vN(listedN)) : null))), /*#__PURE__*/React.createElement("span", {
     className: "sp"
-  }), /*#__PURE__*/React.createElement(VSearchBox, {
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "vr-htools",
+    "data-tour": "tools"
+  }, /*#__PURE__*/React.createElement(VSearchBox, {
     openPoint: openPoint
   }), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost vr-planbtn",
     onClick: () => openLayer("plan", "1")
   }, "\u041F\u043B\u0430\u043D \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438", plan.plan.length ? /*#__PURE__*/React.createElement("span", {
     className: "vr-badge"
-  }, plan.plan.length) : null)), /*#__PURE__*/React.createElement("div", {
-    className: "vr-sub"
+  }, plan.plan.length) : null))), /*#__PURE__*/React.createElement("div", {
+    className: "vr-sub",
+    "data-tour": "help"
   }, meta && meta.run ? `Данные на ${vDay(meta.run.finished_at)}` : "Загружаю данные", map && !map.err && map.points_total ? ` · вся сеть: ${vN(map.points_total)} ${vPl(map.points_total, "отделение", "отделения", "отделений")}` : "", " \xB7", " ", /*#__PURE__*/React.createElement("button", {
     className: "vlink",
     onClick: () => openLayer("method", "1")
-  }, "\u041A\u0430\u043A \u044D\u0442\u043E \u0440\u0430\u0431\u043E\u0442\u0430\u0435\u0442"), " ", "\xB7", " ", meta && meta.access && meta.access.owner ? meta.access.beta ? `бета: вы и ещё ${meta.access.beta} ${vPl(meta.access.beta, "участник", "участника", "участников")}` : "раздел виден только вам" : "бета-версия раздела"), meta && !meta.err && meta.source === "слова" && /*#__PURE__*/React.createElement("div", {
+  }, "\u041A\u0430\u043A \u044D\u0442\u043E \u0440\u0430\u0431\u043E\u0442\u0430\u0435\u0442"), " ", "\xB7", " ", /*#__PURE__*/React.createElement("button", {
+    className: "vlink",
+    onClick: () => startTour()
+  }, "\u041E\u0431\u0443\u0447\u0435\u043D\u0438\u0435"), " ", "\xB7", " ", meta && meta.access && meta.access.owner ? meta.access.beta ? `бета: вы и ещё ${meta.access.beta} ${vPl(meta.access.beta, "участник", "участника", "участников")}` : "раздел виден только вам" : "бета-версия раздела"), meta && !meta.err && meta.source === "слова" && /*#__PURE__*/React.createElement("div", {
     className: "vr-benign"
   }, "\u041F\u0440\u0435\u0434\u0432\u0430\u0440\u0438\u0442\u0435\u043B\u044C\u043D\u043E: \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u043D\u0430\u0439\u0434\u0435\u043D\u044B \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C, \u043C\u043E\u0434\u0435\u043B\u044C \u0435\u0449\u0451 \u0447\u0438\u0442\u0430\u0435\u0442 \u043E\u0442\u0437\u044B\u0432\u044B."), /*#__PURE__*/React.createElement("div", {
     className: "vr-body"
@@ -24696,7 +25539,14 @@ function VspPage() {
     onClose: () => closeLayer("method"),
     width: 820,
     title: "\u041A\u0430\u043A \u044D\u0442\u043E \u0440\u0430\u0431\u043E\u0442\u0430\u0435\u0442"
-  }, /*#__PURE__*/React.createElement(VspMethod2, null)), st.L.plan && /*#__PURE__*/React.createElement(VLayer, {
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "vt-again"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, "\u041E\u0431\u0443\u0447\u0435\u043D\u0438\u0435 \u043F\u043E \u0432\u043A\u043B\u0430\u0434\u043A\u0435"), /*#__PURE__*/React.createElement("span", {
+    className: "note"
+  }, V_TOUR.length, " \u0448\u0430\u0433\u043E\u0432 \u043D\u0430 \u0436\u0438\u0432\u044B\u0445 \u0434\u0430\u043D\u043D\u044B\u0445, \u043E\u043A\u043E\u043B\u043E \u043F\u044F\u0442\u0438 \u043C\u0438\u043D\u0443\u0442")), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary vsm",
+    onClick: () => startTour()
+  }, "\u041F\u0440\u043E\u0439\u0442\u0438 \u043E\u0431\u0443\u0447\u0435\u043D\u0438\u0435 \u2192")), /*#__PURE__*/React.createElement(VspMethod2, null)), st.L.plan && /*#__PURE__*/React.createElement(VLayer, {
     depth: depth("plan"),
     onClose: () => closeLayer("plan"),
     width: 640,
@@ -24711,6 +25561,16 @@ function VspPage() {
     onClose: () => closeLayer("story"),
     openPoint: openPoint,
     plan: plan
+  }), /*#__PURE__*/React.createElement(VTour, {
+    ctl: tourCtl,
+    ctx: {
+      net: map && !map.err ? map.net_per100 : null
+    },
+    stats: meta && !meta.err && meta.progress ? {
+      read: meta.progress.screened,
+      stories: meta.progress.relevant,
+      points: map && !map.err ? map.points_total : null
+    } : null
   }), toastS && ReactDOM.createPortal(/*#__PURE__*/React.createElement("div", {
     className: "vsp vr"
   }, /*#__PURE__*/React.createElement("div", {

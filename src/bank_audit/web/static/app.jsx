@@ -11001,10 +11001,10 @@ function VCaseCard({c,size,openPoint,plan,hidePlace}){
     {!hidePlace&&<span className="vr-pl">{vPlace(P)}</span>}
     {!hidePlace&&sz!=="row"&&<span>{vCode(P)}{P.gosb?` · ГОСБ ${P.gosb}`:""}</span>}
     <span>{vDay(c.date||c.at)}</span></div>;
-  if(sz==="row")return <div className="vr-case row" role="button" tabIndex={0} onClick={open} onKeyDown={vEnter(open)}>
+  if(sz==="row")return <div className="vr-case row" data-rid={c.rid} role="button" tabIndex={0} onClick={open} onKeyDown={vEnter(open)}>
     {meta}<div className="vr-chead">{head}</div>{facts.length>0&&<div className="vr-facts">{facts.join(" · ")}</div>}</div>;
   const q=c.quote&&c.episode?(sz==="list"?vCut(c.quote,260):c.quote):null;
-  return <article className={"vr-case "+sz}>
+  return <article className={"vr-case "+sz} data-rid={c.rid}>
     {meta}
     <h3 className="vr-chead">{head}</h3>
     {facts.length>0&&<div className="vr-facts">{facts.join(" · ")}{sz!=="lead"&&c.money?" — по словам клиента":""}</div>}
@@ -11063,7 +11063,7 @@ function VFilterBar({f,setF,regions,gosbs,mode,facets}){
   }
   const reset={subject:"",gosb:""};if(!lite)Object.assign(reset,{action:"",vul:false,named:false,fresh:false,money:false,fmt:""},isS?{sev:V_F0.sev,per:V_F0.per,q:""}:{});
   const tg=(k,l)=><button className={"vr-tg"+(f[k]?" on":"")} aria-pressed={f[k]} onClick={()=>setF({[k]:!f[k]})}>{l}</button>;
-  return <div className={"vr-fbar"+(open?" open":"")}>
+  return <div className={"vr-fbar"+(open?" open":"")} data-tour="filters">
     <button className="vr-tg vr-ftoggle" aria-expanded={open} onClick={()=>setOpen(!open)}>Фильтры{chips.length?` · ${chips.length}`:""}</button>
     <div className="vr-frow" role="group" aria-label="Фильтры">
       <select className="vsel" value={f.subject} onChange={e=>setF({subject:e.target.value,gosb:""})} aria-label="Регион">
@@ -11207,20 +11207,20 @@ function VMain({f,setF,go,openPoint,plan,regions,meta,map:m}){
   return <div className="vr-mainwrap">
     <div className="vr-main">
       <div className="vr-main-l">
-        <div className="vr-scope"><span className="eyebrow">Главное{P?` · ${P.days===90?"последние три месяца":"последние полгода"}`:""}</span>
+        <div className="vr-scope" data-tour="scope"><span className="eyebrow">Главное{P?` · ${P.days===90?"последние три месяца":"последние полгода"}`:""}</span>
           <label className="vr-scope-sel">Сводка по: <select value={f.subject} onChange={e=>setF({subject:e.target.value,gosb:""})} aria-label="Сводка по региону">
             <option value="">вся сеть</option>{regions.map(r=><option key={r.code} value={r.code}>{r.name}</option>)}</select></label></div>
-        <h2 className="vr-display">{P?<>{P.text}{P.accent?<> — <em>{P.accent}</em></>:null}</>
+        <h2 className="vr-display" data-tour="headline">{P?<>{P.text}{P.accent?<> — <em>{P.accent}</em></>:null}</>
           :<>За год — {vN(k.heavy_year)} {vPl(k.heavy_year,"тяжёлая история","тяжёлые истории","тяжёлых историй")} клиентов в {vN(k.points_year)} {vPl(k.points_year,"отделении","отделениях","отделениях")}</>}</h2>
         <p className="vr-lede">{P&&P.examples.length>1?<>Например: {P.examples.map((e,i)=><React.Fragment key={e.rid}>{i?"; ":""}{(e.place||{}).city}, {vDay(e.date)}</React.Fragment>)}. </>:null}
           {k.heavy_year!=null&&<>За год тяжёлых историй {vN(k.heavy_year)}{scopeName?` (${scopeName})`:""}, из них {vN(k.vulnerable_year)} — о пожилых и уязвимых. {yTxt?<>Это {yTxt}{hTxt}.</>:null}</>}</p>
-        {hero&&<VCaseCard c={hero} size="lead" openPoint={openPoint} plan={plan}/>}
+        {hero&&<div data-tour="case"><VCaseCard c={hero} size="lead" openPoint={openPoint} plan={plan}/></div>}
         {P&&P.examples.length>1&&<div className="vr-same">
           <div className="vr-same-h">Та же схема в других отделениях<span className="sp"/>
             <button className="vlink" onClick={()=>toStories({action:P.action,per:String(P.days),sev:2})}>Все {vN(P.stories)} {vPl(P.stories,"история","истории","историй")} →</button></div>
           {P.examples.slice(1).map(e=><VCaseCard key={e.rid} c={e} size="row" openPoint={openPoint}/>)}</div>}
       </div>
-      <aside className="vr-aside">
+      <aside className="vr-aside" data-tour="check">
         <div className="eyebrow">Что проверить</div>
         <div className="vr-bigrow"><span className="vr-big">{vN(L.urgent||0)}</span><span className="vr-big-l">{vPl(L.urgent||0,"отделение","отделения","отделений")} —<br/>проверить срочно</span></div>
         <div className="note">ещё {vN(L.converged||0)} — сходятся признаки, {vN(L.watch||0)} — под наблюдением</div>
@@ -11240,7 +11240,7 @@ function VMain({f,setF,go,openPoint,plan,regions,meta,map:m}){
     <section className="vr-sec">
       <div className="vr-sech"><h3>Изнутри и свои</h3><span className="note">что делают сотрудники, а не банк · тяжёлые истории за год</span></div>
       <div className="vr-grid2">
-        <div><h4 className="vr-h4">Действия «изнутри»</h4>
+        <div data-tour="insiders"><h4 className="vr-h4">Действия «изнутри»</h4>
           <VBarList items={b.insiders} onPick={x=>x.key&&toStories({action:x.key,per:"365",sev:2})}/>
           <p className="vr-fine">Нажмите на строку — откроются эти истории.</p></div>
         <div><h4 className="vr-h4">Одного сотрудника называют разные клиенты</h4>
@@ -11353,7 +11353,7 @@ function VQueue({f,openPoint,plan,tiers}){
   const narrow=typeof window!=="undefined"&&window.innerWidth<1000;
   const T=[["urgent","Срочно"],["converged","Сходятся"],["watch","Наблюдать"]];
   const sub={urgent:"Свежие очень тяжёлые, пожилые клиенты, крупные суммы — за полгода.",converged:"Разные клиенты, одна схема, больше, чем у похожих отделений.",watch:"Давние истории или один-два признака."}[tier];
-  return <div className="vr-queue">
+  return <div className="vr-queue" data-tour="queue">
     <div className="vr-q-l">
       <div className="vr-q-top">
         <div className="vr-seg3" role="tablist" aria-label="Уровень">{T.map(([k,l])=><button key={k} role="tab" aria-selected={tier===k} className={tier===k?"on":""} onClick={()=>pickTier(k)}>
@@ -11393,7 +11393,7 @@ function VWhere({f,setF,openPoint,plan,regions,view,setView,map:m}){
       <p className="vr-p">{sigR.length>1?<>Заметно выше ожидаемого ещё {sigR.length-1} {vPl(sigR.length-1,"регион","региона","регионов")}: {sigR.slice(1,6).map(r=>`${vRegionShort(r.name)} (×${vX(r.ratio)})`).join(", ")}. </>:null}
         Ожидание — {vX(m.net_per100)} тяжёлой истории на 100 отзывов за год, как в среднем по сети.</p></div>
     <div className="vr-mapgrid">
-      <div className="vr-card">
+      <div className="vr-card" data-tour="map">
         <div className="vr-maphead"><span className="note">Россия{R?<> › <b>{R.name}</b> <button className="vr-x sm" aria-label="Снять регион" onClick={()=>setF({subject:"",gosb:""})}>✕</button></>:null}</span><span className="sp"/>
           <div className="vr-seg2" role="group" aria-label="Что показывает цвет"><button className={mode==="ratio"?"on":""} aria-pressed={mode==="ratio"} onClick={()=>setMode("ratio")}>Больше ожидаемого</button>
             <button className={mode==="delta"?"on":""} aria-pressed={mode==="delta"} onClick={()=>setMode("delta")}>К прошлому году</button></div></div>
@@ -11422,7 +11422,7 @@ function VWhere({f,setF,openPoint,plan,regions,view,setView,map:m}){
         </>}
       </aside>
     </div>
-    <div className="vr-grid2 gosb">
+    <div className="vr-grid2 gosb" data-tour="gosb">
       <div className="vr-card"><h4 className="vr-h4">ГОСБ сверх размера · вся сеть</h4>
         <VScatter gosbs={m.gosbs} picked={f.gosb} onPick={g=>setF({subject:g.subject||"",gosb:g.gosb})}/></div>
       <div className="vr-card"><h4 className="vr-h4">ГОСБ{R?` региона`:" — сначала значимые"}</h4>
@@ -11459,7 +11459,7 @@ function VStoriesAll({f,setF,openPoint,plan,setFacets}){
   const more=()=>{if(busy)return;const g=gen.current;setBusy(true);
     apiFetch(`/api/vsp/stories?${qs}&limit=30&offset=${items.length}`).then(x=>{if(g===gen.current)setItems(a=>[...a,...x.items]);}).catch(()=>{}).finally(()=>setBusy(false));};
   return <div className="vr-stories">
-    <div className="vr-tools">
+    <div className="vr-tools" data-tour="stools">
       <label className="vin" style={{flex:"1 1 280px"}}><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Слова клиента, имя сотрудника, продукт" aria-label="Поиск по историям"/></label>
       <div className="vr-seg2" role="group" aria-label="Порядок"><button className={sort==="new"?"on":""} aria-pressed={sort==="new"} onClick={()=>setSort("new")}>Сначала новые</button>
         <button className={sort==="severe"?"on":""} aria-pressed={sort==="severe"} onClick={()=>setSort("severe")}>Сначала тяжёлые</button></div>
@@ -11539,7 +11539,7 @@ function VStoriesHub({f,setF,openPoint,plan,regions,gosbs,view,setView,openPerso
   const[facets,setFacets]=useState(null);
   const V=[["all","Все"],["people","По сотрудникам"],["schemes","По схемам"]];
   return <div>
-    <div className="vr-hubtop"><div className="vr-seg2" role="tablist" aria-label="Вид историй">{V.map(([k,l])=><button key={k} role="tab" aria-selected={view===k} className={view===k?"on":""} onClick={()=>setView(k)}>{l}</button>)}</div>
+    <div className="vr-hubtop" data-tour="views"><div className="vr-seg2" role="tablist" aria-label="Вид историй">{V.map(([k,l])=><button key={k} role="tab" aria-selected={view===k} className={view===k?"on":""} onClick={()=>setView(k)}>{l}</button>)}</div>
       {view==="schemes"&&<span className="note">Схемы строятся по всей сети, фильтры к ним не применяются.</span>}</div>
     {view!=="schemes"&&<VFilterBar f={f} setF={setF} regions={regions} gosbs={gosbs} mode={view==="people"?"people":"stories"} facets={facets}/>}
     {view==="all"?<VStoriesAll f={f} setF={setF} openPoint={openPoint} plan={plan} setFacets={setFacets}/>
@@ -11605,7 +11605,7 @@ function VEvidenceBody({d,openPoint,plan}){
   const r=d.review||{};const m=d.model;const s=d.story||{};
   const copy=()=>{try{navigator.clipboard.writeText((r.text||"").slice(0,60));setCopied(true);}catch(e){}};
   const facts=vFacts({...s,vuln_types:s.vuln_types||[],actions:s.actions||[]},true);
-  return <div className="vr-ev">
+  return <div className="vr-ev" data-tour="evidence">
     <div className="vr-meta"><span className={"vr-dot"+((s.severity||0)>=3?"":" mid")}/>{s.severity&&<span className="vr-sev">{s.severity>=3?"очень тяжёлая":s.severity>=2?"тяжёлая":"лёгкая"}</span>}
       <span>{vDay(r.date)}</span><span>{vSrc(r.source)}</span>{r.rating!=null&&<span>оценка {r.rating}</span>}
       {r.author_total===1&&<span className="vr-flag">аккаунт без других отзывов</span>}{r.author_total>1&&<span>у автора {r.author_total} {vPl(r.author_total,"отзыв","отзыва","отзывов")}</span>}
@@ -11738,7 +11738,7 @@ function VDossierLayer({point,depth,onClose,openPoint,plan,goFilter,openPerson})
   const crumbs=ok?<span className="vr-crumbs">{d.subject_name&&<button className="vlink" onClick={()=>goFilter({subject:d.subject,gosb:""})}>{d.subject_name}</button>}
     {d.gosb&&<> › <button className="vlink" onClick={()=>goFilter({subject:d.subject||"",gosb:d.gosb})}>ГОСБ {d.gosb}</button></>}{vCode(d)?` › ${vCode(d)}`:""}</span>:"Досье отделения";
   return <VLayer depth={depth} onClose={onClose} width={940} label="Досье отделения" sub={crumbs} title={ok?vPlace(d):"Досье отделения"}>
-    {!d?<Skel h={500}/>:d.err?<ErrState msg="Досье не загрузилось"/>:<article className="vdos vr-dos">
+    {!d?<Skel h={500}/>:d.err?<ErrState msg="Досье не загрузилось"/>:<article className="vdos vr-dos" data-tour="dossier">
       <div className="note">{d.vol_2y!=null?`${vN(d.vol_2y)} ${vPl(d.vol_2y,"отзыв","отзыва","отзывов")} за 2 года`:""}{stories.length?` · историй ${stories.length}, тяжёлых ${heavy.length}`:""}</div>
       <div className="vr-acts" style={{marginTop:10}}>
         <VPlanBtn x={d} plan={plan}/>
@@ -11870,6 +11870,212 @@ function VSearchBox({openPoint}){
   </div>;
 }
 
+// ── знакомство с вкладкой: приветствие, 15 шагов по главам с подсветкой, итог ─
+// Учит работать, а не описывает экран: как читать случай и признаки, что делает каждый
+// фильтр, как пользоваться картой, очередью, досье и проверкой отзыва. Показывается один
+// раз каждому, у кого есть доступ (и владельцу); где остановились — в профиле (prefs.vsp_tour).
+// Пройти снова — «Знакомство» в шапке раздела или в «Как это работает».
+// open — что открыть перед шагом (досье первого отделения очереди, затем его первую историю);
+// в подсвеченной области можно нажимать — «Попробуйте» подсказывает, что именно.
+const V_TOUR_CH=[["Главное",5],["Где проверить",4],["Досье и проверка",2],["Истории",2],["Работа",2]];
+const V_TOUR=[
+  {ch:0,s:"main",sel:"scope",t:"Сводка — по сети или по своему региону",
+   x:"«Сводка по» пересчитывает всю страницу под выбранный регион: заголовок, главный случай, «Что проверить» и графики. Выбранный регион сохранится и в разделах «Где проверить» и «Истории».",
+   tr:"выберите свой регион, посмотрите, как поменялся заголовок, и верните «вся сеть»."},
+  {ch:0,s:"main",sel:"headline",t:"Заголовок — схема, которая повторяется",
+   x:"Код берёт истории за последние три месяца и ищет одно и то же действие у клиентов трёх и больше разных отделений. Первыми идут действия «изнутри»: работа в телефоне клиента, касса, утечка данных. Красный курсив — кто чаще пострадал. Ниже — города примеров и как меняется число тяжёлых историй."},
+  {ch:0,s:"main",sel:"case",t:"Как читать случай",ex:"verbatim",
+   x:"Красная точка — очень тяжёлая история, серая — тяжёлая; дальше место, код ВСП, ГОСБ и дата. Заголовок — пересказ модели, под ним всегда в одном порядке: кто пострадал · что сделали · сумма по словам клиента. Цитата — слова клиента."},
+  {ch:0,s:"main",sel:"check",t:"Уровни и пять признаков",ex:"sig",
+   x:"«Срочно» — за полгода есть очень тяжёлая история, пострадал пожилой или уязвимый клиент или названа сумма от 10 000 ₽. «Сходятся признаки» — сработали три признака и больше. «Под наблюдением» — остальные. Квадраты под отделением — пять признаков, закрашен — сработал."},
+  {ch:0,s:"main",sel:"insiders",t:"Каждая строка ведёт в истории",
+   x:"Блоки «Главного» — не просто графики. Строка «доступ к телефону клиента» откроет все такие истории за год, имя справа — досье отделения, клетка «пенсионер × без согласия» ниже — истории пенсионеров с этим действием, регион в «Почему мы так думаем» — его отделения. Числа везде — тяжёлые истории.",
+   tr:"нажмите строку — откроется раздел «Истории» уже с этим фильтром."},
+  {ch:1,s:"where",sel:"filters",t:"Фильтры: сузить до своего вопроса",ex:"filters",
+   x:"Регион и ГОСБ — где искать. «Что сделали» — тип нарушения, рядом число историй. «Пожилые и уязвимые» и «назван сотрудник» оставляют отделения, где за год были такие тяжёлые истории; «за 3 месяца» — только свежие. Формат — например, только отделения со СберПервым.",
+   tr:"включите «пожилые и уязвимые» — под фильтрами появится строка «Показано» с крестиком."},
+  {ch:1,s:"where",sel:"map",t:"Карта: где больше, чем ожидалось",ex:"ramp",
+   x:d=>`Для каждого региона код считает ожидание — сколько тяжёлых историй было бы при среднем по сети${d.net?`: ${vX(d.net)} на 100 отзывов`:""}. Цвет — во сколько раз факт больше. Красный — превышение не похоже на случайность: шанс получить столько случайно меньше 1 %. Штриховка — меньше 300 отзывов за год, выводов не делаем.`,
+   tr:"нажмите регион — справа появятся его ГОСБ и отделения; «К прошлому году» покажет, где стало больше."},
+  {ch:1,s:"where",sel:"gosb",t:"ГОСБ сверх своего размера",
+   x:"Точка — ГОСБ: по горизонтали — сколько тяжёлых историй ожидалось по числу отзывов, по вертикали — сколько есть. Выше частого пунктира — больше ожидаемого, выше редкого — вдвое больше. Красные точки и строки таблицы — значимые. Нажатие ставит фильтр на этот ГОСБ, повторное — снимает."},
+  {ch:1,s:"where",sel:"queue",t:"Очередь: список и доказательство рядом",ex:"keys",
+   x:"Вкладки «Срочно / Сходятся / Наблюдать» — уровни с числом отделений. В строке — место, дата главной истории, пересказ, сколько клиентов, сумма и признаки. Справа уже открыто: каждый признак с цифрами, главная история целиком с подсветкой цитаты и безобидное объяснение с тем, что его исключит.",
+   tr:"«Таблица» над очередью — все отделения с сортировкой по столбцам, «Обоснование» — Excel по текущим фильтрам."},
+  {ch:2,s:"where",sel:"dossier",open:"point",t:"Досье отделения",
+   x:"Всё об одном ВСП: паспорт и карточки на площадках, почему в списке, хроника историй с фильтром по типам, сравнение с похожими отделениями ГОСБ, люди, что запросить (у ГОСБ, в центре или у ВСП) и что проверить, все отзывы с фильтрами. Сверху — «+ В план» и «Лист проверки» в Word.",
+   tr:"прокрутите досье — у него своя ссылка, её можно отправить коллеге."},
+  {ch:2,s:"where",sel:"evidence",open:"story",t:"Проверка истории",ex:"verbatim",
+   x:"Отзыв целиком, слова клиента подсвечены. Ниже — проверки кодом: дословна ли цитата, написано ли названное имя в тексте. Площадки не дают ссылку на отдельный отзыв, поэтому «Оригинал» открывает отзывы отделения, а «Скопировать начало отзыва» помогает найти его поиском по странице. «Что поняла модель» — пересказ, сверяйте с текстом."},
+  {ch:3,s:"stories",sel:"stools",t:"Истории: поиск и выгрузка",
+   x:"Здесь те же фильтры, что в «Где проверить», плюс тяжесть, период и «названа сумма». Поиск ищет по словам клиента, имени сотрудника и продукту, можно часть слова. Порядок — сначала новые или сначала тяжёлые. «Выгрузить в Excel» выгружает ровно то, что на экране.",
+   tr:"наберите «страховк» — найдутся «страховка», «страховку», «страхование»."},
+  {ch:3,s:"stories",sel:"views",t:"По сотрудникам и по схемам",
+   x:"«По сотрудникам» — кого называют несколько разных клиентов одного отделения, кого назвал один клиент в тяжёлой истории, посредники и «по знакомству». Имена — как написали клиенты; тёзки в разных ВСП не связываются. «По схемам» — группы похожих историй по смыслу: где встречаются и что проверить по теме."},
+  {ch:4,s:"stories",sel:"tools",t:"Найти и отложить",ex:"kbd",
+   x:"Поиск — по коду ВСП, адресу, имени или фразе из отзыва. «+ В план» есть в каждом случае, строке очереди и досье, добавление можно отменить. В «Плане проверки» — листы проверки по всем отделениям одним файлом Word, обоснование и истории в Excel. План хранится в этом браузере."},
+  {ch:4,s:"stories",sel:"help",t:"Методика и обратная связь",
+   x:"«Как это работает» — как считаются уровни, признаки и карта и чего не видно в данных. «Обучение» рядом — пройти эти шаги ещё раз. Нашли ошибку или интересный случай — «Обратная связь» внизу меню: читаем всё."},
+];
+const vReduced=()=>{try{return matchMedia("(prefers-reduced-motion: reduce)").matches;}catch(e){return false;}};
+const vToday=()=>new Date().toISOString().slice(0,10);
+
+function VTourExtra({k}){
+  if(k==="verbatim")return <div className="vt-ex">
+    <div className="vt-ex-r"><span className="vr-ok" style={{padding:0}}><VCheck/>дословно · Яндекс Карты, 6 ноября</span></div>
+    <div className="vt-ex-r note">код нашёл цитату в тексте отзыва</div>
+    <div className="vt-ex-r"><span className="vr-ok" style={{padding:0}}>не дословно — пересказ модели</span></div>
+    <div className="vt-ex-r note">цитату не нашли — решайте по полному тексту</div></div>;
+  if(k==="sig")return <div className="vt-ex vt-sigs">{V_SIG.map(([key,l,off],i)=><div key={key} className="vt-sig">
+    <span className="vr-sigd">{V_SIG.map(([k2],j)=><i key={k2} className={j===i?"on":""}/>)}</span><span><b>{l}</b></span></div>)}
+    <div className="vt-sig-note">разные клиенты с тяжёлыми историями · одно действие повторяется · одно имя у разных клиентов · больше, чем ожидалось для отделения такого размера · посредники или волна похвалы тому, на кого жалуются</div></div>;
+  if(k==="ramp")return <div className="vt-ex"><div className="vr-legend" style={{borderTop:0,paddingTop:0}}>
+    <span className="vr-ramp"><i className="low"/><i className="avg"/><i className="mid"/><i className="hi"/>меньше → больше ожидаемого</span>
+    <span><i className="vr-sw sig"/>не похоже на случайность</span><span><i className="vr-sw few"/>мало отзывов</span></div></div>;
+  if(k==="filters")return <div className="vt-ex"><div className="vt-ex-r">Всё включённое — в строке <span className="vr-fchip" style={{height:22}}>пожилые и уязвимые<button tabIndex={-1} aria-hidden="true">✕</button></span></div>
+    <div className="vt-ex-r note" style={{paddingLeft:0}}>Фильтры хранятся в адресе страницы: скопируйте его — коллега увидит ровно этот срез.</div></div>;
+  if(k==="keys")return <div className="vt-ex vt-keys"><span><kbd>↑</kbd><kbd>↓</kbd> по списку</span><span><kbd>Enter</kbd> досье</span><span><kbd>Esc</kbd> закрыть слой</span></div>;
+  if(k==="kbd")return <div className="vt-ex vt-keys"><span><kbd>⌘</kbd><kbd>K</kbd> или <kbd>Ctrl</kbd><kbd>K</kbd> — поиск</span><span><kbd>+ В план</kbd> — отложить отделение</span></div>;
+  return null;
+}
+
+function VTourWelcome({stats,onStart,onLater,onSkip}){
+  const ref=useRef(null);
+  useEffect(()=>{const t=setTimeout(()=>{try{ref.current&&ref.current.focus();}catch(e){}},40);return()=>clearTimeout(t);},[]);
+  const k=v=>{if(v<1e3)return vN(v);const t=Math.round(v/1e3);return vN(t)+" "+vPl(t,"тысяча","тысячи","тысяч");};
+  const T=[["Главное","как читать случай, уровни и признаки, сводка по своему региону"],["Где проверить","каждый фильтр, карта «больше ожидаемого», ГОСБ, очередь"],
+    ["Досье и проверка","досье отделения и как найти отзыв на площадке"],["Истории и работа","поиск, сотрудники, схемы, план и выгрузки"]];
+  return ReactDOM.createPortal(<div className="vsp vr vt-wrap" role="dialog" aria-modal="true" aria-labelledby="vt-w-title">
+    <section className="vt-modal" ref={ref} tabIndex={-1}>
+      <div className="vt-m-top">
+        <div className="eyebrow">Новый раздел · бета · обучение</div>
+        <h2 id="vt-w-title" className="vt-display">Знакомство с <em>Аудитом сети ВСП</em></h2>
+        <p className="vt-lede">{stats&&stats.read?<>Модель прочитала {k(stats.read)} отзывов{stats.points?` о ${vN(stats.points)} отделениях`:""} и нашла {k(stats.stories)} {vPl(stats.stories,"историю","истории","историй")}, где клиенты описывают действия сотрудников. </>:null}
+          Вкладка подсказывает, что проверить, и к каждому выводу даёт доказательство — дословную цитату и ссылку на оригинал.</p>
+      </div>
+      <div className="vt-tiles">
+        {T.map(([t,x],i)=><div key={t} className="vt-tile"><span className="vt-n">0{i+1}</span><b>{t}</b><span>{x}</span></div>)}
+      </div>
+      <div className="vt-reco"><VCheck/><span><b>Советуем пройти обучение до начала работы.</b> {V_TOUR.length} шагов прямо на живых данных — около пяти минут, можно прерваться и продолжить завтра.
+        Дальше будет меньше вопросов: что значит каждый признак и фильтр, откуда цифры и как проверить любую историю.</span></div>
+      <div className="vt-actions">
+        <button className="btn btn-primary" onClick={onStart}>Начать обучение →</button>
+        <button className="btn btn-ghost" onClick={onLater}>Напомнить завтра</button>
+        <span className="sp"/><button className="vt-skip" onClick={onSkip}>Пропустить</button>
+      </div>
+    </section></div>,document.body);
+}
+
+function VTourFinal({onClose,onAgain}){
+  const ref=useRef(null);
+  useEffect(()=>{const t=setTimeout(()=>{try{ref.current&&ref.current.focus();}catch(e){}},40);return()=>clearTimeout(t);},[]);
+  return ReactDOM.createPortal(<div className="vsp vr vt-wrap" role="dialog" aria-modal="true" aria-labelledby="vt-f-title">
+    <section className="vt-modal vt-final" ref={ref} tabIndex={-1}>
+      <div className="vt-m-top">
+        <div className="vt-done" aria-hidden="true"><VCheck/></div>
+        <h2 id="vt-f-title" className="vt-display sm">Готово — можно <em>работать</em></h2>
+        <p className="vt-lede">Три правила, которые стоит держать в голове:</p>
+      </div>
+      <ol className="vt-rules">
+        <li><b>Отзывы — слова клиентов, а не установленные факты.</b> Поэтому у каждой истории есть проверка: полный текст, подсвеченная цитата и оригинал.</li>
+        <li><b>Имена сотрудников — только внутри одного отделения.</b> Тёзки в разных ВСП не связываются.</li>
+        <li><b>Суммы — по словам клиентов.</b> Это повод запросить операции, а не размер ущерба.</li>
+      </ol>
+      <p className="vt-note">Методика — «Как это работает» в шапке раздела; пройти обучение ещё раз — «Обучение» рядом. Вопросы и находки — «Обратная связь» внизу меню.</p>
+      <div className="vt-actions">
+        <button className="btn btn-primary" onClick={onClose}>Начать работу →</button>
+        <button className="btn btn-ghost" onClick={onAgain}>Пройти ещё раз</button>
+      </div>
+    </section></div>,document.body);
+}
+
+function VTourStep({idx,onNext,onBack,onSkip,goTour,openTour,ctx}){
+  const step=V_TOUR[idx];
+  const[rect,setRect]=useState(null);const[miss,setMiss]=useState(false);const[ch,setCh]=useState(280);
+  const cardRef=useRef(null);
+  const measure=()=>{const el=document.querySelector(`[data-tour="${step.sel}"]`);if(!el)return;
+    const r=el.getBoundingClientRect(),p=8,vh=window.innerHeight;
+    const top=Math.max(r.top-p,8),bottom=Math.min(r.bottom+p,vh-8);
+    setRect({x:Math.max(4,r.left-p),y:top,w:Math.min(window.innerWidth-8-Math.max(4,r.left-p),r.width+2*p),h:Math.max(36,bottom-top)});};
+  // перейти в раздел шага (и открыть досье или историю), дождаться элемента, прокрутить и подсветить
+  useEffect(()=>{let alive=true,timer,opened=!step.open;const t0=Date.now();setMiss(false);
+    goTour(step.s,!!step.open);
+    const find=()=>{if(!alive)return;
+      if(!opened)opened=openTour(step.open);
+      const el=opened&&document.querySelector(`[data-tour="${step.sel}"]`);
+      if(el&&el.getBoundingClientRect().height>0){
+        const inLayer=!!el.closest(".vr-layer"),r=el.getBoundingClientRect(),vh=window.innerHeight,head=150;
+        const sticky=el.closest(".vr-head")||inLayer;
+        if(!sticky){const want=r.height<vh-head-300?window.scrollY+r.top-head-Math.max(0,(vh-head-300-r.height)/2):window.scrollY+r.top-head;
+          try{window.scrollTo({top:Math.max(0,want),behavior:vReduced()?"auto":"smooth"});}catch(e){}}
+        timer=setTimeout(()=>{if(alive)measure();},vReduced()?40:480);
+      }else if(Date.now()-t0<8000)timer=setTimeout(find,140);else{setRect(null);setMiss(true);}};
+    timer=setTimeout(find,80);
+    return()=>{alive=false;clearTimeout(timer);};},[idx]);
+  useEffect(()=>{let raf=0;const on=()=>{cancelAnimationFrame(raf);raf=requestAnimationFrame(measure);};
+    window.addEventListener("resize",on);window.addEventListener("scroll",on,true);
+    return()=>{window.removeEventListener("resize",on);window.removeEventListener("scroll",on,true);cancelAnimationFrame(raf);};},[idx]);
+  useEffect(()=>{if(cardRef.current)setCh(cardRef.current.offsetHeight||280);try{cardRef.current&&cardRef.current.focus({preventScroll:true});}catch(e){}},[idx,rect&&rect.h]);
+  // где карточка: под подсветкой, над ней, справа, слева — иначе в правом нижнем углу
+  const vw=window.innerWidth,vh=window.innerHeight,cw=Math.min(408,vw-24),g=16;
+  let pos;
+  if(vw<760)pos={left:12,right:12,bottom:12};
+  else if(!rect)pos={left:(vw-cw)/2,top:Math.max(80,(vh-ch)/2)};
+  else{const clampX=x=>Math.min(Math.max(12,x),vw-cw-12),clampY=y=>Math.min(Math.max(12,y),vh-ch-12);
+    if(rect.y+rect.h+g+ch<vh-12)pos={left:clampX(rect.x),top:rect.y+rect.h+g};
+    else if(rect.y-g-ch>12)pos={left:clampX(rect.x),top:rect.y-g-ch};
+    else if(rect.x-g-cw>12)pos={left:rect.x-g-cw,top:clampY(rect.y+24)};
+    else if(rect.x+rect.w+g+cw<vw-12)pos={left:rect.x+rect.w+g,top:clampY(rect.y+24)};
+    else pos={left:vw-cw-24,top:vh-ch-24};}
+  const n=V_TOUR.length,last=idx===n-1;
+  const chap=V_TOUR_CH[step.ch];const inCh=V_TOUR.slice(0,idx+1).filter(x=>x.ch===step.ch).length;
+  const text=typeof step.x==="function"?step.x(ctx||{}):step.x;
+  // вокруг подсветки — четыре «заглушки»: внутри неё можно нажимать
+  const blk=rect?[{left:0,top:0,width:vw,height:rect.y},{left:0,top:rect.y+rect.h,width:vw,height:Math.max(0,vh-rect.y-rect.h)},
+    {left:0,top:rect.y,width:rect.x,height:rect.h},{left:rect.x+rect.w,top:rect.y,width:Math.max(0,vw-rect.x-rect.w),height:rect.h}]:[{left:0,top:0,width:vw,height:vh}];
+  return ReactDOM.createPortal(<div className="vsp vr vt-root">
+    {blk.map((b,i)=><div key={i} className="vt-block" style={b}/>)}
+    {/* затемнение — маской SVG с вырезом */}
+    <svg className="vt-svg" aria-hidden="true"><defs><mask id="vt-mask"><rect width="100%" height="100%" fill="white"/>
+      {rect&&<rect className="vt-mr" x={rect.x} y={rect.y} width={rect.w} height={rect.h} rx="12" ry="12" fill="black"/>}</mask></defs>
+      <rect className="vt-shade" width="100%" height="100%" mask="url(#vt-mask)"/></svg>
+    {rect&&<div className="vt-hole" style={{left:rect.x,top:rect.y,width:rect.w,height:rect.h}}/>}
+    <section className="vt-card" ref={cardRef} tabIndex={-1} role="dialog" aria-modal="false" aria-labelledby="vt-s-title"
+      style={{...pos,width:vw<760?undefined:cw}}>
+      <div className="vt-prog" aria-hidden="true">{V_TOUR.map((x,i)=><i key={i} className={(i<idx?"done":i===idx?"cur":"")+(i>0&&V_TOUR[i-1].ch!==x.ch?" gap":"")}/>)}</div>
+      <div className="vt-step"><span>{chap[0]}</span> · шаг {inCh} из {chap[1]}<span className="vt-all">{idx+1} / {n}</span></div>
+      <h3 id="vt-s-title">{step.t}</h3>
+      <p aria-live="polite">{text}</p>
+      {step.ex&&<VTourExtra k={step.ex}/>}
+      {step.tr&&<p className="vt-try"><b>Попробуйте:</b> {step.tr}</p>}
+      {miss&&<p className="vt-miss">Этот блок ещё загружается — его можно посмотреть позже, обучение продолжится.</p>}
+      <div className="vt-foot">
+        <button className="vt-skip" onClick={onSkip}>Пропустить</button><span className="sp"/>
+        {idx>0&&<button className="btn btn-ghost vsm" onClick={onBack}>Назад</button>}
+        <button className="btn btn-primary vsm" onClick={onNext}>{last?"Готово":"Дальше →"}</button>
+      </div>
+    </section>
+  </div>,document.body);
+}
+
+// управляет показом: приветствие → шаги → итог; пишет, где человек остановился
+function VTour({ctl,stats,ctx}){
+  const{phase,idx}=ctl.t;
+  useEffect(()=>{if(phase!=="step")return;
+    const k=e=>{const tag=(e.target&&e.target.tagName)||"";if(/INPUT|SELECT|TEXTAREA/.test(tag))return;   // в поле — печатаем, а не листаем
+      if(e.key==="ArrowRight"||(e.key==="Enter"&&tag!=="BUTTON"&&tag!=="A")){e.preventDefault();ctl.next();}
+      else if(e.key==="ArrowLeft"){e.preventDefault();ctl.back();}
+      else if(e.key==="Escape"){e.preventDefault();e.stopImmediatePropagation();ctl.later();}};
+    window.addEventListener("keydown",k,true);return()=>window.removeEventListener("keydown",k,true);},[phase,idx]);
+  useEffect(()=>{if(phase!=="welcome"&&phase!=="final")return;
+    const k=e=>{if(e.key==="Escape"){e.preventDefault();e.stopImmediatePropagation();phase==="welcome"?ctl.later():ctl.close();}};
+    window.addEventListener("keydown",k,true);return()=>window.removeEventListener("keydown",k,true);},[phase]);
+  if(phase==="welcome")return <VTourWelcome stats={stats} onStart={ctl.start} onLater={ctl.later} onSkip={ctl.skip}/>;
+  if(phase==="step")return <VTourStep idx={idx} onNext={ctl.next} onBack={ctl.back} onSkip={ctl.skip} goTour={ctl.goTour} openTour={ctl.open} ctx={ctx}/>;
+  if(phase==="final")return <VTourFinal onClose={ctl.close} onAgain={ctl.again}/>;
+  return null;
+}
+
 // ── страница: три раздела, слои по адресу, план, уведомление с отменой ───────
 function VspPage(){
   const me=useMe();
@@ -11893,6 +12099,27 @@ function VspPage(){
   const openLayer=(k,val)=>{const c=stRef.current;const L={...c.L,[k]:val};if(k==="point"){delete L.story;delete L.person;delete L.scheme;}commit({...c,L},true);};
   const closeLayer=k=>{if(history.state&&history.state.vsp){history.back();return;}const c=stRef.current;const L={...c.L};delete L[k];commit({...c,L},false);};
   const evCtx=useMemo(()=>({open:rid=>openLayer("story",rid)}),[]);
+  // знакомство: один раз каждому, у кого есть доступ; где остановились — в профиле
+  const[tour,setTour]=useState({phase:null,idx:0});const[tourPref,setTourPref]=useState(null);const tourShown=useRef(false);
+  const tourTrk=(a,x)=>{try{trkEvent({kind:"ui",page:"vsp",payload:{action:"vsp_tour",step:a,...(x||{})}});}catch(e){}};
+  const tourSave=(state,step)=>{const v={state,at:vToday(),step};setTourPref(v);apiPut("/api/me",{prefs:{vsp_tour:v}}).catch(()=>{});};
+  const tourCtl={t:tour,
+    goTour:(s,keep)=>{const c=stRef.current;if(c.s!==s)commit({...c,s,L:keep?c.L:{}},false);else if(!keep&&Object.keys(c.L).length)commit({...c,L:{}},false);},
+    // открыть досье первого отделения очереди или первую историю досье — для шагов «Досье и проверка»
+    open:kind=>{const c=stRef.current;const pt=()=>{const el=document.querySelector('[data-tour="queue"] [data-pt]')||document.querySelector('[data-pt]');return el&&el.getAttribute("data-pt");};
+      if(kind==="point"){if(c.L.point)return true;const p=pt();if(!p)return false;commit({...c,L:{point:p}},false);return true;}
+      if(kind==="story"){if(c.L.story)return true;if(!c.L.point){const p=pt();if(p)commit({...c,L:{point:p}},false);return false;}
+        const r=document.querySelector('[data-tour="dossier"] [data-rid]');if(!r)return false;commit({...c,L:{...c.L,story:r.getAttribute("data-rid")}},false);return true;}
+      return true;},
+    start:()=>{setTour({phase:"step",idx:0});tourTrk("start");},
+    next:()=>setTour(t=>{if(t.idx<V_TOUR.length-1){tourTrk("step",{n:t.idx+2});return {phase:"step",idx:t.idx+1};}
+      tourSave("done",V_TOUR.length);tourTrk("done");return {phase:"final",idx:t.idx};}),
+    back:()=>setTour(t=>({phase:"step",idx:Math.max(0,t.idx-1)})),
+    later:()=>{tourSave("later",tour.idx);tourTrk("later",{n:tour.idx+1,from:tour.phase});setTour({phase:null,idx:0});},
+    skip:()=>{tourSave("skipped",tour.idx);tourTrk("skip",{n:tour.idx+1,from:tour.phase});setTour({phase:null,idx:0});},
+    close:()=>{setTour({phase:null,idx:0});const c=stRef.current;commit({...c,s:"main",L:{}},false);try{window.scrollTo({top:0,behavior:"smooth"});}catch(e){}},
+    again:()=>{setTour({phase:"step",idx:0});tourTrk("again");}};
+  const startTour=()=>{const c=stRef.current;if(Object.keys(c.L).length)commit({...c,L:{}},false);setTour({phase:"step",idx:0});tourTrk("start",{manual:1});};
   // Esc закрывает верхний слой
   const order=["point","scheme","person","method","plan","story"];
   const openL=order.filter(k=>st.L[k]);
@@ -11900,6 +12127,12 @@ function VspPage(){
     window.addEventListener("keydown",k);return()=>window.removeEventListener("keydown",k);},[openL.join(",")]);
   const tiles=meta&&!meta.err?meta.tiles:null;
   const regions=useMemo(()=>(tiles||[]).filter(t=>t.n>0).slice().sort((a,b)=>a.name.localeCompare(b.name,"ru")),[tiles]);
+  useEffect(()=>{if(tourShown.current||tour.phase||!me||!me.can_vsp||!meta||meta.err)return;
+    const pr=tourPref||(me.prefs&&me.prefs.vsp_tour)||null;
+    if(pr&&(pr.state==="done"||pr.state==="skipped"||(pr.state==="later"&&pr.at===vToday())))return;
+    if(Object.keys(stRef.current.L).length)return;            // пришли по ссылке на досье — не мешаем
+    tourShown.current=true;const t=setTimeout(()=>{setTour({phase:"welcome",idx:0});tourTrk("shown");},900);
+    return()=>clearTimeout(t);},[me,meta]);
   if(me&&!me.can_vsp)return <ErrState msg="Раздел открыт только владельцу инструмента."/>;
   const gosbs=map&&!map.err?map.gosbs:[];
   const openPoint=p=>openLayer("point",p);
@@ -11910,14 +12143,15 @@ function VspPage(){
   return <VEv.Provider value={evCtx}><div className="vsp vr fade-in">
     <div className="vr-head">
       <h1>Аудит сети ВСП</h1>
-      <div className="vr-tabs" role="tablist" aria-label="Разделы">{S.map(([k,l])=><button key={k} role="tab" aria-selected={st.s===k} className={st.s===k?"on":""}
+      <div className="vr-tabs" role="tablist" aria-label="Разделы" data-tour="tabs">{S.map(([k,l])=><button key={k} role="tab" aria-selected={st.s===k} className={st.s===k?"on":""}
         onClick={()=>st.s!==k&&go(k)}>{l}{k==="where"&&listedN?<span className="vr-tabn">{vN(listedN)}</span>:null}</button>)}</div>
       <span className="sp"/>
-      <VSearchBox openPoint={openPoint}/>
-      <button className="btn btn-ghost vr-planbtn" onClick={()=>openLayer("plan","1")}>План проверки{plan.plan.length?<span className="vr-badge">{plan.plan.length}</span>:null}</button>
+      <div className="vr-htools" data-tour="tools"><VSearchBox openPoint={openPoint}/>
+        <button className="btn btn-ghost vr-planbtn" onClick={()=>openLayer("plan","1")}>План проверки{plan.plan.length?<span className="vr-badge">{plan.plan.length}</span>:null}</button></div>
     </div>
-    <div className="vr-sub">{meta&&meta.run?`Данные на ${vDay(meta.run.finished_at)}`:"Загружаю данные"}{map&&!map.err&&map.points_total?` · вся сеть: ${vN(map.points_total)} ${vPl(map.points_total,"отделение","отделения","отделений")}`:""} ·{" "}
+    <div className="vr-sub" data-tour="help">{meta&&meta.run?`Данные на ${vDay(meta.run.finished_at)}`:"Загружаю данные"}{map&&!map.err&&map.points_total?` · вся сеть: ${vN(map.points_total)} ${vPl(map.points_total,"отделение","отделения","отделений")}`:""} ·{" "}
       <button className="vlink" onClick={()=>openLayer("method","1")}>Как это работает</button>{" "}·{" "}
+      <button className="vlink" onClick={()=>startTour()}>Обучение</button>{" "}·{" "}
       {meta&&meta.access&&meta.access.owner?(meta.access.beta?`бета: вы и ещё ${meta.access.beta} ${vPl(meta.access.beta,"участник","участника","участников")}`:"раздел виден только вам"):"бета-версия раздела"}</div>
     {meta&&!meta.err&&meta.source==="слова"&&<div className="vr-benign">Предварительно: истории найдены по словам, модель ещё читает отзывы.</div>}
     <div className="vr-body">
@@ -11932,9 +12166,12 @@ function VspPage(){
     {st.L.scheme&&<VSchemeLayer key={"s"+st.L.scheme} id={st.L.scheme} depth={depth("scheme")} onClose={()=>closeLayer("scheme")} openPoint={openPoint} tiles={tiles}
       goStories={k=>go("stories",{action:k,sev:0,per:"all"},"all")}/>}
     {st.L.person&&<VPersonLayer key={"h"+st.L.person} id={st.L.person} depth={depth("person")} onClose={()=>closeLayer("person")} openPoint={openPoint}/>}
-    {st.L.method&&<VLayer depth={depth("method")} onClose={()=>closeLayer("method")} width={820} title="Как это работает"><VspMethod2/></VLayer>}
+    {st.L.method&&<VLayer depth={depth("method")} onClose={()=>closeLayer("method")} width={820} title="Как это работает">
+      <div className="vt-again"><div><b>Обучение по вкладке</b><span className="note">{V_TOUR.length} шагов на живых данных, около пяти минут</span></div>
+        <button className="btn btn-primary vsm" onClick={()=>startTour()}>Пройти обучение →</button></div><VspMethod2/></VLayer>}
     {st.L.plan&&<VLayer depth={depth("plan")} onClose={()=>closeLayer("plan")} width={640} title={`План проверки · ${plan.plan.length}`}><VPlanBody plan={plan} openPoint={openPoint}/></VLayer>}
     {st.L.story&&<VEvidenceLayer key={"e"+st.L.story} rid={st.L.story} depth={depth("story")} onClose={()=>closeLayer("story")} openPoint={openPoint} plan={plan}/>}
+    <VTour ctl={tourCtl} ctx={{net:map&&!map.err?map.net_per100:null}} stats={meta&&!meta.err&&meta.progress?{read:meta.progress.screened,stories:meta.progress.relevant,points:map&&!map.err?map.points_total:null}:null}/>
     {toastS&&ReactDOM.createPortal(<div className="vsp vr"><div className="vr-toast" role="status" key={toastS.id}><span>{toastS.text}</span>
       {toastS.undo&&<button onClick={()=>{toastS.undo();setToastS(null);}}>{toastS.undoLabel||"Отменить"}</button>}
       <button className="vr-x sm" aria-label="Скрыть" onClick={()=>setToastS(null)}>✕</button></div></div>,document.body)}
