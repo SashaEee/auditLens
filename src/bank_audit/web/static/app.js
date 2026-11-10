@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 61c4823ba1ac5d25f46abdd224e3f014d15aa0f096a483fb1f3ae8d7f4db5302): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 beee030889ac11487e3da5270a8f6171bc54ce7084a810f6c129488add78d046): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -21455,7 +21455,7 @@ function vHash(st) {
   return "#vsp" + (q ? "?" + q : "");
 }
 
-// план проверки — отделения, отложенные для выезда; хранится в этом браузере
+// план проверки — отделения, отложенные для проверки; хранится в этом браузере
 function useVPlan(toast) {
   const [plan, setPlan] = useState(() => vLS("vsp_plan", []));
   const save = n => {
@@ -21588,7 +21588,7 @@ function VPlanBody({
     style: {
       marginTop: 0
     }
-  }, "\u041E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u0432\u044B \u043E\u0442\u043B\u043E\u0436\u0438\u043B\u0438 \u0434\u043B\u044F \u0432\u044B\u0435\u0437\u0434\u0430. \u0421\u043F\u0438\u0441\u043E\u043A \u0445\u0440\u0430\u043D\u0438\u0442\u0441\u044F \u0432 \u044D\u0442\u043E\u043C \u0431\u0440\u0430\u0443\u0437\u0435\u0440\u0435."), plan.plan.length ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", null, plan.plan.map(x => /*#__PURE__*/React.createElement("div", {
+  }, "\u041E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u0432\u044B \u043E\u0442\u043B\u043E\u0436\u0438\u043B\u0438 \u0434\u043B\u044F \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438. \u0421\u043F\u0438\u0441\u043E\u043A \u0445\u0440\u0430\u043D\u0438\u0442\u0441\u044F \u0432 \u044D\u0442\u043E\u043C \u0431\u0440\u0430\u0443\u0437\u0435\u0440\u0435."), plan.plan.length ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", null, plan.plan.map(x => /*#__PURE__*/React.createElement("div", {
     key: x.point,
     className: "vplan-it"
   }, /*#__PURE__*/React.createElement("button", {
@@ -21602,7 +21602,7 @@ function VPlanBody({
     className: "vmore",
     href: `/api/vsp/export/visit.docx?point=${encodeURIComponent(x.point)}`,
     download: true
-  }, "\u041B\u0438\u0441\u0442 \u0432\u044B\u0435\u0437\u0434\u0430"), /*#__PURE__*/React.createElement("button", {
+  }, "\u041B\u0438\u0441\u0442 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438"), /*#__PURE__*/React.createElement("button", {
     className: "vr-x sm",
     "aria-label": "\u0423\u0431\u0440\u0430\u0442\u044C \u0438\u0437 \u043F\u043B\u0430\u043D\u0430",
     onClick: () => plan.remove(x.point)
@@ -21617,7 +21617,7 @@ function VPlanBody({
     className: "btn btn-primary",
     href: "/api/vsp/export/visit.docx?points=" + encodeURIComponent(pts),
     download: true
-  }, "\u041B\u0438\u0441\u0442\u044B \u0432\u044B\u0435\u0437\u0434\u0430 \u043E\u0434\u043D\u0438\u043C \u0444\u0430\u0439\u043B\u043E\u043C (Word)"), /*#__PURE__*/React.createElement("a", {
+  }, "\u041B\u0438\u0441\u0442\u044B \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u043E\u0434\u043D\u0438\u043C \u0444\u0430\u0439\u043B\u043E\u043C (Word)"), /*#__PURE__*/React.createElement("a", {
     className: "btn btn-ghost",
     href: "/api/vsp/export/justification.xlsx?points=" + encodeURIComponent(pts),
     download: true
@@ -22233,7 +22233,7 @@ function VMatrix({
   }, "\u2014"))))))));
 }
 
-// ── раздел «Главное»: вывод, история, куда ехать, почему мы так думаем ─────
+// ── раздел «Главное»: вывод, история, что проверить, почему мы так думаем ──
 function VMain({
   f,
   setF,
@@ -22357,7 +22357,7 @@ function VMain({
     className: "vr-aside"
   }, /*#__PURE__*/React.createElement("div", {
     className: "eyebrow"
-  }, "\u041A\u0443\u0434\u0430 \u0435\u0445\u0430\u0442\u044C"), /*#__PURE__*/React.createElement("div", {
+  }, "\u0427\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C"), /*#__PURE__*/React.createElement("div", {
     className: "vr-bigrow"
   }, /*#__PURE__*/React.createElement("span", {
     className: "vr-big"
@@ -22666,7 +22666,7 @@ function VQueueDetail({
   }, r.peer === 0 && r.me > 0 ? "у большинства похожих — ни одной" : `обычно ${fmt(r, r.peer)}`)))), /*#__PURE__*/React.createElement("button", {
     className: "vlink",
     onClick: () => openPoint(row.point)
-  }, "\u0412\u0441\u0435 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F, \u043B\u044E\u0434\u0438, \u0447\u0442\u043E \u0437\u0430\u043F\u0440\u043E\u0441\u0438\u0442\u044C \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C \u043D\u0430 \u043C\u0435\u0441\u0442\u0435 \u2192"));
+  }, "\u0412\u0441\u0435 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F, \u043B\u044E\u0434\u0438, \u0447\u0442\u043E \u0437\u0430\u043F\u0440\u043E\u0441\u0438\u0442\u044C \u0438 \u0447\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C \u2192"));
 }
 function VQueue({
   f,
@@ -23061,7 +23061,7 @@ function VWhere({
     }
   }, /*#__PURE__*/React.createElement("div", {
     className: "vr-sech"
-  }, /*#__PURE__*/React.createElement("h3", null, view === "table" ? "Все отделения с историями" : "Очередь выезда"), /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("h3", null, view === "table" ? "Все отделения с историями" : "Очередь проверки"), /*#__PURE__*/React.createElement("span", {
     className: "sp"
   }), /*#__PURE__*/React.createElement("div", {
     className: "vr-seg2",
@@ -24024,7 +24024,7 @@ function VDossierLayer({
     className: "btn btn-ghost",
     href: `/api/vsp/export/visit.docx?point=${encodeURIComponent(point)}`,
     download: true
-  }, "\u041B\u0438\u0441\u0442 \u0432\u044B\u0435\u0437\u0434\u0430 (Word)"), /*#__PURE__*/React.createElement("a", {
+  }, "\u041B\u0438\u0441\u0442 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 (Word)"), /*#__PURE__*/React.createElement("a", {
     className: "btn btn-ghost",
     href: `/api/vsp/export/justification.xlsx?points=${encodeURIComponent(point)}`,
     download: true
@@ -24135,7 +24135,7 @@ function VDossierLayer({
     className: "note"
   }, "\u0418\u043C\u0435\u043D\u0430 \u2014 \u043A\u0430\u043A \u043D\u0430\u043F\u0438\u0441\u0430\u043B\u0438 \u043A\u043B\u0438\u0435\u043D\u0442\u044B, \u0442\u043E\u043B\u044C\u043A\u043E \u0432\u043D\u0443\u0442\u0440\u0438 \u044D\u0442\u043E\u0433\u043E \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F; \u0441 \u0434\u0440\u0443\u0433\u0438\u043C\u0438 \u0412\u0421\u041F \u043D\u0435 \u0441\u043E\u043F\u043E\u0441\u0442\u0430\u0432\u043B\u044F\u044E\u0442\u0441\u044F.")), (a.request || []).length > 0 && /*#__PURE__*/React.createElement("section", {
     className: "sec"
-  }, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0442\u043E \u0437\u0430\u043F\u0440\u043E\u0441\u0438\u0442\u044C \u0437\u0430\u0440\u0430\u043D\u0435\u0435"), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0442\u043E \u0437\u0430\u043F\u0440\u043E\u0441\u0438\u0442\u044C"), /*#__PURE__*/React.createElement("div", {
     className: "check"
   }, a.request.map((r, i) => /*#__PURE__*/React.createElement("label", {
     key: i
@@ -24145,7 +24145,7 @@ function VDossierLayer({
     className: "where"
   }, r.where))))), (a.check || []).length > 0 && /*#__PURE__*/React.createElement("section", {
     className: "sec"
-  }, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C \u043D\u0430 \u043C\u0435\u0441\u0442\u0435"), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C"), /*#__PURE__*/React.createElement("div", {
     className: "check"
   }, a.check.map((t, i) => /*#__PURE__*/React.createElement("label", {
     key: i
@@ -24313,7 +24313,7 @@ function VspMethod2() {
     }
   }, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0442\u043E \u0433\u0434\u0435"), /*#__PURE__*/React.createElement("ul", {
     className: "facts"
-  }, /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0413\u043B\u0430\u0432\u043D\u043E\u0435"), " \u2014 \u0441\u0445\u0435\u043C\u0430, \u043A\u043E\u0442\u043E\u0440\u0430\u044F \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u0435\u0442\u0441\u044F \u0432 \u0440\u0430\u0437\u043D\u044B\u0445 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F\u0445, \u0441\u0438\u043B\u044C\u043D\u044B\u0435 \u0441\u043B\u0443\u0447\u0430\u0438 \u0441 \u0434\u043E\u0441\u043B\u043E\u0432\u043D\u043E\u0439 \u0446\u0438\u0442\u0430\u0442\u043E\u0439, \u043A\u0443\u0434\u0430 \u0435\u0445\u0430\u0442\u044C, \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \xAB\u0438\u0437\u043D\u0443\u0442\u0440\u0438\xBB \u0438 \u043F\u043E\u0447\u0435\u043C\u0443 \u043C\u044B \u0442\u0430\u043A \u0434\u0443\u043C\u0430\u0435\u043C.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0413\u0434\u0435 \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C"), " \u2014 \u043A\u0430\u0440\u0442\u0430 \xAB\u0432\u043E \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u0440\u0430\u0437 \u0442\u044F\u0436\u0451\u043B\u044B\u0445 \u0438\u0441\u0442\u043E\u0440\u0438\u0439 \u0431\u043E\u043B\u044C\u0448\u0435 \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u043E\u0433\u043E\xBB, \u0413\u041E\u0421\u0411 \u0441\u0432\u0435\u0440\u0445 \u0440\u0430\u0437\u043C\u0435\u0440\u0430, \u043E\u0447\u0435\u0440\u0435\u0434\u044C \u0432\u044B\u0435\u0437\u0434\u0430 \u043F\u043E \u0443\u0440\u043E\u0432\u043D\u044F\u043C \u0441 \u043E\u0442\u043A\u0440\u044B\u0442\u044B\u043C \u0434\u043E\u043A\u0430\u0437\u0430\u0442\u0435\u043B\u044C\u0441\u0442\u0432\u043E\u043C \u0438 \u0442\u0430\u0431\u043B\u0438\u0446\u0430 \u0432\u0441\u0435\u0445 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0418\u0441\u0442\u043E\u0440\u0438\u0438"), " \u2014 \u0432\u0441\u0435 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432 \u0441 \u0444\u0438\u043B\u044C\u0442\u0440\u0430\u043C\u0438 \u0438 \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u043E\u0439; \u0432\u0438\u0434\u044B \xAB\u043F\u043E \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u0430\u043C\xBB \u0438 \xAB\u043F\u043E \u0441\u0445\u0435\u043C\u0430\u043C\xBB.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0421\u043B\u043E\u0438"), " \u2014 \u0441\u043B\u0443\u0447\u0430\u0439, \u0434\u043E\u0441\u044C\u0435, \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A \u0438 \u0441\u0445\u0435\u043C\u0430 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u044E\u0442\u0441\u044F \u043F\u043E\u0432\u0435\u0440\u0445 \u0440\u0430\u0437\u0434\u0435\u043B\u0430, \u0443 \u043A\u0430\u0436\u0434\u043E\u0433\u043E \u0441\u0432\u043E\u044F \u0441\u0441\u044B\u043B\u043A\u0430. \xAB\u041D\u0430\u0437\u0430\u0434\xBB \u0438 Esc \u0437\u0430\u043A\u0440\u044B\u0432\u0430\u044E\u0442 \u0441\u043B\u043E\u0439.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u041F\u043B\u0430\u043D \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438"), " \u2014 \u043E\u0442\u043B\u043E\u0436\u0435\u043D\u043D\u044B\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F: \u043B\u0438\u0441\u0442\u044B \u0432\u044B\u0435\u0437\u0434\u0430 \u043E\u0434\u043D\u0438\u043C Word-\u0444\u0430\u0439\u043B\u043E\u043C, \u043E\u0431\u043E\u0441\u043D\u043E\u0432\u0430\u043D\u0438\u0435 \u0438 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u0432 Excel.")))), /*#__PURE__*/React.createElement("section", {
+  }, /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0413\u043B\u0430\u0432\u043D\u043E\u0435"), " \u2014 \u0441\u0445\u0435\u043C\u0430, \u043A\u043E\u0442\u043E\u0440\u0430\u044F \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u0435\u0442\u0441\u044F \u0432 \u0440\u0430\u0437\u043D\u044B\u0445 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F\u0445, \u0441\u0438\u043B\u044C\u043D\u044B\u0435 \u0441\u043B\u0443\u0447\u0430\u0438 \u0441 \u0434\u043E\u0441\u043B\u043E\u0432\u043D\u043E\u0439 \u0446\u0438\u0442\u0430\u0442\u043E\u0439, \u0447\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C \u0432 \u043F\u0435\u0440\u0432\u0443\u044E \u043E\u0447\u0435\u0440\u0435\u0434\u044C, \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \xAB\u0438\u0437\u043D\u0443\u0442\u0440\u0438\xBB \u0438 \u043F\u043E\u0447\u0435\u043C\u0443 \u043C\u044B \u0442\u0430\u043A \u0434\u0443\u043C\u0430\u0435\u043C.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0413\u0434\u0435 \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C"), " \u2014 \u043A\u0430\u0440\u0442\u0430 \xAB\u0432\u043E \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u0440\u0430\u0437 \u0442\u044F\u0436\u0451\u043B\u044B\u0445 \u0438\u0441\u0442\u043E\u0440\u0438\u0439 \u0431\u043E\u043B\u044C\u0448\u0435 \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u043E\u0433\u043E\xBB, \u0413\u041E\u0421\u0411 \u0441\u0432\u0435\u0440\u0445 \u0440\u0430\u0437\u043C\u0435\u0440\u0430, \u043E\u0447\u0435\u0440\u0435\u0434\u044C \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u043F\u043E \u0443\u0440\u043E\u0432\u043D\u044F\u043C \u0441 \u043E\u0442\u043A\u0440\u044B\u0442\u044B\u043C \u0434\u043E\u043A\u0430\u0437\u0430\u0442\u0435\u043B\u044C\u0441\u0442\u0432\u043E\u043C \u0438 \u0442\u0430\u0431\u043B\u0438\u0446\u0430 \u0432\u0441\u0435\u0445 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0418\u0441\u0442\u043E\u0440\u0438\u0438"), " \u2014 \u0432\u0441\u0435 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432 \u0441 \u0444\u0438\u043B\u044C\u0442\u0440\u0430\u043C\u0438 \u0438 \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u043E\u0439; \u0432\u0438\u0434\u044B \xAB\u043F\u043E \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u0430\u043C\xBB \u0438 \xAB\u043F\u043E \u0441\u0445\u0435\u043C\u0430\u043C\xBB.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0421\u043B\u043E\u0438"), " \u2014 \u0441\u043B\u0443\u0447\u0430\u0439, \u0434\u043E\u0441\u044C\u0435, \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A \u0438 \u0441\u0445\u0435\u043C\u0430 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u044E\u0442\u0441\u044F \u043F\u043E\u0432\u0435\u0440\u0445 \u0440\u0430\u0437\u0434\u0435\u043B\u0430, \u0443 \u043A\u0430\u0436\u0434\u043E\u0433\u043E \u0441\u0432\u043E\u044F \u0441\u0441\u044B\u043B\u043A\u0430. \xAB\u041D\u0430\u0437\u0430\u0434\xBB \u0438 Esc \u0437\u0430\u043A\u0440\u044B\u0432\u0430\u044E\u0442 \u0441\u043B\u043E\u0439.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u041F\u043B\u0430\u043D \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438"), " \u2014 \u043E\u0442\u043B\u043E\u0436\u0435\u043D\u043D\u044B\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F: \u043B\u0438\u0441\u0442\u044B \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 \u043E\u0434\u043D\u0438\u043C Word-\u0444\u0430\u0439\u043B\u043E\u043C, \u043E\u0431\u043E\u0441\u043D\u043E\u0432\u0430\u043D\u0438\u0435 \u0438 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u0432 Excel.")))), /*#__PURE__*/React.createElement("section", {
     className: "sec"
   }, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0442\u043E \u0438\u0449\u0435\u043C"), /*#__PURE__*/React.createElement("p", {
     style: {

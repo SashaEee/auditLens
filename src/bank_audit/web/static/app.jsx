@@ -10936,7 +10936,7 @@ function vHash(st){
   const q=p.toString();return "#vsp"+(q?"?"+q:"");
 }
 
-// план проверки — отделения, отложенные для выезда; хранится в этом браузере
+// план проверки — отделения, отложенные для проверки; хранится в этом браузере
 function useVPlan(toast){
   const[plan,setPlan]=useState(()=>vLS("vsp_plan",[]));
   const save=n=>{setPlan(n);vLSset("vsp_plan",n);};
@@ -10975,14 +10975,14 @@ function VLayer({title,sub,onClose,width,depth,children,label}){
 function VPlanBody({plan,openPoint}){
   const pts=plan.plan.map(x=>x.point).join(",");
   return <>
-    <p className="note" style={{marginTop:0}}>Отделения, которые вы отложили для выезда. Список хранится в этом браузере.</p>
+    <p className="note" style={{marginTop:0}}>Отделения, которые вы отложили для проверки. Список хранится в этом браузере.</p>
     {plan.plan.length?<>
       <div>{plan.plan.map(x=><div key={x.point} className="vplan-it">
         <button className="lk" onClick={()=>openPoint(x.point)}><div className="t">{vPlace(x)}</div><div className="m">{vCode(x)}{x.gosb?` · ГОСБ ${x.gosb}`:""}</div></button>
-        <a className="vmore" href={`/api/vsp/export/visit.docx?point=${encodeURIComponent(x.point)}`} download>Лист выезда</a>
+        <a className="vmore" href={`/api/vsp/export/visit.docx?point=${encodeURIComponent(x.point)}`} download>Лист проверки</a>
         <button className="vr-x sm" aria-label="Убрать из плана" onClick={()=>plan.remove(x.point)}>✕</button></div>)}</div>
       <div className="row" style={{marginTop:14,gap:8,flexWrap:"wrap"}}>
-        <a className="btn btn-primary" href={"/api/vsp/export/visit.docx?points="+encodeURIComponent(pts)} download>Листы выезда одним файлом (Word)</a>
+        <a className="btn btn-primary" href={"/api/vsp/export/visit.docx?points="+encodeURIComponent(pts)} download>Листы проверки одним файлом (Word)</a>
         <a className="btn btn-ghost" href={"/api/vsp/export/justification.xlsx?points="+encodeURIComponent(pts)} download>Обоснование (Excel)</a>
         <a className="btn btn-ghost" href={"/api/vsp/export/stories.xlsx?"+vQS({period:"all",severity:2})} download>Истории (Excel)</a>
         <span className="sp"/><button className="btn btn-ghost" onClick={plan.clear}>Очистить</button></div>
@@ -11187,7 +11187,7 @@ function VMatrix({m,onPick}){
         title={`${r} · ${m.cols[j].label}: ${n}`} onClick={()=>onPick(m.cols[j].key)}>{vN(n)}</button>:<span className="note">—</span>}</td>)}</tr>)}</tbody></table></div>;
 }
 
-// ── раздел «Главное»: вывод, история, куда ехать, почему мы так думаем ─────
+// ── раздел «Главное»: вывод, история, что проверить, почему мы так думаем ──
 function VMain({f,setF,go,openPoint,plan,regions,meta,map:m}){
   const scope=vQS({subject:f.subject,gosb:f.gosb});
   const b=useVFetch("/api/vsp/brief"+(scope?"?"+scope:""));
@@ -11227,7 +11227,7 @@ function VMain({f,setF,go,openPoint,plan,regions,meta,map:m}){
           {P.examples.slice(1).map(e=><VCaseCard key={e.rid} c={e} size="row" openPoint={openPoint}/>)}</div>}
       </div>
       <aside className="vr-aside">
-        <div className="eyebrow">Куда ехать</div>
+        <div className="eyebrow">Что проверить</div>
         <div className="vr-bigrow"><span className="vr-big">{vN(L.urgent||0)}</span><span className="vr-big-l">{vPl(L.urgent||0,"отделение","отделения","отделений")} —<br/>проверить срочно</span></div>
         <div className="note">ещё {vN(L.converged||0)} — сходятся признаки, {vN(L.watch||0)} — под наблюдением</div>
         <div className="vr-urg">{!u?<Skel h={180}/>:urgent.length?urgent.map(r=><div key={r.point} className="vr-urg-r" role="button" tabIndex={0} onClick={()=>openPoint(r.point)} onKeyDown={vEnter(()=>openPoint(r.point))}>
@@ -11334,7 +11334,7 @@ function VQueueDetail({row,openPoint,plan}){
     {cmp.length>0&&<div className="vr-qd-cmp"><div className="eyebrow">Рядом с похожими отделениями ГОСБ {row.gosb||""}</div>
       {cmp.map(r=><div key={r.key} className="vr-cmp-r"><span>{r.label}</span><b>{fmt(r,r.me)}</b>
         <span className="note">{r.peer===0&&r.me>0?"у большинства похожих — ни одной":`обычно ${fmt(r,r.peer)}`}</span></div>)}</div>}
-    <button className="vlink" onClick={()=>openPoint(row.point)}>Все истории отделения, люди, что запросить и проверить на месте →</button>
+    <button className="vlink" onClick={()=>openPoint(row.point)}>Все истории отделения, люди, что запросить и что проверить →</button>
   </div>;
 }
 
@@ -11441,7 +11441,7 @@ function VWhere({f,setF,openPoint,plan,regions,view,setView,map:m}){
         {gos.length>8&&<button className="vmore" onClick={()=>setGAll(!gAll)}>{gAll?"Свернуть":`Все ГОСБ (${gos.length})`}</button>}</div>
     </div>
     <section id="vr-queue" className="vr-sec" style={{marginTop:36}}>
-      <div className="vr-sech"><h3>{view==="table"?"Все отделения с историями":"Очередь выезда"}</h3><span className="sp"/>
+      <div className="vr-sech"><h3>{view==="table"?"Все отделения с историями":"Очередь проверки"}</h3><span className="sp"/>
         <div className="vr-seg2" role="group" aria-label="Вид"><button className={view!=="table"?"on":""} aria-pressed={view!=="table"} onClick={()=>setView("queue")}>Очередь</button>
           <button className={view==="table"?"on":""} aria-pressed={view==="table"} onClick={()=>setView("table")}>Таблица</button></div>
         <a className="btn btn-ghost vsm" href={just} download title="Отделения из списка с учётом фильтров">Обоснование (Excel)</a></div>
@@ -11748,7 +11748,7 @@ function VDossierLayer({point,depth,onClose,openPoint,plan,goFilter,openPerson})
       <div className="note">{d.vol_2y!=null?`${vN(d.vol_2y)} ${vPl(d.vol_2y,"отзыв","отзыва","отзывов")} за 2 года`:""}{stories.length?` · историй ${stories.length}, тяжёлых ${heavy.length}`:""}</div>
       <div className="vr-acts" style={{marginTop:10}}>
         <VPlanBtn x={d} plan={plan}/>
-        <a className="btn btn-ghost" href={`/api/vsp/export/visit.docx?point=${encodeURIComponent(point)}`} download>Лист выезда (Word)</a>
+        <a className="btn btn-ghost" href={`/api/vsp/export/visit.docx?point=${encodeURIComponent(point)}`} download>Лист проверки (Word)</a>
         <a className="btn btn-ghost" href={`/api/vsp/export/justification.xlsx?points=${encodeURIComponent(point)}`} download>Обоснование (Excel)</a>
         <a className="btn btn-ghost" href={"/api/vsp/export/stories.xlsx?"+vQS({point,period:"all"})} download>Истории (Excel)</a></div>
       <VPassport d={d}/>
@@ -11774,9 +11774,9 @@ function VDossierLayer({point,depth,onClose,openPoint,plan,goFilter,openPerson})
         {(a.people||[]).length?<ul className="facts">{a.people.map((x,i)=><li key={i}><span><b>{x.name}</b> — {x.clients>1?`называют ${x.clients} ${vPl(x.clients,"разный клиент","разных клиента","разных клиентов")}`:"назван одним клиентом"}</span></li>)}</ul>
           :<p className="note">Имена в тяжёлых историях не названы.</p>}
         <p className="note">Имена — как написали клиенты, только внутри этого отделения; с другими ВСП не сопоставляются.</p></section>
-      {(a.request||[]).length>0&&<section className="sec"><h3>Что запросить заранее</h3><div className="check">
+      {(a.request||[]).length>0&&<section className="sec"><h3>Что запросить</h3><div className="check">
         {a.request.map((r,i)=><label key={i}><input type="checkbox"/><span>{r.text}</span><span className="where">{r.where}</span></label>)}</div></section>}
-      {(a.check||[]).length>0&&<section className="sec"><h3>Что проверить на месте</h3><div className="check">
+      {(a.check||[]).length>0&&<section className="sec"><h3>Что проверить</h3><div className="check">
         {a.check.map((t,i)=><label key={i}><input type="checkbox"/><span>{t}</span><span/></label>)}</div></section>}
       <VReviews point={point}/>
       {(d.nearby||[]).length>0&&<section className="sec"><h3>Рядом</h3><p className="note">В том же ГОСБ похожие истории ещё в {d.nearby.length} {d.nearby.length===1?"отделении":"отделениях"}:</p>
@@ -11827,11 +11827,11 @@ function VSchemeLayer({id,depth,onClose,openPoint,tiles,goStories}){
 function VspMethod2(){
   return <div className="vdos vr-dos">
     <section className="sec" style={{marginTop:0}}><h3>Что где</h3><ul className="facts">
-      <li><span><b>Главное</b> — схема, которая повторяется в разных отделениях, сильные случаи с дословной цитатой, куда ехать, действия «изнутри» и почему мы так думаем.</span></li>
-      <li><span><b>Где проверить</b> — карта «во сколько раз тяжёлых историй больше ожидаемого», ГОСБ сверх размера, очередь выезда по уровням с открытым доказательством и таблица всех отделений.</span></li>
+      <li><span><b>Главное</b> — схема, которая повторяется в разных отделениях, сильные случаи с дословной цитатой, что проверить в первую очередь, действия «изнутри» и почему мы так думаем.</span></li>
+      <li><span><b>Где проверить</b> — карта «во сколько раз тяжёлых историй больше ожидаемого», ГОСБ сверх размера, очередь проверки по уровням с открытым доказательством и таблица всех отделений.</span></li>
       <li><span><b>Истории</b> — все истории клиентов с фильтрами и выгрузкой; виды «по сотрудникам» и «по схемам».</span></li>
       <li><span><b>Слои</b> — случай, досье, сотрудник и схема открываются поверх раздела, у каждого своя ссылка. «Назад» и Esc закрывают слой.</span></li>
-      <li><span><b>План проверки</b> — отложенные отделения: листы выезда одним Word-файлом, обоснование и истории в Excel.</span></li></ul></section>
+      <li><span><b>План проверки</b> — отложенные отделения: листы проверки одним Word-файлом, обоснование и истории в Excel.</span></li></ul></section>
     <section className="sec"><h3>Что ищем</h3><p style={{maxWidth:"80ch"}}>Истории клиентов о том, что сделали люди в конкретном отделении: оформили без согласия, выдали один продукт под видом другого,
       сказали, что без допуслуги не дадут, работали в телефоне клиента, недодали наличные, раскрыли данные, обслуживают по знакомству.
       Жалобы на банк в целом, тарифы, очереди и приложение сюда не попадают — это «Аудит отзывов».</p></section>

@@ -249,9 +249,9 @@ def _fmt_ok(p: dict, fmt: str | None) -> bool:
 
 CAMPAIGN_GUIDE = {
     "check": [
-        {"where": "на месте", "text": "Просят ли клиентов оставить отзыв в картах и как: планшет или QR у стойки, "
+        {"where": "ВСП", "text": "Просят ли клиентов оставить отзыв в картах и как: планшет или QR у стойки, "
                                       "просьба после операции, «поставьте пять»"},
-        {"where": "на месте", "text": "Кто из сотрудников работал в дни эпизода: смены, графики, замены"},
+        {"where": "ВСП", "text": "Кто из сотрудников работал в дни эпизода: смены, графики, замены"},
         {"where": "запрос в ГОСБ", "text": "Показатели ВСП и сотрудников, завязанные на рейтинг или число отзывов; "
                                           "конкурсы и поручения по отзывам в период эпизода"},
         {"where": "запрос в ГОСБ", "text": "Жалобы клиентов ВСП за тот же период по внутренним каналам: не "
@@ -753,7 +753,7 @@ RISK_GUIDE = {
     "check": [
         {"where": "запрос в ГОСБ", "text": "Обращения клиента по внутренним каналам за ту же дату: было ли разбирательство и чем закончилось"},
         {"where": "запрос в центр", "text": "Операции клиента и действия сотрудников в системе за дату визита: кто проводил, что оформлено"},
-        {"where": "на месте", "text": "Документы по операции: заявления, согласия, подписи клиента; запись камер, если срок хранения позволяет"},
+        {"where": "ВСП", "text": "Документы по операции: заявления, согласия, подписи клиента; запись камер, если срок хранения позволяет"},
     ],
     "limits": ["Это слова клиента, а не установленный факт", "Поиск по фразам находит и ложные совпадения — "
                "смотрите цитату и полный текст", "Отзывы, удалённые площадкой до начала сбора, не видны"],
@@ -2104,7 +2104,7 @@ def export_justification(points: Optional[str] = None, subject: Optional[str] = 
         rows += [{**_place(run["points"][p]), "why": [], "quote": None, "confidence": None, "benign": None,
                   "action": None} for p in want if p in run["points"] and p not in {x["point"] for x in rows}]
     head = ["Отделение", "Город", "Адрес", "ГОСБ", "Регион", "Почему в списке", "Цитата клиента", "Дата",
-            "Уверенность", "Может быть безобидно", "Что запросить заранее", "Что проверить на месте"]
+            "Уверенность", "Может быть безобидно", "Что запросить", "Что проверить"]
     data, st_rows = [], []
     for x in rows:
         a = (run["points"][x["point"]].get("risk") or {})
@@ -2122,7 +2122,7 @@ def export_justification(points: Optional[str] = None, subject: Optional[str] = 
     head2 = ["Отделение", "Город", "Дата", "Что произошло (кратко)", "Тяжесть", "Пересказ ИИ", "Слова клиента", "Отзыв"]
     xb = _xlsx("Аудит сети ВСП · обоснование", [("Где стоит проверить", head, data,
                                                 {"Почему в списке", "Цитата клиента", "Может быть безобидно",
-                                                 "Что запросить заранее", "Что проверить на месте", "Адрес"}),
+                                                 "Что запросить", "Что проверить", "Адрес"}),
                                                ("Истории клиентов", head2, st_rows, {"Пересказ ИИ", "Слова клиента"})])
     return _xlsx_response(xb, "ВСП_обоснование.xlsx")
 
@@ -2138,16 +2138,16 @@ def export_visit(point: Optional[str] = None, points: Optional[str] = None,
         raise HTTPException(404, "отделение не найдено")
     from .export_brand import WD, docx_bytes
     first = run["points"][want[0]]
-    title = (f"Лист выезда · {first.get('city') or ''}, {first.get('address') or ''}" if len(want) == 1
-             else f"Листы выезда · {len(want)} отделений")
+    title = (f"Лист проверки · {first.get('city') or ''}, {first.get('address') or ''}" if len(want) == 1
+             else f"Листы проверки · {len(want)} отделений")
     doc = WD.new(title)
-    WD.header_footer(doc, "Аудит сети ВСП · лист выезда")
+    WD.header_footer(doc, "Аудит сети ВСП · лист проверки")
     for i, pt in enumerate(want):
         if i:
             doc.add_page_break()
         _visit_sheet(doc, run, run["points"][pt])
     return Response(docx_bytes(doc), media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('ВСП_лист_выезда.docx')}"})
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('ВСП_лист_проверки.docx')}"})
 
 
 def _visit_sheet(doc, run, p: dict) -> None:
@@ -2163,10 +2163,10 @@ def _visit_sheet(doc, run, p: dict) -> None:
         doc.add_paragraph(f"Уверенность: {a['confidence']['level']} — {a['confidence']['reason']}")
     if a.get("benign"):
         doc.add_paragraph(f"Может быть безобидно: {a['benign']['text']}. Снимет вопрос: {a['benign']['resolve']}.")
-    doc.add_heading("Что запросить заранее", level=1)
+    doc.add_heading("Что запросить", level=1)
     for r in a.get("request") or []:
         doc.add_paragraph(f"☐ {r['text']} — {r['where']}")
-    doc.add_heading("Что проверить на месте", level=1)
+    doc.add_heading("Что проверить", level=1)
     for t in a.get("check") or []:
         doc.add_paragraph(f"☐ {t}")
     doc.add_heading("Истории клиентов", level=1)
