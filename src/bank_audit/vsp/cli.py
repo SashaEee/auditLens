@@ -14,7 +14,7 @@
   daemon    --i-know-this-is-mass                            сбор и дописывание по расписанию (mass.py)
   status                                                     сводка: карточки, полнота, расписание, паузы
   llm-read  [--stage screen|card|detail|both|all] [--limit N] [--cap-rub N]   чтение отзывов моделью
-  motifs    [--cap-rub N]                                    почерки: разложить описания историй по каталогу
+  motifs    [--cap-rub N] [--kinds 5,15]                     почерки: разложить описания историй по каталогу
   signals                                                    расчёт сигналов вкладки (истории, волны, очаги, полки)
   branch-read [--limit N] [--cap-rub N]                      выводы по отделениям (после signals)
   nightly   [--cap-rub N]                                    вся ночная цепочка: чтение → почерки → расчёт → выводы → расчёт
@@ -163,6 +163,7 @@ def main(argv: list[str] | None = None) -> int:
     lr.add_argument("--ids", default=None, help="файл со списком review_id (эталон)")
     mo = sub.add_parser("motifs")
     mo.add_argument("--cap-rub", type=float, default=None, help="потолок трат на этот запуск, ₽")
+    mo.add_argument("--kinds", default=None, help="только эти типы историй, через запятую (проба)")
     br = sub.add_parser("branch-read")
     br.add_argument("--limit", type=int, default=2000)
     br.add_argument("--cap-rub", type=float, default=None, help="потолок трат на этот запуск, ₽")
@@ -197,7 +198,8 @@ def main(argv: list[str] | None = None) -> int:
         out = asyncio.run(llm_run(store, limit=a.limit, ids=ids, stage=a.stage, cap_rub=a.cap_rub))
     elif a.cmd == "motifs":
         from .signals.motifs import build as motifs_build
-        out = asyncio.run(motifs_build(store, cap_rub=a.cap_rub))
+        kinds = [int(x) for x in a.kinds.split(",") if x.strip().isdigit()] if a.kinds else None
+        out = asyncio.run(motifs_build(store, cap_rub=a.cap_rub, kinds=kinds))
     elif a.cmd == "branch-read":
         from .signals.branch_llm import run as branch_run
         out = asyncio.run(branch_run(store, limit=a.limit, cap_rub=a.cap_rub))

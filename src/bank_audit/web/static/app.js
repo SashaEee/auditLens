@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 a2030770722c31de129d3fb3ce5aa46756123a5e68f698e6b07bd6cd705f114a): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 7f4dbbbafaee95cf08c1f0061b334f5f72419eea6880f84a3bc1d2181f248140): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -25864,7 +25864,7 @@ function VspPage() {
     onClick: () => st.s !== k && go(k),
     title: k === "schemes" && nav.up ? `${nav.up} ${vPl(nav.up, "способ действия растёт или появился", "способа действия растут или появились", "способов действия растут или появились")}` : k === "where" && nav.listed ? `${nav.listed} ${vPl(nav.listed, "отделение", "отделения", "отделений")} на полках` : undefined
   }, l, badge[k] ? /*#__PURE__*/React.createElement("span", {
-    className: "vr-tabn" + (k === "schemes" ? " up" : "")
+    className: "vr-tabn"
   }, vN(badge[k])) : null))), /*#__PURE__*/React.createElement("span", {
     className: "sp"
   }), /*#__PURE__*/React.createElement("div", {

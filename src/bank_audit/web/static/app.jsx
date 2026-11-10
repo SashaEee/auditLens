@@ -12295,7 +12295,7 @@ function VspPage(){
       <h1>Аудит сети ВСП</h1>
       <div className="vr-tabs" role="tablist" aria-label="Разделы" data-tour="tabs">{S.map(([k,l])=><button key={k} role="tab" aria-selected={st.s===k} className={st.s===k?"on":""}
         onClick={()=>st.s!==k&&go(k)} title={k==="schemes"&&nav.up?`${nav.up} ${vPl(nav.up,"способ действия растёт или появился","способа действия растут или появились","способов действия растут или появились")}`:k==="where"&&nav.listed?`${nav.listed} ${vPl(nav.listed,"отделение","отделения","отделений")} на полках`:undefined}>
-        {l}{badge[k]?<span className={"vr-tabn"+(k==="schemes"?" up":"")}>{vN(badge[k])}</span>:null}</button>)}</div>
+        {l}{badge[k]?<span className="vr-tabn">{vN(badge[k])}</span>:null}</button>)}</div>
       <span className="sp"/>
       <div className="vr-htools" data-tour="tools"><VSearchBox openPoint={openPoint}/>
         <button className="btn btn-ghost vr-planbtn" onClick={()=>openLayer("plan","1")}>План проверки{plan.plan.length?<span className="vr-badge">{plan.plan.length}</span>:null}</button></div>

@@ -153,7 +153,9 @@ def _next_id(kind: int, have: set) -> str:
     return f"m{kind:02d}{n:02d}"
 
 
-async def build(store: Store, *, cap_rub: float | None = None, reader: Reader | None = None) -> dict:
+async def build(store: Store, *, cap_rub: float | None = None, reader: Reader | None = None,
+                kinds: list[int] | None = None) -> dict:
+    """kinds — только эти типы историй (проба на одном-двух типах перед полным прогоном)."""
     cap = CAP_RUB if cap_rub is None else cap_rub
     ms, labels = load(store)
     pend = _pending(store, labels)
@@ -190,7 +192,7 @@ async def build(store: Store, *, cap_rub: float | None = None, reader: Reader | 
 
     for kind in sorted(pend):
         todo = pend[kind]
-        if not todo or kind not in KINDS:
+        if not todo or kind not in KINDS or (kinds and kind not in kinds):
             continue
         if other_id(kind) not in ms:
             save_motifs([{"motif_id": other_id(kind), "kind": kind, "name": f"Прочее: {kind_name(kind).lower()}",
