@@ -11174,8 +11174,9 @@ function VHexMap({regions,picked,onPick}){
     {rs.map(r=>{const x=r.col*S+(r.row%2)*S/2,y=r.row*dy;const lv=vHexLevel(r);const on=picked===r.code;
       return <React.Fragment key={r.code}>
         {on&&<span className="vr-hex-sel" style={{left:x-3,top:y-3.5,width:S+4,height:H+5}}/>}
-        <button className={"vr-hex "+lv} style={{left:x,top:y,width:S-2,height:H-2,fontSize:fs}} title={hint(r)} aria-label={hint(r)} aria-pressed={on}
-          disabled={!r.points||!onPick} onClick={()=>onPick&&onPick(on?"":r.code)}>{r.label}</button></React.Fragment>;})}
+        {/* без onPick карта только показывает: плитку не отключаем, иначе пропадает подсказка при наведении */}
+        <button className={"vr-hex "+lv+(onPick?"":" ro")} style={{left:x,top:y,width:S-2,height:H-2,fontSize:fs}} title={hint(r)} aria-label={hint(r)}
+          aria-pressed={onPick?on:undefined} tabIndex={onPick?0:-1} disabled={!r.points} onClick={()=>onPick&&onPick(on?"":r.code)}>{r.label}</button></React.Fragment>;})}
   </div>;
 }
 function VHexLegend(){

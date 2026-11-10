@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 5ba1bc21bcd5c139fed137813edf81466cdb17263396c92c5c705193692b3a4f): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 2d3b95448697bd1d050d1866ed0780adf905bf2b44db94fc38a9aa7155d464d7): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -22212,7 +22212,7 @@ function VHexMap({
         height: H + 5
       }
     }), /*#__PURE__*/React.createElement("button", {
-      className: "vr-hex " + lv,
+      className: "vr-hex " + lv + (onPick ? "" : " ro"),
       style: {
         left: x,
         top: y,
@@ -22222,8 +22222,9 @@ function VHexMap({
       },
       title: hint(r),
       "aria-label": hint(r),
-      "aria-pressed": on,
-      disabled: !r.points || !onPick,
+      "aria-pressed": onPick ? on : undefined,
+      tabIndex: onPick ? 0 : -1,
+      disabled: !r.points,
       onClick: () => onPick && onPick(on ? "" : r.code)
     }, r.label));
   }));
