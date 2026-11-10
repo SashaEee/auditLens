@@ -11577,7 +11577,8 @@ function VQueue({f,openPoint,openHot,plan}){
             <div className="vr-q-r3"><span>{(r.why||[]).slice(0,3).join(" · ")}</span></div></div>;}
         const L=r.lead||{},F=r.flags||{},pt=(r.patterns||[])[0];
         const facts=[pt?`${pt.window_clients} ${vPl(pt.window_clients,"клиент","клиента","клиентов")} за ${pt.months} мес.`:r.heavy_clients>=2?`${r.heavy_clients} ${vPl(r.heavy_clients,"клиент","клиента","клиентов")}`:null,
-          F.money_max?vN(Math.round(F.money_max))+" ₽":null,F.vulnerable?"пожилые и уязвимые":null,(r.hot||[]).length?"в очаге":null].filter(Boolean);
+          F.money_max?vN(Math.round(F.money_max))+" ₽":null,F.vulnerable?"пожилые и уязвимые":null,(r.hot||[]).length?"в очаге":null,
+          pt&&pt.last&&new Date(pt.last)<Date.now()-730*864e5?"давно":null].filter(Boolean);
         return <div key={id} data-row={id} data-pt={r.point} role="option" aria-selected={on} tabIndex={on?0:-1} className={"vr-q-r"+(on?" on":"")}
           onClick={()=>narrow?openPoint(r.point):setSel(id)} onDoubleClick={()=>openRow(r)}>
           <div className="vr-q-r1"><span className={"vr-dot"+(r.red?"":" mid")}/><b>{vPlace(r)}</b><span className="note">{vDay(pt&&pt.last?pt.last:(r.quote||{}).date)}</span></div>

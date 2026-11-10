@@ -26,7 +26,7 @@ import math
 import os
 import re
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from . import clients as clients_mod
 from .kinds import BACKGROUND, INSIDE, KINDS, kind_name
@@ -711,11 +711,14 @@ def assess(points: dict[str, dict], stories: list[dict], exposure: Exposure, *, 
 SHELF_RANK = {"sure": 0, "pattern": 1}
 
 
-def order_key(a: dict) -> tuple:
-    """Порядок списка отделений: сначала значимые, затем почерки; внутри — сила доказательства и свежесть."""
+def order_key(a: dict, now: datetime | None = None) -> tuple:
+    """Порядок списка отделений: сначала значимые, затем почерки; свежие (причина не старше двух лет) — раньше
+    давних; внутри — сила доказательства."""
     st = a.get("stat") or {}
     pat = (a.get("patterns") or [{}])[0]
-    return (SHELF_RANK.get(a.get("shelf"), 9), st.get("p", 1.0) if a.get("shelf") == "sure" else pat.get("p", 1.0),
+    cut = ((now or datetime.now(timezone.utc)) - timedelta(days=730)).isoformat()
+    old = bool(pat.get("last")) and str(pat["last"]) < cut
+    return (SHELF_RANK.get(a.get("shelf"), 9), old, st.get("p", 1.0) if a.get("shelf") == "sure" else pat.get("p", 1.0),
             -(pat.get("window_clients") or 0), -(a.get("heavy_2y") or 0), a.get("last") or "")
 
 

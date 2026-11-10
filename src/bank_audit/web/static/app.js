@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 7f4dbbbafaee95cf08c1f0061b334f5f72419eea6880f84a3bc1d2181f248140): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 5ba1bc21bcd5c139fed137813edf81466cdb17263396c92c5c705193692b3a4f): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -23444,7 +23444,7 @@ function VQueue({
     const L = r.lead || {},
       F = r.flags || {},
       pt = (r.patterns || [])[0];
-    const facts = [pt ? `${pt.window_clients} ${vPl(pt.window_clients, "клиент", "клиента", "клиентов")} за ${pt.months} мес.` : r.heavy_clients >= 2 ? `${r.heavy_clients} ${vPl(r.heavy_clients, "клиент", "клиента", "клиентов")}` : null, F.money_max ? vN(Math.round(F.money_max)) + " ₽" : null, F.vulnerable ? "пожилые и уязвимые" : null, (r.hot || []).length ? "в очаге" : null].filter(Boolean);
+    const facts = [pt ? `${pt.window_clients} ${vPl(pt.window_clients, "клиент", "клиента", "клиентов")} за ${pt.months} мес.` : r.heavy_clients >= 2 ? `${r.heavy_clients} ${vPl(r.heavy_clients, "клиент", "клиента", "клиентов")}` : null, F.money_max ? vN(Math.round(F.money_max)) + " ₽" : null, F.vulnerable ? "пожилые и уязвимые" : null, (r.hot || []).length ? "в очаге" : null, pt && pt.last && new Date(pt.last) < Date.now() - 730 * 864e5 ? "давно" : null].filter(Boolean);
     return /*#__PURE__*/React.createElement("div", {
       key: id,
       "data-row": id,
