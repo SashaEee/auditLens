@@ -101,7 +101,7 @@ def load(store: Store) -> tuple[dict[str, dict], dict[tuple, str]]:
     meta.create_all(store.engine, tables=[motif_t, motif_label])
     with store.engine.connect() as c:
         ms = {r["motif_id"]: dict(r) for r in c.execute(select(motif_t)).mappings()}
-        lab = {(k, l): m for k, l, m in c.execute(select(motif_label.c.kind, motif_label.c.label, motif_label.c.motif_id))}
+        lab = {(k, lb): m for k, lb, m in c.execute(select(motif_label.c.kind, motif_label.c.label, motif_label.c.motif_id))}
     return ms, lab
 
 
@@ -203,7 +203,7 @@ async def build(store: Store, *, cap_rub: float | None = None, reader: Reader | 
             sample = sorted(todo.items(), key=lambda kv: -kv[1]["n"])[:PROPOSE_SAMPLE]
             d = await ask(rdr(SYSTEM_PROPOSE.replace("{kind}", kind_name(kind))),
                           "Тип: " + kind_name(kind) + "\nОписания (в скобках — сколько раз встретилось):\n" +
-                          "\n".join(f"- {l} ({x['n']})" for l, x in sample))
+                          "\n".join(f"- {lb} ({x['n']})" for lb, x in sample))
             got = [x for x in (_clean(m) for m in (d.get("motifs") or []) if isinstance(m, dict)) if x][:14]
             have = set(ms)
             rows = []
@@ -215,7 +215,7 @@ async def build(store: Store, *, cap_rub: float | None = None, reader: Reader | 
             stats["proposed"] += len(rows)
             mine = [m for m in ms.values() if m["kind"] == kind and m["motif_id"] != other_id(kind)]
         if not mine:                                     # описаний мало — пока всё в «прочее»
-            save_labels([{"kind": kind, "label": l, "motif_id": other_id(kind), "at": now} for l in todo])
+            save_labels([{"kind": kind, "label": lb, "motif_id": other_id(kind), "at": now} for lb in todo])
             stats["other"] += len(todo)
             continue
         # 2) каждое описание — к почерку каталога, к «прочему» или к новому почерку
@@ -228,8 +228,8 @@ async def build(store: Store, *, cap_rub: float | None = None, reader: Reader | 
             cat = sorted((m for m in ms.values() if m["kind"] == kind and m["motif_id"] != other_id(kind)),
                          key=lambda m: m["motif_id"])
             user = ("Перечень почерков:\n" + "\n".join(f"{i}. {m['name']} — {m['description']}" for i, m in enumerate(cat, 1)) +
-                    "\n\nИстории:\n" + "\n".join(f"[{i}] {l} | Пересказ: {x['episode'][:260]}"
-                                                 for i, (l, x) in enumerate(batch, 1)))
+                    "\n\nИстории:\n" + "\n".join(f"[{i}] {lb} | Пересказ: {x['episode'][:260]}"
+                                                 for i, (lb, x) in enumerate(batch, 1)))
             d = await ask(rd_k, user)
             new = {}
             for m in d.get("new") or []:
