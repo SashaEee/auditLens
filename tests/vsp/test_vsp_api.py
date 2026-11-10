@@ -180,3 +180,11 @@ def test_people_names_in_nominative_and_split():
     assert [_nom(x) for x in ("Светланой", "Анне Петровне", "Натальей", "Алексей", "Сергей", "Иван")] == \
         ["Светлана", "Анна Петровна", "Наталья", "Алексей", "Сергей", "Иван"]
     assert _split_people("Таласпаева Улбасым, Кух Юлия") == ["Таласпаева Улбасым", "Кух Юлия"]
+
+
+def test_brief_overview(client):
+    b = client.get("/api/vsp/brief").json()
+    assert b["kpi"]["heavy_2y"] >= 1 and "cases" in b and len(b["money_hist"]) == 5
+    assert all(c["score"] >= 5 and c["why"] for c in b["cases"])
+    assert isinstance(b["products"], list) and isinstance(b["actions"], list) and isinstance(b["staff"], list)
+    assert len({c["point"] for c in b["cases"]}) == len(b["cases"])          # одно отделение — один случай

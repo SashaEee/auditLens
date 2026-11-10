@@ -1513,6 +1513,152 @@ def evidence(rid: str, user: CurrentUser = Depends(get_current_user)):
             "checks": checks, "place": _place(run["points"].get(pt)), "point": pt}
 
 
+# ── «Обзор»: главные случаи и картина по сети ─────────────────────────────────
+# Не «раз навязали», а то, что интересно аудиту: очень тяжёлое, крупные суммы, пожилые и уязвимые,
+# действия «изнутри» (доступ к телефону, касса, утечка данных, посредники, «по знакомству»,
+# платная биометрия), один сотрудник у нескольких клиентов. Балл прозрачный, причины — метками.
+
+INSIDER = {"доступ_к_телефону_или_аккаунту": "доступ к телефону клиента", "касса_недостача_или_чужой_платеж": "касса",
+           "оглашение_или_утечка_данных": "утечка данных", "посредник": "посредник", "блат_очередь": "по знакомству",
+           "биометрия": "биометрия", "накрутка_продаж": "продажи «для плана»", "наказание_за_отказ": "наказание за отказ"}
+MONEY_CAP = 50_000_000          # больше — почти наверняка ошибка чтения суммы
+
+
+def _money(x) -> float:
+    m = x.get("money")
+    return float(m) if isinstance(m, (int, float)) and 0 < m < MONEY_CAP else 0.0
+
+
+def _interest(x: dict, named_many: set, listed_tier: dict, now: datetime) -> tuple[int, list[str]]:
+    s, why = 0, []
+    sev = x.get("severity") or 0
+    if sev >= 3:
+        s += 4; why.append("очень тяжёлая")
+    elif sev >= 2:
+        s += 1
+    m = _money(x)
+    if m >= 100_000:
+        s += 3
+    elif m >= 30_000:
+        s += 2
+    elif m >= 10_000:
+        s += 1
+    if m >= 10_000:
+        why.append(f"{int(m):,} ₽".replace(",", " "))
+    if x.get("vulnerable"):
+        s += 2; why.append(((x.get("vuln_types") or ["пожилой или уязвимый клиент"])[0]).split("/")[0])
+    ins = [INSIDER[a] for a in x["actions"] if a in INSIDER]
+    if ins:
+        s += 2; why.append(ins[0])
+    emp = (x.get("employee") or "").strip()
+    if emp and (x["point"], _nom(emp).lower()) in named_many:
+        s += 2; why.append("сотрудника называют несколько клиентов")
+    if x["_at"] >= now - timedelta(days=120):
+        s += 1; why.append("свежая")
+    if listed_tier.get(x["point"]) in ("urgent", "converged"):
+        s += 1
+    if x.get("dup_points"):
+        s -= 3
+    return s, why
+
+
+@router.get("/brief")
+def brief(subject: Optional[str] = None, gosb: Optional[str] = None, user: CurrentUser = Depends(get_current_user)):
+    _need(user)
+    run = _run()
+    from ..vsp.signals.risk import ACTIONS
+    pts = run["points"]
+    now = datetime.now(UTC)
+    y1, y2 = now - timedelta(days=365), now - timedelta(days=730)
+    xs = _sf(run, subject=subject, gosb=gosb, severity=2, period="730")
+    year = [x for x in xs if x["_at"] >= y1]
+    prev = [x for x in xs if x["_at"] < y1]
+    listed = {p["point"]: (p.get("risk") or {}).get("tier") for p in pts.values() if (p.get("risk") or {}).get("include")}
+    # один сотрудник у нескольких клиентов одного отделения
+    by_emp: dict[tuple, set] = defaultdict(set)
+    for x in xs:
+        for e in _split_people(x.get("employee")):
+            by_emp[(x["point"], _nom(e).lower())].add(x.get("author") or x["rid"])
+    named_many = {k for k, v in by_emp.items() if len(v) >= 2}
+    # главные случаи: балл + разнообразие (тип, отделение, ГОСБ)
+    cand = []
+    for x in xs:
+        if not x.get("quote_ok", True):
+            continue
+        sc, why = _interest(x, named_many, listed, now)
+        if sc >= 5:
+            cand.append((sc, x["_at"], x, why))
+    cand.sort(key=lambda t: (-t[0], -t[1].timestamp()))
+    picked, per_act, per_pt, per_g = [], Counter(), set(), Counter()
+    for sc, _, x, why in cand:
+        a = next((a for a in x["actions"] if a in INSIDER), x["actions"][0])
+        if per_act[a] >= 3 or x["point"] in per_pt or per_g[x.get("gosb")] >= 3:
+            continue
+        per_act[a] += 1; per_pt.add(x["point"]); per_g[x.get("gosb")] += 1
+        picked.append({**_story_out(x, pts), "score": sc, "why": why})
+        if len(picked) >= 12:
+            break
+    _attach_src(picked)
+    # деньги
+    buckets = [("до 5 тыс.", 0, 5_000), ("5–30 тыс.", 5_000, 30_000), ("30–100 тыс.", 30_000, 100_000),
+               ("100–500 тыс.", 100_000, 500_000), ("от 500 тыс.", 500_000, MONEY_CAP)]
+    money = [(m, x) for x in xs if (m := _money(x))]
+    hist = [{"label": l, "n": sum(1 for m, _ in money if lo <= m < hi), "sum": round(sum(m for m, _ in money if lo <= m < hi))}
+            for l, lo, hi in buckets]
+    top_money = [{**_story_out(x, pts), "amount": m} for m, x in sorted(money, key=lambda t: -t[0])[:5]]
+    _attach_src(top_money)
+    # кого обманывают и через какие продукты
+    vt = Counter(t.split("/")[0] for x in xs for t in (x.get("vuln_types") or (["пожилой или уязвимый клиент"] if x.get("vulnerable") else [])))
+    vul_acts = Counter(a for x in xs if x.get("vulnerable") for a in x["actions"] if a not in ("другое",))
+    prod = Counter(p_ for x in xs for p_ in (x.get("products") or []) if p_ and p_ != "другое")
+    prod_v = Counter(p_ for x in xs if x.get("vulnerable") for p_ in (x.get("products") or []) if p_ and p_ != "другое")
+    # что растёт: тяжёлые за год против года раньше
+    ay, ap = Counter(a for x in year for a in x["actions"]), Counter(a for x in prev for a in x["actions"])
+    acts = sorted(({"key": a, "label": ACTIONS[a]["short"], "now": ay[a], "before": ap[a]} for a in set(ay) | set(ap)
+                   if a in ACTIONS and a != "другое"), key=lambda r: -r["now"])[:10]
+    # сговор и «свои»
+    staff = []
+    for (pt, nm), auth in sorted(by_emp.items(), key=lambda kv: -len(kv[1])):
+        if len(auth) < 2:
+            break
+        ss = [x for x in xs if x["point"] == pt and any(_nom(e).lower() == nm for e in _split_people(x.get("employee")))]
+        if not ss:
+            continue
+        top = max(ss, key=lambda x: (x.get("severity") or 0, x["_at"]))
+        staff.append({"name": _nom(top.get("employee")), "clients": len(auth), "place": _place(pts.get(pt)),
+                      "labels": sorted({l for x in ss for l in x["labels"]})[:3], "quote": top.get("quote"),
+                      "rid": top["rid"], "date": top.get("date")})
+        if len(staff) >= 6:
+            break
+    insiders = Counter(INSIDER[a] for x in year for a in x["actions"] if a in INSIDER)
+    # ГОСБ, где тяжёлых историй много для своего размера
+    gt = [g for g in _gosb_table(run, subject) if g.get("per100") is not None and g["n_12m"] >= 300]
+    net_rate = (sum(g["heavy"] for g in gt) / max(1, sum(g["n_12m"] for g in gt))) * 100 if gt else 0
+    for g in gt:
+        g["ratio"] = round(g["per100"] / net_rate, 1) if net_rate else None
+    gosb_hot = sorted(gt, key=lambda g: -(g["ratio"] or 0))[:8]
+    prog = None
+    try:
+        prog = _progress()
+    except Exception:  # noqa: BLE001
+        pass
+    return {
+        "run": {"id": run["id"], "finished_at": _iso(run["finished_at"])}, "source": run["network"].get("story_source"),
+        "kpi": {"read": (prog or {}).get("screened"), "stories": (prog or {}).get("relevant"),
+                "heavy_2y": len(xs), "heavy_year": len(year), "heavy_prev": len(prev),
+                "points_year": len({x["point"] for x in year}), "vulnerable_year": sum(1 for x in year if x.get("vulnerable")),
+                "money_sum": round(sum(m for m, _ in money)), "money_n": len(money),
+                "very_year": sum(1 for x in year if (x.get("severity") or 0) >= 3)},
+        "cases": picked, "money_hist": hist, "money_top": top_money,
+        "vuln_types": [{"label": k, "n": n} for k, n in vt.most_common(6)],
+        "vuln_actions": [{"label": ACTIONS[a]["short"], "n": n} for a, n in vul_acts.most_common(6) if a in ACTIONS],
+        "products": [{"label": k, "n": n, "vulnerable": prod_v.get(k, 0)} for k, n in prod.most_common(8)],
+        "actions": acts, "staff": staff, "insiders": [{"label": k, "n": n} for k, n in insiders.most_common(8)],
+        "gosb_hot": gosb_hot, "net_per100": round(net_rate, 2),
+        "listed": dict(Counter(listed.values())), "react": len(run["network"].get("risk_react") or []),
+    }
+
+
 def _scheme_rows(run) -> tuple[list[dict], str]:
     """Схемы: кластеры модели (vsp_scheme, последняя сборка), иначе — по действиям из карточек."""
     try:

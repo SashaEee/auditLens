@@ -175,6 +175,7 @@ def stories_from(recs, llm: dict[str, dict], rule_cases: list[dict]) -> tuple[li
                               quote=d.get("quote") or "", quote_ok=llm_quote_ok(d.get("quote") or "", (r.extra or {}).get("raw_text") or r.text or ""),
                               episode=d.get("episode") or "", scheme=d.get("scheme_free") or "",
                               vulnerable=bool(d.get("vulnerability")), employee=emp,
+                              vuln_types=[str(v) for v in (d.get("vulnerability") or []) if v][:4],
                               money=d.get("money_rub"), products=d.get("products") or [], source="модель",
                               intermediary="посредник" in acts))
         return _mark_dups(out), "модель"
