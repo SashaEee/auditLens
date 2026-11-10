@@ -985,7 +985,8 @@ def bell_list(user: CurrentUser = Depends(get_current_user)):
     from . import notices
     u = userdata.get_user(user.username) or {}
     return {"items": notices.items(user.username),
-            "groups": notices.settings(u.get("prefs"), team=user.username in _inbox_team())}
+            "groups": notices.settings(u.get("prefs"), team=user.username in _inbox_team(),
+                                       vsp=_can_vsp(user.username))}
 
 
 @app.get("/api/bell/unread")

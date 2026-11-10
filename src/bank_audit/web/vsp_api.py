@@ -31,6 +31,7 @@ from pydantic import BaseModel
 from sqlalchemy import and_, case, create_engine, event, func, or_, select
 
 from ..vsp.regions import BY_CODE, subject_name
+from ..vsp.signals.kinds import TYPED_SINCE
 from ..vsp.signals.risks import BY_KEY as RISK, TYPES as RISK_TYPES
 from ..vsp.storage import (author_groups, authors, branch_stats, branches, cases, episodes, network, persons, reviews,
                            signal_runs, source_branches, sync_state)
@@ -823,18 +824,20 @@ def person_card(pid: int, user: CurrentUser = Depends(get_current_user)):
             "place": _pt_brief(run["points"].get(x["point"])), "reviews": [_review_row(r, run) for r in rows]}
 
 
-# ── «Где стоит проверить»: главный экран, досье, схемы, поиск, отметки ─────────
+# ── вкладка: истории, волны и очаги способов действия, полки отделений ────────
 
 def _place(p: dict | None) -> dict:
     p = p or {}
     return {k: p.get(k) for k in ("point", "name", "city", "address", "gosb", "subject", "subject_name", "formats",
-                                  "n_12m", "status")}
+                                  "n_12m", "status", "hq")}
 
 
-# ── истории клиентов: общий источник для проводника, таблицы, людей и динамики ──
+# ── истории клиентов: общий источник для разделов, слоёв и выгрузок ────────────
 
 PERIODS = {"90": 90, "180": 180, "365": 365, "730": 730}
 SEVERITY = {3: "очень тяжёлая", 2: "тяжёлая", 1: "лёгкая"}
+SHELF_LABEL = {"sure": "Выделяются наверняка", "pattern": "Виден один почерк"}
+STATUS_LABEL = {"new": "новое", "rising": "растёт", "steady": "идёт давно", "fading": "затихает", "gone": "ушло"}
 
 
 def _aware(d):
@@ -845,8 +848,39 @@ def _aware(d):
     return d
 
 
+def _kinds(run) -> dict[int, dict]:
+    """Справочник типов историй: из расчёта (каким он был в ту ночь), иначе — из кода."""
+    if "_kinds" not in run:
+        from ..vsp.signals.kinds import KINDS
+        raw = run["network"].get("kinds") or {}
+        run["_kinds"] = {int(k): v for k, v in raw.items()} if raw else {k: dict(v) for k, v in KINDS.items()}
+    return run["_kinds"]
+
+
+def _kind_name(run, k) -> str | None:
+    try:
+        return (_kinds(run).get(int(k)) or {}).get("name") if k else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _wave_id(key: str) -> str:
+    """Ключ ряда «k:5» / «m:m0503» → адрес «k5» / «m0503»."""
+    return "k" + key[2:] if key.startswith("k:") else key[2:]
+
+
+def _wave_key(wid: str | None) -> str | None:
+    wid = (wid or "").strip()
+    if wid.startswith("k") and wid[1:].isdigit():
+        return f"k:{int(wid[1:])}"
+    if wid.startswith("m") and len(wid) > 1:
+        return f"m:{wid}"
+    return None
+
+
 def _stories(run) -> list[dict]:
     """Все истории прогона, свежие первыми. Ключ сети `stories`; у прогона до него — из досье точек."""
+    from ..vsp.signals.kinds import BACKGROUND
     from ..vsp.signals.risk import ACTIONS
     if "_stories" in run:
         return run["_stories"]
@@ -858,15 +892,33 @@ def _stories(run) -> list[dict]:
                for p_ in run["points"].values() for x in p_.get("stories") or []]
     else:
         out = [dict(x) for x in raw]
+    motifs = run["network"].get("motifs") or {}
     for x in out:
         x["_at"] = _aware(x.get("at")) or datetime(2000, 1, 1, tzinfo=UTC)
         x["actions"] = [a for a in x.get("actions") or [] if a in ACTIONS] or ["другое"]
         x["labels"] = [ACTIONS[a]["label"] for a in x["actions"]]
         x.setdefault("quote_ok", True)
         x["_named"] = _named(x)                    # один раз на прогон: регулярка дорогая
+        x["kind_name"] = _kind_name(run, x.get("kind"))
+        m = x.get("motif")
+        real = bool(m) and not str(m).endswith("00")
+        x["motif_name"] = (motifs.get(m) or {}).get("name") if real else None
+        keys = []
+        if x.get("kind") and x["kind"] not in BACKGROUND and x["kind"] != 25:
+            keys.append(f"k:{x['kind']}")
+        if real:
+            keys.append(f"m:{m}")
+        x["_keys"] = keys
+        x["_client"] = x.get("client") or x.get("author") or x["rid"]
     out.sort(key=lambda x: x["_at"], reverse=True)
     run["_stories"] = out
+    run["_story_by_rid"] = {x["rid"]: x for x in out}
     return out
+
+
+def _story(run, rid: str) -> dict | None:
+    _stories(run)
+    return run["_story_by_rid"].get(rid)
 
 
 def _named(x: dict) -> bool:
@@ -881,11 +933,14 @@ def _named(x: dict) -> bool:
 
 
 def _sf(run, *, subject=None, gosb=None, point=None, action=None, severity: int = 0, period=None,
-        vulnerable=False, named=False, money=False, q=None, fmt=None) -> list[dict]:
-    """Истории по фильтрам. period — ключ PERIODS (дни) или пусто (всё время)."""
+        vulnerable=False, named=False, money=False, q=None, fmt=None, kind=None, key=None, inside=False,
+        uniq=False, here=False) -> list[dict]:
+    """Истории по фильтрам. period — ключ PERIODS (дни) или пусто (всё время); key — ряд волны
+    («k:5», «m:m0503»); uniq — по одной истории на клиента (без копий); here — без историй «не про это отделение»."""
     cut = datetime.now(UTC) - timedelta(days=PERIODS[period]) if period in PERIODS else None
     ql = (q or "").strip().lower()
     pts = run["points"]
+    kind = int(kind) if kind not in (None, "", 0, "0") and str(kind).isdigit() else None
     out = []
     for x in _stories(run):
         if cut and x["_at"] < cut:
@@ -896,11 +951,16 @@ def _sf(run, *, subject=None, gosb=None, point=None, action=None, severity: int 
         if (severity and (x.get("severity") or 0) < severity) or (vulnerable and not x.get("vulnerable")) or \
                 (money and not x.get("money")):
             continue
+        if (kind and x.get("kind") != kind) or (key and key not in x["_keys"]) or (inside and not x.get("inside")):
+            continue
+        if (uniq and (x.get("copy_of") or x.get("dup_of"))) or (here and (x.get("elsewhere") or x.get("hq"))):
+            continue
         if fmt and not _fmt_ok(pts.get(x["point"]) or {}, fmt):
             continue
         if named and not x["_named"]:
             continue
-        if ql and ql not in " ".join(str(x.get(k) or "") for k in ("quote", "episode", "employee", "scheme")).lower():
+        if ql and ql not in " ".join(str(x.get(k) or "") for k in ("quote", "episode", "employee", "scheme", "label",
+                                                                   "kind_name", "motif_name")).lower():
             continue
         out.append(x)
     return out
@@ -931,6 +991,8 @@ def _story_out(x: dict, pts: dict) -> dict:
     o = {k: v for k, v in x.items() if not k.startswith("_") and k not in ("author",)}
     o["place"] = _place(pts.get(x["point"]))
     o["severity_label"] = SEVERITY.get(x.get("severity") or 0, "")
+    if x.get("moved_from"):
+        o["moved_place"] = _place(pts.get(x["moved_from"]))
     return o
 
 
@@ -964,14 +1026,26 @@ def _action_facets(xs: list[dict]) -> list[dict]:
             for k, n in c.most_common()]
 
 
-def _story_kw(subject, gosb, point, action, severity, period, vulnerable, named, money, q, fmt) -> dict:
+def _kind_facets(run, xs: list[dict]) -> list[dict]:
+    """Типы историй в выборке: для фильтра «Что произошло» и подписей в досье."""
+    c: Counter = Counter()
+    pts: dict[int, set] = defaultdict(set)
+    for x in xs:
+        k = x.get("kind")
+        if k:
+            c[k] += 1
+            pts[k].add(x["point"])
+    kinds = _kinds(run)
+    return [{"kind": k, "name": (kinds.get(k) or {}).get("name") or str(k), "inside": bool((kinds.get(k) or {}).get("inside")),
+             "n": n, "points": len(pts[k])} for k, n in c.most_common()]
+
+
+def _story_kw(subject, gosb, point, action, severity, period, vulnerable, named, money, q, fmt,
+              kind=None, key=None, inside=False) -> dict:
     return dict(subject=subject or None, gosb=gosb or None, point=point or None, action=action or None,
                 severity=int(severity or 0), period=period or None, vulnerable=bool(vulnerable), named=bool(named),
-                money=bool(money), q=q or None, fmt=fmt or None)
-
-
-SIG_LABEL = {"A": "Разные клиенты", "B": "Одна схема", "C": "Один сотрудник", "D": "Больше, чем у похожих",
-             "E": "Люди вокруг"}
+                money=bool(money), q=q or None, fmt=fmt or None, kind=kind or None, key=_wave_key(key),
+                inside=bool(inside))
 
 
 def _pl(n: int, one: str, few: str, many: str) -> str:
@@ -979,33 +1053,156 @@ def _pl(n: int, one: str, few: str, many: str) -> str:
     return many if 11 <= m <= 14 else one if m % 10 == 1 else few if 2 <= m % 10 <= 4 else many
 
 
-def _sig_out(a: dict) -> list[dict]:
-    """Сработавшие признаки отделения обычными словами — для пяти квадратов в строке и карточек в досье."""
-    from ..vsp.signals.risk import ACTIONS
-    out = []
-    n_h = a.get("heavy_clients") or 0
-    for s in a.get("signals") or []:
-        k, n = s.get("key"), s.get("n") or 0
-        if k == "A":
-            t = f"{n} {_pl(n, 'клиент', 'клиента', 'клиентов')} с тяжёлыми историями"
-        elif k == "B":
-            t = f"у {n} {_pl(n, 'клиента', 'клиентов', 'клиентов')}: {ACTIONS.get(s.get('action'), ACTIONS['другое'])['label']}"
-        elif k == "C":
-            t = f"{n} {_pl(n, 'клиент называет', 'клиента называют', 'клиентов называют')} {_nom(s.get('name')) or 'одного сотрудника'}"
-        elif k == "D":
-            e = s.get("expected")
-            t = (f"здесь {n_h}, по размеру ожидалось бы меньше одного" if e is not None and e < 1 else
-                 f"здесь {n_h}, по размеру ожидалось бы {str(e).replace('.', ',')}" if e is not None else f"здесь {n_h}")
-        elif k == "E":
-            t = "посредники или одни и те же люди хвалят того, на кого жалуются"
-        else:
-            continue
-        out.append({"key": k, "label": SIG_LABEL[k], "text": t,
-                    **{x: s[x] for x in ("ratio", "expected", "action") if s.get(x) is not None}})
-    return out
+def _x(v) -> str:
+    """Число для текста: запятая вместо точки, без лишнего нуля."""
+    if v is None:
+        return "—"
+    s = f"{v:.1f}" if isinstance(v, float) and abs(v) < 100 and v != int(v) else str(int(round(v)))
+    return s.replace(".", ",")
 
 
-def _listed(run, subject=None, gosb=None, only: set | None = None) -> list[dict]:
+MONTHS_G = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября",
+            "декабря"]
+MONTHS_N = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь",
+            "декабрь"]
+
+
+def _period(a, b) -> str:
+    """«с марта по сентябрь 2025» / «с ноября 2024 по май 2025» / «в мае 2025»."""
+    a, b = _aware(a), _aware(b)
+    if not a or not b:
+        return ""
+    if (a.year, a.month) == (b.year, b.month):
+        return f"в {['январе', 'феврале', 'марте', 'апреле', 'мае', 'июне', 'июле', 'августе', 'сентябре', 'октябре', 'ноябре', 'декабре'][a.month - 1]} {a.year}"
+    if a.year == b.year:
+        return f"с {MONTHS_G[a.month - 1]} по {MONTHS_N[b.month - 1]} {b.year}"
+    return f"с {MONTHS_G[a.month - 1]} {a.year} по {MONTHS_N[b.month - 1]} {b.year}"
+
+
+# ── волны и очаги ─────────────────────────────────────────────────────────────
+
+def _waves(run) -> list[dict]:
+    if "_waves" not in run:
+        hot = Counter(h["key"] for h in run["network"].get("hotspots") or [])
+        out = []
+        for w in run["network"].get("waves") or []:
+            out.append({**w, "id": _wave_id(w["key"]), "status_label": STATUS_LABEL.get(w.get("status"), ""),
+                        "hot": hot.get(w["key"], 0),
+                        "inside_kind": bool((_kinds(run).get(w.get("kind")) or {}).get("inside"))})
+        run["_waves"] = out
+        run["_wave_by_key"] = {w["key"]: w for w in out}
+    return run["_waves"]
+
+
+def _wave(run, key: str | None) -> dict | None:
+    _waves(run)
+    return run["_wave_by_key"].get(key) if key else None
+
+
+def _wave_text(w: dict) -> dict:
+    """Заголовок волны словами: что именно и чем подтверждается. Текст собирает код, числа — из расчёта."""
+    clause = w.get("clause") or ""
+    name = w["name"]
+    what = f"клиенты пишут, что {clause}" if (clause and w["level"] == "kind") else name[0].lower() + name[1:]
+    y, p = w.get("year") or 0, w.get("prev_year") or 0
+    if w["status"] == "new":
+        head, acc = f"Новое: {what}", f"за год — {y} {_pl(y, 'клиент', 'клиента', 'клиентов')}, раньше почти не встречалось"
+    elif w["status"] == "rising" and w.get("horizon") == "quarter":
+        r, e = w.get("recent") or 0, w.get("recent_expected")
+        head = f"Растёт: {what}"
+        acc = f"за три месяца — {r} {_pl(r, 'клиент', 'клиента', 'клиентов')} при ожидании {_x(e)}"
+    elif w["status"] == "rising":
+        head, acc = f"Растёт: {what}", f"за год — {y} {_pl(y, 'клиент', 'клиента', 'клиентов')}, годом раньше — {p}"
+    elif w["status"] == "fading":
+        head, acc = f"Затихает: {what}", f"за год — {y}, в {w.get('peak_year')} году было чаще"
+    elif w["status"] == "gone":
+        head, acc = f"Ушло: {what}", "за последний год — ни одной истории"
+    else:
+        head, acc = f"Идёт давно: {what}", f"за год — {y} {_pl(y, 'клиент', 'клиента', 'клиентов')}, годом раньше — {p}"
+    return {"text": head, "accent": acc}
+
+
+def _hots(run) -> list[dict]:
+    if "_hots" not in run:
+        pts = run["points"]
+        out = []
+        for h in run["network"].get("hotspots") or []:
+            w = _wave(run, h["key"]) or {}
+            n, k = h["clients"], len(h["points"])
+            where = (f"ГОСБ {h['terr']}" if h["level"] == "gosb" else h["terr"])
+            # очаг за всю историю — не вспышка, а устойчивое превышение: так и говорим
+            when = f"с {TYPED_SINCE[:4]} года" if h.get("all_time") else _period(h["from"], h["to"])
+            out.append({**{f: v for f, v in h.items() if f != "rids"}, "wave_id": _wave_id(h["key"]),
+                        "subject_name": subject_name(h["subject"]) if h.get("subject") else None,
+                        "where": where, "period": when,
+                        "wave_status": w.get("status"),
+                        "text": (f"{where}: {n} {_pl(n, 'клиент', 'клиента', 'клиентов')} в {k} "
+                                 f"{_pl(k, 'отделении', 'отделениях', 'отделениях')} {when} — "
+                                 f"{h['name'][0].lower() + h['name'][1:]}"),
+                        "note": f"по частоте остальной сети за то же время ожидалось {_x(h['expected'])}",
+                        "places": [{**_place(pts.get(x["point"])), "point": x["point"], "n": x["n"]} for x in h["points"]],
+                        # свежий — последняя история не старше полутора лет: старый очаг — справка, а не повод
+                        "recent": _aware(h["to"]) >= datetime.now(UTC) - timedelta(days=548),
+                        "_rids": h["rids"]})
+        out.sort(key=lambda h: (not h["recent"], h["strength"] != "strong", h["p"], -h["clients"]))
+        run["_hots"] = out
+        run["_hot_by_id"] = {h["id"]: h for h in out}
+        by_pt: dict[str, list[dict]] = defaultdict(list)
+        for h in out:
+            for x in h["points"]:
+                by_pt[x["point"]].append(h)
+        run["_hot_by_point"] = by_pt
+    return run["_hots"]
+
+
+def _hot_brief(h: dict) -> dict:
+    return {k: v for k, v in h.items() if not k.startswith("_") and k != "places"} | {"points_n": len(h["points"])}
+
+
+def _req_period(a: dict) -> str:
+    """Период запроса по отделению: окно причины (почерка), иначе — от первой до последней тяжёлой истории."""
+    x, y = a.get("req_from") or a.get("first"), a.get("req_to") or a.get("last")
+    return f"с {_aware(x).strftime('%d.%m.%Y')} по {_aware(y).strftime('%d.%m.%Y')}" if x and y else ""
+
+
+def _request_text(run, kind, *, where: str, period: str, motif: str | None = None) -> dict | None:
+    """Запрос данных банка: что, где, за какой период, какой показатель снимет вопрос.
+    У почерка — свои операции и показатель (их предложила модель-редактор), иначе — по типу истории."""
+    k = _kinds(run).get(int(kind)) if kind else None
+    m = (run["network"].get("motifs") or {}).get(motif) if motif else None
+    ops = ((m or {}).get("ops") or (k or {}).get("ops") or "").strip()
+    if not ops:
+        return None
+    metric = (m or {}).get("metric") or (k or {}).get("metric") or ""
+    return {"kind": int(kind) if kind else None, "name": (m or {}).get("name") or (k or {}).get("name"),
+            "what": ops[0].upper() + ops[1:], "where": where, "period": period, "metric": metric,
+            "benign": (m or {}).get("benign") or (k or {}).get("benign") or "",
+            "text": (f"Прошу предоставить: {ops} — {where}, {period}, в разрезе сотрудника и окна. "
+                     + (f"Показатель для сравнения: {metric}. " if metric else "")
+                     + "Основание: повторяющиеся отзывы клиентов; это слова клиентов, а не установленные факты.")}
+
+
+# ── полки отделений ───────────────────────────────────────────────────────────
+
+def _row_out(run, p: dict) -> dict:
+    a = p.get("risk") or {}
+    con = a.get("conclusion") or {}
+    _hots(run)
+    return {**_place(p), "shelf": a.get("shelf"), "shelf_label": SHELF_LABEL.get(a.get("shelf")),
+            "why": a.get("why") or [], "sig": a.get("sig") or [], "stat": a.get("stat"),
+            "patterns": [{k: v for k, v in x.items() if k != "rids"} for x in a.get("patterns") or []],
+            "quote": a.get("quote"), "benign": a.get("benign"), "red": a.get("red"), "severity": a.get("severity"),
+            "heavy_clients": a.get("heavy_clients"), "heavy_2y": a.get("heavy_2y"), "heavy_5y": a.get("heavy_5y"),
+            "read": a.get("read"), "vol_2y": a.get("vol_2y"), "first": a.get("first"), "last": a.get("last"),
+            "people": [{**pp, "name": _nom(pp.get("name"))} for pp in a.get("people") or []],
+            "lead": a.get("lead") or {}, "flags": a.get("flags") or {}, "kinds": a.get("kinds") or [],
+            "action": a.get("action_label"),
+            "conclusion": ({"pattern": bool(con.get("pattern")), "pattern_name": con.get("pattern_name"),
+                            "confidence": con.get("confidence"), "wave_only": bool(con.get("wave_only"))} if con else None),
+            "hot": [{"id": h["id"], "where": h["where"], "name": h["name"]} for h in run["_hot_by_point"].get(p["point"], [])]}
+
+
+def _listed(run, subject=None, gosb=None, only: set | None = None, shelf: str | None = None) -> list[dict]:
     from ..vsp.signals.risk import order_key
     rows = []
     for p in run["points"].values():
@@ -1013,62 +1210,28 @@ def _listed(run, subject=None, gosb=None, only: set | None = None) -> list[dict]
         if not a or not a.get("include"):
             continue
         if (subject and p.get("subject") != subject) or (gosb and p.get("gosb") != gosb) or \
-                (only is not None and p["point"] not in only):
+                (only is not None and p["point"] not in only) or (shelf and a.get("shelf") != shelf):
             continue
-        rows.append(((TIER_RANK.get(a.get("tier"), 2),) + tuple(order_key(a)), p))
+        rows.append((order_key(a), p))
     rows.sort(key=lambda t: t[0])
-    return [{**_place(p), "why": p["risk"]["why"], "quote": p["risk"]["quote"], "confidence": p["risk"]["confidence"],
-             "benign": p["risk"]["benign"], "red": p["risk"]["red"], "severity": p["risk"]["severity"],
-             "signals": len(p["risk"]["signals"]), "action": p["risk"]["action_label"],
-             "heavy_clients": p["risk"].get("heavy_clients"), "vol_2y": p["risk"].get("vol_2y"),
-             "people": [{**pp, "name": _nom(pp.get("name"))} for pp in p["risk"].get("people") or []],
-             "tier": p["risk"].get("tier") or "watch",
-             "lead": p["risk"].get("lead") or {}, "flags": p["risk"].get("flags") or {},
-             "acts": p["risk"].get("acts") or [], "ratio": p["risk"].get("ratio"),
-             "sig": _sig_out(p["risk"]),
-             # в список по одной очень тяжёлой истории с деталями, а не по сходящимся признакам
-             "single": len(p["risk"].get("signals") or []) < 2} for _, p in rows]
+    return [_row_out(run, p) for _, p in rows]
 
 
-TIER_RANK = {"urgent": 0, "converged": 1, "watch": 2}
-
-
-def _gosb_table(run, subject=None) -> list[dict]:
-    """ГОСБ региона (или сети): сколько отделений в списке, тяжёлых историй за год и год назад, на 100 отзывов."""
-    now = datetime.now(UTC)
-    y1, y2 = now - timedelta(days=365), now - timedelta(days=730)
-    agg: dict[str, Counter] = defaultdict(Counter)
-    acts: dict[str, Counter] = defaultdict(Counter)
-    for p in run["points"].values():
-        g = p.get("gosb")
-        if not g or (subject and p.get("subject") != subject):
-            continue
-        agg[g]["points"] += 1
-        agg[g]["with_data"] += (p.get("n_12m") or 0) > 0
-        agg[g]["n_12m"] += p.get("n_12m") or 0
-        agg[g]["listed"] += bool((p.get("risk") or {}).get("include"))
-        agg[g]["subject:" + (p.get("subject") or "")] += 1
-    for x in _stories(run):
-        g = x.get("gosb")
-        if g not in agg or (x.get("severity") or 0) < 2 or x["_at"] < y2:
-            continue
-        if x["_at"] >= y1:
-            agg[g]["heavy"] += 1
-            for a in x["actions"]:
-                acts[g][a] += 1
-        else:
-            agg[g]["heavy_prev"] += 1
-    from ..vsp.signals.risk import ACTIONS
+def _queue(run, *, subject=None, gosb=None, kind=None, inside=False, vulnerable=False, days: int | None = None) -> list[dict]:
+    """Третья полка — отдельные тяжёлые случаи за год: очередь случаев, а не отделений."""
+    pts = run["points"]
+    kind = int(kind) if kind and str(kind).isdigit() else None
+    cut = datetime.now(UTC) - timedelta(days=days) if days else None
     out = []
-    for g, c in agg.items():
-        subj = max((k for k in c if k.startswith("subject:")), key=lambda k: c[k])[8:]
-        top = acts[g].most_common(1)
-        out.append({"gosb": g, "subject": subj, "subject_name": subject_name(subj) if subj else None,
-                    "points": c["points"], "with_data": c["with_data"], "listed": c["listed"],
-                    "heavy": c["heavy"], "heavy_prev": c["heavy_prev"], "n_12m": c["n_12m"],
-                    "per100": round(100 * c["heavy"] / c["n_12m"], 2) if c["n_12m"] >= 50 else None,
-                    "top_action": ACTIONS[top[0][0]]["short"] if top else None})
-    out.sort(key=lambda r: (-r["listed"], -r["heavy"]))
+    for q in run["network"].get("case_queue") or []:
+        x = _story(run, q["rid"])
+        if not x:
+            continue
+        if (subject and x.get("subject") != subject) or (gosb and x.get("gosb") != gosb) or \
+                (kind and x.get("kind") != kind) or (inside and not x.get("inside")) or \
+                (vulnerable and not x.get("vulnerable")) or (cut and x["_at"] < cut):
+            continue
+        out.append({**_story_out(x, pts), "score": q["score"], "why": q.get("why") or []})
     return out
 
 
@@ -1137,9 +1300,37 @@ def _progress() -> dict:
     return v
 
 
+_WATCH: dict = {"at": 0.0, "v": None}
+
+
+def _watch() -> dict | None:
+    """Сторож чтения моделью (кэш 2 минуты): всё ли подходящее прочитано, не отстало ли чтение."""
+    now = time.monotonic()
+    if _WATCH["v"] is not None and now - _WATCH["at"] < 120:
+        return _WATCH["v"]
+    from ..vsp.storage import kv
+    from ..vsp.watch import llm_watch
+    try:
+        with engine().connect() as c:
+            raw = dict(c.execute(select(kv.c.key, kv.c.value).where(
+                kv.c.key.in_(["llm:last", "llm:at", "llm:clean_at", "llm:spent", "failed:llm"]))).all())
+
+        def kv_get(k):
+            try:
+                return json.loads(raw[k]) if raw.get(k) is not None else None
+            except (TypeError, ValueError):
+                return raw.get(k)
+        v = llm_watch(kv_get)
+    except Exception:  # noqa: BLE001 — сторож не должен ронять вкладку
+        log.exception("vsp: сторож чтения не посчитан")
+        v = None
+    _WATCH.update(at=now, v=v)
+    return v
+
+
 @router.get("/meta")
 def meta_(user: CurrentUser = Depends(get_current_user)):
-    """Лёгкое: плитки карты (регионы для фильтра), дата расчёта и ход сбора/чтения."""
+    """Лёгкое: плитки карты (регионы для фильтра), дата расчёта, ход сбора и чтения, счётчики разделов."""
     _need(user)
     run = _run()
     try:
@@ -1148,158 +1339,282 @@ def meta_(user: CurrentUser = Depends(get_current_user)):
         log.exception("vsp: прогресс не посчитан")
         prog = None
     owner = telemetry.is_admin(user.username)
+    waves = _waves(run)
+    shelves = Counter((p.get("risk") or {}).get("shelf") for p in run["points"].values()
+                      if (p.get("risk") or {}).get("include"))
+    _notify_waves(run)
     return {"run": {"id": run["id"], "finished_at": _iso(run["finished_at"])}, "tiles": _tiles(run),
-            "source": run["network"].get("story_source"), "progress": prog,
+            "source": run["network"].get("story_source"), "progress": prog, "watch": _watch(),
+            "nav": {"up": sum(1 for w in waves if w["status"] in ("new", "rising")),
+                    "hot": sum(1 for h in _hots(run) if h["strength"] == "strong" and h["recent"]),
+                    "listed": sum(shelves.values()), "sure": shelves.get("sure", 0), "pattern": shelves.get("pattern", 0),
+                    "cases": len(run["network"].get("case_queue") or [])},
+            "kinds": [{"kind": k, "name": v.get("name"), "inside": bool(v.get("inside"))}
+                      for k, v in sorted(_kinds(run).items())],
+            "typed_since": TYPED_SINCE[:4],
             "access": {"owner": owner, "beta": len(beta_users()) if owner else None}}
 
 
-MAP_FEW = 300            # меньше отзывов за год — цвет не показываем (штриховка)
-MAP_SIG_P = 0.01         # «не похоже на случайность»: пуассоновский хвост ниже этого
-MAP_SIG_RATIO = 1.5      # и превышение не меньше чем в полтора раза
-
-
-def _poisson_tail(k: int, lam: float) -> float:
-    """P(X ≥ k) при X ~ Пуассон(lam): вероятность увидеть столько или больше случайно."""
-    import math
-    if k <= 0:
-        return 1.0
-    if lam <= 0:
-        return 0.0
-    term = math.exp(-lam)
-    s = 0.0
-    for i in range(k):
-        s += term
-        term *= lam / (i + 1)
-    return max(0.0, 1.0 - s)
-
-
-def _net_rate(run) -> float:
-    """Тяжёлых историй за год на 100 отзывов по сети — по ГОСБ с MAP_FEW+ отзывами (как в «Обзоре»)."""
-    if "_net_rate" not in run:
-        gt = [g for g in _gosb_table(run) if g["n_12m"] >= MAP_FEW]
-        run["_net_rate"] = (sum(g["heavy"] for g in gt) / max(1, sum(g["n_12m"] for g in gt))) * 100 if gt else 0.0
-    return run["_net_rate"]
-
-
-def _vs_expected(row: dict, rate: float) -> dict:
-    """Ожидание по числу отзывов, во сколько раз факт больше и значимо ли это."""
-    exp = row["n_12m"] * rate / 100
-    few = row["n_12m"] < MAP_FEW
-    ratio = round(row["heavy"] / exp, 1) if exp > 0 and not few else None
-    p = _poisson_tail(row["heavy"], exp) if exp > 0 else 1.0
-    return {**row, "expected": round(exp, 1), "ratio": ratio, "few": few,
-            "sig": bool(not few and ratio and ratio >= MAP_SIG_RATIO and p < MAP_SIG_P),
-            "delta": row["heavy"] - row["heavy_prev"]}
+MAP_FEW = 300            # меньше прочитанных отзывов за период — цвет не показываем (штриховка)
 
 
 @router.get("/map")
-def map_(subject: Optional[str] = None, user: CurrentUser = Depends(get_current_user)):
-    """Лёгкое для карты: по регионам и ГОСБ — тяжёлые истории за год против ожидания по числу отзывов
-    (сеть: тяжёлых на 100 отзывов), отметка «не похоже на случайность», динамика к прошлому году."""
+def map_(subject: Optional[str] = None, key: Optional[str] = None, user: CurrentUser = Depends(get_current_user)):
+    """Карта «больше ожидаемого» — по всем тяжёлым историям или по выбранному способу действия (key —
+    адрес волны). Клиенты за 2 года по регионам и ГОСБ против ожидания: прочитанные отзывы территории ×
+    частота по остальной сети, отдельно по площадкам и жалобам; красным — значимо с поправкой на число сравнений."""
     _need(user)
     run = _run()
+    wkey = _wave_key(key) or "all"
     cache = run.setdefault("_map", {})
-    if subject in cache:
-        return cache[subject]
-    from ..vsp.signals.risk import ACTIONS
-    rate = _net_rate(run)
-    grid = run["network"].get("tile_grid") or {}
-    now = datetime.now(UTC)
-    y1, y2 = now - timedelta(days=365), now - timedelta(days=730)
+    if (subject, wkey) in cache:
+        return cache[(subject, wkey)]
+    net = run["network"]
+    terr = (net.get("terr") or {}).get(wkey) or {}
+    grid = net.get("tile_grid") or {}
     reg: dict[str, Counter] = defaultdict(Counter)
-    acts: dict[str, Counter] = defaultdict(Counter)
+    gos: dict[str, Counter] = defaultdict(Counter)
     for p in run["points"].values():
-        s_ = p.get("subject")
-        if not s_:
-            continue
-        reg[s_]["points"] += 1
-        reg[s_]["with_data"] += (p.get("n_12m") or 0) > 0
-        reg[s_]["n_12m"] += p.get("n_12m") or 0
-        reg[s_]["listed"] += bool((p.get("risk") or {}).get("include"))
-    for x in _stories(run):
-        s_ = x.get("subject")
-        if s_ not in reg or (x.get("severity") or 0) < 2 or x["_at"] < y2:
-            continue
-        if x["_at"] >= y1:
-            reg[s_]["heavy"] += 1
-            for a in x["actions"]:
-                if a != "другое":
-                    acts[s_][a] += 1
-        else:
-            reg[s_]["heavy_prev"] += 1
+        for bucket, k in ((reg, p.get("subject")), (gos, p.get("gosb"))):
+            if not k or (bucket is gos and subject and p.get("subject") != subject):
+                continue
+            bucket[k]["points"] += 1
+            bucket[k]["with_data"] += (p.get("n_12m") or 0) > 0
+            bucket[k]["listed"] += bool((p.get("risk") or {}).get("include"))
+            bucket[k]["subject:" + (p.get("subject") or "")] += 1
+
+    def cell(row: dict | None) -> dict:
+        row = row or {}
+        return {"n": row.get("n", 0), "branches": row.get("points", 0), "expected": row.get("expected", 0.0),
+                "read": row.get("read", 0), "ratio": row.get("ratio"), "few": bool(row.get("few", True)),
+                "sig": bool(row.get("sig"))}
+
     regions = []
     for code, c in reg.items():
-        top = acts[code].most_common(1)
         col, row = grid.get(code, (None, None))
-        regions.append(_vs_expected({
-            "code": code, "name": subject_name(code), "label": BY_CODE[code][2] if code in BY_CODE else code,
-            "col": col, "row": row, "points": c["points"], "with_data": c["with_data"], "listed": c["listed"],
-            "n_12m": c["n_12m"], "heavy": c["heavy"], "heavy_prev": c["heavy_prev"],
-            "top_action": ACTIONS[top[0][0]]["short"] if top else None}, rate))
+        regions.append({"code": code, "name": subject_name(code), "label": BY_CODE[code][2] if code in BY_CODE else code,
+                        "col": col, "row": row, "points": c["points"], "with_data": c["with_data"],
+                        "listed": c["listed"], **cell((terr.get("subject") or {}).get(code))})
     for code, (col, row) in grid.items():          # регионы без отделений — пустые плитки
         if code not in reg:
             regions.append({"code": code, "name": subject_name(code), "label": BY_CODE[code][2] if code in BY_CODE else code,
-                            "col": col, "row": row, "points": 0, "with_data": 0, "listed": 0, "n_12m": 0, "heavy": 0,
-                            "heavy_prev": 0, "expected": 0, "ratio": None, "few": True, "sig": False, "delta": 0,
-                            "top_action": None})
-    gosbs = [_vs_expected(g, rate) for g in _gosb_table(run, subject)]
-    gosbs.sort(key=lambda g: (not g["sig"], -(g["ratio"] or 0), -g["heavy"]))
-    out = {"net_per100": round(rate, 2), "few_below": MAP_FEW, "regions": regions, "gosbs": gosbs,
-           "sig_rule": {"p": MAP_SIG_P, "ratio": MAP_SIG_RATIO}, "points_total": len(run["points"]),
+                            "col": col, "row": row, "points": 0, "with_data": 0, "listed": 0, **cell(None)})
+    gosbs = []
+    for g, c in gos.items():
+        subj = max((k for k in c if k.startswith("subject:")), key=lambda k: c[k])[8:]
+        gosbs.append({"gosb": g, "subject": subj, "subject_name": subject_name(subj) if subj else None,
+                      "points": c["points"], "listed": c["listed"], **cell((terr.get("gosb") or {}).get(g))})
+    gosbs.sort(key=lambda g: (not g["sig"], -(g["ratio"] or 0), -g["n"]))
+    w = _wave(run, wkey) if wkey != "all" else None
+    keys = [{"id": _wave_id(k), "name": (_wave(run, k) or {}).get("name") or k, "clients": v.get("clients", 0),
+             "level": "motif" if k.startswith("m:") else "kind"}
+            for k, v in (net.get("terr") or {}).items() if k != "all" and _wave(run, k)]
+    keys.sort(key=lambda x: (x["level"] != "motif", -x["clients"]))
+    out = {"key": key if w else None, "name": w["name"] if w else "Все тяжёлые истории", "clients": terr.get("clients", 0),
+           "period_days": 730, "few_below": MAP_FEW, "regions": regions, "gosbs": gosbs, "keys": keys,
+           "points_total": len(run["points"]),
            "listed_total": sum(1 for p in run["points"].values() if (p.get("risk") or {}).get("include"))}
-    cache[subject] = out
+    cache[(subject, wkey)] = out
     return out
 
 
 @router.get("/home")
-def home(subject: Optional[str] = None, gosb: Optional[str] = None, action: Optional[str] = None,
-         vulnerable: bool = False, named: bool = False, fresh: bool = False, fmt: Optional[str] = None,
-         tier: Optional[str] = None, limit: Optional[int] = None, offset: int = 0,
+def home(subject: Optional[str] = None, gosb: Optional[str] = None, kind: Optional[int] = None,
+         vulnerable: bool = False, fresh: bool = False, fmt: Optional[str] = None,
+         shelf: Optional[str] = None, limit: Optional[int] = None, offset: int = 0,
          user: CurrentUser = Depends(get_current_user)):
-    """Список «Где проверить» и всё вокруг него. tier/limit/offset — постранично по уровню
-    (без limit — весь список одним ответом, как раньше)."""
+    """Полки отделений «Где проверить». shelf — «sure» (выделяются наверняка) или «pattern» (виден один почерк);
+    limit/offset — постранично (без limit — весь список). Третья полка — случаи — в /queue."""
     _need(user)
     run = _run()
-    net = run["network"]
-    rmap = net.get("risk_map") or {"subjects": {}, "network_share": 0}
-    tiles = _tiles(run)
-    filtered = bool(action or vulnerable or named or fresh or fmt)
+    filtered = bool(kind or vulnerable or fresh or fmt)
     only = None
     if filtered:
-        # тот же набор, что считают плашки сводки: тяжёлые истории за год (или за 3 месяца)
-        only = {x["point"] for x in _sf(run, subject=subject, gosb=gosb, action=action, vulnerable=vulnerable,
-                                         named=named, fmt=fmt, severity=2, period="90" if fresh else "365")}
-    full = _listed(run)
+        only = {x["point"] for x in _sf(run, subject=subject, gosb=gosb, kind=kind, vulnerable=vulnerable, fmt=fmt,
+                                         severity=2, period="90" if fresh else None)}
     lst = _listed(run, subject, gosb, only)
     scope = _listed(run, subject)
     gosbs = Counter(x["gosb"] for x in scope if x["gosb"])
-    react = []
-    for x in net.get("risk_react") or []:
-        pl_ = run["points"].get(x["point"]) or {}
-        if (not subject or pl_.get("subject") == subject) and (not gosb or pl_.get("gosb") == gosb):
-            react.append({**x, "place": _place(pl_)})
-    pts = run["points"].values()
-    with_data = sum(1 for p in pts if (p.get("n_12m") or 0) > 0)
-    heavy_year = _sf(run, subject=subject, gosb=gosb, severity=2, period="365")
-    heavy_prev = [x for x in _sf(run, subject=subject, gosb=gosb, severity=2, period="730")
-                  if x["_at"] < datetime.now(UTC) - timedelta(days=365)]
-    tiers = dict(Counter(x["tier"] for x in lst))
-    page = [x for x in lst if not tier or x["tier"] == tier]
+    shelves = dict(Counter(x["shelf"] for x in lst))
+    shelves["cases"] = len(_queue(run, subject=subject, gosb=gosb, kind=kind, vulnerable=vulnerable,
+                                  days=90 if fresh else None))
+    page = [x for x in lst if not shelf or x["shelf"] == shelf]
     list_total = len(page)
     if limit is not None:
         page = page[max(0, offset):max(0, offset) + max(1, min(int(limit), 500))]
+    pts = run["points"].values()
     return {"run": {"id": run["id"], "finished_at": _iso(run["finished_at"])},
-            "source": net.get("story_source"), "react": _attach_src(react), "tiles": tiles,
-            "network_share": rmap.get("network_share"), "list": page, "list_total": list_total,
-            "total": len(full), "in_scope": len(scope), "filtered": filtered, "tiers": tiers,
+            "source": run["network"].get("story_source"), "list": page, "list_total": list_total,
+            "total": sum(1 for p in pts if (p.get("risk") or {}).get("include")), "in_scope": len(scope),
+            "filtered": filtered, "shelves": shelves,
+            "tested": sum(1 for p in pts if (p.get("risk") or {}).get("read")),
             "gosbs": [{"gosb": g, "n": n} for g, n in gosbs.most_common()],
-            "gosb_table": _gosb_table(run, subject),
-            "summary": {"heavy_year": len(heavy_year), "heavy_prev": len(heavy_prev),
-                        "points_year": len({x["point"] for x in heavy_year}),
-                        "vulnerable_year": sum(1 for x in heavy_year if x.get("vulnerable")),
-                        "named_year": sum(1 for x in heavy_year if x["_named"]),
-                        "actions": _action_facets(heavy_year)[:10]},
-            "with_data": with_data, "points": len(run["points"])}
+            "with_data": sum(1 for p in pts if (p.get("n_12m") or 0) > 0), "points": len(run["points"])}
+
+
+@router.get("/queue")
+def queue(subject: Optional[str] = None, gosb: Optional[str] = None, kind: Optional[int] = None,
+          inside: bool = False, vulnerable: bool = False, fresh: bool = False, limit: int = 30, offset: int = 0,
+          user: CurrentUser = Depends(get_current_user)):
+    """Отдельные тяжёлые случаи за год — по важности для аудита: сначала поступок сотрудника (действие за
+    клиента, личная выгода), потом обстоятельства (сумма, пожилой клиент, обращение в полицию)."""
+    _need(user)
+    run = _run()
+    xs = _queue(run, subject=subject, gosb=gosb, kind=kind, inside=inside, vulnerable=vulnerable,
+                days=90 if fresh else None)
+    off = max(0, offset)
+    return {"total": len(xs), "inside": sum(1 for x in xs if x.get("inside")),
+            "items": _attach_src(xs[off:off + max(1, min(limit, 200))])}
+
+
+# ── «Схемы»: волны способов действия и очаги ─────────────────────────────────
+
+def _wave_brief(w: dict) -> dict:
+    return {k: v for k, v in w.items() if k != "description"} | _wave_text(w)
+
+
+@router.get("/waves")
+def waves(level: Optional[str] = None, status: Optional[str] = None, user: CurrentUser = Depends(get_current_user)):
+    """Что идёт по сети: каждый способ действия — тип истории и узкий почерк внутри типа — с рядом по месяцам
+    и состоянием (новое, растёт, идёт давно, затихает, ушло)."""
+    _need(user)
+    run = _run()
+    ws = _waves(run)
+    has_motifs = any(w["level"] == "motif" for w in ws)
+    rows = [w for w in ws if (not level or w["level"] == level) and (not status or w["status"] == status)]
+    return {"waves": [_wave_brief(w) for w in rows], "has_motifs": has_motifs,
+            "counts": {lv: dict(Counter(w["status"] for w in ws if w["level"] == lv)) for lv in ("kind", "motif")},
+            "since": TYPED_SINCE[:4], "source": run["network"].get("story_source")}
+
+
+def _examples(run, xs: list[dict], n: int = 12) -> list[dict]:
+    """Примеры для карточки: сначала важные для аудита, по одной истории на отделение."""
+    from ..vsp.signals.risk import case_score
+    now = datetime.now(UTC)
+    pts = run["points"]
+
+    def sc(x):
+        return case_score({**x, "at": x["_at"]}, now)
+
+    ranked = sorted(xs, key=lambda x: (-sc(x)[0], -x["_at"].timestamp()))
+    out, seen = [], set()
+    for x in ranked:
+        if x["point"] in seen or not x.get("quote_ok", True):
+            continue
+        seen.add(x["point"])
+        out.append({**_story_out(x, pts), "why": sc(x)[1][:4]})
+        if len(out) >= n:
+            break
+    return _attach_src(out)
+
+
+def _profile(xs: list[dict]) -> dict:
+    """Кто пострадал, кому выгода и чем закончилось — по уточнённым историям (одна на клиента)."""
+    det = [x for x in xs if x.get("detailed")]
+    n = len(xs)
+    money = [float(x["money"]) for x in xs if isinstance(x.get("money"), (int, float)) and 0 < x["money"] < MONEY_CAP
+             and x.get("sum_kind") in (None, "потеря")]
+    return {"n": n, "detailed": len(det), "vulnerable": sum(1 for x in xs if x.get("vulnerable")),
+            "very": sum(1 for x in xs if (x.get("severity") or 0) >= 3),
+            "named": sum(1 for x in xs if x["_named"]), "inside": sum(1 for x in xs if x.get("inside")),
+            "benefit": [{"label": k, "n": v} for k, v in Counter(x.get("benefit") or "неясно" for x in det).most_common()],
+            "systemic": sum(1 for x in det if x.get("systemic")),
+            "police": sum(1 for x in det if set(x.get("escalation") or []) & {"полиция", "суд", "прокуратура", "ЦБ"}),
+            "outcome": [{"label": k, "n": v} for k, v in Counter(x.get("outcome") or "неизвестно" for x in det).most_common(5)],
+            "money_n": len(money), "money_sum": round(sum(money)), "money_median": (sorted(money)[len(money) // 2] if money else None)}
+
+
+@router.get("/waves/{wid}")
+def wave_card(wid: str, user: CurrentUser = Depends(get_current_user)):
+    """Карточка способа действия — «за пять минут»: что это, как меняется, где сгущается, какие отделения
+    смотреть, что пишут клиенты и что запросить из данных банка."""
+    _need(user)
+    run = _run()
+    key = _wave_key(wid)
+    w = _wave(run, key)
+    if not w:
+        raise HTTPException(404, "способ действия не найден")
+    cache = run.setdefault("_wave_cards", {})
+    if key in cache:
+        return cache[key]
+    since = datetime.fromisoformat(TYPED_SINCE).replace(tzinfo=UTC)
+    xs = [x for x in _sf(run, key=key, severity=2, uniq=True) if x["_at"] >= since]
+    here = [x for x in xs if not x.get("elsewhere") and not x.get("hq")]
+    pts = run["points"]
+    by_pt: dict[str, list[dict]] = defaultdict(list)
+    for x in here:
+        by_pt[x["point"]].append(x)
+    branches = sorted(({**_place(pts.get(p)), "point": p, "n": len(ss), "last": ss[0]["date"],
+                        "shelf": ((pts.get(p) or {}).get("risk") or {}).get("shelf")}
+                       for p, ss in by_pt.items() if len(ss) >= 2 and p in pts), key=lambda r: (-r["n"], r["last"]))[:15]
+    hot = [_hot_brief(h) for h in _hots(run) if h["key"] == key]
+    kinfo = _kinds(run).get(w.get("kind")) or {}
+    motif = (run["network"].get("motifs") or {}).get(w.get("motif")) or {}
+    siblings = [{"id": o["id"], "name": o["name"], "status": o["status"], "status_label": o["status_label"],
+                 "year": o["year"], "clients": o["clients"]}
+                for o in _waves(run) if o["kind"] == w["kind"] and o["key"] != key and o["level"] == "motif"]
+    parent = _wave(run, f"k:{w['kind']}") if w["level"] == "motif" else None
+    year = [x for x in xs if x["_at"] >= datetime.now(UTC) - timedelta(days=365)]
+    out = {**_wave_brief(w), "description": w.get("description") or motif.get("description") or "",
+           "kind_name": kinfo.get("name"), "inside_kind": bool(kinfo.get("inside")),
+           "ops": motif.get("ops") or kinfo.get("ops") or "", "metric": motif.get("metric") or kinfo.get("metric") or "",
+           "benign": motif.get("benign") or kinfo.get("benign") or "",
+           "hotspots": hot, "branches": branches, "branches_total": sum(1 for ss in by_pt.values() if len(ss) >= 2),
+           "siblings": siblings, "parent": ({"id": parent["id"], "name": parent["name"]} if parent else None),
+           "profile": _profile(xs), "profile_year": _profile(year),
+           "examples": _examples(run, [x for x in here if x["_at"] >= datetime.now(UTC) - timedelta(days=730)] or here),
+           "request": _request_text(run, w.get("kind"), where="по отделениям из списка ниже" if branches else "по сети",
+                                    period=_period(w["first"], w["last"]), motif=w.get("motif")),
+           "since": TYPED_SINCE[:4]}
+    cache[key] = out
+    return out
+
+
+@router.get("/hotspots")
+def hotspots(subject: Optional[str] = None, key: Optional[str] = None, strength: Optional[str] = None,
+             user: CurrentUser = Depends(get_current_user)):
+    """Где сгущается: один способ действия в нескольких отделениях одного города или ГОСБ за короткое время."""
+    _need(user)
+    run = _run()
+    wkey = _wave_key(key)
+    hs = [h for h in _hots(run) if (not subject or h.get("subject") == subject) and (not wkey or h["key"] == wkey)
+          and (not strength or h["strength"] == strength)]
+    allh = _hots(run)
+    return {"hotspots": [_hot_brief(h) | {"places": h["places"][:8]} for h in hs],
+            "counts": dict(Counter(h["strength"] for h in allh)), "total": len(allh)}
+
+
+@router.get("/hotspots/{hid}")
+def hotspot_card(hid: str, user: CurrentUser = Depends(get_current_user)):
+    _need(user)
+    run = _run()
+    _hots(run)
+    h = run["_hot_by_id"].get(hid)
+    if not h:
+        raise HTTPException(404, "очаг не найден")
+    pts = run["points"]
+    xs = [x for x in (_story(run, r) for r in h["_rids"]) if x]
+    xs.sort(key=lambda x: x["_at"], reverse=True)
+    w = _wave(run, h["key"]) or {}
+    kinfo = _kinds(run).get(h.get("kind")) or {}
+    codes = [rk_code(pl_.get("name")) or pl_.get("name") or "" for pl_ in h["places"]]
+    where = "отделения " + ", ".join(c for c in codes if c) if any(codes) else h["where"]
+    a, b = _aware(h["from"]), _aware(h["to"])
+    return {**_hot_brief(h), "places": h["places"],
+            "stories": _attach_src([_story_out(x, pts) for x in xs]), "profile": _profile(xs),
+            "wave": ({"id": w["id"], "name": w["name"], "status": w["status"], "status_label": w["status_label"],
+                      "year": w["year"], "clients": w["clients"], "points": w["points"]} if w else None),
+            "benign": ((run["network"].get("motifs") or {}).get(h.get("motif")) or {}).get("benign") or kinfo.get("benign") or "",
+            "request": _request_text(run, h.get("kind"), where=where, motif=h.get("motif"),
+                                     period=f"с {a.strftime('%d.%m.%Y')} по {b.strftime('%d.%m.%Y')}"),
+            "limits": ["Отзывы — слова клиентов, а не установленные факты",
+                       "Очаг — повод запросить данные банка по этим отделениям, а не вывод о нарушении",
+                       "В каждом отделении очага — один-два клиента: по отдельности они ничем не выделяются"]}
+
+
+def rk_code(name: str | None) -> str | None:
+    from ..vsp.signals.risk import code_key
+    return code_key(name)
 
 
 def _month_bars(point: str) -> list[dict]:
@@ -1329,33 +1644,36 @@ def dossier(point: str, user: CurrentUser = Depends(get_current_user)):
     if not p:
         raise HTTPException(404, "отделение не найдено")
     a = p.get("risk") or {}
-    stories = p.get("stories") or []
-    nearby = []
-    if a.get("action_label") and p.get("gosb"):
-        for q in run["points"].values():
-            qa = q.get("risk") or {}
-            if q["point"] != point and q.get("gosb") == p.get("gosb") and qa.get("action_label") == a.get("action_label") \
-                    and qa.get("heavy_clients", 0) >= 1:
-                nearby.append(_place(q))
+    _hots(run)
     bars = _month_bars(point)
     full = _sf(run, point=point)
-    stories = _attach_src([_story_out(x, {}) for x in full[:300]] or stories)
-    vol = a.get("vol_2y") or 0
+    pts = run["points"]
+    stories = _attach_src([_story_out(x, pts) for x in full[:300]])
     n12 = p.get("n_12m") or 0
     neg12 = p.get("neg_12m") if p.get("neg_12m") is not None else sum(b["neg"] for b in bars[-12:])
-    heavy2 = sum(1 for x in full if (x.get("severity") or 0) >= 2 and x["_at"] >= datetime.now(UTC) - timedelta(days=730))
     peer = (run["network"].get("peers") or {}).get(p.get("gosb")) or {}
     compare = [
         {"key": "n_12m", "label": "Отзывов за год", "me": n12, "peer": peer.get("n_12m"), "fmt": "n"},
         {"key": "neg_share", "label": "Доля жалоб (1–2★) за год", "me": round(neg12 / n12, 3) if n12 >= 10 else None,
          "peer": peer.get("neg_share"), "fmt": "p"},
-        {"key": "heavy_per100", "label": "Тяжёлых историй на 100 отзывов за 2 года",
-         "me": round(100 * heavy2 / vol, 2) if vol >= 10 else None, "peer": peer.get("heavy_per100"), "fmt": "x"},
     ]
+    pat_rids = {r for x in a.get("patterns") or [] for r in x.get("rids") or []}
+    for s_ in stories:
+        s_["in_pattern"] = s_["rid"] in pat_rids
+    code = rk_code(p.get("name")) or ""
+    period = _req_period(a)
+    request = []
+    for r in a.get("request") or []:
+        rt = _request_text(run, r.get("kind"), where=f"отделение {code}" if code else "это отделение", period=period)
+        if rt:
+            request.append(rt)
     return {**_place(p), "vol_2y": a.get("vol_2y"), "open_date": p.get("open_date"),
             "passport": _passport(p), "lat": p.get("lat"), "lon": p.get("lon"),
-            "risk": a, "sig": _sig_out(a), "stories": stories, "bars": bars, "nearby": nearby[:5],
-            "compare": compare, "peer_points": peer.get("points"), "actions": _action_facets(full),
+            "risk": {k: v for k, v in a.items() if k != "request"}, "request": request,
+            "shelf_label": SHELF_LABEL.get(a.get("shelf")),
+            "hot": [_hot_brief(h) for h in run["_hot_by_point"].get(point, [])],
+            "stories": stories, "bars": bars, "kinds": _kind_facets(run, full),
+            "compare": compare, "peer_points": peer.get("points"),
             "source": (run["network"].get("story_source")),
             "limits": ["Отзывы — слова клиентов, а не установленные факты",
                        "Пожилые клиенты пишут редко — за них часто пишут родственники",
@@ -1370,21 +1688,28 @@ def dossier(point: str, user: CurrentUser = Depends(get_current_user)):
 def stories_list(subject: Optional[str] = None, gosb: Optional[str] = None, point: Optional[str] = None,
                  action: Optional[str] = None, severity: int = 0, period: Optional[str] = "730",
                  vulnerable: bool = False, named: bool = False, money: bool = False, q: Optional[str] = None,
-                 fmt: Optional[str] = None, sort: str = "new", limit: int = 50, offset: int = 0,
+                 fmt: Optional[str] = None, kind: Optional[int] = None, key: Optional[str] = None,
+                 inside: bool = False, sort: str = "new", limit: int = 50, offset: int = 0,
                  user: CurrentUser = Depends(get_current_user)):
     _need(user)
     run = _run()
-    kw = _story_kw(subject, gosb, point, action, severity, period, vulnerable, named, money, q, fmt)
+    kw = _story_kw(subject, gosb, point, action, severity, period, vulnerable, named, money, q, fmt, kind, key, inside)
     xs = _sf(run, **kw)
     if sort == "severe":
         xs = sorted(xs, key=lambda x: (-(x.get("severity") or 0), -x["_at"].timestamp()))
-    base = _sf(run, **{**kw, "action": None}) if action else xs
+    elif sort == "important":
+        from ..vsp.signals.risk import case_score
+        now = datetime.now(UTC)
+        xs = sorted(xs, key=lambda x: (-case_score({**x, "at": x["_at"]}, now)[0], -x["_at"].timestamp()))
+    base = _sf(run, **{**kw, "kind": None}) if kind else xs
     pts = run["points"]
+    w = _wave(run, kw["key"]) if kw["key"] else None
     return {"total": len(xs), "points": len({x["point"] for x in xs}),
-            "clients": len({x.get("author") or x["rid"] for x in xs}),
+            "clients": len({x["_client"] for x in xs}),
             "heavy": sum(1 for x in xs if (x.get("severity") or 0) >= 2),
             "items": _attach_src([_story_out(x, pts) for x in xs[offset:offset + min(max(limit, 1), 200)]]),
-            "actions": _action_facets(base), "months": _months(xs),
+            "kinds": _kind_facets(run, base), "months": _months(xs),
+            "wave": ({"id": w["id"], "name": w["name"]} if w else None),
             "source": run["network"].get("story_source")}
 
 
@@ -1392,71 +1717,79 @@ def stories_list(subject: Optional[str] = None, gosb: Optional[str] = None, poin
 def export_stories(subject: Optional[str] = None, gosb: Optional[str] = None, point: Optional[str] = None,
                    action: Optional[str] = None, severity: int = 0, period: Optional[str] = "730",
                    vulnerable: bool = False, named: bool = False, money: bool = False, q: Optional[str] = None,
-                   fmt: Optional[str] = None, user: CurrentUser = Depends(get_current_user)):
+                   fmt: Optional[str] = None, kind: Optional[int] = None, key: Optional[str] = None,
+                   inside: bool = False, user: CurrentUser = Depends(get_current_user)):
     _need(user)
     run = _run()
-    xs = _sf(run, **_story_kw(subject, gosb, point, action, severity, period, vulnerable, named, money, q, fmt))
+    xs = _sf(run, **_story_kw(subject, gosb, point, action, severity, period, vulnerable, named, money, q, fmt,
+                              kind, key, inside))
     pts = run["points"]
-    head = ["Дата", "Город", "Адрес", "ВСП", "ГОСБ", "Регион", "Что произошло", "Тяжесть", "Сотрудник",
-            "Пожилой или уязвимый клиент", "Сумма, ₽", "Слова клиента", "Пересказ ИИ", "Оценка", "Отзыв"]
+    head = ["Дата", "Город", "Адрес", "ВСП", "ГОСБ", "Регион", "Что произошло", "Способ (почерк)", "Тяжесть",
+            "Кому выгода, по словам клиента", "Сотрудник", "Пожилой или уязвимый клиент", "Сумма, ₽",
+            "Слова клиента", "Пересказ ИИ", "Примечание", "Оценка", "Отзыв"]
     data = []
     cap = 20000
     for x in xs[:cap]:
         pl_ = pts.get(x["point"]) or {}
+        note = "; ".join(t for t in (
+            "копия отзыва того же клиента" if x.get("copy_of") else "",
+            f"тот же текст ещё у {x['dup_points']} отделений" if x.get("dup_points") else "",
+            "клиент пишет о другом отделении" if x.get("elsewhere") else "",
+            "перенесено из карточки другого отделения по коду в тексте" if x.get("moved_from") else "") if t)
         data.append([x.get("date"), pl_.get("city"), pl_.get("address"), pl_.get("name"), x.get("gosb"),
-                     subject_name(x["subject"]) if x.get("subject") else "", ", ".join(x["labels"]),
-                     SEVERITY.get(x.get("severity") or 0, ""), x.get("employee") or "",
+                     subject_name(x["subject"]) if x.get("subject") else "", x.get("kind_name") or ", ".join(x["labels"]),
+                     x.get("motif_name") or x.get("label") or "",
+                     SEVERITY.get(x.get("severity") or 0, ""), x.get("benefit") or "", x.get("employee") or "",
                      "да" if x.get("vulnerable") else "", x.get("money") or "",
                      x.get("quote") if x.get("quote_ok", True) else "",
                      "; ".join(t for t in ((x.get("episode") or ""), ("" if x.get("quote_ok", True) else
                                                                       f"не дословно: {x.get('quote')}")) if t),
-                     x.get("rating"), x["rid"]])
+                     note, x.get("rating"), x["rid"]])
     title = "Аудит сети ВСП · истории клиентов"
     if len(xs) > cap:
         title += f" · первые {cap:,} из {len(xs):,}".replace(",", " ")
-    xb = _xlsx(title, [("Истории клиентов", head, data, {"Слова клиента", "Пересказ ИИ", "Адрес", "Что произошло"})])
+    xb = _xlsx(title, [("Истории клиентов", head, data, {"Слова клиента", "Пересказ ИИ", "Адрес", "Что произошло",
+                                                        "Способ (почерк)", "Примечание"})])
     return _xlsx_response(xb, "ВСП_истории.xlsx")
 
 
-# ── таблица отделений: рейтинг по многим параметрам ──────────────────────────
+# ── таблица отделений: все отделения с историями ─────────────────────────────
 
-TABLE_SORT = {"heavy", "per100", "clients", "last", "signals", "vulnerable", "named"}
+TABLE_SORT = {"heavy", "clients", "per100", "last", "vulnerable", "inside"}
 
 
 @router.get("/table")
-def table(subject: Optional[str] = None, gosb: Optional[str] = None, action: Optional[str] = None,
-          period: Optional[str] = "730", vulnerable: bool = False, named: bool = False, fmt: Optional[str] = None,
-          sort: str = "heavy", limit: int = 300, offset: int = 0, user: CurrentUser = Depends(get_current_user)):
+def table(subject: Optional[str] = None, gosb: Optional[str] = None, kind: Optional[int] = None,
+          period: Optional[str] = "730", vulnerable: bool = False, fmt: Optional[str] = None,
+          sort: str = "clients", limit: int = 300, offset: int = 0, user: CurrentUser = Depends(get_current_user)):
     _need(user)
     run = _run()
-    kw = dict(subject=subject, gosb=gosb, action=action, vulnerable=vulnerable, named=named, fmt=fmt)
-    xs = _sf(run, period=period, **kw)
-    heavy2y = Counter(x["point"] for x in _sf(run, period="730", severity=2, **kw))
+    xs = _sf(run, period=period, subject=subject, gosb=gosb, kind=kind, vulnerable=vulnerable, fmt=fmt, here=True)
     by: dict[str, list[dict]] = defaultdict(list)
     for x in xs:
         by[x["point"]].append(x)
-    from ..vsp.signals.risk import ACTIONS
     pts = run["points"]
     rows = []
     for pt, ss in by.items():
         P = pts.get(pt) or {}
         a = P.get("risk") or {}
         heavy = [x for x in ss if (x.get("severity") or 0) >= 2]
-        vol = a.get("vol_2y") or 0
-        acts = Counter(k for x in ss for k in x["actions"])
+        clients = {x["_client"] for x in heavy if not x.get("dup_of")}
+        read = a.get("read") or 0
+        kinds = Counter(x["kind_name"] for x in heavy if x.get("kind_name"))
         rows.append({**_place(P), "stories": len(ss), "heavy": len(heavy), "very": sum(1 for x in ss if (x.get("severity") or 0) >= 3),
-                     "clients": len({x.get("author") or x["rid"] for x in heavy}),
-                     "per100": round(100 * heavy2y[pt] / vol, 2) if vol >= 10 else None, "vol_2y": vol or None,
+                     "clients": len(clients),
+                     "per100": round(100 * (a.get("heavy_clients") or 0) / read, 2) if read >= 30 else None, "read": read or None,
                      "last": ss[0]["date"], "last_at": ss[0]["at"],
-                     "vulnerable": sum(1 for x in ss if x.get("vulnerable")), "named": sum(1 for x in ss if x["_named"]),
-                     "actions": [ACTIONS[k]["short"] for k, _ in acts.most_common(3)],
-                     "listed": bool(a.get("include")), "signals": len(a.get("signals") or []),
-                     "confidence": (a.get("confidence") or {}).get("level")})
-    key = sort if sort in TABLE_SORT else "heavy"
+                     "vulnerable": sum(1 for x in heavy if x.get("vulnerable")),
+                     "inside": sum(1 for x in heavy if x.get("inside")),
+                     "kinds": [k for k, _ in kinds.most_common(2)],
+                     "shelf": a.get("shelf"), "shelf_label": SHELF_LABEL.get(a.get("shelf"))})
+    key = sort if sort in TABLE_SORT else "clients"
     if key == "last":
         rows.sort(key=lambda r: r["last_at"] or "", reverse=True)
     else:
-        rows.sort(key=lambda r: (-(r.get(key) or 0), -r["heavy"], -r["stories"]))
+        rows.sort(key=lambda r: (-(r.get(key) or 0), -r["clients"], -r["stories"]))
     off = max(offset, 0)
     return {"total": len(rows), "items": rows[off:off + min(max(limit, 1), 1000)], "offset": off, "sort": key}
 
@@ -1489,137 +1822,6 @@ def _split_people(name: str | None) -> list[str]:
 
 
 # ── «Люди»: сотрудники, которых называют разные клиенты; похвала от новых аккаунтов; посредники ─
-
-@router.get("/staff")
-def staff(subject: Optional[str] = None, gosb: Optional[str] = None, user: CurrentUser = Depends(get_current_user)):
-    _need(user)
-    run = _run()
-    pts = run["points"]
-    inscope = lambda pt: ((not subject or (pts.get(pt) or {}).get("subject") == subject)  # noqa: E731
-                          and (not gosb or (pts.get(pt) or {}).get("gosb") == gosb))
-    # 1) имя в историях модели: одно отделение, разные клиенты
-    named: dict[tuple, list[dict]] = defaultdict(list)
-    for x in _stories(run):
-        if not inscope(x["point"]):
-            continue
-        for e in _split_people(x.get("employee")):
-            named[(x["point"], _nom(e).lower().replace("ё", "е"))].append({**x, "employee": _nom(e)})
-    model_rows = []
-    for (pt, _), ss in named.items():
-        clients = len({x.get("author") or x["rid"] for x in ss})
-        model_rows.append({"kind": "named", "name": Counter(x["employee"].strip() for x in ss).most_common(1)[0][0],
-                           "clients": clients, "stories": len(ss), "heavy": sum(1 for x in ss if (x.get("severity") or 0) >= 2),
-                           "last": ss[0]["date"], "actions": sorted({l for x in ss for l in x["labels"]})[:3],
-                           "quote": ss[0]["quote"], "rid": ss[0]["rid"], "place": _place(pts.get(pt))})
-    model_rows.sort(key=lambda r: (-r["clients"], -r["heavy"]))
-    # 2) имена по словам (vsp_person): жалобы и волны похвалы
-    heavy_by_pt = Counter(x["point"] for x in _stories(run) if (x.get("severity") or 0) >= 2)
-    comp, praise = [], []
-    for x in run["persons"]:
-        if not inscope(x["point"]):
-            continue
-        row = {"id": x["id"], "name": _nom(x["name"]), "n": x["n"], "authors": x["authors"],
-               "first": _iso(x["first_at"]), "last": _iso(x["last_at"]),
-               "oneoff": x["detail"].get("oneoff"), "full_name": bool(x["detail"].get("full_name")),
-               "types": [RISK[k].label if k in RISK else k for k in (x["detail"].get("types") or {})],
-               "heavy_here": heavy_by_pt.get(x["point"], 0), "place": _place(pts.get(x["point"]))}
-        (comp if x["kind"] == "complaints" else praise).append(row)
-    # одно и то же имя из карточек модели и из слов — одна строка (ключ — основы слов имени, как в
-    # vsp_person). Клиентов — больше из двух: модель могла отметить не все отзывы с этим именем.
-    from ..vsp.signals.people import stem
-    def _stems(name):
-        return {stem(w) for w in (name or "").split()[:3] if w}
-    keep = []
-    for r in comp:
-        pk = set(((next((p_ for p_ in run["persons"] if p_["id"] == r["id"]), {}).get("detail") or {}).get("key")
-                  or "").split("|")) - {""} or _stems(r["name"])
-        m = next((mr for mr in model_rows if mr["place"].get("point") == r["place"].get("point")
-                  and _stems(mr["name"]) & pk), None)
-        if m is not None:
-            m.setdefault("id", r["id"])
-            m.setdefault("full_name", bool(r.get("full_name")))
-            m["authors"] = max(m.get("authors") or 0, r["authors"])
-            m["clients"] = max(m["clients"], r["authors"])
-        elif (r["name"] or "").strip():
-            keep.append(r)
-    model_rows.sort(key=lambda r: (-r["clients"], -r["heavy"]))
-    comp = sorted(keep, key=lambda r: (-r["authors"], -r["n"]))
-    praise = [r for r in praise if (r["name"] or "").strip() and r["heavy_here"] > 0]
-    praise.sort(key=lambda r: (-(r["heavy_here"] > 0), -(r["oneoff"] or 0), -r["n"]))
-    # 3) посредники и обслуживание по знакомству
-    mid: dict[str, list[dict]] = defaultdict(list)
-    for x in _stories(run):
-        if inscope(x["point"]) and ({"посредник", "блат_очередь"} & set(x["actions"])):
-            mid[x["point"]].append(x)
-    middle = sorted(({"place": _place(pts.get(pt)), "stories": len(ss), "last": ss[0]["date"], "quote": ss[0]["quote"],
-                      "rid": ss[0]["rid"], "kinds": sorted({l for x in ss for l in x["labels"]
-                                                            if l in ("посредники и «свой» менеджер",
-                                                                     "обслуживают по знакомству, в обход очереди")})}
-                     for pt, ss in mid.items()), key=lambda r: -r["stories"])
-    return {"named": _attach_src(model_rows[:200]), "complaints": comp[:200], "praise": praise[:200],
-            "middlemen": _attach_src(middle[:100]),
-            "source": run["network"].get("story_source")}
-
-
-# ── «Динамика»: что растёт ────────────────────────────────────────────────────
-
-@router.get("/trends")
-def trends(subject: Optional[str] = None, gosb: Optional[str] = None, action: Optional[str] = None,
-           user: CurrentUser = Depends(get_current_user)):
-    _need(user)
-    run = _run()
-    from ..vsp.signals.risk import ACTIONS
-    xs = _sf(run, subject=subject, gosb=gosb, action=action, severity=2, period="730")
-    now = datetime.now(UTC)
-    h1, h0 = now - timedelta(days=182), now - timedelta(days=364)
-    top = [k for k, _ in Counter(a for x in xs for a in x["actions"] if a != "другое").most_common(6)]
-    months = _months(xs)
-    by_m: dict[str, Counter] = defaultdict(Counter)
-    for x in xs:
-        k = x["_at"].strftime("%Y-%m")
-        for a in x["actions"]:
-            by_m[k][a if a in top else "_other"] += 1
-    for m in months:
-        m["by"] = dict(by_m.get(m["month"], {}))
-
-    def growth(keyf):
-        cur, prev = Counter(), Counter()
-        for x in xs:
-            for k in keyf(x):
-                if not k:
-                    continue
-                if x["_at"] >= h1:
-                    cur[k] += 1
-                elif x["_at"] >= h0:
-                    prev[k] += 1
-        return [{"key": k, "now": cur[k], "before": prev[k], "delta": cur[k] - prev[k]} for k in set(cur) | set(prev)]
-
-    acts = sorted(growth(lambda x: x["actions"]), key=lambda r: -r["delta"])
-    for r in acts:
-        r["label"] = ACTIONS.get(r["key"], ACTIONS["другое"])["label"]
-    n12: Counter = Counter()
-    gsub: dict[str, str] = {}
-    for p in run["points"].values():
-        if p.get("gosb"):
-            n12[p["gosb"]] += p.get("n_12m") or 0
-            gsub.setdefault(p["gosb"], p.get("subject") or "")
-    gs = sorted(growth(lambda x: [x.get("gosb")]), key=lambda r: -r["delta"])
-    for r in gs:
-        r["subject_name"] = subject_name(gsub.get(r["key"])) if gsub.get(r["key"]) else None
-        r["n_12m"] = n12.get(r["key"], 0)
-    first: dict[str, datetime] = {}
-    for x in _sf(run, subject=subject, gosb=gosb, action=action, severity=2):      # за всё время
-        first[x["point"]] = min(first.get(x["point"], x["_at"]), x["_at"])
-    cnt = Counter(x["point"] for x in xs)
-    fresh_cut = now - timedelta(days=90)
-    new_pts = [{"place": _place(run["points"].get(pt)), "first": d.strftime("%d.%m.%Y"), "n": cnt[pt]}
-               for pt, d in first.items() if d >= fresh_cut]
-    new_pts.sort(key=lambda r: -r["n"])
-    return {"months": months, "top": [{"key": k, "label": ACTIONS[k]["label"], "short": ACTIONS[k]["short"]} for k in top],
-            "actions": acts[:15], "gosbs": gs[:20], "new_points": new_pts[:20], "total": len(xs),
-            "half_now": sum(1 for x in xs if x["_at"] >= h1), "half_before": sum(1 for x in xs if h0 <= x["_at"] < h1),
-            "source": run["network"].get("story_source")}
-
 
 FORMAT_LABEL = {"mass": "массовое обслуживание", "sber_first": "СберПервый", "private": "Private Banking",
                 "legal": "юрлица", "business": "бизнес", "corporate": "корпоративные клиенты",
@@ -1661,11 +1863,15 @@ def _passport(p: dict) -> dict:
 
 # ── проверка истории: полный отзыв, что увидела модель, проверки кодом ─────────
 
+INTENT_LABEL = {0: "ошибка или недоразумение", 1: "неясно", 2: "ввели в заблуждение или надавили",
+                3: "действие за клиента или присвоение"}
+
+
 @router.get("/evidence/{rid:path}")
 def evidence(rid: str, user: CurrentUser = Depends(get_current_user)):
     _need(user)
     run = _run()
-    from ..vsp.signals.llm_read import PROMPT_VERSION, SCREEN_VERSION, quote_ok, review_llm
+    from ..vsp.signals.llm_read import DETAIL_VERSION, PROMPT_VERSION, SCREEN_VERSION, quote_ok, review_llm
     from ..vsp.signals.risk import ACTIONS
     with engine().connect() as c:
         r = c.execute(select(reviews).where(reviews.c.review_id == rid)).mappings().first()
@@ -1679,7 +1885,7 @@ def evidence(rid: str, user: CurrentUser = Depends(get_current_user)):
             pass
     row = _review_row(r, run)
     row["url"] = _safe_url(row.get("url"))
-    story = next((x for x in _stories(run) if x["rid"] == rid), None)
+    story = _story(run, rid)
     text = row.get("text") or ""
     card = cards_.get(PROMPT_VERSION)
     data = {}
@@ -1691,6 +1897,7 @@ def evidence(rid: str, user: CurrentUser = Depends(get_current_user)):
     quote = (story or {}).get("quote") or data.get("quote") or ""
     emp = (story or {}).get("employee") or (data.get("employee_name") or "").strip()
     low = text.lower().replace("ё", "е")
+    pts = run["points"]
     checks = []
     if quote:
         checks.append({"ok": quote_ok(quote, text), "label": "Слова клиента дословно есть в отзыве" if quote_ok(quote, text)
@@ -1702,6 +1909,24 @@ def evidence(rid: str, user: CurrentUser = Depends(get_current_user)):
         checks.append({"ok": True, "label": "Отбор и карточка — модель; цитату и имя проверяет код"})
     elif story:
         checks.append({"ok": None, "label": "Найдено по словам, модель этот отзыв ещё не разбирала"})
+    if story and story.get("copy_of"):
+        checks.append({"ok": None, "label": "Тот же клиент уже описал этот случай в другом отзыве об этом отделении — "
+                                            "в подсчётах он один"})
+    if story and story.get("dup_points"):
+        n = story["dup_points"]
+        checks.append({"ok": None, "label": f"Этот же текст оставлен ещё у {n} {_pl(n, 'отделения', 'отделений', 'отделений')} — "
+                                            "в волнах и очагах клиент считается один раз"})
+    if story and story.get("moved_from"):
+        src_pl = pts.get(story["moved_from"]) or {}
+        checks.append({"ok": None, "label": "Отзыв оставлен на карточке другого отделения"
+                       + (f" ({src_pl.get('city') or ''}, {src_pl.get('name') or ''})" if src_pl else "")
+                       + ", но клиент назвал код этого — история отнесена сюда"})
+    if story and story.get("elsewhere"):
+        checks.append({"ok": None, "label": "По словам клиента, это произошло в другом отделении — в счёт этого "
+                                            "отделения история не идёт, в волнах по сети учитывается"})
+    if story and story.get("hq"):
+        checks.append({"ok": None, "label": "Карточка центрального офиса: сюда пишут жалобы на банк в целом — "
+                                            "в сравнении отделений не участвует"})
     model = None
     if data:
         model = {"what": data.get("episode") or (card or {}).get("summary"), "scheme": data.get("scheme_free"),
@@ -1709,23 +1934,30 @@ def evidence(rid: str, user: CurrentUser = Depends(get_current_user)):
                  "products": data.get("products") or [], "severity": SEVERITY.get(int(data["severity"]) if str(data.get("severity") or "").isdigit() else 0, ""),
                  "fault": data.get("fault"), "employee": emp or None, "money": data.get("money_rub"),
                  "vulnerable": bool(data.get("vulnerability")), "relevant": bool(data.get("relevant")),
-                 "other_vsp": data.get("other_vsp") or None, "model": (card or {}).get("model")}
+                 "model": (card or {}).get("model")}
+    detail = None
+    dcard = cards_.get(DETAIL_VERSION)
+    if dcard is not None and story:
+        intent = story.get("intent")
+        detail = {"kind": story.get("kind_name"), "kind2": _kind_name(run, story.get("kind2")),
+                  "motif": story.get("motif_name"), "label": story.get("label"), "benefit": story.get("benefit"),
+                  "intent": INTENT_LABEL.get(intent) if isinstance(intent, int) else None,
+                  "systemic": story.get("systemic") or [], "outcome": story.get("outcome"),
+                  "escalation": story.get("escalation") or [], "window": story.get("window"),
+                  "sum_kind": story.get("sum_kind"), "event_date": story.get("event_date"),
+                  "inside": bool(story.get("inside")), "model": dcard["model"]}
     screen = cards_.get(SCREEN_VERSION)
-    pt = row.get("point")
+    pt = (story or {}).get("point") or row.get("point")
+    waves_ = [{"id": _wave_id(k), "name": (_wave(run, k) or {}).get("name"),
+               "status_label": (_wave(run, k) or {}).get("status_label")}
+              for k in ((story or {}).get("_keys") or []) if _wave(run, k)]
     return {"review": row, "quote": quote, "employee": emp or None,
-            "story": _story_out(story, {}) if story else None, "model": model,
+            "story": _story_out(story, pts) if story else None, "model": model, "detail": detail, "waves": waves_,
             "screen": {"relevant": bool(screen["relevant"]), "why": screen["summary"]} if screen is not None else None,
-            "checks": checks, "place": _place(run["points"].get(pt)), "point": pt}
+            "checks": checks, "place": _place(pts.get(pt)), "point": pt}
 
 
-# ── «Обзор»: главные случаи и картина по сети ─────────────────────────────────
-# Не «раз навязали», а то, что интересно аудиту: очень тяжёлое, крупные суммы, пожилые и уязвимые,
-# действия «изнутри» (доступ к телефону, касса, утечка данных, посредники, «по знакомству»,
-# платная биометрия), один сотрудник у нескольких клиентов. Балл прозрачный, причины — метками.
-
-INSIDER = {"доступ_к_телефону_или_аккаунту": "доступ к телефону клиента", "касса_недостача_или_чужой_платеж": "касса",
-           "оглашение_или_утечка_данных": "утечка данных", "посредник": "посредник", "блат_очередь": "по знакомству",
-           "биометрия": "биометрия", "накрутка_продаж": "продажи «для плана»", "наказание_за_отказ": "наказание за отказ"}
+# ── «Главное»: что идёт → где сгущается → кого смотреть → что запросить ─────────
 MONEY_CAP = 50_000_000          # больше — почти наверняка ошибка чтения суммы
 
 
@@ -1734,312 +1966,145 @@ def _money(x) -> float:
     return float(m) if isinstance(m, (int, float)) and 0 < m < MONEY_CAP else 0.0
 
 
-def _interest(x: dict, named_many: set, listed_tier: dict, now: datetime) -> tuple[int, list[str]]:
-    s, why = 0, []
-    sev = x.get("severity") or 0
-    if sev >= 3:
-        s += 4; why.append("очень тяжёлая")
-    elif sev >= 2:
-        s += 1
-    m = _money(x)
-    if m >= 100_000:
-        s += 3
-    elif m >= 30_000:
-        s += 2
-    elif m >= 10_000:
-        s += 1
-    if m >= 10_000:
-        why.append(f"{int(m):,} ₽".replace(",", " "))
-    if x.get("vulnerable"):
-        s += 2; why.append(((x.get("vuln_types") or ["пожилой или уязвимый клиент"])[0]).split("/")[0])
-    ins = [INSIDER[a] for a in x["actions"] if a in INSIDER]
-    if ins:
-        s += 2; why.append(ins[0])
-    emp = (x.get("employee") or "").strip()
-    if emp and (x["point"], _nom(emp).lower()) in named_many:
-        s += 2; why.append("сотрудника называют несколько клиентов")
-    if x["_at"] >= now - timedelta(days=120):
-        s += 1; why.append("свежая")
-    if listed_tier.get(x["point"]) in ("urgent", "converged"):
-        s += 1
-    if x.get("dup_points"):
-        s -= 3
-    return s, why
-
-
-# Заголовок «Главного» — о повторяющейся схеме, а не о количестве: что клиенты разных отделений пишут
-# об одном и том же действии за последние три месяца. Текст собирает код из шаблона, числа — из историй.
-PATTERN_CLAUSE = {
-    "доступ_к_телефону_или_аккаунту": "сотрудники сами работали в их телефоне, приложении или Госуслугах",
-    "касса_недостача_или_чужой_платеж": "в кассе им недодали деньги или провели чужой платёж",
-    "оглашение_или_утечка_данных": "сотрудники раскрыли их данные посторонним",
-    "биометрия": "у них без согласия собрали биометрию или взяли за неё деньги",
-    "накрутка_продаж": "им оформляли продукты «для плана», обещая, что потом можно отказаться",
-    "блат_очередь": "знакомых обслуживают в обход очереди",
-    "посредник": "в отделении работают посредники или «свой» менеджер",
-    "наказание_за_отказ": "их наказывали за отказ от допуслуги",
-    "оформление_без_согласия": "им оформили или подключили продукты без согласия",
-    "подмена_продукта": "им выдали один продукт под видом другого",
-    "ложь_об_обязательности": "им говорили, что без допуслуги не дадут",
-    "обусловливание": "услугу ставили условием выдачи",
-    "ложь_об_условиях": "им рассказали одно, а оформили другое",
-}
-PATTERN_WINDOWS = (90, 180)
-
-
-def _patterns(xs: list[dict], pts: dict, named_many: set, listed: dict, now: datetime) -> list[dict]:
-    """Схемы периода: одно действие у клиентов ≥3 разных отделений за 90 дней (или 180), с примерами.
-    Сначала действия «изнутри», внутри — по охвату отделений, доле пожилых и очень тяжёлых."""
-    for days in PATTERN_WINDOWS:
-        cut = now - timedelta(days=days)
-        by: dict[str, list[dict]] = defaultdict(list)
-        for x in xs:
-            if x["_at"] >= cut and x.get("quote_ok", True) and not x.get("dup_points"):
-                for a in x["actions"]:
-                    if a in PATTERN_CLAUSE:
-                        by[a].append(x)
-        out = []
-        for a, ss in by.items():
-            points = {x["point"] for x in ss}
-            if len(points) < 3:
-                continue
-            vul = sum(1 for x in ss if x.get("vulnerable"))
-            very = sum(1 for x in ss if (x.get("severity") or 0) >= 3)
-            score = len(points) * (1 + vul / len(ss)) * (1.6 if a in INSIDER else 1.0) + very
-            ranked = sorted(ss, key=lambda x: (-_interest(x, named_many, listed, now)[0], -x["_at"].timestamp()))
-            ex, seen = [], set()
-            for x in ranked:
-                if x["point"] in seen:
-                    continue
-                seen.add(x["point"])
-                ex.append({**_story_out(x, pts), "why": _interest(x, named_many, listed, now)[1]})
-                if len(ex) >= 3:
-                    break
-            n, p_ = len(ss), len(points)
-            text = (f"За {'три' if days == 90 else 'полгода'} {'месяца ' if days == 90 else ''}клиенты {p_} "
-                    f"{_pl(p_, 'отделения', 'отделений', 'отделений')} пишут, что {PATTERN_CLAUSE[a]}")
-            if vul and vul / n >= 0.5:
-                accent = "чаще всего у пожилых и уязвимых"
-            elif vul >= 2:
-                accent = f"в {vul} из {n} {_pl(n, 'истории', 'историй', 'историй')} пострадали пожилые и уязвимые"
-            elif very >= 2:
-                accent = f"{very} из них очень тяжёлые"
-            else:
-                accent = ""
-            out.append({"action": a, "days": days, "stories": n, "points": p_, "vulnerable": vul, "very": very,
-                        "insider": a in INSIDER, "score": round(score, 1), "text": text, "accent": accent,
-                        "examples": ex})
-        if out:
-            # первыми — действия «изнутри»: «без согласия» есть почти везде, а работа в телефоне клиента — нет
-            out.sort(key=lambda r: (not r["insider"], -r["score"]))
-            return out[:4]
-    return []
-
-
 @router.get("/brief")
 def brief(subject: Optional[str] = None, gosb: Optional[str] = None, user: CurrentUser = Depends(get_current_user)):
     _need(user)
     run = _run()
     cache = run.setdefault("_brief", {})
-    if (subject, gosb) not in cache:              # считаем раз на прогон: ~4 с по всем историям
+    if (subject, gosb) not in cache:              # считаем раз на прогон
         cache[(subject, gosb)] = _brief(run, subject, gosb)
-    return cache[(subject, gosb)]
+    return {**cache[(subject, gosb)], "watch": _watch()}
 
 
 def _brief(run, subject, gosb) -> dict:
-    from ..vsp.signals.risk import ACTIONS
     pts = run["points"]
     now = datetime.now(UTC)
-    y1, y2 = now - timedelta(days=365), now - timedelta(days=730)
-    xs = _sf(run, subject=subject, gosb=gosb, severity=2, period="730")
+    y1 = now - timedelta(days=365)
+    scoped = bool(subject or gosb)
+    ws = _waves(run)
+    has_motifs = any(w["level"] == "motif" for w in ws)
+
+    # 1. что идёт: новое и растущее (почерк раньше своего типа), затем самое частое из «идёт давно»
+    def rank(w):
+        return ({"new": 0, "rising": 1}.get(w["status"], 2), w["level"] != "motif", -(w.get("year_ratio") or 0), -w["year"])
+    up = sorted((w for w in ws if w["status"] in ("new", "rising")), key=rank)
+    up_kinds = {w["kind"] for w in up if w["level"] == "motif"}
+    up = [w for w in up if not (w["level"] == "kind" and w["kind"] in up_kinds)]      # тип повторяет свой почерк
+    rest = sorted((w for w in ws if w["status"] == "steady" and w["level"] == ("motif" if has_motifs else "kind")),
+                  key=lambda w: -w["year"])
+    waves_top = (up + rest)[:6]
+    # 2. где сгущается
+    hs = [h for h in _hots(run) if (not subject or h.get("subject") == subject)
+          and (not gosb or h.get("gosb") == gosb or any(pl_.get("gosb") == gosb for pl_ in h["places"]))]
+    # 3. кого смотреть
+    lst = _listed(run, subject, gosb)
+    shelves = Counter(x["shelf"] for x in lst)
+    q = _queue(run, subject=subject, gosb=gosb)
+    fresh = [x for x in q if _aware(x["at"]) >= now - timedelta(days=90)]
+    inside = [x for x in q if x.get("inside")]
+    # цифры по охвату
+    xs = _sf(run, subject=subject, gosb=gosb, severity=2, period="730", uniq=True, here=True)
     year = [x for x in xs if x["_at"] >= y1]
     prev = [x for x in xs if x["_at"] < y1]
-    listed = {p["point"]: (p.get("risk") or {}).get("tier") for p in pts.values() if (p.get("risk") or {}).get("include")}
-    # один сотрудник у нескольких клиентов одного отделения
-    by_emp: dict[tuple, set] = defaultdict(set)
-    for x in xs:
-        for e in _split_people(x.get("employee")):
-            by_emp[(x["point"], _nom(e).lower())].add(x.get("author") or x["rid"])
-    named_many = {k for k, v in by_emp.items() if len(v) >= 2}
-    # главные случаи: балл + разнообразие (тип, отделение, ГОСБ)
-    cand = []
-    for x in xs:
-        if not x.get("quote_ok", True):
-            continue
-        sc, why = _interest(x, named_many, listed, now)
-        if sc >= 5:
-            cand.append((sc, x["_at"], x, why))
-    cand.sort(key=lambda t: (-t[0], -t[1].timestamp()))
-    picked, per_act, per_pt, per_g = [], Counter(), set(), Counter()
-    for sc, _, x, why in cand:
-        a = next((a for a in x["actions"] if a in INSIDER), x["actions"][0])
-        if per_act[a] >= 3 or x["point"] in per_pt or per_g[x.get("gosb")] >= 3:
-            continue
-        per_act[a] += 1; per_pt.add(x["point"]); per_g[x.get("gosb")] += 1
-        picked.append({**_story_out(x, pts), "score": sc, "why": why})
-        if len(picked) >= 12:
-            break
-    _attach_src(picked)
-    # деньги
-    buckets = [("до 5 тыс.", 0, 5_000), ("5–30 тыс.", 5_000, 30_000), ("30–100 тыс.", 30_000, 100_000),
-               ("100–500 тыс.", 100_000, 500_000), ("от 500 тыс.", 500_000, MONEY_CAP)]
-    money = [(m, x) for x in xs if (m := _money(x))]
-    hist = [{"label": l, "n": sum(1 for m, _ in money if lo <= m < hi), "sum": round(sum(m for m, _ in money if lo <= m < hi))}
-            for l, lo, hi in buckets]
-    top_money = [{**_story_out(x, pts), "amount": m} for m, x in sorted(money, key=lambda t: -t[0])[:5]]
-    _attach_src(top_money)
-    # кого обманывают и через какие продукты
-    vt = Counter(t.split("/")[0] for x in xs for t in (x.get("vuln_types") or (["пожилой или уязвимый клиент"] if x.get("vulnerable") else [])))
-    vul_acts = Counter(a for x in xs if x.get("vulnerable") for a in x["actions"] if a not in ("другое",))
-    prod = Counter(p_ for x in xs for p_ in (x.get("products") or []) if p_ and p_ != "другое")
-    prod_v = Counter(p_ for x in xs if x.get("vulnerable") for p_ in (x.get("products") or []) if p_ and p_ != "другое")
-    # что растёт: тяжёлые за год против года раньше
-    ay, ap = Counter(a for x in year for a in x["actions"]), Counter(a for x in prev for a in x["actions"])
-    acts = sorted(({"key": a, "label": ACTIONS[a]["short"], "now": ay[a], "before": ap[a]} for a in set(ay) | set(ap)
-                   if a in ACTIONS and a != "другое"), key=lambda r: -r["now"])[:10]
-    # сговор и «свои»
-    staff = []
-    by_pt: dict[str, list[dict]] = defaultdict(list)
-    for x in xs:
-        by_pt[x["point"]].append(x)
-    for (pt, nm), auth in sorted(by_emp.items(), key=lambda kv: -len(kv[1])):
-        if len(auth) < 2:
-            break
-        if pt not in pts:                          # карточка без отделения реестра — некуда вести
-            continue
-        ss, shown = [], None
-        for x in by_pt.get(pt, []):
-            for e in _split_people(x.get("employee")):
-                if _nom(e).lower() == nm:
-                    ss.append(x); shown = shown or _nom(e)
-        if not ss:
-            continue
-        top = max(ss, key=lambda x: (x.get("severity") or 0, x["_at"]))
-        staff.append({"name": shown, "clients": len(auth), "place": _place(pts.get(pt)),
-                      "labels": sorted({l for x in ss for l in x["labels"]})[:3], "quote": top.get("quote"),
-                      "rid": top["rid"], "date": top.get("date")})
-        if len(staff) >= 6:
-            break
-    insiders = Counter(INSIDER[a] for x in year for a in x["actions"] if a in INSIDER)
-    insider_key = {v: k for k, v in INSIDER.items()}
-    # кто пострадал × что с ним сделали (тяжёлые за 2 года, у уязвимых)
-    vrows = [k for k, _ in vt.most_common(5)]
-    vcols = [a for a, _ in vul_acts.most_common(6) if a in ACTIONS]
-    cells = Counter()
-    for x in xs:
-        if not x.get("vulnerable"):
-            continue
-        types = {t.split("/")[0] for t in (x.get("vuln_types") or ["пожилой или уязвимый клиент"])}
-        for t in types & set(vrows):
-            for a in set(x["actions"]) & set(vcols):
-                cells[(t, a)] += 1
-    vmatrix = {"rows": vrows, "cols": [{"key": a, "label": ACTIONS[a]["short"]} for a in vcols],
-               "cells": [[cells[(t, a)] for a in vcols] for t in vrows]}
-    # последние полгода против предыдущих
-    h1, h2 = now - timedelta(days=182), now - timedelta(days=364)
-    half = {"now": sum(1 for x in xs if x["_at"] >= h1), "before": sum(1 for x in xs if h2 <= x["_at"] < h1)}
-    patterns = _patterns(xs, pts, named_many, listed, now)
-    for p_ in patterns:
-        _attach_src(p_["examples"])
-    # ГОСБ, где тяжёлых историй много для своего размера
-    gt = [g for g in _gosb_table(run, subject) if g.get("per100") is not None and g["n_12m"] >= 300]
-    net_rate = (sum(g["heavy"] for g in gt) / max(1, sum(g["n_12m"] for g in gt))) * 100 if gt else 0
-    for g in gt:
-        g["ratio"] = round(g["per100"] / net_rate, 1) if net_rate else None
-    gosb_hot = sorted(gt, key=lambda g: -(g["ratio"] or 0))[:8]
-    prog = None
-    try:
-        prog = _progress()
-    except Exception:  # noqa: BLE001
-        pass
+    money = [m for x in year if (m := _money(x)) and x.get("sum_kind") in (None, "потеря")]
+    det = [x for x in year if x.get("detailed")]
+    benefit = Counter(x.get("benefit") or "неясно" for x in det)
+    # 4. заголовок: волна по сети; в регионе — его очаг; иначе — счёт
+    lead_w = None if scoped else (up[0] if up else None)
+    lead_h = hs[0] if (hs and hs[0]["strength"] == "strong" and hs[0]["recent"] and (scoped or not lead_w)) else None
+    hero, same, same_total, head, request = None, [], 0, None, None
+    if lead_w:
+        head = {**_wave_text(lead_w), "kind": "wave", "wave_id": lead_w["id"], "name": lead_w["name"]}
+        ex = _examples(run, [x for x in _sf(run, key=lead_w["key"], severity=2, uniq=True, here=True, period="365")], 4)
+        same_total = lead_w["year"]
+        request = _request_text(run, lead_w.get("kind"), where="по сети, в разрезе отделений",
+                                period=_period(y1, now), motif=lead_w.get("motif"))
+    elif lead_h:
+        head = {"text": lead_h["text"], "accent": lead_h["note"], "kind": "hot", "hot_id": lead_h["id"],
+                "name": lead_h["name"]}
+        ex = _examples(run, [x for x in (_story(run, r) for r in lead_h["_rids"]) if x], 4)
+        same_total = lead_h["clients"]
+        request = _request_text(run, lead_h.get("kind"), where=lead_h["where"], motif=lead_h.get("motif"),
+                                period=f"с {_aware(lead_h['from']).strftime('%d.%m.%Y')} по {_aware(lead_h['to']).strftime('%d.%m.%Y')}")
+    else:
+        n, p_ = len(year), len({x["point"] for x in year})
+        head = {"text": (f"За год — {n} {_pl(n, 'клиент', 'клиента', 'клиентов')} с тяжёлыми историями в {p_} "
+                         f"{_pl(p_, 'отделении', 'отделениях', 'отделениях')}"),
+                "accent": "ни один способ действия не растёт и нигде не сгущается" if not scoped else "", "kind": "count"}
+        ex = _attach_src([dict(x) for x in q[:4]])
+    if ex:
+        hero, same = ex[0], ex[1:4]
     return {
         "run": {"id": run["id"], "finished_at": _iso(run["finished_at"])}, "source": run["network"].get("story_source"),
-        "kpi": {"read": (prog or {}).get("screened"), "stories": (prog or {}).get("relevant"),
-                "heavy_2y": len(xs), "heavy_year": len(year), "heavy_prev": len(prev),
-                "points_year": len({x["point"] for x in year}), "vulnerable_year": sum(1 for x in year if x.get("vulnerable")),
-                "money_sum": round(sum(m for m, _ in money)), "money_n": len(money),
-                "very_year": sum(1 for x in year if (x.get("severity") or 0) >= 3)},
-        "cases": picked, "money_hist": hist, "money_top": top_money,
-        "vuln_types": [{"label": k, "n": n} for k, n in vt.most_common(6)],
-        "vuln_actions": [{"label": ACTIONS[a]["short"], "n": n} for a, n in vul_acts.most_common(6) if a in ACTIONS],
-        "products": [{"label": k, "n": n, "vulnerable": prod_v.get(k, 0)} for k, n in prod.most_common(8)],
-        "actions": acts, "staff": staff,
-        "insiders": [{"label": k, "n": n, "key": insider_key.get(k)} for k, n in insiders.most_common(8)],
-        "vuln_matrix": vmatrix, "half": half, "patterns": patterns,
-        "gosb_hot": gosb_hot, "net_per100": round(net_rate, 2),
-        "listed": dict(Counter(listed.values())), "react": len(run["network"].get("risk_react") or []),
+        "scoped": scoped, "headline": head, "hero": hero, "same": same, "same_total": same_total,
+        "kpi": {"read": (run["stats"] or {}).get("read"), "clients_2y": len(xs), "clients_year": len(year),
+                "clients_prev": len(prev), "points_year": len({x["point"] for x in year}),
+                "vulnerable_year": sum(1 for x in year if x.get("vulnerable")),
+                "very_year": sum(1 for x in year if (x.get("severity") or 0) >= 3),
+                "inside_year": sum(1 for x in year if x.get("inside")), "detailed_year": len(det),
+                "money_sum": round(sum(money)), "money_n": len(money)},
+        "waves": [_wave_brief(w) for w in waves_top], "waves_up": len(up), "waves_total": len(ws),
+        "has_motifs": has_motifs,
+        "hotspots": [_hot_brief(h) | {"places": h["places"][:6]} for h in hs[:6]],
+        "hot_strong": sum(1 for h in hs if h["strength"] == "strong" and h["recent"]), "hot_total": len(hs),
+        "shelves": {"sure": shelves.get("sure", 0), "pattern": shelves.get("pattern", 0), "rows": lst[:5],
+                    "tested": sum(1 for p in pts.values() if (p.get("risk") or {}).get("read"))},
+        "cases": _attach_src([dict(x) for x in q[:6]]),
+        "cases_total": len(q), "cases_fresh": len(fresh),
+        "inside": _attach_src([dict(x) for x in inside[:4]]),
+        "inside_total": len(inside),
+        "benefit": [{"label": k, "n": v} for k, v in benefit.most_common()],
+        "request": request, "typed_since": TYPED_SINCE[:4],
     }
 
 
-def _scheme_rows(run) -> tuple[list[dict], str]:
-    """Схемы: кластеры модели (vsp_scheme, последняя сборка), иначе — по действиям из карточек."""
-    try:
-        from ..vsp.signals.schemes import scheme_member, scheme_t
-        with engine().connect() as c:
-            ver = c.execute(select(func.max(scheme_t.c.version))).scalar()
-            if ver:
-                rows = [dict(r) for r in c.execute(select(scheme_t).where(scheme_t.c.version == ver,
-                                                                           scheme_t.c.relevance >= 2)).mappings()]
-                mem = defaultdict(list)
-                for rid, sid in c.execute(select(scheme_member.c.review_id, scheme_member.c.scheme_id).where(
-                        scheme_member.c.version == ver)):
-                    mem[sid].append(rid)
-                out = []
-                for r in rows:
-                    rids = mem.get(r["id"], [])
-                    pts = {x for x in (run["review_point"].get(i) for i in rids) if x}
-                    out.append({"id": f"k{r['id']}", "name": r["name"], "description": r["description"],
-                                "stories": r["size"], "points": len(pts), "recent": r["recent"],
-                                "novel": bool(r["novel"]), "check": json.loads(r["check"] or "[]"),
-                                "benign": "; ".join(json.loads(r["benign"] or "[]")), "resolve": "",
-                                "rids": rids})
-                return sorted(out, key=lambda x: (-x["points"], -x["stories"])), "модель"
-    except Exception:  # noqa: BLE001 — кластеров ещё нет
-        pass
-    return run["network"].get("schemes_fallback") or [], "действия"
+# ── колокольчик: раннее предупреждение о новой или растущей волне ──────────────
+_NOTIFIED: dict = {"run": None}
 
 
-@router.get("/schemes")
-def schemes(user: CurrentUser = Depends(get_current_user)):
-    _need(user)
-    run = _run()
-    rows, kind = _scheme_rows(run)
-    pts = run["points"]
-    brief = []
-    for r in rows:
-        if r.get("rids") is not None:
-            where = {run["review_point"].get(i) for i in r["rids"]} - {None}
-        else:
-            where = {e.get("point") for e in r.get("examples") or []} - {None}
-        brief.append({**{k: v for k, v in r.items() if k not in ("examples", "rids", "by_subject")},
-                      "gosbs": len({(pts.get(p) or {}).get("gosb") for p in where} - {None}),
-                      "subjects": len({(pts.get(p) or {}).get("subject") for p in where} - {None})})
-    return {"kind": kind, "new": [b for b in brief if b.get("novel")][:8], "all": brief}
+def _notify_waves(run) -> None:
+    """Раз на расчёт: если способ действия стал «новым» или «растёт», а раньше таким не был, — строка в
+    колокольчик тем, кому открыт раздел. Письмом не дублируется. Что уже сообщали — в app_setting."""
+    if _NOTIFIED["run"] == run["id"]:
+        return
+    _NOTIFIED["run"] = run["id"]
+    ups = [w for w in _waves(run) if w["status"] in ("new", "rising")]
 
+    def work():
+        try:
+            from sqlalchemy import text as _t
+            from .. import db
+            from . import notices
+            with db.session() as s_:
+                raw = s_.execute(_t("SELECT value FROM app_setting WHERE key = 'vsp_waves_seen'")).scalar()
+            if isinstance(raw, str):
+                raw = json.loads(raw)
+            seen = raw or {}
+            if seen.get("run") == run["id"]:
+                return
+            known = set(seen.get("keys") or [])
+            fresh = [w for w in ups if w["key"] not in known]
+            # почерк важнее своего типа; в первый раз — не больше трёх строк, чтобы не засыпать
+            motif_kinds = {w["kind"] for w in fresh if w["level"] == "motif"}
+            fresh = [w for w in fresh if not (w["level"] == "kind" and w["kind"] in motif_kinds)]
+            if not seen:
+                fresh = fresh[:3]
+            users = set(beta_users()) | {u.strip() for u in os.getenv("VSP_USERS", "").split(",") if u.strip()} \
+                | {u.strip() for u in os.getenv("ADMIN_USERS", "").split(",") if u.strip()}
+            for w in fresh:
+                t = _wave_text(w)
+                notices.notify(users, "vsp_wave", link=f"#vsp?s=schemes&scheme={w['id']}",
+                               ref={"name": w["name"], "status": w["status"], "accent": t["accent"], "key": w["key"]})
+            with db.session() as s_:
+                s_.execute(_t("""INSERT INTO app_setting (key, value, updated_at, updated_by)
+                                 VALUES ('vsp_waves_seen', CAST(:v AS jsonb), now(), 'vsp')
+                                 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()"""),
+                           {"v": json.dumps({"run": run["id"], "keys": sorted(w["key"] for w in ups)}, ensure_ascii=False)})
+                s_.commit()
+        except Exception:  # noqa: BLE001 — уведомление не должно ронять вкладку
+            log.warning("vsp: уведомление о волнах не отправлено", exc_info=True)
 
-@router.get("/schemes/{sid}")
-def scheme_card(sid: str, user: CurrentUser = Depends(get_current_user)):
-    _need(user)
-    run = _run()
-    rows, kind = _scheme_rows(run)
-    x = next((r for r in rows if str(r["id"]) == sid), None)
-    if not x:
-        raise HTTPException(404, "схема не найдена")
-    pts = run["points"]
-    examples = x.get("examples")
-    if examples is None:                      # кластер модели: цитаты из историй отделений
-        examples = []
-        want = set(x.get("rids") or [])
-        for p in pts.values():
-            for s_ in p.get("stories") or []:
-                if s_["rid"] in want:
-                    examples.append({"rid": s_["rid"], "point": p["point"], "quote": s_["quote"], "date": s_["date"]})
-    by_subject = Counter((pts.get(e["point"]) or {}).get("subject") for e in examples)
-    gosbs = {(pts.get(e["point"]) or {}).get("gosb") for e in examples} - {None}
-    return {**{k: v for k, v in x.items() if k not in ("rids",)}, "kind": kind,
-            "examples": _attach_src([{**e, "place": _place(pts.get(e["point"]))} for e in examples[:30]]),
-            "by_subject": {k: v for k, v in by_subject.items() if k}, "network_wide": len(gosbs) >= 3,
-            "gosbs": len(gosbs)}
+    threading.Thread(target=work, name="vsp-wave-notice", daemon=True).start()
 
 
 @router.get("/search")
@@ -2088,43 +2153,82 @@ def feedback(body: FeedbackIn, user: CurrentUser = Depends(get_current_user)):
     return {"ok": True}
 
 
+def _stat_line(a: dict) -> str:
+    """Строка о числе клиентов против ожидания — словами, без терминов."""
+    st = a.get("stat")
+    n = a.get("heavy_clients") or 0
+    if st and st.get("sig"):
+        return (f"{st['clients']} {_pl(st['clients'], 'клиент', 'клиента', 'клиентов')} с {st['what']} за {st['window']} "
+                f"при ожидании {_x(st['expected'])} — так много случайно не бывает")
+    if st:
+        return (f"{st['clients']} {_pl(st['clients'], 'клиент', 'клиента', 'клиентов')} с {st['what']} за {st['window']} "
+                f"при ожидании {_x(st['expected'])} — в пределах случайного для отделения с таким числом отзывов")
+    return f"{n} {_pl(n, 'клиент', 'клиента', 'клиентов')} с тяжёлыми историями — в пределах случайного" if n else ""
+
+
+def _conclusion_line(con: dict | None) -> str:
+    if not con:
+        return ""
+    if not con.get("pattern"):
+        return "общего почерка нет: жалобы разные" + (f" — {con['why']}" if con.get("why") else "")
+    t = f"{con.get('pattern_name') or 'общий почерк'} ({con.get('clients') or 0} кл., {con.get('period') or ''}); уверенность {con.get('confidence')}"
+    if con.get("wave_only"):
+        t += "; по сети это встречается так же часто — отделение этим не выделяется"
+    return t
+
+
 @router.get("/export/justification.xlsx")
 def export_justification(points: Optional[str] = None, subject: Optional[str] = None, gosb: Optional[str] = None,
-                         action: Optional[str] = None, vulnerable: bool = False, named: bool = False,
-                         fresh: bool = False, fmt: Optional[str] = None, user: CurrentUser = Depends(get_current_user)):
+                         kind: Optional[int] = None, vulnerable: bool = False, fresh: bool = False,
+                         fmt: Optional[str] = None, shelf: Optional[str] = None,
+                         user: CurrentUser = Depends(get_current_user)):
     _need(user)
     run = _run()
     want = set((points or "").split(",")) - {""}
     only = None
-    if action or vulnerable or named or fresh or fmt:          # как на главном экране
-        only = {x["point"] for x in _sf(run, subject=subject, gosb=gosb, action=action, vulnerable=vulnerable,
-                                         named=named, fmt=fmt, severity=2, period="90" if fresh else "365")}
-    rows = [x for x in _listed(run, subject, gosb, only) if not want or x["point"] in want]
-    if want:
-        rows += [{**_place(run["points"][p]), "why": [], "quote": None, "confidence": None, "benign": None,
-                  "action": None} for p in want if p in run["points"] and p not in {x["point"] for x in rows}]
-    head = ["Отделение", "Город", "Адрес", "ГОСБ", "Регион", "Почему в списке", "Цитата клиента", "Дата",
-            "Уверенность", "Может быть безобидно", "Что запросить", "Что проверить"]
+    if kind or vulnerable or fresh or fmt:          # как на экране «Где проверить»
+        only = {x["point"] for x in _sf(run, subject=subject, gosb=gosb, kind=kind, vulnerable=vulnerable, fmt=fmt,
+                                         severity=2, period="90" if fresh else None)}
+    rows = [x for x in _listed(run, subject, gosb, only, shelf) if not want or x["point"] in want]
+    have = {x["point"] for x in rows}
+    rows += [_row_out(run, run["points"][p]) for p in want if p in run["points"] and p not in have]
+    head = ["Отделение", "Город", "Адрес", "ГОСБ", "Регион", "Полка", "Почему в списке", "Клиенты против ожидания",
+            "Вывод по всем историям (модель)", "В каких очагах", "Цитата клиента", "Дата", "Может быть безобидно",
+            "Что запросить", "Что проверить"]
     data, st_rows = [], []
     for x in rows:
-        a = (run["points"][x["point"]].get("risk") or {})
+        P = run["points"][x["point"]]
+        a = P.get("risk") or {}
         b = a.get("benign") or {}
+        code = rk_code(P.get("name")) or ""
+        period = _req_period(a)
+        req = [r_ for r_ in (_request_text(run, r.get("kind"), where=f"отделение {code}" if code else "это отделение",
+                                           period=period) for r in a.get("request") or []) if r_]
         data.append([x.get("name"), x.get("city"), x.get("address"), x.get("gosb"), x.get("subject_name"),
-                     "; ".join(a.get("why") or []), (a.get("quote") or {}).get("text"), (a.get("quote") or {}).get("date"),
-                     (f"{a['confidence']['level']} — {a['confidence']['reason']}" if a.get("confidence") else ""),
+                     x.get("shelf_label") or "не в списке", "; ".join(a.get("why") or []), _stat_line(a),
+                     _conclusion_line(a.get("conclusion")), "; ".join(f"{h['where']} — {h['name']}" for h in x.get("hot") or []),
+                     (a.get("quote") or {}).get("text"), (a.get("quote") or {}).get("date"),
                      (f"{b.get('text')}. Снимет вопрос: {b.get('resolve')}" if b else ""),
-                     "; ".join(f"{r['text']} ({r['where']})" for r in a.get("request") or []),
+                     "; ".join(f"{r_['what']} — {r_['where']}, {r_['period']}" for r_ in req),
                      "; ".join(a.get("check") or [])])
-        for s_ in run["points"][x["point"]].get("stories") or []:
-            st_rows.append([x.get("name"), x.get("city"), s_["date"], ", ".join(s_["actions"]),
+        for s_ in _sf(run, point=x["point"], severity=2)[:60]:
+            st_rows.append([x.get("name"), x.get("city"), s_["date"], s_.get("kind_name") or ", ".join(s_["labels"]),
                             {3: "очень тяжёлая", 2: "тяжёлая"}.get(s_["severity"], ""), s_.get("episode") or "",
-                            s_["quote"], s_["rid"]])
-    head2 = ["Отделение", "Город", "Дата", "Что произошло (кратко)", "Тяжесть", "Пересказ ИИ", "Слова клиента", "Отзыв"]
+                            s_["quote"] if s_.get("quote_ok", True) else "", s_["rid"]])
+    head2 = ["Отделение", "Город", "Дата", "Что произошло", "Тяжесть", "Пересказ ИИ", "Слова клиента", "Отзыв"]
     xb = _xlsx("Аудит сети ВСП · обоснование", [("Где стоит проверить", head, data,
-                                                {"Почему в списке", "Цитата клиента", "Может быть безобидно",
-                                                 "Что запросить", "Что проверить", "Адрес"}),
-                                               ("Истории клиентов", head2, st_rows, {"Пересказ ИИ", "Слова клиента"})])
+                                                {"Почему в списке", "Клиенты против ожидания", "Цитата клиента",
+                                                 "Вывод по всем историям (модель)", "Может быть безобидно",
+                                                 "Что запросить", "Что проверить", "Адрес", "В каких очагах"}),
+                                               ("Истории клиентов", head2, st_rows, {"Пересказ ИИ", "Слова клиента",
+                                                                                     "Что произошло"})])
     return _xlsx_response(xb, "ВСП_обоснование.xlsx")
+
+
+def _docx_response(doc, name: str) -> Response:
+    from .export_brand import docx_bytes
+    return Response(docx_bytes(doc), media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
 
 
 @router.get("/export/visit.docx")
@@ -2136,7 +2240,7 @@ def export_visit(point: Optional[str] = None, points: Optional[str] = None,
     want = [x for x in dict.fromkeys(want) if x in run["points"]]
     if not want:
         raise HTTPException(404, "отделение не найдено")
-    from .export_brand import WD, docx_bytes
+    from .export_brand import WD
     first = run["points"][want[0]]
     title = (f"Лист проверки · {first.get('city') or ''}, {first.get('address') or ''}" if len(want) == 1
              else f"Листы проверки · {len(want)} отделений")
@@ -2146,35 +2250,131 @@ def export_visit(point: Optional[str] = None, points: Optional[str] = None,
         if i:
             doc.add_page_break()
         _visit_sheet(doc, run, run["points"][pt])
-    return Response(docx_bytes(doc), media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('ВСП_лист_проверки.docx')}"})
+    return _docx_response(doc, "ВСП_лист_проверки.docx")
 
 
 def _visit_sheet(doc, run, p: dict) -> None:
     from .export_brand import stamp_line
     a = p.get("risk") or {}
+    _hots(run)
     doc.add_heading(f"{p.get('city') or ''}", level=0)
     doc.add_paragraph(f"{p.get('address') or ''} · ВСП {p.get('name') or ''} · ГОСБ {p.get('gosb') or '—'}")
     doc.add_paragraph(f"Черновик — поправьте под проверку. {stamp_line()}")
-    doc.add_heading("Почему в списке", level=1)
-    for w in a.get("why") or ["Отделение открыто вручную — признаков из отзывов нет"]:
+    doc.add_heading("Почему в списке" if a.get("include") else "Что видно по отзывам", level=1)
+    for w in a.get("why") or ["Отделение открыто вручную — оснований из отзывов нет"]:
         doc.add_paragraph(w, style="List Bullet")
-    if a.get("confidence"):
-        doc.add_paragraph(f"Уверенность: {a['confidence']['level']} — {a['confidence']['reason']}")
+    if _stat_line(a):
+        doc.add_paragraph(_stat_line(a)[0].upper() + _stat_line(a)[1:] + ".")
+    for h in run["_hot_by_point"].get(p["point"], []):
+        doc.add_paragraph(f"Входит в очаг: {h['text']}; {h['note']}.", style="List Bullet")
+    con = a.get("conclusion")
+    if con:
+        doc.add_heading("Вывод по всем историям отделения (модель)", level=1)
+        doc.add_paragraph(_conclusion_line(con)[0].upper() + _conclusion_line(con)[1:] + ".")
+        for label, key in (("Об исполнителях", "who"), ("Кто пострадал", "victims"), ("Суммы, по словам клиентов", "money"),
+                           ("Остальные истории", "other"), ("Может объясняться безобидно", "benign")):
+            if con.get(key):
+                doc.add_paragraph(f"{label}: {con[key]}")
     if a.get("benign"):
         doc.add_paragraph(f"Может быть безобидно: {a['benign']['text']}. Снимет вопрос: {a['benign']['resolve']}.")
+    code = rk_code(p.get("name")) or ""
+    period = _req_period(a)
     doc.add_heading("Что запросить", level=1)
     for r in a.get("request") or []:
-        doc.add_paragraph(f"☐ {r['text']} — {r['where']}")
+        rt = _request_text(run, r.get("kind"), where=f"отделение {code}" if code else "это отделение", period=period)
+        if rt:
+            doc.add_paragraph(f"☐ {rt['what']} — {rt['where']}, {rt['period']}, в разрезе сотрудника и окна."
+                              + (f" Показатель: {rt['metric']}." if rt.get("metric") else ""))
+    for r in (con or {}).get("request") or []:
+        doc.add_paragraph(f"☐ {r}")
     doc.add_heading("Что проверить", level=1)
     for t in a.get("check") or []:
         doc.add_paragraph(f"☐ {t}")
     doc.add_heading("Истории клиентов", level=1)
-    for s_ in (p.get("stories") or [])[:15]:
-        doc.add_paragraph(f"{s_['date']} · {', '.join(s_['actions'])}: «{s_['quote']}»", style="List Bullet")
+    for s_ in _sf(run, point=p["point"], severity=2)[:15]:
+        body = f"«{s_['quote']}»" if s_.get("quote_ok", True) and s_.get("quote") else (s_.get("episode") or "")
+        doc.add_paragraph(f"{s_['date']} · {s_.get('kind_name') or ', '.join(s_['labels'])}: {body}", style="List Bullet")
     doc.add_heading("Чего мы не видим", level=1)
     doc.add_paragraph("Отзывы — слова клиентов, а не установленные факты. Отзывы, удалённые площадкой до начала "
                       "сбора, не видны. Имена сотрудников — как написали клиенты.")
+
+
+@router.get("/export/request.docx")
+def export_request(hotspot: Optional[str] = None, wave: Optional[str] = None, point: Optional[str] = None,
+                   user: CurrentUser = Depends(get_current_user)):
+    """«Запрос данных»: что запросить у банка по очагу, способу действия или отделению — с основанием,
+    списком отделений, периодом, показателем, который снимет вопрос, и примерами слов клиентов."""
+    _need(user)
+    run = _run()
+    from .export_brand import WD, stamp_line
+    pts = run["points"]
+    basis, places, stories, reqs, benign, name = [], [], [], [], "", ""
+    if hotspot:
+        _hots(run)
+        h = run["_hot_by_id"].get(hotspot)
+        if not h:
+            raise HTTPException(404, "очаг не найден")
+        d = hotspot_card(hotspot, user)
+        name = f"{h['where']} · {h['name']}"
+        basis = [h["text"] + ".", h["note"][0].upper() + h["note"][1:] + "."]
+        places = [pl_ for pl_ in h["places"]]
+        stories = d["stories"][:6]
+        reqs = [d["request"]] if d.get("request") else []
+        benign = d.get("benign") or ""
+    elif wave:
+        d = wave_card(wave, user)
+        name = d["name"]
+        basis = [f"{d['text']} — {d['accent']}.",
+                 f"С {d['since']} года — {d['clients']} {_pl(d['clients'], 'клиент', 'клиента', 'клиентов')} в {d['points']} "
+                 f"{_pl(d['points'], 'отделении', 'отделениях', 'отделениях')}."]
+        places = d["branches"]
+        stories = d["examples"][:6]
+        reqs = [d["request"]] if d.get("request") else []
+        benign = d.get("benign") or ""
+    elif point and point in pts:
+        d = dossier(point, user)
+        name = f"{d.get('city') or ''}, {d.get('address') or ''}"
+        basis = [w + "." for w in (d["risk"].get("why") or [])] or ["Отделение выбрано вручную."]
+        places = [_place(pts[point]) | {"n": d["risk"].get("heavy_clients")}]
+        stories = [s_ for s_ in d["stories"] if (s_.get("severity") or 0) >= 2][:6]
+        reqs = d.get("request") or []
+        benign = ((d["risk"].get("benign") or {}).get("text")) or ""
+    else:
+        raise HTTPException(404, "не указано, по чему готовить запрос")
+    doc = WD.new(f"Запрос данных · {name}")
+    WD.header_footer(doc, "Аудит сети ВСП · запрос данных")
+    doc.add_heading("Запрос данных", level=0)
+    doc.add_paragraph(name)
+    doc.add_paragraph(f"Черновик — поправьте под задачу. {stamp_line()}")
+    doc.add_heading("Основание", level=1)
+    for b in basis:
+        doc.add_paragraph(b)
+    doc.add_paragraph("Это слова клиентов из открытых отзывов, а не установленные факты.")
+    doc.add_heading("Что запросить", level=1)
+    for r in reqs:
+        doc.add_paragraph(f"☐ {r['what']} — {r['where']}, {r['period']}, в разрезе сотрудника и окна.")
+        if r.get("metric"):
+            doc.add_paragraph(f"Что подтвердит или снимет вопрос: {r['metric']}.")
+    if not reqs:
+        doc.add_paragraph("☐ Операции по продуктам, о которых пишут клиенты, за период историй — в разрезе сотрудника и окна.")
+    if places:
+        doc.add_heading("Отделения", level=1)
+        for pl_ in places:
+            n = pl_.get("n")
+            doc.add_paragraph(f"{pl_.get('city') or ''}, {pl_.get('address') or ''} · ВСП {pl_.get('name') or ''}"
+                              f"{' · ГОСБ ' + str(pl_['gosb']) if pl_.get('gosb') else ''}"
+                              + (f" — {n} {_pl(n, 'клиент', 'клиента', 'клиентов')}" if n else ""), style="List Bullet")
+    if stories:
+        doc.add_heading("Что пишут клиенты", level=1)
+        for s_ in stories:
+            pl_ = s_.get("place") or {}
+            body = f"«{s_['quote']}»" if s_.get("quote_ok", True) and s_.get("quote") else (s_.get("episode") or "")
+            doc.add_paragraph(f"{s_.get('date')} · {pl_.get('city') or ''}, ВСП {pl_.get('name') or ''}: {body}",
+                              style="List Bullet")
+    if benign:
+        doc.add_heading("Чем это может объясняться безобидно", level=1)
+        doc.add_paragraph(benign[0].upper() + benign[1:] + ".")
+    return _docx_response(doc, "ВСП_запрос_данных.docx")
 
 
 @router.get("/completeness")

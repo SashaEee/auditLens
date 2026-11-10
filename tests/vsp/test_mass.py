@@ -293,3 +293,81 @@ def test_host_limiter_is_shared_and_capped():
     assert a is b and b._next == 123.0 and b.interval == pytest.approx(2.0)        # очередь не сброшена
     H.set_source_rps("tsrc", 0.25)
     assert H.host_limiter("tsrc", "h", 1.0).interval == pytest.approx(4.0)         # потолок источника
+
+
+# ── чтение моделью как шаг сборщика: порядок ночной цепочки, потолок трат, сторож ──
+
+def _chain(store, monkeypatch, *, saved=3):
+    calls = []
+
+    def fake(name, res):
+        async def f(_store):
+            calls.append(name)
+            return res
+        return f
+
+    monkeypatch.setattr(mass, "_llm_read", fake("llm", {"screen": {"rub": 1.0}}))
+    monkeypatch.setattr(mass, "_motifs", fake("motifs", {"rub": 2.0}))
+    monkeypatch.setattr(mass, "_signals", fake("signals", {"run_id": 1}))
+    monkeypatch.setattr(mass, "_branch_read", fake("branch-read", {"saved": saved}))
+
+    async def step(name, coro_fn, retry_h=1.0):
+        return await coro_fn()
+
+    return calls, step
+
+
+def test_night_chain_order_with_and_without_model(store, monkeypatch):
+    night = datetime(2026, 11, 10, 23, 30, tzinfo=timezone.utc)
+    store.kv_set("discover:2gis", {"finished": True})
+    monkeypatch.setenv("LLM_API_KEY", "k")
+    monkeypatch.setenv("LLM_BASE_URL", "http://x")
+    calls, step = _chain(store, monkeypatch)
+    run(mass._analysis(store, step, now=night, signals_every_h=24))
+    assert calls == ["llm", "motifs", "signals", "branch-read", "signals"]     # выводы изменились — расчёт повторяется
+    calls, step = _chain(store, monkeypatch, saved=0)
+    run(mass._analysis(store, step, now=night, signals_every_h=24))
+    assert calls == ["llm", "motifs", "signals", "branch-read"]                # новых выводов нет — второй расчёт не нужен
+    monkeypatch.delenv("LLM_API_KEY")
+    calls, step = _chain(store, monkeypatch)
+    run(mass._analysis(store, step, now=night, signals_every_h=24))
+    assert calls == ["signals"] and not mass.llm_enabled()                     # без ключа модели — только расчёт
+    # днём расчёт уже был — не повторяется; чтение идёт каждый час
+    monkeypatch.setenv("LLM_API_KEY", "k")
+    store.kv_set("signals:at", (night - timedelta(hours=30)).isoformat())
+    calls, step = _chain(store, monkeypatch)
+    run(mass._analysis(store, step, now=night.replace(hour=12), signals_every_h=24))
+    assert calls == ["llm"]
+    store.kv_set("llm:at", night.replace(hour=11, minute=40).isoformat())
+    calls, step = _chain(store, monkeypatch)
+    run(mass._analysis(store, step, now=night.replace(hour=12, minute=0), signals_every_h=24))
+    assert calls == []
+
+
+def test_llm_step_respects_daily_cap_and_feeds_watch(store, monkeypatch):
+    from bank_audit.vsp.signals import llm_read
+    seen = {}
+
+    async def fake_run(_store, *, limit, stage, cap_rub):
+        seen.update(limit=limit, stage=stage, cap=cap_rub)
+        return {"screen": {"rub": 10.0}, "card": {"rub": 30.0}, "detail": {"rub": 5.5}}
+
+    waiting = {"screen": 0, "card": 0, "detail": 0}
+    monkeypatch.setattr(llm_read, "run", fake_run)
+    monkeypatch.setattr(llm_read, "unread", lambda _s: dict(waiting))
+    assert mass.llm_watch(store)["state"] == "off"                             # шаг ещё не шёл
+    res = run(mass._llm_read(store))
+    assert seen["stage"] == "all" and seen["cap"] == mass.LLM_DAILY_RUB and "screen" in res
+    w = mass.llm_watch(store)
+    assert w["state"] == "ok" and w["waiting_total"] == 0 and w["spent_today"] == 45.5 and w["clean_at"]
+    # потолок исчерпан — модель не зовём, но сторож продолжает считать очередь
+    store.kv_set("llm:spent", {utcnow().strftime("%Y-%m-%d"): mass.LLM_DAILY_RUB + 1})
+    seen.clear()
+    waiting["card"] = 40
+    assert "skipped" in run(mass._llm_read(store)) and not seen
+    w = mass.llm_watch(store)
+    assert w["state"] == "ok" and w["waiting"]["card"] == 40                   # ждут, но недавно всё было прочитано
+    later = utcnow() + timedelta(hours=30)
+    assert mass.llm_watch(store, later)["state"] == "late"                     # сутки без чтения — тревога
+    assert mass.status(store)["llm"]["state"] in ("ok", "late")
+

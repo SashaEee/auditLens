@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta
 from typing import Callable
 
@@ -35,6 +36,7 @@ from .registry.cbr import fetch_registry
 from .registry.match import haversine_m
 from .storage import Store, branches, reviews, source_branches, sync_state
 from .sync import sync_many
+from .watch import LLM_DAILY_RUB
 
 log = logging.getLogger(__name__)
 
@@ -410,6 +412,103 @@ async def source_cycle(store: Store, settings: Settings, source: str, *,
 
 COLLECTOR_MAX_AGE_S = 6 * 3600     # адаптер демона пересоздаётся раз в 6 ч или при смене частоты
 
+# ── чтение моделью — шаг сборщика ──────────────────────────────────────────────
+LLM_EVERY_H = float(os.getenv("VSP_LLM_EVERY_H", "1"))            # как часто читать новые отзывы
+LLM_STEP_LIMIT = int(os.getenv("VSP_LLM_STEP_LIMIT", "3000"))     # отзывов на один шаг и этап
+
+
+def llm_enabled() -> bool:
+    """Модель доступна сборщику: есть адрес и ключ, шаг не выключен."""
+    return bool(os.getenv("LLM_API_KEY") and os.getenv("LLM_BASE_URL")) and os.getenv("VSP_LLM_ENABLED", "1") != "0"
+
+
+def _llm_left(store: Store, now: datetime) -> float:
+    spent = store.kv_get("llm:spent") or {}
+    return max(0.0, LLM_DAILY_RUB - float(spent.get(now.strftime("%Y-%m-%d"), 0.0)))
+
+
+def _llm_spend(store: Store, now: datetime, rub: float) -> None:
+    spent = store.kv_get("llm:spent") or {}
+    day = now.strftime("%Y-%m-%d")
+    spent[day] = round(float(spent.get(day, 0.0)) + float(rub or 0.0), 2)
+    store.kv_set("llm:spent", {k: spent[k] for k in sorted(spent)[-14:]})
+
+
+async def _llm_read(store: Store) -> dict:
+    """Новые отзывы читает модель: отбор → карточка → уточнение тяжёлых. Раньше это делал внешний
+    цикл рядом с демоном; остановился бы он — вкладка молча перестала бы видеть свежие истории."""
+    from .signals import llm_read
+    now = utcnow()
+    left = _llm_left(store, now)
+    if left <= 0:
+        res: dict = {"skipped": "дневной потолок трат на модели исчерпан"}
+    else:
+        res = await llm_read.run(store, limit=LLM_STEP_LIMIT, stage="all", cap_rub=left)
+        _llm_spend(store, now, sum(float((v or {}).get("rub") or 0) for v in res.values()))
+    waiting = await asyncio.to_thread(llm_read.unread, store)       # что осталось ждать следующего шага
+    done = utcnow()
+    store.kv_set("llm:at", done.isoformat())
+    if left > 0 and not any(waiting.values()):
+        store.kv_set("llm:clean_at", done.isoformat())
+    store.kv_set("llm:last", {"at": done.isoformat(), "result": res, "waiting": waiting})
+    return res
+
+
+async def _motifs(store: Store) -> dict:
+    """Почерки: новые описания историй раскладываются по каталогу узких способов действия."""
+    from .signals import motifs
+    now = utcnow()
+    left = _llm_left(store, now)
+    if left <= 0:
+        return {"skipped": "дневной потолок трат на модели исчерпан"}
+    res = await motifs.build(store, cap_rub=min(left, motifs.CAP_RUB))
+    _llm_spend(store, now, res.get("rub") or 0)
+    store.kv_set("motifs:last", {"at": utcnow().isoformat(), **res})
+    return res
+
+
+async def _branch_read(store: Store) -> dict:
+    """Выводы по отделениям: модель читает все тяжёлые истории отделения разом (после расчёта сигналов)."""
+    from .signals import branch_llm
+    now = utcnow()
+    left = _llm_left(store, now)
+    if left <= 0:
+        return {"skipped": "дневной потолок трат на модели исчерпан"}
+    res = await branch_llm.run(store, cap_rub=min(left, branch_llm.CAP_RUB))
+    _llm_spend(store, now, res.get("rub") or 0)
+    store.kv_set("branch_llm:last", {"at": utcnow().isoformat(), **res})
+    return res
+
+
+def llm_watch(store: Store, now: datetime | None = None) -> dict:
+    """Сторож чтения (см. watch.py): «ok», «late» — отзывы ждут дольше суток, «off» — шаг ещё не шёл."""
+    from .watch import llm_watch as _watch
+    return _watch(store.kv_get, now)
+
+
+async def _analysis(store: Store, step, *, now: datetime, signals_every_h: float) -> None:
+    """Чтение моделью и расчёт вкладки — шаги обслуживания демона.
+
+    Каждый час: новые отзывы читает модель; сторож пишет в журнал, если чтение отстало.
+    Раз в сутки ночью (01–06 МСК) или сразу, если расчёта ещё не было:
+    почерки → расчёт → выводы по отделениям (им нужны истории и волны расчёта) → расчёт с выводами."""
+    if llm_enabled() and _older(store, "llm:at", hours=LLM_EVERY_H, now=now):
+        await step("llm", lambda: _llm_read(store), retry_h=1)
+        w = llm_watch(store)
+        if w["state"] == "late":
+            log.warning("сторож чтения: моделью не прочитано %s отзывов, последний раз всё было прочитано %s",
+                        w["waiting_total"], w["clean_at"] or "никогда")
+    night = now.hour >= 22 or now.hour < 3
+    if (store.kv_get("discover:2gis") or {}).get("finished") and (
+            store.kv_get("signals:at") is None
+            or (night and _older(store, "signals:at", hours=signals_every_h - 2, now=now))):
+        if llm_enabled():
+            await step("motifs", lambda: _motifs(store), retry_h=6)
+        if await step("signals", lambda: _signals(store), retry_h=6) is not None and llm_enabled():
+            res = await step("branch-read", lambda: _branch_read(store), retry_h=6)
+            if res and res.get("saved"):
+                await step("signals", lambda: _signals(store), retry_h=6)
+
 
 async def _forever(name: str, body: Callable[[], "asyncio.Future"], idle_s: float) -> None:
     """Повторять body; упавший шаг не роняет демон (журнал + пауза)."""
@@ -469,12 +568,7 @@ async def daemon(store: Store, settings: Settings,
         # паспорт ВСП с сайта банка — когда есть точки (после обхода 2ГИС), раз в месяц
         if settings.bank_site and (store.kv_get("discover:2gis") or {}).get("finished"):
             await step("banksite", lambda: refresh_banksite(store, settings), retry_h=24)
-        # сигналы вкладки — раз в сутки ночью (01–06 МСК) или сразу, если ещё не считались
-        night = now.hour >= 22 or now.hour < 3
-        if (store.kv_get("discover:2gis") or {}).get("finished") and (
-                store.kv_get("signals:at") is None
-                or (night and _older(store, "signals:at", hours=sch.signals_every_h - 2, now=now))):
-            await step("signals", lambda: _signals(store), retry_h=6)
+        await _analysis(store, step, now=now, signals_every_h=sch.signals_every_h)
         return False
 
     def src_loop(source: str):
@@ -570,6 +664,7 @@ def status(store: Store) -> dict:
                          "blocked_last": store.kv_get(f"blocked:{src}")})
         d = store.kv_get(f"discover:{src}") or {}
         out[src]["discover"] = {k: (len(v) if k == "done" else v) for k, v in d.items()}
+    out["llm"] = llm_watch(store, now)
     out["registry_at"] = store.kv_get("registry:at")
     out["match_last"] = store.kv_get("match:last")
     return out

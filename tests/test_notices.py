@@ -173,4 +173,16 @@ def test_team_feedback_titles_and_settings():
         "Неверный факт в ответе ИИ: «ставки по вкладам»"
     assert N.title_of("team_ai_minus", {}, 3) == "3 минуса к ответам ИИ"
     assert "team" not in {g["key"] for g in N.settings(None)}
+
+
+def test_vsp_wave_notice_bell_only():
+    """Новая или растущая волна в «Аудите сети ВСП»: строка в колокольчике, письмом не уходит;
+    группу в настройках видят только те, кому открыт раздел."""
+    t = N.title_of("vsp_wave", {"name": "Перевод пенсии без согласия", "status": "rising",
+                                "accent": "за год — 18 клиентов, годом раньше — 5"})
+    assert t == "Аудит сети ВСП — растёт способ действия: «Перевод пенсии без согласия» (за год — 18 клиентов, годом раньше — 5)"
+    assert N.title_of("vsp_wave", {"name": "X", "status": "new"}).startswith("Аудит сети ВСП — новый способ действия")
+    assert N.KIND_GROUP["vsp_wave"] == "vsp" and "vsp_wave" in N.NO_MAIL
+    assert "vsp" not in {g["key"] for g in N.settings(None)}
+    assert "vsp" in {g["key"] for g in N.settings(None, vsp=True)}
     assert "team" in {g["key"] for g in N.settings(None, team=True)}

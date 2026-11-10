@@ -1,5 +1,5 @@
-"""Ночной расчёт сигналов: эпизоды кампаний, синхронные всплески ГОСБ, авторы и кольца,
-находки сети, витрина ВСП с баллом отбора. Результаты — новым прогоном (vsp_signal_run);
+"""Ночной расчёт сигналов: истории клиентов, волны и очаги способов действия, три полки отделений,
+эпизоды кампаний, авторы, находки сети. Результаты — новым прогоном (vsp_signal_run);
 вкладка читает последний завершённый. Хранятся три последних прогона."""
 from __future__ import annotations
 
@@ -22,8 +22,14 @@ from .campaign import (episode_features, find_bursts, score, series_flags, stren
 from .data import Rec, load
 from .network import calendar, events, norms, replies
 from .people import analyze as analyze_people
+from . import branch_llm as branch_mod
+from . import hotspots as hot_mod
+from . import motifs as motifs_mod
 from . import risk as rk
+from . import waves as waves_mod
+from .kinds import KINDS
 from .risks import BY_KEY as RISK, match as risk_match
+from .stats import Exposure, city_key
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +66,34 @@ def _llm_cards(store: Store) -> dict[str, dict]:
             return out
     except Exception:  # noqa: BLE001 — таблицы ещё нет
         return {}
+
+
+def _llm_details(store: Store) -> dict[str, dict]:
+    """Ответы этапа «уточнение» (тип, выгода, умысел, произошло ли здесь): review_id → поля."""
+    try:
+        from .llm_read import DETAIL_VERSION, review_llm
+        with store.engine.connect() as c:
+            out = {}
+            for rid, dj in c.execute(select(review_llm.c.review_id, review_llm.c.data_json).where(
+                    review_llm.c.prompt_version == DETAIL_VERSION)):
+                try:
+                    out[rid] = json.loads(dj or "{}")
+                except ValueError:
+                    pass
+            return out
+    except Exception:  # noqa: BLE001 — таблицы ещё нет
+        return {}
+
+
+def _screened(store: Store) -> set[str]:
+    """Отзывы, которые прочитала модель (беглый отбор): знаменатель для «больше ожидаемого»."""
+    try:
+        from .llm_read import SCREEN_VERSION, review_llm
+        with store.engine.connect() as c:
+            return {r[0] for r in c.execute(select(review_llm.c.review_id).where(
+                review_llm.c.prompt_version == SCREEN_VERSION))}
+    except Exception:  # noqa: BLE001
+        return set()
 
 
 def _pl(n: int, one: str, few: str, many: str) -> str:
@@ -185,10 +219,32 @@ def compute(store: Store, *, now=None) -> dict:
     ppl = analyze_people(recs, risk_by_rid)
     # истории клиентов: карточки модели (llm_read), пока их нет — слова-правила
     llm = _llm_cards(store)
+    details = _llm_details(store)
+    screened = _screened(store)
+    places, by_code = rk.places_of(ref["branches"])
+    try:
+        motif_meta, motif_labels = motifs_mod.load(store)
+    except Exception:  # noqa: BLE001 — каталога почерков ещё нет
+        motif_meta, motif_labels = {}, {}
     spam = {a for a, n in Counter(r.author for r in recs if r.author).items() if n >= 40}
-    stories, story_source = rk.stories_from([r for r in recs if r.author not in spam], llm, case_rows)
+    stories, story_source = rk.stories_from([r for r in recs if r.author not in spam], llm, case_rows,
+                                            details=details, motif_of=motifs_mod.mapper(motif_labels),
+                                            places=places, by_code=by_code)
+    # экспозиция: что прочитала модель (пока она не читала — все отзывы с текстом); центральный офис не в счёт
+    expo = Exposure()
+    for r in recs:
+        if (r.rid in screened) if screened else bool(r.extra.get("raw_text")):
+            pl_ = places.get(r.point) or {}
+            if not pl_.get("hq"):
+                expo.add(r.point, r.source, r.at, r.rating, gosb=r.gosb,
+                         city=city_key(r.subject, pl_.get("city")), subject=r.subject)
     st["stories"] = len(stories)
     st["story_source"] = story_source
+    st["read"] = expo.total
+    st["detailed"] = sum(1 for x in stories if x.get("detailed"))
+    st["clients"] = len({(x["point"], x["client"]) for x in stories})
+    st["moved"] = sum(1 for x in stories if x.get("moved_from"))
+    st["elsewhere"] = sum(1 for x in stories if x.get("elsewhere"))
     st["cases"] = len(case_rows)
     st["cases_by_type"] = dict(Counter(c["type"] for c in case_rows))
     st["persons"] = dict(Counter(x["kind"] for x in ppl))
@@ -360,10 +416,30 @@ def compute(store: Store, *, now=None) -> dict:
                       "above": z >= 2.58, "few": c["few"] >= 0.5 * c["points"]}
         return out
     # «Где стоит проверить»: признаки отделения, карта, полоса «Требует реакции», схемы
-    pts_ref = {r["point"]: {"gosb": r["detail"].get("gosb"), "subject": r["detail"].get("subject")} for r in rows
+    pts_ref = {r["point"]: {"gosb": r["detail"].get("gosb"), "subject": r["detail"].get("subject"),
+                            "city": r["detail"].get("city"), "code": rk.code_key(r["detail"].get("name")),
+                            "hq": bool((places.get(r["point"]) or {}).get("hq"))} for r in rows
                if r["detail"].get("status") in (None, "active") and not r["detail"].get("data_error")}
-    assessed = rk.assess(pts_ref, stories, recs, ppl, now=now, source=story_source)
+    for r in rows:
+        if (places.get(r["point"]) or {}).get("hq"):
+            r["detail"]["hq"] = True
+    waves = waves_mod.build(stories, expo, now=now, motif_meta=motif_meta)
+    wave_motifs = {w["motif"] for w in waves if w["level"] == "motif" and w["status"] in ("rising", "new", "steady")
+                   and w["points"] >= 20}
+    try:
+        conclusions = branch_mod.load(store)
+    except Exception:  # noqa: BLE001 — выводов по отделениям ещё нет
+        conclusions = {}
+    assessed = rk.assess(pts_ref, stories, expo, now=now, source=story_source, conclusions=conclusions,
+                         motif_names={k: v["name"] for k, v in motif_meta.items()}, wave_motifs=wave_motifs,
+                         vol_2y=vol24)
     st["risk_listed"] = sum(1 for a in assessed.values() if a["include"])
+    st["shelves"] = dict(Counter(a["shelf"] for a in assessed.values() if a["shelf"]))
+    queue = rk.case_queue(stories, now=now)
+    spots = hot_mod.build(stories, expo, {p: {"risk": a} for p, a in assessed.items()}, now=now, motif_meta=motif_meta)
+    st["waves"] = dict(Counter(w["status"] for w in waves))
+    st["hotspots"] = dict(Counter(h["strength"] for h in spots))
+    st["case_queue"] = len(queue)
     sto_by_point: dict[str, list[dict]] = defaultdict(list)
     for x in stories:
         sto_by_point[x["point"]].append(x)
@@ -378,7 +454,8 @@ def compute(store: Store, *, now=None) -> dict:
                                                                               for a_ in x["actions"]],
                                        "quote": x["quote"], "episode": x.get("episode"), "employee": x.get("employee"),
                                        "vulnerable": x.get("vulnerable"), "source": x.get("source"),
-                                       "fault": x.get("fault"), "money": x.get("money")} for x in ss]
+                                       "fault": x.get("fault"), "money": x.get("money"), "kind": x.get("kind"),
+                                       "client": x.get("client")} for x in ss]
     cal = calendar(recs)
     net = {
         "calendar": cal, "events": events(cal), "replies": replies(recs), "norms": nrm,
@@ -396,10 +473,30 @@ def compute(store: Store, *, now=None) -> dict:
                      "scheme": x.get("scheme") or "", "author": x.get("author"),
                      "quote_ok": bool(x.get("quote_ok", True)), "dup_points": x.get("dup_points", 0),
                      "vuln_types": x.get("vuln_types") or [],
-                     "new_author": (x.get("author_total") or 0) <= 1} for x in stories],
+                     "new_author": (x.get("author_total") or 0) <= 1,
+                     # один клиент, тип и уточнение модели, почерк, где случилось
+                     "client": x.get("client"), "copy_of": x.get("copy_of"), "dup_of": x.get("dup_of"),
+                     "src": x.get("src"), "city": x.get("city"),
+                     "kind": x.get("kind"), "kind2": x.get("kind2"), "label": x.get("label"), "motif": x.get("motif"),
+                     "benefit": x.get("benefit"), "intent": x.get("intent"), "systemic": x.get("systemic") or [],
+                     "outcome": x.get("outcome"), "escalation": x.get("escalation") or [], "window": x.get("window"),
+                     "sum_kind": x.get("sum_kind"), "event_date": x.get("event_date"),
+                     "detailed": bool(x.get("detailed")), "inside": bool(x.get("inside")),
+                     "elsewhere": bool(x.get("elsewhere")), "moved_from": x.get("moved_from"),
+                     "hq": bool(x.get("hq"))} for x in stories],
         "peers": rk.peer_norms(rows, recs, stories, now=now),
         "risk_react": rk.react_list(stories, now=now),
-        "schemes_fallback": rk.schemes_fallback(stories, pts_ref, now=now),
+        "case_queue": queue,
+        "waves": waves,
+        "hotspots": spots,
+        "terr": hot_mod.territory_table(stories, expo, now=now),
+        "motifs": {k: {f: v.get(f) for f in ("kind", "name", "description", "benign", "ops", "metric")}
+                   for k, v in motif_meta.items()},
+        "kinds": {str(k): {f: v.get(f) for f in ("name", "clause", "inside", "ops", "metric", "benign")}
+                  for k, v in KINDS.items()},
+        "places": {p: {"code": v.get("code"), "city": v.get("city"), "gosb": v.get("gosb"), "subject": v.get("subject")}
+                   for p, v in pts_ref.items() if p in assessed},
+        "exposure": {"total": expo.total, "months": dict(expo.month)},
         "story_source": story_source,
         "summary": st,
     }

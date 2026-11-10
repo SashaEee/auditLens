@@ -39,6 +39,7 @@ GROUPS = {
     "access": "Доступ, статус дел и отчёты",
     "inbox": "Ответы на обращения",
     "watch": "Всплески жалоб по вашим подпискам",
+    "vsp": "Аудит сети ВСП: новые и растущие способы действия",
     "team": "Обратная связь пользователей (команде)",
 }
 KIND_GROUP = {
@@ -50,6 +51,7 @@ KIND_GROUP = {
     "case_restored": "access", "case_status": "access", "report_shared": "access",
     "ticket": "inbox",
     "watch_signal": "watch",
+    "vsp_wave": "vsp",
     "team_ticket": "team", "team_ai_minus": "team", "team_slice": "team",
 }
 # «Не следить за делом» глушит эти; упоминания, ответы и доступ — нет
@@ -59,6 +61,8 @@ _MERGE = {"case_items", "case_msg", "case_status", "case_analysis", "ticket", "r
           "team_ticket", "team_ai_minus", "team_slice"}
 _COUNTED = {"case_items", "case_msg", "team_ai_minus", "team_slice"}          # склейка копит число
 _SAME_ACTOR = {"case_items"}                   # склеиваются только от одного автора
+# только в колокольчике, письмом не уходят: раздел в закрытой бете, содержание — не для почты
+NO_MAIL = {"vsp_wave"}
 KEEP_DAYS = 90
 LIST_LIMIT = 60
 
@@ -152,6 +156,9 @@ def title_of(kind: str, ref: dict, count: int = 1) -> str:
                                       if ref.get("product") else "")
         ratio = f" ×{str(ref['ratio']).replace('.', ',')}" if ref.get("ratio") else ""
         return f"{what}: всплеск жалоб «{_q(ref.get('label'))}»{ratio}"
+    if kind == "vsp_wave":
+        head = "новый способ действия" if ref.get("status") == "new" else "растёт способ действия"
+        return f"Аудит сети ВСП — {head}: «{_q(ref.get('name'))}»" + (f" ({_q(ref['accent'])})" if ref.get("accent") else "")
     return _q(ref.get("title")) or "Новое событие"
 
 
@@ -312,11 +319,11 @@ def mark_read(username: str, ids: list[int] | None = None, *, everything: bool =
         return 0
 
 
-def settings(prefs: dict | None, team: bool = False) -> list[dict]:
-    """Группы для настроек колокольчика; «команде» — только тем, кому она приходит."""
+def settings(prefs: dict | None, team: bool = False, vsp: bool = False) -> list[dict]:
+    """Группы для настроек колокольчика; «команде» и «Аудит сети ВСП» — только тем, кому они приходят."""
     off = set((prefs or {}).get("notify_off") or [])
     return [{"key": k, "label": v, "on": k not in off} for k, v in GROUPS.items()
-            if k != "team" or team]
+            if (k != "team" or team) and (k != "vsp" or vsp)]
 
 
 # ── письма (миграция 087): что ещё не отправлено и не прочитано ────────────────
@@ -331,7 +338,8 @@ def pending_mail(username: str, kinds: set[str] | None = None, limit: int = 40) 
                    n.link, n.ref, n.count, n.created_at, n.updated_at
               FROM app_notice n LEFT JOIN app_user au ON au.username = n.actor
              WHERE n.username = :u AND n.read_at IS NULL AND n.emailed_at IS NULL
-             ORDER BY n.updated_at DESC LIMIT :lim""", {"u": username, "lim": limit})
+               AND n.kind <> ALL(:nomail)
+             ORDER BY n.updated_at DESC LIMIT :lim""", {"u": username, "lim": limit, "nomail": list(NO_MAIL)})
     except Exception:  # noqa: BLE001 — до миграции 087
         return []
     for r in rows:

@@ -2,7 +2,7 @@
 
 Слова-правила (risks.py) находят только известное и шумят; здесь каждый отзыв из
 выборки читает модель и пишет нейтральное описание и поля — без закрытого списка
-категорий. Схемы потом собираются из описаний (schemes.py), так находятся и новые.
+категорий. Узкие способы действия («почерки») потом собираются из описаний (motifs.py), так находятся и новые.
 
 Прогон пакетами по BATCH отзывов, с учётом трат в рублях и потолком (CAP_RUB),
 продолжается с места остановки: прочитанное (тот же отзыв, та же версия промпта,
@@ -25,6 +25,7 @@ from sqlalchemy import Column, DateTime, Float, Integer, String, Table, Text, se
 
 from ..models import utcnow
 from ..storage import Store, meta, reviews
+from .kinds import TYPED_SINCE
 
 log = logging.getLogger(__name__)
 
@@ -78,6 +79,16 @@ SCREEN_VERSION = "s1"
 SCREEN_MODEL = os.getenv("VSP_LLM_SCREEN_MODEL", "openai/gpt-oss-120b")
 TPM = int(os.getenv("VSP_LLM_TPM", "70000"))      # лимит Cloud.ru — 100 тыс. токенов в минуту на модель
 SCREEN_BATCH = int(os.getenv("VSP_LLM_SCREEN_BATCH", "20"))
+# этап 3 «уточнение» — только тяжёлые истории (тяжесть 2–3): тонкий тип, кому выгода, умысел, слова
+# клиента о системности, чем закончилось, произошло ли в этом отделении. Замер 10.11 на 3 146 историях:
+# дешёвая модель отбора ставит тип уверенно, но пропускает слова о системности, поэтому читает модель карточек.
+DETAIL_VERSION = "d1"
+DETAIL_MODEL = os.getenv("VSP_LLM_DETAIL_MODEL", MODEL)
+DETAIL_BATCH = int(os.getenv("VSP_LLM_DETAIL_BATCH", "5"))
+DETAIL_MIN_SEVERITY = 2
+# уточняем истории не старше этой даты: ≈0,26 ₽ за историю, а для волн и очагов нужны последние годы;
+# у более старых тип берётся из действий карточки (risk.kind_from_actions)
+DETAIL_SINCE = TYPED_SINCE
 
 # этап 1: дешёвая модель на всех текстах — только «есть ли эпизод» (полнота важнее точности)
 SYSTEM_SCREEN = """Ты — аудитор розничного банка, читаешь отзывы клиентов об отделениях (ВСП) банка.
@@ -168,6 +179,124 @@ fault=сотрудник, severity=2.
 Отвечай строго JSON."""
 SYSTEM_V1 = SYSTEM_V2
 
+SYSTEM_DETAIL = """Ты — аудитор розничного банка. Тебе дают отзывы клиентов об отделениях банка, в которых уже найден
+эпизод для проверки (есть краткий пересказ). Уточни эпизод, чтобы находить массовые и системные злоупотребления
+сотрудников. Пиши только то, что есть в отзыве; вину не утверждай; ничего не придумывай. Каждое поле заполняй по тексту
+именно этого отзыва, не переноси значения с соседних. Читай отзыв до конца: слова о других клиентах, о повторе, о
+руководителе и о том, чем всё закончилось, часто стоят в конце.
+
+Для каждого отзыва верни объект с полями:
+"kind": номер главного типа из списка ниже (одно число);
+"kind2": номер второго типа или null;
+"label": 3–7 слов — способ действия простыми словами, без имён, сумм, дат и городов, так чтобы один и тот же приём у
+  разных клиентов назывался одинаково (например: «готовую кредитную карту вынесли вместе с дебетовой», «взяли телефон
+  и подключили подписку», «биометрию назвали платной и продали пакет здоровья»);
+"benefit": кому выгода по тексту: "сотрудник лично" (деньги или имущество клиента оказались у сотрудника или его
+  знакомых, присвоение, откат) | "план продаж" (продукт оформлен ради плана, премии, показателей) | "третьи лица"
+  (мошенники, посредники) | "нет" (ошибка, сбой, правило банка) | "неясно";
+"intent": 0–3 — насколько по тексту похоже на умышленное действие сотрудника: 0 — не про сотрудника; 1 — скорее ошибка
+  или грубая продажа; 2 — похоже на умысел (скрыл, сделал вопреки отказу, обманул); 3 — прямое присвоение, подделка,
+  действия за клиента без его ведома;
+"systemic": массив — прямые слова клиента о том, что случай не единичный: "другие клиенты" (видел или знает такие же
+  случаи с другими людьми в этом отделении) | "повторно с нами" (с этим клиентом или его семьёй здесь так уже было) |
+  "так заведено" (пишет, что так делают все или всегда; что руководитель знал, поддержал или сам участвовал);
+  [] — если таких слов нет;
+"outcome": чем закончилось по словам клиента: "вернули или исправили" | "банк признал нарушение" |
+  "сотрудника наказали или уволили" | "отказали или не признали" | "не сообщается";
+"escalation": массив из: "полиция" | "суд" | "ЦБ" | "прокуратура" | "жалоба в банк"; [] — если никуда не обращался
+  или не сказано;
+"here": true — событие произошло в отделении этой карточки (код и адрес даны перед отзывом); false — в другом месте
+  (другое отделение, онлайн, колл-центр, банкомат на улице, доставка); null — неясно. Если клиент называет адрес или
+  номер, совпадающие с отделением карточки, — это true;
+"elsewhere": если here=false и клиент назвал другое отделение — его адрес или номер как в тексте, иначе null;
+"window": окно, стол, касса или кабинет, если клиент назвал («окно 9»), иначе null;
+"sum_kind": что за сумма названа в отзыве: "потеря" (клиент лишился этих денег) | "сумма продукта" (размер вклада,
+  кредита, страховой премии, лимит карты) | "попытка" (пытались, но деньги не ушли) | null — суммы нет;
+"event_date": когда это случилось, если клиент назвал (ГГГГ-ММ или ГГГГ), иначе null.
+
+Типы (kind):
+{kinds}
+
+Примеры:
+«Пригласили отца-пенсионера продлить вклад, вместо этого впарили страховку жизни на 300 тысяч на пять лет» → kind 6,
+label «вместо продления вклада оформили страхование жизни», benefit "план продаж", intent 2, systemic [],
+outcome "не сообщается", sum_kind "сумма продукта".
+«Мать брала кредит, навязали страховку 35 тыс. Персонал во главе с управляющей отговаривал её от возврата, чуть ли не
+угрожая» → kind 20, kind2 22, label «страховку включили в кредит и отговаривали от возврата», benefit "план продаж",
+intent 2, systemic ["так заведено"], sum_kind "сумма продукта".
+«Кассир недодала бабушке 5000 при выдаче пенсии, соседке месяц назад так же. Заявление писали — сказали, по камерам
+всё верно» → kind 1, label «недодали при выдаче пенсии», benefit "неясно", intent 2, systemic ["другие клиенты"],
+outcome "отказали или не признали", escalation ["жалоба в банк"], sum_kind "потеря".
+«Постоянно тут проблемы: то платёж уйдёт не тому поставщику, в этот раз три платежа из пяти отправили не туда» →
+kind 2, label «платежи отправили не тому получателю», benefit "нет", intent 1, systemic ["повторно с нами"].
+«Менеджер в 9 окне взяла мой телефон „обновить приложение“, дома увидела заявку на кредитную карту и новый пароль.
+После жалобы карту закрыли, сотрудницу, сказали, уволили» → kind 9, kind2 4, label «через телефон клиента подали
+заявку на кредитную карту», benefit "план продаж", intent 3, outcome "сотрудника наказали или уволили",
+escalation ["жалоба в банк"], window «окно 9».
+Отвечай строго JSON."""
+
+
+def system_detail() -> str:
+    from .kinds import prompt_list
+    return SYSTEM_DETAIL.replace("{kinds}", prompt_list())
+
+
+FIELDS_DETAIL = ("kind", "kind2", "label", "benefit", "intent", "systemic", "outcome", "escalation", "here",
+                 "elsewhere", "window", "sum_kind", "event_date")
+_BENEFIT = {"сотрудник": "сотрудник лично", "план": "план продаж", "трет": "третьи лица", "нет": "нет"}
+_SYSTEMIC = ("другие клиенты", "повторно с нами", "так заведено")
+_OUTCOME = {"вернул": "вернули или исправили", "исправ": "вернули или исправили", "признал": "банк признал нарушение",
+            "наказ": "сотрудника наказали или уволили", "уволи": "сотрудника наказали или уволили",
+            "отказ": "отказали или не признали", "не признал": "отказали или не признали"}
+_ESCALATION = ("полиция", "суд", "ЦБ", "прокуратура", "жалоба в банк")
+_SUM_KIND = ("потеря", "сумма продукта", "попытка")
+
+
+def normalize_detail(d: dict | None) -> dict | None:
+    """Ответ этапа «уточнение» → поля. Значения вне списков приводятся к ближайшему или сбрасываются."""
+    from .kinds import KINDS
+    if not isinstance(d, dict) or "kind" not in d:
+        return None
+
+    def _kind(v):
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            return None
+        return v if v in KINDS else None
+
+    def _txt(v, n):
+        v = str(v).strip() if v not in (None, "", "null", "None") else ""
+        return v[:n] or None
+
+    out: dict = {"kind": _kind(d.get("kind")) or 25, "kind2": _kind(d.get("kind2"))}
+    if out["kind2"] == out["kind"]:
+        out["kind2"] = None
+    out["label"] = (_txt(d.get("label") or d.get("kind_free"), 120) or "").strip(" .«»\"").lower() or None
+    b = str(d.get("benefit") or "").strip().lower()
+    out["benefit"] = next((v for k, v in _BENEFIT.items() if b.startswith(k)), "неясно")
+    try:
+        out["intent"] = max(0, min(3, int(d.get("intent", d.get("staff_intent")) or 0)))
+    except (TypeError, ValueError):
+        out["intent"] = 0
+    sy = d.get("systemic") if isinstance(d.get("systemic"), list) else []
+    out["systemic"] = [x for x in _SYSTEMIC if any(str(y).strip().lower() == x for y in sy)]
+    o = str(d.get("outcome") or "").strip().lower()
+    out["outcome"] = next((v for k, v in _OUTCOME.items() if k in o), "не сообщается")
+    es = d.get("escalation") if isinstance(d.get("escalation"), list) else []
+    low = [str(y).strip().lower() for y in es]
+    out["escalation"] = [x for x in _ESCALATION if x.lower() in low]
+    h = d.get("here")
+    out["here"] = h if isinstance(h, bool) else (True if str(h).lower() == "true" else False if str(h).lower() == "false"
+                                                 else None)
+    out["elsewhere"] = _txt(d.get("elsewhere"), 200) if out["here"] is False else None
+    out["window"] = _txt(d.get("window"), 40)
+    sk = str(d.get("sum_kind") or "").strip().lower()
+    out["sum_kind"] = sk if sk in _SUM_KIND else None
+    ed = str(d.get("event_date") or "").strip()
+    out["event_date"] = ed if re.fullmatch(r"(19|20)\d{2}(-(0[1-9]|1[0-2]))?", ed) else None
+    return out
+
 FIELDS = ("relevant", "episode", "scheme_free", "actions", "realized", "products", "employee_role", "employee_name",
           "vulnerability", "money_rub", "harm", "fault", "other_vsp", "source", "severity", "quote", "noise")
 
@@ -183,9 +312,25 @@ def _loose(raw: str):
     return json.loads(m.group(0)) if m else None
 
 
+def _where(x: dict) -> str:
+    """Код, город и адрес отделения карточки. Без адреса модель записывала в «другое отделение»
+    само это отделение (10.11: 108 из 593 таких историй) — и код выбрасывал историю."""
+    if not x.get("vsp"):
+        return ""
+    parts = [str(x["vsp"]), str(x.get("city") or "")]
+    addr = re.sub(r"^\d{6},?\s*", "", str(x.get("address") or "")).strip()
+    if addr:
+        parts.append(addr[:160])
+    return " Отделение карточки: " + ", ".join(p for p in parts if p) + "."
+
+
 def card(x: dict, n: int) -> str:
-    where = f" Отделение карточки: {x['vsp']}, {x.get('city') or ''}." if x.get("vsp") else ""
-    return f"[{n}] Оценка {x['rating']}★, {str(x['date'])[:10]}.{where}\nОтзыв:\n<<<{(x['text'] or '')[:2500]}>>>"
+    return f"[{n}] Оценка {x['rating']}★, {str(x['date'])[:10]}.{_where(x)}\nОтзыв:\n<<<{(x['text'] or '')[:2500]}>>>"
+
+
+def card_detail(x: dict, n: int) -> str:
+    return (f"[{n}] Оценка {x['rating']}★, {str(x['date'])[:10]}.{_where(x)}\nПересказ: {(x.get('episode') or '')[:500]}"
+            f"\nОтзыв:\n<<<{(x['text'] or '')[:2500]}>>>")
 
 
 def quote_ok(q: str, text: str) -> bool:
@@ -242,11 +387,13 @@ class Reader:
     """Клиент модели: повторы, отказ от неподдержанных параметров (temperature, отключение
     рассуждений), учёт рублей по токенам, включая скрытые рассуждения модели."""
 
-    def __init__(self, model: str = MODEL, system: str = SYSTEM_V2):
+    def __init__(self, model: str = MODEL, system: str = SYSTEM_V2, *, think: bool = True, tpm: int | None = None):
         from openai import AsyncOpenAI
         self.client = AsyncOpenAI(base_url=os.environ["LLM_BASE_URL"], api_key=os.environ["LLM_API_KEY"],
                                   timeout=300, max_retries=0)
         self.model, self.system = model, system
+        self.think = think                                     # False — просим модель не рассуждать (дешевле и быстрее)
+        self.tpm = tpm or TPM
         self.sem = asyncio.Semaphore(INFLIGHT)
         self.rub = 0.0
         self.calls = self.errors = 0
@@ -259,7 +406,7 @@ class Reader:
         while True:
             now = time.monotonic()
             self._window = [(t, n) for t, n in self._window if now - t < 60]
-            if sum(n for _, n in self._window) < TPM:
+            if sum(n for _, n in self._window) < self.tpm:
                 return
             await asyncio.sleep(max(0.5, 60 - (now - self._window[0][0])))
 
@@ -269,7 +416,7 @@ class Reader:
 
     def _extras(self) -> dict:
         ex: dict = {"temperature": 0}
-        if self.model.startswith(("qwen/", "z-ai/")):          # без рассуждений: дешевле и быстрее на разметке
+        if self.model.startswith(("qwen/", "z-ai/")) or not self.think:   # без рассуждений: дешевле и быстрее
             ex["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
         if self.model.startswith(("openai/gpt-5", "openai/gpt-6")):
             ex["reasoning_effort"] = "low"
@@ -307,8 +454,9 @@ class Reader:
                 await asyncio.sleep(min(60, 4 * 2 ** attempt))
         return None, 0.0
 
-    async def read_batch(self, items: list[dict], *, tail: str, norm) -> dict[str, dict]:
-        user = "Прочитай каждый отзыв отдельно.\n\n" + "\n\n".join(card(x, k + 1) for k, x in enumerate(items)) + tail
+    async def read_batch(self, items: list[dict], *, tail: str, norm, fmt=None) -> dict[str, dict]:
+        fmt = fmt or card
+        user = "Прочитай каждый отзыв отдельно.\n\n" + "\n\n".join(fmt(x, k + 1) for k, x in enumerate(items)) + tail
         d, rub = await self.ask(user)
         arr = [it for it in ((d or {}).get("items") or []) if isinstance(it, dict)] if isinstance(d, dict) else []
         by_n = {int(it["n"]): it for it in arr if str(it.get("n", "")).isdigit()}
@@ -317,7 +465,7 @@ class Reader:
         for k, x in enumerate(items):
             v = norm(by_n.get(k + 1))
             if v is None:                                  # пропустила — по одному
-                d1, rub1 = await self.ask(card(x, 1) + tail)
+                d1, rub1 = await self.ask(fmt(x, 1) + tail)
                 if isinstance(d1, dict) and isinstance(d1.get("items"), list) and d1["items"]:
                     d1 = d1["items"][0]
                 v = norm(d1)
@@ -331,6 +479,7 @@ class Reader:
 TAIL_SCREEN = '\n\nВерни JSON: {"items":[{"n":1,"episode":true|false,"why":"≤10 слов"}, ...]} — по объекту на каждый отзыв.'
 TAIL_CARD = ('\n\nВерни JSON: {"items":[{"n":1, ...поля по схеме...}, ...]} — по объекту на каждый отзыв, '
              'поле n обязательно.')
+TAIL_DETAIL = TAIL_CARD
 SPAM_AUTHOR_MIN = int(os.getenv("VSP_LLM_SPAM_AUTHOR", "40"))   # столько отзывов о Сбере у одного аккаунта — рассылка
 
 
@@ -340,59 +489,97 @@ def _norm_text(t: str) -> str:
 
 def candidates(store: Store, *, stage: str, ids: list[str] | None = None) -> list[dict]:
     """Отзывы для этапа. Одинаковые тексты — один раз (остальные получат тот же ответ),
-    массовые аккаунты (политика, рассылка одной жалобы) — пропускаются."""
-    from collections import Counter
+    массовые аккаунты (политика, рассылка одной жалобы) — пропускаются.
+    Этап detail — только отзывы с карточкой тяжести 2–3; к ним прикладывается пересказ.
+    Уже прочитанное отсеивает база: шаг сборщика идёт каждый час и не должен тянуть все тексты."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import exists, func
+
     from ..storage import branches
     meta.create_all(store.engine, tables=[review_llm])
-    version = SCREEN_VERSION if stage == "screen" else PROMPT_VERSION
+    version = {"screen": SCREEN_VERSION, "detail": DETAIL_VERSION}.get(stage, PROMPT_VERSION)
+
+    def has(ver: str, *conds):
+        t = review_llm.alias()
+        return exists().where(t.c.review_id == reviews.c.review_id, t.c.prompt_version == ver,
+                              *(cond(t) for cond in conds))
+
+    q = select(
+        reviews.c.review_id, reviews.c.rating, reviews.c.review_date.label("date"),
+        reviews.c.review_text.label("text"), reviews.c.author_ref, branches.c.name.label("vsp"), branches.c.city,
+        branches.c.address
+    ).outerjoin(branches, branches.c.branch_id == reviews.c.branch_id).where(
+        reviews.c.review_text.isnot(None), ~has(version))
+    if ids is not None and len(ids) <= 5000:
+        q = q.where(reviews.c.review_id.in_(list(ids)))
+    if ids is None and stage == "card":
+        q = q.where(has(SCREEN_VERSION, lambda t: t.c.relevant == 1))
+    if ids is None and stage == "detail":
+        q = q.where(has(PROMPT_VERSION, lambda t: t.c.relevant == 1, lambda t: t.c.severity >= DETAIL_MIN_SEVERITY),
+                    reviews.c.review_date >= datetime.fromisoformat(DETAIL_SINCE).replace(tzinfo=timezone.utc))
     with store.engine.connect() as c:
-        done = {r[0] for r in c.execute(select(review_llm.c.review_id).where(review_llm.c.prompt_version == version))}
-        passed = None
-        if stage == "card" and ids is None:
-            passed = {r[0] for r in c.execute(select(review_llm.c.review_id).where(
-                review_llm.c.prompt_version == SCREEN_VERSION, review_llm.c.relevant == 1))}
-        rows = [dict(r) for r in c.execute(select(
-            reviews.c.review_id, reviews.c.rating, reviews.c.review_date.label("date"),
-            reviews.c.review_text.label("text"), reviews.c.author_ref, branches.c.name.label("vsp"), branches.c.city
-        ).outerjoin(branches, branches.c.branch_id == reviews.c.branch_id).where(
-            reviews.c.review_text.isnot(None))).mappings()]
-    by_author = Counter(r["author_ref"] for r in rows if r["author_ref"])
+        episodes: dict[str, str] = {}
+        if stage == "detail":
+            episodes = {r[0]: r[1] or "" for r in c.execute(select(review_llm.c.review_id, review_llm.c.summary).where(
+                review_llm.c.prompt_version == PROMPT_VERSION, review_llm.c.relevant == 1,
+                review_llm.c.severity >= DETAIL_MIN_SEVERITY))}
+        spam = set()
+        if stage != "detail":
+            spam = {r[0] for r in c.execute(select(reviews.c.author_ref).where(
+                reviews.c.author_ref.isnot(None), reviews.c.review_text.isnot(None)).group_by(reviews.c.author_ref)
+                .having(func.count() >= SPAM_AUTHOR_MIN))}
+        rows = [dict(r) for r in c.execute(q).mappings()]
     want = set(ids) if ids is not None else None
     out, seen = [], {}
     for r in rows:
         if want is not None and r["review_id"] not in want:
             continue
-        if r["review_id"] in done or (passed is not None and r["review_id"] not in passed):
+        if want is None and stage != "detail" and (not long_enough(r["text"], r["rating"])
+                                                   or r["author_ref"] in spam):
             continue
-        if want is None and (not long_enough(r["text"], r["rating"])
-                             or by_author.get(r["author_ref"], 0) >= SPAM_AUTHOR_MIN):
-            continue
-        h = _hash(_norm_text(r["text"]))
+        if stage == "detail":
+            r["episode"] = episodes.get(r["review_id"], "")
+            # копии одного текста у разных отделений читаем отдельно: «произошло здесь» у них разное
+            h = _hash(_norm_text(r["text"]) + "|" + str(r["vsp"] or ""))
+        else:
+            h = _hash(_norm_text(r["text"]))
         if h in seen:
             seen[h]["_dups"].append(r["review_id"])
             continue
         r["_dups"] = []
         seen[h] = r
         out.append(r)
-    out.sort(key=lambda r: (r["rating"] or 9, -len(r["text"] or "")))
+    if stage == "detail":
+        out.sort(key=lambda r: str(r["date"] or ""), reverse=True)      # свежие истории — первыми
+    else:
+        out.sort(key=lambda r: (r["rating"] or 9, -len(r["text"] or "")))
     return out
 
 
 async def run_stage(store: Store, stage: str, *, limit: int = 1000, ids: list[str] | None = None,
-                    model: str | None = None) -> dict:
-    items = candidates(store, stage=stage, ids=ids)[:limit]
-    screen = stage == "screen"
-    rd = Reader(model or (SCREEN_MODEL if screen else MODEL), SYSTEM_SCREEN if screen else SYSTEM_V2)
-    size, tail, norm = (SCREEN_BATCH, TAIL_SCREEN, normalize_screen) if screen else (BATCH, TAIL_CARD, normalize)
-    version = SCREEN_VERSION if screen else PROMPT_VERSION
+                    model: str | None = None, cap_rub: float | None = None) -> dict:
+    found = candidates(store, stage=stage, ids=ids)
+    items = found[:limit]
+    screen, detail = stage == "screen", stage == "detail"
+    if screen:
+        rd = Reader(model or SCREEN_MODEL, SYSTEM_SCREEN)
+        size, tail, norm, fmt, version = SCREEN_BATCH, TAIL_SCREEN, normalize_screen, card, SCREEN_VERSION
+    elif detail:
+        rd = Reader(model or DETAIL_MODEL, system_detail())
+        size, tail, norm, fmt, version = DETAIL_BATCH, TAIL_DETAIL, normalize_detail, card_detail, DETAIL_VERSION
+    else:
+        rd = Reader(model or MODEL, SYSTEM_V2)
+        size, tail, norm, fmt, version = BATCH, TAIL_CARD, normalize, card, PROMPT_VERSION
+    cap = CAP_RUB if cap_rub is None else cap_rub
     t0 = time.monotonic()
     saved = 0
 
     async def one(b):
         nonlocal saved
-        if rd.rub >= CAP_RUB:
+        if rd.rub >= cap:
             return
-        got = await rd.read_batch(b, tail=tail, norm=norm)
+        got = await rd.read_batch(b, tail=tail, norm=norm, fmt=fmt)
         rows = []
         for x in b:
             v = got.get(x["review_id"])
@@ -401,6 +588,10 @@ async def run_stage(store: Store, stage: str, *, limit: int = 1000, ids: list[st
             if screen:
                 core = {"relevant": v["relevant"], "severity": None, "staff": None, "summary": v["why"], "scheme": None}
                 data = {"why": v["why"]}
+            elif detail:
+                data = {k: v[k] for k in FIELDS_DETAIL}
+                core = {"relevant": 1, "severity": None, "staff": v["benefit"], "summary": v["label"],
+                        "scheme": str(v["kind"])}
             else:
                 data = {k: v[k] for k in FIELDS}
                 data["quote_ok"] = quote_ok(v.get("quote") or "", x["text"])
@@ -417,10 +608,11 @@ async def run_stage(store: Store, stage: str, *, limit: int = 1000, ids: list[st
                                                         review_llm.c.prompt_version == version))
                 c.execute(review_llm.insert(), rows)
             saved += len(rows)
-            if saved // 2000 != (saved - len(rows)) // 2000:
+            if saved // 2000 != (saved - len(rows)) // 2000 or (detail and saved // 300 != (saved - len(rows)) // 300):
                 log.info("llm-read %s: %d отзывов, %.1f ₽", stage, saved, rd.rub)
     await asyncio.gather(*(one(items[i:i + size]) for i in range(0, len(items), size)))
-    res = {"stage": stage, "read_unique": len(items), "saved": saved, "rub": round(rd.rub, 2), "calls": rd.calls,
+    res = {"stage": stage, "read_unique": len(items), "waiting": len(found), "saved": saved, "rub": round(rd.rub, 2),
+           "calls": rd.calls,
            "errors": rd.errors, "minutes": round((time.monotonic() - t0) / 60, 1), "model": rd.model,
            "version": version, "dropped_params": sorted(rd.drop)}
     log.info("llm-read: %s", res)
@@ -428,10 +620,28 @@ async def run_stage(store: Store, stage: str, *, limit: int = 1000, ids: list[st
 
 
 async def run(store: Store, *, limit: int = 1000, sample: str | None = None, ids: list[str] | None = None,
-              stage: str = "both") -> dict:
+              stage: str = "both", cap_rub: float | None = None) -> dict:
+    """stage: screen | card | detail | both (отбор и карточка) | all (все три этапа подряд)."""
     out = {}
-    if stage in ("screen", "both"):
-        out["screen"] = await run_stage(store, "screen", limit=limit, ids=ids)
-    if stage in ("card", "both"):
-        out["card"] = await run_stage(store, "card", limit=limit, ids=ids if stage == "card" else None)
+    left = cap_rub
+
+    def spent(res: dict) -> None:
+        nonlocal left
+        if left is not None:
+            left = max(0.0, left - float(res.get("rub") or 0))
+
+    if stage in ("screen", "both", "all"):
+        out["screen"] = await run_stage(store, "screen", limit=limit, ids=ids, cap_rub=left)
+        spent(out["screen"])
+    if stage in ("card", "both", "all"):
+        out["card"] = await run_stage(store, "card", limit=limit, ids=ids if stage == "card" else None, cap_rub=left)
+        spent(out["card"])
+    if stage in ("detail", "all"):
+        out["detail"] = await run_stage(store, "detail", limit=limit, ids=ids if stage == "detail" else None,
+                                        cap_rub=left)
     return out
+
+
+def unread(store: Store) -> dict:
+    """Сколько подходящих отзывов ждёт каждого этапа — для сторожа и строки в интерфейсе."""
+    return {st: len(candidates(store, stage=st)) for st in ("screen", "card", "detail")}

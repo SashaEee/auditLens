@@ -13,6 +13,11 @@
   banksite  [--force]                                        паспорт ВСП с сайта банка: форматы, часы, услуги
   daemon    --i-know-this-is-mass                            сбор и дописывание по расписанию (mass.py)
   status                                                     сводка: карточки, полнота, расписание, паузы
+  llm-read  [--stage screen|card|detail|both|all] [--limit N] [--cap-rub N]   чтение отзывов моделью
+  motifs    [--cap-rub N]                                    почерки: разложить описания историй по каталогу
+  signals                                                    расчёт сигналов вкладки (истории, волны, очаги, полки)
+  branch-read [--limit N] [--cap-rub N]                      выводы по отделениям (после signals)
+  nightly   [--cap-rub N]                                    вся ночная цепочка: чтение → почерки → расчёт → выводы → расчёт
 
 Массовый прогон по всей сети — только после согласования (см. docs/vsp/RUNBOOK.md):
 sync --all и daemon требуют флаг --i-know-this-is-mass.
@@ -99,6 +104,19 @@ async def cmd_sync(a, settings: Settings, store: Store) -> dict:
     return summary
 
 
+async def cmd_nightly(store: Store, cap_rub: float | None) -> dict:
+    """Ночная цепочка одним запуском — то же, что делает демон, но сразу и с общим потолком на шаг."""
+    from .mass import _signals
+    from .signals import branch_llm, llm_read, motifs
+    out: dict = {"read": await llm_read.run(store, limit=20000, stage="all", cap_rub=cap_rub)}
+    out["motifs"] = await motifs.build(store, cap_rub=cap_rub)
+    out["signals"] = await _signals(store)
+    out["branches"] = await branch_llm.run(store, cap_rub=cap_rub)
+    if out["branches"].get("saved"):
+        out["signals"] = await _signals(store)
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="python -m bank_audit.vsp", description="Сборщик отзывов о ВСП")
     p.add_argument("-v", "--verbose", action="store_true")
@@ -140,9 +158,16 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("signals")
     lr = sub.add_parser("llm-read")
     lr.add_argument("--limit", type=int, default=500)
-    lr.add_argument("--stage", choices=["screen", "card", "both"], default="both")
+    lr.add_argument("--stage", choices=["screen", "card", "detail", "both", "all"], default="both")
+    lr.add_argument("--cap-rub", type=float, default=None, help="потолок трат на этот запуск, ₽")
     lr.add_argument("--ids", default=None, help="файл со списком review_id (эталон)")
-    sub.add_parser("schemes")
+    mo = sub.add_parser("motifs")
+    mo.add_argument("--cap-rub", type=float, default=None, help="потолок трат на этот запуск, ₽")
+    br = sub.add_parser("branch-read")
+    br.add_argument("--limit", type=int, default=2000)
+    br.add_argument("--cap-rub", type=float, default=None, help="потолок трат на этот запуск, ₽")
+    ni = sub.add_parser("nightly")
+    ni.add_argument("--cap-rub", type=float, default=None, help="потолок трат на каждый шаг, ₽")
     a = p.parse_args(argv)
 
     settings = Settings.from_env()
@@ -169,10 +194,15 @@ def main(argv: list[str] | None = None) -> int:
     elif a.cmd == "llm-read":
         from .signals.llm_read import run as llm_run
         ids = [x.strip() for x in open(a.ids, encoding="utf-8") if x.strip()] if a.ids else None
-        out = asyncio.run(llm_run(store, limit=a.limit, ids=ids, stage=a.stage))
-    elif a.cmd == "schemes":
-        from .signals.schemes import build as schemes_build
-        out = asyncio.run(schemes_build(store))
+        out = asyncio.run(llm_run(store, limit=a.limit, ids=ids, stage=a.stage, cap_rub=a.cap_rub))
+    elif a.cmd == "motifs":
+        from .signals.motifs import build as motifs_build
+        out = asyncio.run(motifs_build(store, cap_rub=a.cap_rub))
+    elif a.cmd == "branch-read":
+        from .signals.branch_llm import run as branch_run
+        out = asyncio.run(branch_run(store, limit=a.limit, cap_rub=a.cap_rub))
+    elif a.cmd == "nightly":
+        out = asyncio.run(cmd_nightly(store, a.cap_rub))
     elif a.cmd == "signals":
         from .mass import _signals
         out = asyncio.run(_signals(store))          # с отметкой signals:at — демон не повторит
