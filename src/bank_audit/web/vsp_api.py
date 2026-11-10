@@ -1566,6 +1566,13 @@ def _interest(x: dict, named_many: set, listed_tier: dict, now: datetime) -> tup
 def brief(subject: Optional[str] = None, gosb: Optional[str] = None, user: CurrentUser = Depends(get_current_user)):
     _need(user)
     run = _run()
+    cache = run.setdefault("_brief", {})
+    if (subject, gosb) not in cache:              # считаем раз на прогон: ~4 с по всем историям
+        cache[(subject, gosb)] = _brief(run, subject, gosb)
+    return cache[(subject, gosb)]
+
+
+def _brief(run, subject, gosb) -> dict:
     from ..vsp.signals.risk import ACTIONS
     pts = run["points"]
     now = datetime.now(UTC)
@@ -1618,14 +1625,23 @@ def brief(subject: Optional[str] = None, gosb: Optional[str] = None, user: Curre
                    if a in ACTIONS and a != "другое"), key=lambda r: -r["now"])[:10]
     # сговор и «свои»
     staff = []
+    by_pt: dict[str, list[dict]] = defaultdict(list)
+    for x in xs:
+        by_pt[x["point"]].append(x)
     for (pt, nm), auth in sorted(by_emp.items(), key=lambda kv: -len(kv[1])):
         if len(auth) < 2:
             break
-        ss = [x for x in xs if x["point"] == pt and any(_nom(e).lower() == nm for e in _split_people(x.get("employee")))]
+        if pt not in pts:                          # карточка без отделения реестра — некуда вести
+            continue
+        ss, shown = [], None
+        for x in by_pt.get(pt, []):
+            for e in _split_people(x.get("employee")):
+                if _nom(e).lower() == nm:
+                    ss.append(x); shown = shown or _nom(e)
         if not ss:
             continue
         top = max(ss, key=lambda x: (x.get("severity") or 0, x["_at"]))
-        staff.append({"name": _nom(top.get("employee")), "clients": len(auth), "place": _place(pts.get(pt)),
+        staff.append({"name": shown, "clients": len(auth), "place": _place(pts.get(pt)),
                       "labels": sorted({l for x in ss for l in x["labels"]})[:3], "quote": top.get("quote"),
                       "rid": top["rid"], "date": top.get("date")})
         if len(staff) >= 6:
