@@ -911,6 +911,41 @@ def _story_kw(subject, gosb, point, action, severity, period, vulnerable, named,
                 money=bool(money), q=q or None, fmt=fmt or None)
 
 
+SIG_LABEL = {"A": "Разные клиенты", "B": "Одна схема", "C": "Один сотрудник", "D": "Больше, чем у похожих",
+             "E": "Люди вокруг"}
+
+
+def _pl(n: int, one: str, few: str, many: str) -> str:
+    m = abs(int(n)) % 100
+    return many if 11 <= m <= 14 else one if m % 10 == 1 else few if 2 <= m % 10 <= 4 else many
+
+
+def _sig_out(a: dict) -> list[dict]:
+    """Сработавшие признаки отделения обычными словами — для пяти квадратов в строке и карточек в досье."""
+    from ..vsp.signals.risk import ACTIONS
+    out = []
+    n_h = a.get("heavy_clients") or 0
+    for s in a.get("signals") or []:
+        k, n = s.get("key"), s.get("n") or 0
+        if k == "A":
+            t = f"{n} {_pl(n, 'клиент', 'клиента', 'клиентов')} с тяжёлыми историями"
+        elif k == "B":
+            t = f"у {n} {_pl(n, 'клиента', 'клиентов', 'клиентов')}: {ACTIONS.get(s.get('action'), ACTIONS['другое'])['label']}"
+        elif k == "C":
+            t = f"{n} {_pl(n, 'клиент называет', 'клиента называют', 'клиентов называют')} {_nom(s.get('name')) or 'одного сотрудника'}"
+        elif k == "D":
+            e = s.get("expected")
+            t = (f"здесь {n_h}, по размеру ожидалось бы меньше одного" if e is not None and e < 1 else
+                 f"здесь {n_h}, по размеру ожидалось бы {str(e).replace('.', ',')}" if e is not None else f"здесь {n_h}")
+        elif k == "E":
+            t = "посредники или одни и те же люди хвалят того, на кого жалуются"
+        else:
+            continue
+        out.append({"key": k, "label": SIG_LABEL[k], "text": t,
+                    **{x: s[x] for x in ("ratio", "expected", "action") if s.get(x) is not None}})
+    return out
+
+
 def _listed(run, subject=None, gosb=None, only: set | None = None) -> list[dict]:
     from ..vsp.signals.risk import order_key
     rows = []
@@ -930,7 +965,10 @@ def _listed(run, subject=None, gosb=None, only: set | None = None) -> list[dict]
              "people": [{**pp, "name": _nom(pp.get("name"))} for pp in p["risk"].get("people") or []],
              "tier": p["risk"].get("tier") or "watch",
              "lead": p["risk"].get("lead") or {}, "flags": p["risk"].get("flags") or {},
-             "acts": p["risk"].get("acts") or [], "ratio": p["risk"].get("ratio")} for _, p in rows]
+             "acts": p["risk"].get("acts") or [], "ratio": p["risk"].get("ratio"),
+             "sig": _sig_out(p["risk"]),
+             # в список по одной очень тяжёлой истории с деталями, а не по сходящимся признакам
+             "single": len(p["risk"].get("signals") or []) < 2} for _, p in rows]
 
 
 TIER_RANK = {"urgent": 0, "converged": 1, "watch": 2}
@@ -1054,10 +1092,111 @@ def meta_(user: CurrentUser = Depends(get_current_user)):
             "source": run["network"].get("story_source"), "progress": prog}
 
 
+MAP_FEW = 300            # меньше отзывов за год — цвет не показываем (штриховка)
+MAP_SIG_P = 0.01         # «не похоже на случайность»: пуассоновский хвост ниже этого
+MAP_SIG_RATIO = 1.5      # и превышение не меньше чем в полтора раза
+
+
+def _poisson_tail(k: int, lam: float) -> float:
+    """P(X ≥ k) при X ~ Пуассон(lam): вероятность увидеть столько или больше случайно."""
+    import math
+    if k <= 0:
+        return 1.0
+    if lam <= 0:
+        return 0.0
+    term = math.exp(-lam)
+    s = 0.0
+    for i in range(k):
+        s += term
+        term *= lam / (i + 1)
+    return max(0.0, 1.0 - s)
+
+
+def _net_rate(run) -> float:
+    """Тяжёлых историй за год на 100 отзывов по сети — по ГОСБ с MAP_FEW+ отзывами (как в «Обзоре»)."""
+    if "_net_rate" not in run:
+        gt = [g for g in _gosb_table(run) if g["n_12m"] >= MAP_FEW]
+        run["_net_rate"] = (sum(g["heavy"] for g in gt) / max(1, sum(g["n_12m"] for g in gt))) * 100 if gt else 0.0
+    return run["_net_rate"]
+
+
+def _vs_expected(row: dict, rate: float) -> dict:
+    """Ожидание по числу отзывов, во сколько раз факт больше и значимо ли это."""
+    exp = row["n_12m"] * rate / 100
+    few = row["n_12m"] < MAP_FEW
+    ratio = round(row["heavy"] / exp, 1) if exp > 0 and not few else None
+    p = _poisson_tail(row["heavy"], exp) if exp > 0 else 1.0
+    return {**row, "expected": round(exp, 1), "ratio": ratio, "few": few,
+            "sig": bool(not few and ratio and ratio >= MAP_SIG_RATIO and p < MAP_SIG_P),
+            "delta": row["heavy"] - row["heavy_prev"]}
+
+
+@router.get("/map")
+def map_(subject: Optional[str] = None, user: CurrentUser = Depends(get_current_user)):
+    """Лёгкое для карты: по регионам и ГОСБ — тяжёлые истории за год против ожидания по числу отзывов
+    (сеть: тяжёлых на 100 отзывов), отметка «не похоже на случайность», динамика к прошлому году."""
+    _need(user)
+    run = _run()
+    cache = run.setdefault("_map", {})
+    if subject in cache:
+        return cache[subject]
+    from ..vsp.signals.risk import ACTIONS
+    rate = _net_rate(run)
+    grid = run["network"].get("tile_grid") or {}
+    now = datetime.now(UTC)
+    y1, y2 = now - timedelta(days=365), now - timedelta(days=730)
+    reg: dict[str, Counter] = defaultdict(Counter)
+    acts: dict[str, Counter] = defaultdict(Counter)
+    for p in run["points"].values():
+        s_ = p.get("subject")
+        if not s_:
+            continue
+        reg[s_]["points"] += 1
+        reg[s_]["with_data"] += (p.get("n_12m") or 0) > 0
+        reg[s_]["n_12m"] += p.get("n_12m") or 0
+        reg[s_]["listed"] += bool((p.get("risk") or {}).get("include"))
+    for x in _stories(run):
+        s_ = x.get("subject")
+        if s_ not in reg or (x.get("severity") or 0) < 2 or x["_at"] < y2:
+            continue
+        if x["_at"] >= y1:
+            reg[s_]["heavy"] += 1
+            for a in x["actions"]:
+                if a != "другое":
+                    acts[s_][a] += 1
+        else:
+            reg[s_]["heavy_prev"] += 1
+    regions = []
+    for code, c in reg.items():
+        top = acts[code].most_common(1)
+        col, row = grid.get(code, (None, None))
+        regions.append(_vs_expected({
+            "code": code, "name": subject_name(code), "label": BY_CODE[code][2] if code in BY_CODE else code,
+            "col": col, "row": row, "points": c["points"], "with_data": c["with_data"], "listed": c["listed"],
+            "n_12m": c["n_12m"], "heavy": c["heavy"], "heavy_prev": c["heavy_prev"],
+            "top_action": ACTIONS[top[0][0]]["short"] if top else None}, rate))
+    for code, (col, row) in grid.items():          # регионы без отделений — пустые плитки
+        if code not in reg:
+            regions.append({"code": code, "name": subject_name(code), "label": BY_CODE[code][2] if code in BY_CODE else code,
+                            "col": col, "row": row, "points": 0, "with_data": 0, "listed": 0, "n_12m": 0, "heavy": 0,
+                            "heavy_prev": 0, "expected": 0, "ratio": None, "few": True, "sig": False, "delta": 0,
+                            "top_action": None})
+    gosbs = [_vs_expected(g, rate) for g in _gosb_table(run, subject)]
+    gosbs.sort(key=lambda g: (not g["sig"], -(g["ratio"] or 0), -g["heavy"]))
+    out = {"net_per100": round(rate, 2), "few_below": MAP_FEW, "regions": regions, "gosbs": gosbs,
+           "sig_rule": {"p": MAP_SIG_P, "ratio": MAP_SIG_RATIO}, "points_total": len(run["points"]),
+           "listed_total": sum(1 for p in run["points"].values() if (p.get("risk") or {}).get("include"))}
+    cache[subject] = out
+    return out
+
+
 @router.get("/home")
 def home(subject: Optional[str] = None, gosb: Optional[str] = None, action: Optional[str] = None,
          vulnerable: bool = False, named: bool = False, fresh: bool = False, fmt: Optional[str] = None,
+         tier: Optional[str] = None, limit: Optional[int] = None, offset: int = 0,
          user: CurrentUser = Depends(get_current_user)):
+    """Список «Где проверить» и всё вокруг него. tier/limit/offset — постранично по уровню
+    (без limit — весь список одним ответом, как раньше)."""
     _need(user)
     run = _run()
     net = run["network"]
@@ -1083,10 +1222,15 @@ def home(subject: Optional[str] = None, gosb: Optional[str] = None, action: Opti
     heavy_year = _sf(run, subject=subject, gosb=gosb, severity=2, period="365")
     heavy_prev = [x for x in _sf(run, subject=subject, gosb=gosb, severity=2, period="730")
                   if x["_at"] < datetime.now(UTC) - timedelta(days=365)]
+    tiers = dict(Counter(x["tier"] for x in lst))
+    page = [x for x in lst if not tier or x["tier"] == tier]
+    list_total = len(page)
+    if limit is not None:
+        page = page[max(0, offset):max(0, offset) + max(1, min(int(limit), 500))]
     return {"run": {"id": run["id"], "finished_at": _iso(run["finished_at"])},
             "source": net.get("story_source"), "react": _attach_src(react), "tiles": tiles,
-            "network_share": rmap.get("network_share"), "list": lst, "total": len(full), "in_scope": len(scope),
-            "filtered": filtered, "tiers": dict(Counter(x["tier"] for x in lst)),
+            "network_share": rmap.get("network_share"), "list": page, "list_total": list_total,
+            "total": len(full), "in_scope": len(scope), "filtered": filtered, "tiers": tiers,
             "gosbs": [{"gosb": g, "n": n} for g, n in gosbs.most_common()],
             "gosb_table": _gosb_table(run, subject),
             "summary": {"heavy_year": len(heavy_year), "heavy_prev": len(heavy_prev),
@@ -1149,7 +1293,7 @@ def dossier(point: str, user: CurrentUser = Depends(get_current_user)):
     ]
     return {**_place(p), "vol_2y": a.get("vol_2y"), "open_date": p.get("open_date"),
             "passport": _passport(p), "lat": p.get("lat"), "lon": p.get("lon"),
-            "risk": a, "stories": stories, "bars": bars, "nearby": nearby[:5],
+            "risk": a, "sig": _sig_out(a), "stories": stories, "bars": bars, "nearby": nearby[:5],
             "compare": compare, "peer_points": peer.get("points"), "actions": _action_facets(full),
             "source": (run["network"].get("story_source")),
             "limits": ["Отзывы — слова клиентов, а не установленные факты",
@@ -1562,6 +1706,75 @@ def _interest(x: dict, named_many: set, listed_tier: dict, now: datetime) -> tup
     return s, why
 
 
+# Заголовок «Главного» — о повторяющейся схеме, а не о количестве: что клиенты разных отделений пишут
+# об одном и том же действии за последние три месяца. Текст собирает код из шаблона, числа — из историй.
+PATTERN_CLAUSE = {
+    "доступ_к_телефону_или_аккаунту": "сотрудники сами работали в их телефоне, приложении или Госуслугах",
+    "касса_недостача_или_чужой_платеж": "в кассе им недодали деньги или провели чужой платёж",
+    "оглашение_или_утечка_данных": "сотрудники раскрыли их данные посторонним",
+    "биометрия": "у них без согласия собрали биометрию или взяли за неё деньги",
+    "накрутка_продаж": "им оформляли продукты «для плана», обещая, что потом можно отказаться",
+    "блат_очередь": "знакомых обслуживают в обход очереди",
+    "посредник": "в отделении работают посредники или «свой» менеджер",
+    "наказание_за_отказ": "их наказывали за отказ от допуслуги",
+    "оформление_без_согласия": "им оформили или подключили продукты без согласия",
+    "подмена_продукта": "им выдали один продукт под видом другого",
+    "ложь_об_обязательности": "им говорили, что без допуслуги не дадут",
+    "обусловливание": "услугу ставили условием выдачи",
+    "ложь_об_условиях": "им рассказали одно, а оформили другое",
+}
+PATTERN_WINDOWS = (90, 180)
+
+
+def _patterns(xs: list[dict], pts: dict, named_many: set, listed: dict, now: datetime) -> list[dict]:
+    """Схемы периода: одно действие у клиентов ≥3 разных отделений за 90 дней (или 180), с примерами.
+    Сначала действия «изнутри», внутри — по охвату отделений, доле пожилых и очень тяжёлых."""
+    for days in PATTERN_WINDOWS:
+        cut = now - timedelta(days=days)
+        by: dict[str, list[dict]] = defaultdict(list)
+        for x in xs:
+            if x["_at"] >= cut and x.get("quote_ok", True) and not x.get("dup_points"):
+                for a in x["actions"]:
+                    if a in PATTERN_CLAUSE:
+                        by[a].append(x)
+        out = []
+        for a, ss in by.items():
+            points = {x["point"] for x in ss}
+            if len(points) < 3:
+                continue
+            vul = sum(1 for x in ss if x.get("vulnerable"))
+            very = sum(1 for x in ss if (x.get("severity") or 0) >= 3)
+            score = len(points) * (1 + vul / len(ss)) * (1.6 if a in INSIDER else 1.0) + very
+            ranked = sorted(ss, key=lambda x: (-_interest(x, named_many, listed, now)[0], -x["_at"].timestamp()))
+            ex, seen = [], set()
+            for x in ranked:
+                if x["point"] in seen:
+                    continue
+                seen.add(x["point"])
+                ex.append({**_story_out(x, pts), "why": _interest(x, named_many, listed, now)[1]})
+                if len(ex) >= 3:
+                    break
+            n, p_ = len(ss), len(points)
+            text = (f"За {'три' if days == 90 else 'полгода'} {'месяца ' if days == 90 else ''}клиенты {p_} "
+                    f"{_pl(p_, 'отделения', 'отделений', 'отделений')} пишут, что {PATTERN_CLAUSE[a]}")
+            if vul and vul / n >= 0.5:
+                accent = "чаще всего у пожилых и уязвимых"
+            elif vul >= 2:
+                accent = f"в {vul} из {n} {_pl(n, 'истории', 'историй', 'историй')} пострадали пожилые и уязвимые"
+            elif very >= 2:
+                accent = f"{very} из них очень тяжёлые"
+            else:
+                accent = ""
+            out.append({"action": a, "days": days, "stories": n, "points": p_, "vulnerable": vul, "very": very,
+                        "insider": a in INSIDER, "score": round(score, 1), "text": text, "accent": accent,
+                        "examples": ex})
+        if out:
+            # первыми — действия «изнутри»: «без согласия» есть почти везде, а работа в телефоне клиента — нет
+            out.sort(key=lambda r: (not r["insider"], -r["score"]))
+            return out[:4]
+    return []
+
+
 @router.get("/brief")
 def brief(subject: Optional[str] = None, gosb: Optional[str] = None, user: CurrentUser = Depends(get_current_user)):
     _need(user)
@@ -1647,6 +1860,26 @@ def _brief(run, subject, gosb) -> dict:
         if len(staff) >= 6:
             break
     insiders = Counter(INSIDER[a] for x in year for a in x["actions"] if a in INSIDER)
+    insider_key = {v: k for k, v in INSIDER.items()}
+    # кто пострадал × что с ним сделали (тяжёлые за 2 года, у уязвимых)
+    vrows = [k for k, _ in vt.most_common(5)]
+    vcols = [a for a, _ in vul_acts.most_common(6) if a in ACTIONS]
+    cells = Counter()
+    for x in xs:
+        if not x.get("vulnerable"):
+            continue
+        types = {t.split("/")[0] for t in (x.get("vuln_types") or ["пожилой или уязвимый клиент"])}
+        for t in types & set(vrows):
+            for a in set(x["actions"]) & set(vcols):
+                cells[(t, a)] += 1
+    vmatrix = {"rows": vrows, "cols": [{"key": a, "label": ACTIONS[a]["short"]} for a in vcols],
+               "cells": [[cells[(t, a)] for a in vcols] for t in vrows]}
+    # последние полгода против предыдущих
+    h1, h2 = now - timedelta(days=182), now - timedelta(days=364)
+    half = {"now": sum(1 for x in xs if x["_at"] >= h1), "before": sum(1 for x in xs if h2 <= x["_at"] < h1)}
+    patterns = _patterns(xs, pts, named_many, listed, now)
+    for p_ in patterns:
+        _attach_src(p_["examples"])
     # ГОСБ, где тяжёлых историй много для своего размера
     gt = [g for g in _gosb_table(run, subject) if g.get("per100") is not None and g["n_12m"] >= 300]
     net_rate = (sum(g["heavy"] for g in gt) / max(1, sum(g["n_12m"] for g in gt))) * 100 if gt else 0
@@ -1669,7 +1902,9 @@ def _brief(run, subject, gosb) -> dict:
         "vuln_types": [{"label": k, "n": n} for k, n in vt.most_common(6)],
         "vuln_actions": [{"label": ACTIONS[a]["short"], "n": n} for a, n in vul_acts.most_common(6) if a in ACTIONS],
         "products": [{"label": k, "n": n, "vulnerable": prod_v.get(k, 0)} for k, n in prod.most_common(8)],
-        "actions": acts, "staff": staff, "insiders": [{"label": k, "n": n} for k, n in insiders.most_common(8)],
+        "actions": acts, "staff": staff,
+        "insiders": [{"label": k, "n": n, "key": insider_key.get(k)} for k, n in insiders.most_common(8)],
+        "vuln_matrix": vmatrix, "half": half, "patterns": patterns,
         "gosb_hot": gosb_hot, "net_per100": round(net_rate, 2),
         "listed": dict(Counter(listed.values())), "react": len(run["network"].get("risk_react") or []),
     }
@@ -1708,7 +1943,16 @@ def schemes(user: CurrentUser = Depends(get_current_user)):
     _need(user)
     run = _run()
     rows, kind = _scheme_rows(run)
-    brief = [{k: v for k, v in r.items() if k not in ("examples", "rids", "by_subject")} for r in rows]
+    pts = run["points"]
+    brief = []
+    for r in rows:
+        if r.get("rids") is not None:
+            where = {run["review_point"].get(i) for i in r["rids"]} - {None}
+        else:
+            where = {e.get("point") for e in r.get("examples") or []} - {None}
+        brief.append({**{k: v for k, v in r.items() if k not in ("examples", "rids", "by_subject")},
+                      "gosbs": len({(pts.get(p) or {}).get("gosb") for p in where} - {None}),
+                      "subjects": len({(pts.get(p) or {}).get("subject") for p in where} - {None})})
     return {"kind": kind, "new": [b for b in brief if b.get("novel")][:8], "all": brief}
 
 

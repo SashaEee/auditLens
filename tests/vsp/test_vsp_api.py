@@ -188,3 +188,39 @@ def test_brief_overview(client):
     assert all(c["score"] >= 5 and c["why"] for c in b["cases"])
     assert isinstance(b["products"], list) and isinstance(b["actions"], list) and isinstance(b["staff"], list)
     assert len({c["point"] for c in b["cases"]}) == len(b["cases"])          # одно отделение — один случай
+
+
+def test_redesign_fields_signals_paging_map_patterns(client):
+    h = client.get("/api/vsp/home").json()
+    assert h["list"] and h["list_total"] == len(h["list"])
+    row = h["list"][0]
+    assert {"sig", "single"} <= set(row) and all(s["key"] in "ABCDE" and s["label"] and s["text"] for s in row["sig"])
+    assert row["single"] == (len(row["sig"]) < 2)
+    t = row["tier"]
+    pg = client.get("/api/vsp/home", params={"tier": t, "limit": 1}).json()
+    assert len(pg["list"]) == 1 and pg["list"][0]["tier"] == t and pg["list_total"] == h["tiers"][t]
+    assert pg["tiers"] == h["tiers"]                                   # счётчики уровней — без страницы
+    m = client.get("/api/vsp/map").json()
+    assert m["net_per100"] >= 0 and m["regions"] and m["gosbs"]
+    assert m["points_total"] >= len(h["list"]) and m["listed_total"] == h["total"]
+    d = client.get(f"/api/vsp/dossier/{row['point']}").json()
+    assert d["sig"] == row["sig"]                                        # признаки досье = признаки строки
+    r = next(x for x in m["regions"] if x["points"])
+    assert {"expected", "ratio", "sig", "few", "delta", "col", "row"} <= set(r)
+    assert all(not x["sig"] for x in m["regions"] if x["few"])          # мало отзывов — никогда не «значимо»
+    b = client.get("/api/vsp/brief").json()
+    assert {"rows", "cols", "cells"} <= set(b["vuln_matrix"]) and set(b["half"]) == {"now", "before"}
+    assert isinstance(b["patterns"], list)
+    for p in b["patterns"]:
+        assert p["points"] >= 3 and p["text"].startswith("За ") and p["examples"]
+    sc = client.get("/api/vsp/schemes").json()
+    assert all("gosbs" in x and "subjects" in x for x in sc["all"])
+
+
+def test_poisson_tail_and_plural():
+    from bank_audit.web.vsp_api import _pl, _poisson_tail
+    assert _poisson_tail(0, 3.0) == 1.0 and _poisson_tail(5, 0) == 0.0
+    assert abs(_poisson_tail(1, 1.0) - (1 - 2.718281828 ** -1)) < 1e-6
+    assert _poisson_tail(32, 9.3) < 0.01 < _poisson_tail(12, 9.3)
+    assert [_pl(n, "отделение", "отделения", "отделений") for n in (1, 3, 5, 11, 21, 104)] == \
+        ["отделение", "отделения", "отделений", "отделений", "отделение", "отделения"]
