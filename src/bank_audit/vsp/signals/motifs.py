@@ -3,9 +3,14 @@
 Этап «уточнение» (llm_read) даёт каждой тяжёлой истории тип и короткое описание способа
 действия своими словами. Здесь модель-редактор раскладывает эти описания на почерки:
 
-  1) для типа без каталога — предлагает почерки по описаниям (propose);
-  2) каждое новое описание относит к почерку каталога, к «прочему» или предлагает новый
-     почерк, если один и тот же новый приём встретился у нескольких историй (assign).
+  1) для типа без каталога — предлагает почерки по самым частым описаниям (не больше MAX_FIRST);
+  2) каждое описание относит к почерку каталога или к «прочему» — пачками, параллельно;
+  3) один раз смотрит на остаток: если среди не подошедших описаний повторяется новый приём,
+     добавляет почерк (не больше MAX_MORE за запуск) и относит остаток ещё раз.
+
+Новые почерки появляются только на шаге 3, одним вызовом: когда их предлагали параллельные
+пачки, каждая придумывала свой вариант одного и того же приёма (проба 10.11: 21 почерк на тип
+вместо десятка, с дублями).
 
 Каталог только растёт: id почерка не меняется между запусками, поэтому ссылки и история
 волн не ломаются, а новый почерк — это и есть «новая схема» из данных. Код проверяет, что
@@ -51,6 +56,9 @@ MOTIF_MODEL = os.getenv("VSP_LLM_MOTIF_MODEL", MODEL)
 PROPOSE_MIN = 20           # столько описаний нужно, чтобы предлагать почерки для типа
 PROPOSE_SAMPLE = 300
 ASSIGN_BATCH = 40
+MAX_FIRST = 10             # почерков в первом каталоге типа
+MAX_MORE = 3               # новых почерков за один запуск — из остатка
+MAX_MOTIFS = 16            # почерков у типа всего: мельче — уже не почерк, а отдельные истории
 CAP_RUB = float(os.getenv("VSP_LLM_MOTIF_CAP_RUB", "300"))
 FORBIDDEN = re.compile(r"мошенни|обман|сговор|воровств|кража|афер", re.I)
 
@@ -60,14 +68,32 @@ SYSTEM_PROPOSE = """Ты — руководитель внутреннего а�
 
 Правила:
 - почерк — это конкретный приём («готовую кредитную карту выносят вместе с дебетовой»), а не тема («навязывание карт»);
-- от 3 до 14 почерков; редкие и разнородные описания в почерки не выделяй — они пойдут в «прочее»;
+- от 3 до {max} почерков. Почерк должен встречаться часто: не меньше чем в трёх описаниях из ста. Редкие и разнородные
+  описания в почерки не выделяй — они пойдут в «прочее»;
+- почерки не должны пересекаться: если два приёма различаются только названием продукта или поводом визита, это один
+  почерк;
 - name — 3–8 слов простым русским языком. Это слова клиентов, вина не установлена: не пиши «мошенничество», «обман»,
   «сговор», «кража»;
 - description — одно предложение, начинается со слов «Клиенты пишут, что»;
 - benign — чем это может объясняться безобидно (одна фраза);
 - ops — какие операции запросить из данных банка, чтобы проверить именно этот приём (одна фраза: какие операции и по
-  какому признаку их отобрать);
+  какому признаку их отобрать). Начни с существительного: «договоры…», «заявки…», «операции…»;
 - metric — какой показатель подтвердит или снимет вопрос (одна фраза).
+
+Верни JSON: {"motifs": [{"name": "...", "description": "...", "benign": "...", "ops": "...", "metric": "..."}, ...]}
+Отвечай строго JSON."""
+
+SYSTEM_MORE = """Ты — руководитель внутреннего аудита розничного банка. Для типа историй «{kind}» уже есть перечень
+«почерков» — узких способов действия сотрудников отделений. Ниже — описания, которые не подошли ни к одному почерку.
+Посмотри, повторяется ли среди них ещё какой-нибудь приём.
+
+Правила:
+- предлагай новый почерк, только если один и тот же приём виден не меньше чем в пяти описаниях из списка;
+- не больше {max} новых почерков; не повторяй и не дроби почерки из перечня;
+- если повторяющихся приёмов нет — верни пустой список, это нормальный ответ;
+- поля те же: name (3–8 слов простым языком, без слов «мошенничество», «обман», «сговор», «кража»), description
+  (начинается со слов «Клиенты пишут, что»), benign, ops (какие операции запросить и по какому признаку отобрать;
+  начни с существительного), metric.
 
 Верни JSON: {"motifs": [{"name": "...", "description": "...", "benign": "...", "ops": "...", "metric": "..."}, ...]}
 Отвечай строго JSON."""
@@ -77,14 +103,10 @@ SYSTEM_ASSIGN = """Ты — руководитель внутреннего ау
 
 Правила:
 - выбирай почерк, только если способ действия действительно тот же; если не подходит ни один — ставь 0 («прочее»);
-- если несколько историй из этого списка описывают один и тот же новый приём, которого нет в перечне, предложи новый
-  почерк в "new" и ссылайся на него как "new1", "new2"; одну необычную историю в новый почерк не выделяй;
 - суди по смыслу описания и пересказа, а не по отдельным словам;
-- name нового почерка — 3–8 слов простым языком, без слов «мошенничество», «обман», «сговор», «кража»; description
-  начинается со слов «Клиенты пишут, что».
+- новых почерков не придумывай.
 
-Верни JSON: {"items": [{"n": 1, "motif": 3}, {"n": 2, "motif": 0}, {"n": 3, "motif": "new1"}, ...],
-"new": [{"id": "new1", "name": "...", "description": "...", "benign": "...", "ops": "...", "metric": "..."}]}
+Верни JSON: {"items": [{"n": 1, "motif": 3}, {"n": 2, "motif": 0}, ...]} — по объекту на каждую историю.
 Отвечай строго JSON."""
 
 
@@ -190,62 +212,36 @@ async def build(store: Store, *, cap_rub: float | None = None, reader: Reader | 
             for r in rows:
                 labels[(r["kind"], r["label"])] = r["motif_id"]
 
-    for kind in sorted(pend):
-        todo = pend[kind]
-        if not todo or kind not in KINDS or (kinds and kind not in kinds):
-            continue
-        if other_id(kind) not in ms:
-            save_motifs([{"motif_id": other_id(kind), "kind": kind, "name": f"Прочее: {kind_name(kind).lower()}",
-                          "description": "", "benign": "", "ops": "", "metric": "", "created_at": now, "updated_at": now}])
-        mine = [m for m in ms.values() if m["kind"] == kind and m["motif_id"] != other_id(kind)]
-        # 1) каталог для типа, у которого его ещё нет
-        if not mine and len(todo) >= PROPOSE_MIN and spent["rub"] < cap:
-            sample = sorted(todo.items(), key=lambda kv: -kv[1]["n"])[:PROPOSE_SAMPLE]
-            d = await ask(rdr(SYSTEM_PROPOSE.replace("{kind}", kind_name(kind))),
-                          "Тип: " + kind_name(kind) + "\nОписания (в скобках — сколько раз встретилось):\n" +
-                          "\n".join(f"- {lb} ({x['n']})" for lb, x in sample))
-            got = [x for x in (_clean(m) for m in (d.get("motifs") or []) if isinstance(m, dict)) if x][:14]
-            have = set(ms)
-            rows = []
-            for g in got:
-                mid = _next_id(kind, have)
-                have.add(mid)
-                rows.append({"motif_id": mid, "kind": kind, **g, "created_at": now, "updated_at": now})
-            save_motifs(rows)
-            stats["proposed"] += len(rows)
-            mine = [m for m in ms.values() if m["kind"] == kind and m["motif_id"] != other_id(kind)]
-        if not mine:                                     # описаний мало — пока всё в «прочее»
-            save_labels([{"kind": kind, "label": lb, "motif_id": other_id(kind), "at": now} for lb in todo])
-            stats["other"] += len(todo)
-            continue
-        # 2) каждое описание — к почерку каталога, к «прочему» или к новому почерку
-        items = list(todo.items())
-        rd_k = rdr(SYSTEM_ASSIGN.replace("{kind}", kind_name(kind)))
+    def catalog(kind: int) -> list[dict]:
+        return sorted((m for m in ms.values() if m["kind"] == kind and m["motif_id"] != other_id(kind)),
+                      key=lambda m: m["motif_id"])
 
-        async def one(batch: list[tuple[str, dict]], kind: int = kind, rd_k: Reader = rd_k) -> None:
+    def add_motifs(kind: int, raw, limit: int) -> int:
+        """Сохранить предложенные почерки: без запретных слов, без повторов названий, не больше limit."""
+        have_names = {m["name"].lower() for m in catalog(kind)}
+        rows, have = [], set(ms)
+        for g in (x for x in (_clean(m) for m in (raw or []) if isinstance(m, dict)) if x):
+            if g["name"].lower() in have_names or len(rows) >= limit:
+                continue
+            mid = _next_id(kind, have)
+            have.add(mid)
+            have_names.add(g["name"].lower())
+            rows.append({"motif_id": mid, "kind": kind, **g, "created_at": utcnow(), "updated_at": utcnow()})
+        save_motifs(rows)
+        return len(rows)
+
+    async def assign(kind: int, items: list[tuple[str, dict]], rd_k: Reader) -> list[tuple[str, dict]]:
+        """Отнести описания к каталогу. Возвращает те, что модель отправила в «прочее» (0) — их ещё не сохраняем:
+        остаток посмотрим на новые почерки. Пропущенные моделью остаются на следующий запуск."""
+        cat = catalog(kind)
+        head = "Перечень почерков:\n" + "\n".join(f"{i}. {m['name']} — {m['description']}" for i, m in enumerate(cat, 1))
+        left: list[tuple[str, dict]] = []
+
+        async def one(batch: list[tuple[str, dict]]) -> None:
             if spent["rub"] >= cap:
                 return
-            cat = sorted((m for m in ms.values() if m["kind"] == kind and m["motif_id"] != other_id(kind)),
-                         key=lambda m: m["motif_id"])
-            user = ("Перечень почерков:\n" + "\n".join(f"{i}. {m['name']} — {m['description']}" for i, m in enumerate(cat, 1)) +
-                    "\n\nИстории:\n" + "\n".join(f"[{i}] {lb} | Пересказ: {x['episode'][:260]}"
-                                                 for i, (lb, x) in enumerate(batch, 1)))
-            d = await ask(rd_k, user)
-            new = {}
-            for m in d.get("new") or []:
-                if isinstance(m, dict) and str(m.get("id", "")).startswith("new"):
-                    c = _clean(m)
-                    if c:
-                        new[str(m["id"])] = c
-            used_new = Counter(str(it.get("motif")) for it in (d.get("items") or []) if isinstance(it, dict))
-            new_ids = {}
-            for nid, c in new.items():
-                if used_new[nid] < 2:                    # новый почерк — только если приём повторился
-                    continue
-                mid = _next_id(kind, set(ms))
-                save_motifs([{"motif_id": mid, "kind": kind, **c, "created_at": utcnow(), "updated_at": utcnow()}])
-                new_ids[nid] = mid
-                stats["new"] += 1
+            d = await ask(rd_k, head + "\n\nИстории:\n" + "\n".join(
+                f"[{i}] {lb} | Пересказ: {x['episode'][:260]}" for i, (lb, x) in enumerate(batch, 1)))
             rows, done = [], set()
             for it in d.get("items") or []:
                 if not isinstance(it, dict) or not str(it.get("n", "")).isdigit():
@@ -253,24 +249,55 @@ async def build(store: Store, *, cap_rub: float | None = None, reader: Reader | 
                 n = int(it["n"])
                 if not (1 <= n <= len(batch)) or n in done:
                     continue
-                mv = it.get("motif")
-                if isinstance(mv, str) and mv in new_ids:
-                    mid = new_ids[mv]
-                elif str(mv).isdigit() and 1 <= int(mv) <= len(cat):
-                    mid = cat[int(mv) - 1]["motif_id"]
-                else:
-                    mid = other_id(kind)
                 done.add(n)
-                rows.append({"kind": kind, "label": batch[n - 1][0], "motif_id": mid, "at": utcnow()})
+                mv = it.get("motif")
+                if str(mv).isdigit() and 1 <= int(mv) <= len(cat):
+                    rows.append({"kind": kind, "label": batch[n - 1][0], "motif_id": cat[int(mv) - 1]["motif_id"],
+                                 "at": utcnow()})
+                else:
+                    left.append(batch[n - 1])
             save_labels(rows)
             stats["assigned"] += len(rows)
-            stats["missed"] += len(batch) - len(rows)    # модель пропустила — останутся на следующий запуск
+            stats["missed"] += len(batch) - len(done)       # модель пропустила — останутся на следующий запуск
 
-        # первая пачка — отдельно: новые почерки из неё должны попасть в перечень для остальных
-        batches = [items[i:i + ASSIGN_BATCH] for i in range(0, len(items), ASSIGN_BATCH)]
-        if batches:
-            await one(batches[0])
-            await asyncio.gather(*(one(b) for b in batches[1:]))
+        await asyncio.gather(*(one(items[i:i + ASSIGN_BATCH]) for i in range(0, len(items), ASSIGN_BATCH)))
+        return left
+
+    for kind in sorted(pend):
+        todo = pend[kind]
+        if not todo or kind not in KINDS or (kinds and kind not in kinds):
+            continue
+        if other_id(kind) not in ms:
+            save_motifs([{"motif_id": other_id(kind), "kind": kind, "name": f"Прочее: {kind_name(kind).lower()}",
+                          "description": "", "benign": "", "ops": "", "metric": "", "created_at": now, "updated_at": now}])
+        name = kind_name(kind)
+        # 1) каталог для типа, у которого его ещё нет
+        if not catalog(kind) and len(todo) >= PROPOSE_MIN and spent["rub"] < cap:
+            sample = sorted(todo.items(), key=lambda kv: -kv[1]["n"])[:PROPOSE_SAMPLE]
+            d = await ask(rdr(SYSTEM_PROPOSE.replace("{kind}", name).replace("{max}", str(MAX_FIRST))),
+                          "Тип: " + name + "\nОписания (в скобках — сколько раз встретилось):\n" +
+                          "\n".join(f"- {lb} ({x['n']})" for lb, x in sample))
+            stats["proposed"] += add_motifs(kind, d.get("motifs"), MAX_FIRST)
+        if not catalog(kind):                            # описаний мало — пока всё в «прочее»
+            save_labels([{"kind": kind, "label": lb, "motif_id": other_id(kind), "at": now} for lb in todo])
+            stats["other"] += len(todo)
+            continue
+        # 2) каждое описание — к почерку каталога или в остаток
+        left = await assign(kind, list(todo.items()), rdr(SYSTEM_ASSIGN.replace("{kind}", name)))
+        # 3) остаток: повторяется ли в нём новый приём
+        room = min(MAX_MORE, MAX_MOTIFS - len(catalog(kind)))
+        if len(left) >= PROPOSE_MIN and room > 0 and spent["rub"] < cap:
+            sample = sorted(left, key=lambda kv: -kv[1]["n"])[:PROPOSE_SAMPLE]
+            d = await ask(rdr(SYSTEM_MORE.replace("{kind}", name).replace("{max}", str(room))),
+                          "Перечень почерков:\n" + "\n".join(f"- {m['name']} — {m['description']}" for m in catalog(kind)) +
+                          "\n\nОписания, которые не подошли (в скобках — сколько раз встретилось):\n" +
+                          "\n".join(f"- {lb} ({x['n']})" for lb, x in sample))
+            added = add_motifs(kind, d.get("motifs"), room)
+            stats["new"] += added
+            if added:
+                left = await assign(kind, left, rdr(SYSTEM_ASSIGN.replace("{kind}", name)))
+        save_labels([{"kind": kind, "label": lb, "motif_id": other_id(kind), "at": utcnow()} for lb, _ in left])
+        stats["other"] += len(left)
     res = {"motifs": len([m for m in ms.values() if not m["motif_id"].endswith("00")]), "labels": len(labels),
            "rub": round(spent["rub"], 2), "calls": spent["calls"], **dict(stats)}
     log.info("почерки: %s", res)

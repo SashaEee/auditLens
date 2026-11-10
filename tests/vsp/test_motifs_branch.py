@@ -168,3 +168,66 @@ def test_detail_stage_reads_only_heavy_recent_and_normalizes(db_url, monkeypatch
     assert d["systemic"] == ["так заведено"] and d["escalation"] == ["полиция"] and d["here"] is False
     assert d["elsewhere"] == "9038/01002" and d["window"] == "окно 3" and d["sum_kind"] == "потеря"
     assert asyncio.run(lr.run(st, stage="detail", limit=50))["detail"]["read_unique"] == 0
+
+
+class Editor2:
+    """Редактор: в первом каталоге — лишние и повторные почерки; редкие описания сначала не подходят,
+    потом из остатка появляется один новый почерк."""
+    rub = 0.0
+
+    def __init__(self):
+        self.system, self.model, self.kinds_of_call = "", "fake", []
+
+    async def ask(self, user):
+        if "не подошли" in user:                                   # шаг 3: остаток
+            self.kinds_of_call.append("more")
+            return {"motifs": [{"name": "Сим-карту выдают вместе с картой", "description": "Клиенты пишут, что вместе с "
+                                "картой им выдали сим-карту", "ops": "выдачи сим-карт", "metric": "доля отказов"},
+                               {"name": "Ещё один лишний почерк", "description": "x"}]}, 0.05
+        if "Перечень почерков" not in user:                         # шаг 1: первый каталог
+            self.kinds_of_call.append("propose")
+            ms = [{"name": f"Приём номер {i} повторяется", "description": "Клиенты пишут, что так бывает"} for i in range(12)]
+            return {"motifs": ms + [{"name": "Приём номер 1 повторяется", "description": "повтор названия"}]}, 0.05
+        self.kinds_of_call.append("assign")
+        has_new = "Сим-карту выдают вместе с картой" in user
+        n_cat = user.split("\n\nИстории:")[0].count("\n")
+        items = []
+        for i, line in enumerate(user.split("\n\nИстории:\n")[1].split("\n"), 1):
+            if "сим" in line:
+                items.append({"n": i, "motif": n_cat if has_new else 0})   # новый почерк — последний в перечне
+            elif "редк" in line:
+                items.append({"n": i, "motif": 0})
+            else:
+                items.append({"n": i, "motif": 1})
+        return {"items": items, "new": [{"id": "new1", "name": "Не должен появиться"}]}, 0.02
+
+
+def test_motifs_new_ones_come_only_from_leftover_and_catalog_is_capped(db_url, monkeypatch):
+    from bank_audit.vsp.storage import meta
+    from test_risk import _card, _detail
+    monkeypatch.setattr(mo, "PROPOSE_MIN", 5)
+    monkeypatch.setattr(mo, "MAX_MORE", 1)
+    st = Store(db_url)
+    meta.create_all(st.engine, tables=[lr.review_llm])
+    labels = [f"обычное описание {i}" for i in range(30)] + [f"сим-карта к карте {i}" for i in range(8)] + \
+        [f"редкое описание {i}" for i in range(4)]
+    rows = []
+    for i, lb in enumerate(labels):
+        rows += [_card(f"2gis:x-{i}"), _detail(f"2gis:x-{i}", kind=5, label=lb)]
+    with st.engine.begin() as c:
+        c.execute(lr.review_llm.insert(), rows)
+    ed = Editor2()
+    res = asyncio.run(mo.build(st, reader=ed))
+    ms, lab = mo.load(st)
+    names = [m["name"] for k, m in sorted(ms.items()) if not k.endswith("00")]
+    assert len(names) == mo.MAX_FIRST + 1 and len(set(names)) == len(names)      # 10 из первого каталога + 1 из остатка
+    assert names[-1] == "Сим-карту выдают вместе с картой" and "Не должен появиться" not in names
+    assert ed.kinds_of_call[0] == "propose" and ed.kinds_of_call.count("more") == 1
+    assert ed.kinds_of_call.index("more") > ed.kinds_of_call.index("assign")     # новые почерки — после раскладки
+    sim = next(k for k, m in ms.items() if m["name"].startswith("Сим-карту"))
+    assert sum(1 for v in lab.values() if v == sim) == 8                          # остаток отнесён к новому почерку
+    assert sum(1 for v in lab.values() if v == "m0500") == 4 and res["other"] == 4 and res["new"] == 1
+    assert len(lab) == len(labels) and res["proposed"] == mo.MAX_FIRST
+    n = len(ed.kinds_of_call)
+    asyncio.run(mo.build(st, reader=ed))                                          # всё разложено — вызовов нет
+    assert len(ed.kinds_of_call) == n

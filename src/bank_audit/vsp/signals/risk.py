@@ -327,14 +327,21 @@ def stories_from(recs, llm: dict[str, dict], rule_cases: list[dict], *, details:
     return _mark_dups(out), "слова"
 
 
+LEAK = 11            # «звонки мошенников сразу после визита»: клиент догадывается об утечке, прямого действия не описывает
+
+
 def is_inside(s: dict) -> bool:
     """История «изнутри»: по словам клиента выгода досталась сотруднику или третьим лицам, либо это
-    присвоение, подделка, действия за клиента. Только там, где модель уточняла историю."""
+    присвоение, подделка, действия за клиента. Только там, где модель уточняла историю.
+    Звонки мошенников после визита сюда не идут: это догадка об утечке — её место в волнах и очагах."""
     if s.get("severity", 0) < 2 or not s.get("detailed"):
         return False
-    if s.get("benefit") in ("сотрудник лично", "третьи лица") or (s.get("intent") or 0) >= 3:
+    kind, benefit, intent = s.get("kind"), s.get("benefit"), s.get("intent") or 0
+    if benefit == "сотрудник лично" or intent >= 3:
         return True
-    return s.get("kind") in (10, 12, 13, 18, 19) and (s.get("intent") or 0) >= 2
+    if benefit == "третьи лица" and intent >= 2 and kind != LEAK:
+        return True
+    return kind in (10, 12, 13, 18, 19) and intent >= 2
 
 
 def _mark_dups(stories: list[dict]) -> list[dict]:
@@ -403,10 +410,10 @@ def case_score(s: dict, now: datetime) -> tuple[int, list[str]]:
     if s.get("benefit") == "сотрудник лично":
         sc += 4
         why.append("выгода — сотруднику")
-    elif s.get("benefit") == "третьи лица":
+    elif s.get("benefit") == "третьи лица" and s.get("kind") != LEAK:
         sc += 3
         why.append("выгода — третьим лицам")
-    if s.get("kind") in INSIDE:
+    if s.get("kind") in INSIDE and s.get("kind") != LEAK:
         sc += 2
         why.append(kind_name(s["kind"]).lower())
     if s.get("systemic"):

@@ -1105,20 +1105,20 @@ def _wave_text(w: dict) -> dict:
     name = w["name"]
     what = f"клиенты пишут, что {clause}" if (clause and w["level"] == "kind") else name[0].lower() + name[1:]
     y, p = w.get("year") or 0, w.get("prev_year") or 0
+    cl = lambda n: f"{n} {_pl(n, 'клиент', 'клиента', 'клиентов')}"  # noqa: E731
     if w["status"] == "new":
-        head, acc = f"Новое: {what}", f"за год — {y} {_pl(y, 'клиент', 'клиента', 'клиентов')}, раньше почти не встречалось"
+        head, acc = f"Новое: {what}", f"за год {cl(y)}, раньше почти не встречалось"
     elif w["status"] == "rising" and w.get("horizon") == "quarter":
-        r, e = w.get("recent") or 0, w.get("recent_expected")
         head = f"Растёт: {what}"
-        acc = f"за три месяца — {r} {_pl(r, 'клиент', 'клиента', 'клиентов')} при ожидании {_x(e)}"
+        acc = f"за три месяца {cl(w.get('recent') or 0)} при ожидании {_x(w.get('recent_expected'))}"
     elif w["status"] == "rising":
-        head, acc = f"Растёт: {what}", f"за год — {y} {_pl(y, 'клиент', 'клиента', 'клиентов')}, годом раньше — {p}"
+        head, acc = f"Растёт: {what}", f"за год {cl(y)}, годом раньше — {p}"
     elif w["status"] == "fading":
-        head, acc = f"Затихает: {what}", f"за год — {y}, в {w.get('peak_year')} году было чаще"
+        head, acc = f"Затихает: {what}", f"за год {cl(y)}, в {w.get('peak_year')} году было чаще"
     elif w["status"] == "gone":
         head, acc = f"Ушло: {what}", "за последний год — ни одной истории"
     else:
-        head, acc = f"Идёт давно: {what}", f"за год — {y} {_pl(y, 'клиент', 'клиента', 'клиентов')}, годом раньше — {p}"
+        head, acc = f"Идёт давно: {what}", f"за год {cl(y)}, годом раньше — {p}"
     return {"text": head, "accent": acc}
 
 
