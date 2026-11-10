@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 fbcfed4ba2232fecdfcd79ed5dbfe6530d7c9e8a3f4a82fc7bff17150d33a791): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 61c4823ba1ac5d25f46abdd224e3f014d15aa0f096a483fb1f3ae8d7f4db5302): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -24636,7 +24636,7 @@ function VspPage() {
   }, meta && meta.run ? `Данные на ${vDay(meta.run.finished_at)}` : "Загружаю данные", map && !map.err && map.points_total ? ` · вся сеть: ${vN(map.points_total)} ${vPl(map.points_total, "отделение", "отделения", "отделений")}` : "", " \xB7", " ", /*#__PURE__*/React.createElement("button", {
     className: "vlink",
     onClick: () => openLayer("method", "1")
-  }, "\u041A\u0430\u043A \u044D\u0442\u043E \u0440\u0430\u0431\u043E\u0442\u0430\u0435\u0442"), " ", "\xB7 \u0440\u0430\u0437\u0434\u0435\u043B \u0432\u0438\u0434\u0435\u043D \u0442\u043E\u043B\u044C\u043A\u043E \u0432\u0430\u043C"), meta && !meta.err && meta.source === "слова" && /*#__PURE__*/React.createElement("div", {
+  }, "\u041A\u0430\u043A \u044D\u0442\u043E \u0440\u0430\u0431\u043E\u0442\u0430\u0435\u0442"), " ", "\xB7", " ", meta && meta.access && meta.access.owner ? meta.access.beta ? `бета: вы и ещё ${meta.access.beta} ${vPl(meta.access.beta, "участник", "участника", "участников")}` : "раздел виден только вам" : "бета-версия раздела"), meta && !meta.err && meta.source === "слова" && /*#__PURE__*/React.createElement("div", {
     className: "vr-benign"
   }, "\u041F\u0440\u0435\u0434\u0432\u0430\u0440\u0438\u0442\u0435\u043B\u044C\u043D\u043E: \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u043D\u0430\u0439\u0434\u0435\u043D\u044B \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C, \u043C\u043E\u0434\u0435\u043B\u044C \u0435\u0449\u0451 \u0447\u0438\u0442\u0430\u0435\u0442 \u043E\u0442\u0437\u044B\u0432\u044B."), /*#__PURE__*/React.createElement("div", {
     className: "vr-body"

@@ -224,3 +224,25 @@ def test_poisson_tail_and_plural():
     assert _poisson_tail(32, 9.3) < 0.01 < _poisson_tail(12, 9.3)
     assert [_pl(n, "отделение", "отделения", "отделений") for n in (1, 3, 5, 11, 21, 104)] == \
         ["отделение", "отделения", "отделений", "отделений", "отделение", "отделения"]
+
+
+def test_beta_access_from_settings(client, monkeypatch):
+    from bank_audit.web import vsp_api
+    monkeypatch.setattr(vsp_api, "beta_users", lambda: ["colleague"])
+    client.who["u"] = "colleague"
+    assert client.get("/api/vsp/access").json() == {"allowed": True}
+    m = client.get("/api/vsp/meta").json()
+    assert m["access"]["owner"] is False and m["access"]["beta"] is None
+    assert client.get("/api/vsp/beta").status_code == 403                 # управлять бетой — только владельцу
+    client.who["u"] = "stranger"
+    assert client.get("/api/vsp/meta").status_code == 403
+    client.who["u"] = "owner"
+    assert client.get("/api/vsp/meta").json()["access"] == {"owner": True, "beta": 1}
+
+
+def test_beta_invite_letter():
+    from bank_audit.web import vsp_invite
+    m = vsp_invite.render("Светлана Фукс", {"read": 468466, "stories": 33687, "reviews": 774618, "urgent": 78})
+    assert m["subject"].startswith("Вы в бета-тесте") and "Светлана, вы в бета-тесте" in m["html"]
+    assert "468 466" in m["html"] and "#vsp" in m["html"] and "Обратная связь" in m["text"]
+    assert "Фукс" not in m["html"]                                          # обращение только по имени

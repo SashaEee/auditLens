@@ -44,11 +44,52 @@ UTC = timezone.utc
 
 # ── доступ и подключение ───────────────────────────────────────────────────────
 
+# Бета-доступ: владелец (ADMIN_USERS) — всегда; остальные — из VSP_USERS или из базы (app_setting,
+# ключ vsp_users: {"users": [логины]}). База — чтобы открыть раздел коллеге без пересоздания контейнера.
+_BETA: dict = {"at": -1e9, "v": []}
+
+
+def beta_users() -> list[str]:
+    now = time.monotonic()
+    if now - _BETA["at"] < 60:
+        return _BETA["v"]
+    v: list[str] = []
+    try:
+        from sqlalchemy import text as _t
+        from .. import db
+        with db.session() as s_:
+            raw = s_.execute(_t("SELECT value FROM app_setting WHERE key = 'vsp_users'")).scalar()
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+        v = [str(u).strip() for u in ((raw or {}).get("users") or []) if str(u).strip()]
+    except Exception:  # noqa: BLE001 — нет таблицы или базы: только владелец и VSP_USERS
+        v = []
+    _BETA.update(at=now, v=v)
+    return v
+
+
+def set_beta_users(users: list[str], by: str | None) -> list[str]:
+    from sqlalchemy import text as _t
+    from .. import db
+    clean = sorted({str(u).strip() for u in users if str(u).strip()})
+    with db.session() as s_:
+        s_.execute(_t("""INSERT INTO app_setting (key, value, updated_at, updated_by)
+                         VALUES ('vsp_users', CAST(:v AS jsonb), now(), :by)
+                         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(),
+                                                         updated_by = EXCLUDED.updated_by"""),
+                   {"v": json.dumps({"users": clean}, ensure_ascii=False), "by": by})
+        s_.commit()
+    _BETA.update(at=-1e9)
+    return clean
+
+
 def can_vsp(username: str | None) -> bool:
     if not username:
         return False
+    if telemetry.is_admin(username):
+        return True
     allow = {u.strip() for u in os.getenv("VSP_USERS", "").split(",") if u.strip()}
-    return username in allow if allow else telemetry.is_admin(username)
+    return username in allow or username in beta_users()
 
 
 def _need(user: CurrentUser) -> None:
@@ -259,6 +300,24 @@ FIVES_EXPLAINER = {
 @router.get("/access")
 def access(user: CurrentUser = Depends(get_current_user)):
     return {"allowed": can_vsp(user.username)}
+
+
+class BetaIn(BaseModel):
+    users: list[str]
+
+
+@router.get("/beta")
+def beta_get(user: CurrentUser = Depends(get_current_user)):
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "только владельцу")
+    return {"users": beta_users()}
+
+
+@router.post("/beta")
+def beta_set(body: BetaIn, user: CurrentUser = Depends(get_current_user)):
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "только владельцу")
+    return {"users": set_beta_users(body.users, user.username)}
 
 
 @router.get("/overview")
@@ -1088,8 +1147,10 @@ def meta_(user: CurrentUser = Depends(get_current_user)):
     except Exception:  # noqa: BLE001 — полоса прогресса не должна ронять вкладку
         log.exception("vsp: прогресс не посчитан")
         prog = None
+    owner = telemetry.is_admin(user.username)
     return {"run": {"id": run["id"], "finished_at": _iso(run["finished_at"])}, "tiles": _tiles(run),
-            "source": run["network"].get("story_source"), "progress": prog}
+            "source": run["network"].get("story_source"), "progress": prog,
+            "access": {"owner": owner, "beta": len(beta_users()) if owner else None}}
 
 
 MAP_FEW = 300            # меньше отзывов за год — цвет не показываем (штриховка)

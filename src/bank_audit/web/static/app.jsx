@@ -11923,7 +11923,8 @@ function VspPage(){
       <button className="btn btn-ghost vr-planbtn" onClick={()=>openLayer("plan","1")}>План проверки{plan.plan.length?<span className="vr-badge">{plan.plan.length}</span>:null}</button>
     </div>
     <div className="vr-sub">{meta&&meta.run?`Данные на ${vDay(meta.run.finished_at)}`:"Загружаю данные"}{map&&!map.err&&map.points_total?` · вся сеть: ${vN(map.points_total)} ${vPl(map.points_total,"отделение","отделения","отделений")}`:""} ·{" "}
-      <button className="vlink" onClick={()=>openLayer("method","1")}>Как это работает</button>{" "}· раздел виден только вам</div>
+      <button className="vlink" onClick={()=>openLayer("method","1")}>Как это работает</button>{" "}·{" "}
+      {meta&&meta.access&&meta.access.owner?(meta.access.beta?`бета: вы и ещё ${meta.access.beta} ${vPl(meta.access.beta,"участник","участника","участников")}`:"раздел виден только вам"):"бета-версия раздела"}</div>
     {meta&&!meta.err&&meta.source==="слова"&&<div className="vr-benign">Предварительно: истории найдены по словам, модель ещё читает отзывы.</div>}
     <div className="vr-body">
       {st.s==="main"?<VMain f={st.f} setF={setF} go={go} openPoint={openPoint} plan={plan} regions={regions} meta={meta&&!meta.err?meta:null} map={map}/>
