@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 e95b455dacc8cd8e5a27a7b9ea04bcc33abb70527ebdc49c0c33621b80d09480): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 1529ced4a1e1e1a8e98c6925c6ab8cb5a5c5b91de084096556e9e70fd30ddaf9): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -509,6 +509,27 @@ const greeting = me => {
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 const Ic = {
+  // «Аудит сети ВСП»: отделение — маркиза с тремя фестонами, дверь, линия земли (предмет раздела, как пузырь у «Аудита отзывов»)
+  branch: p => /*#__PURE__*/React.createElement("svg", _extends({
+    width: "16",
+    height: "16",
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "1.6",
+    strokeLinecap: "round",
+    strokeLinejoin: "round"
+  }, p), /*#__PURE__*/React.createElement("path", {
+    d: "M3.5 9.5L5.3 4h13.4l1.8 5.5"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M3.5 9.5a2.83 2.83 0 005.67 0 2.83 2.83 0 005.66 0 2.83 2.83 0 005.67 0"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M5 12.2V20h14v-7.8"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M10.2 20v-4.6h3.6V20"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M3 20h18"
+  })),
   grid: p => /*#__PURE__*/React.createElement("svg", _extends({
     width: "16",
     height: "16",
@@ -36844,7 +36865,7 @@ function Shell() {
     const base = me && me.can_vsp ? NAV.flatMap(n => n.id === "loophole" ? [n, {
       id: "vsp",
       label: "Аудит сети ВСП",
-      icon: Ic.grid,
+      icon: Ic.branch,
       group: "Анализ"
     }] : [n]) : NAV;
     const items = me && (me.is_admin || me.can_pulse) ? [...base, {

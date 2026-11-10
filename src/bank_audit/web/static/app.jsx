@@ -238,6 +238,8 @@ const greeting = (me) => {
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 const Ic = {
+  // «Аудит сети ВСП»: отделение — маркиза с тремя фестонами, дверь, линия земли (предмет раздела, как пузырь у «Аудита отзывов»)
+  branch:  p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M3.5 9.5L5.3 4h13.4l1.8 5.5"/><path d="M3.5 9.5a2.83 2.83 0 005.67 0 2.83 2.83 0 005.66 0 2.83 2.83 0 005.67 0"/><path d="M5 12.2V20h14v-7.8"/><path d="M10.2 20v-4.6h3.6V20"/><path d="M3 20h18"/></svg>,
   grid:    p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" {...p}><rect x="3" y="3" width="7.5" height="7.5" rx="1"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1"/></svg>,
   news:    p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M7 4h12a1 1 0 011 1v13a2 2 0 01-2 2H6a2 2 0 01-2-2V9h3"/><path d="M7 4v14a2 2 0 01-2 2"/><path d="M11 8h5v3.5h-5z"/><path d="M11 15h5"/></svg>,
   market:  p=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M3 17l6-6 4 4 8-9"/><path d="M21 6h-5"/><path d="M21 6v5"/></svg>,
@@ -17635,7 +17637,7 @@ function Shell(){
     try{localStorage.setItem("al-rail-data",nv?"1":"0");}catch{} return nv; });
   const groups=useMemo(()=>{
     // «Аудит сети ВСП» — только тем, кому открыт (VSP_USERS; по умолчанию владелец), после «Аудита уязвимостей»
-    const base=(me&&me.can_vsp)?NAV.flatMap(n=>n.id==="loophole"?[n,{id:"vsp",label:"Аудит сети ВСП",icon:Ic.grid,group:"Анализ"}]:[n]):NAV;
+    const base=(me&&me.can_vsp)?NAV.flatMap(n=>n.id==="loophole"?[n,{id:"vsp",label:"Аудит сети ВСП",icon:Ic.branch,group:"Анализ"}]:[n]):NAV;
     const items=(me&&(me.is_admin||me.can_pulse))?[...base,{id:"pulse",label:"Пульс",icon:Ic.spark,group:"Данные"}]:base;
     const g={};items.forEach(n=>{(g[n.group]=g[n.group]||[]).push(n);});return g;},[me]);
   // Страница есть на сервере, но неизвестна ЭТОМУ бандлу (вкладка держит старую
