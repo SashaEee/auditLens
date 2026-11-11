@@ -259,7 +259,8 @@ def test_bodies_never_store_raw_bytes_of_a_file(monkeypatch):
 # ── полка «Исследования и обзоры» ────────────────────────────────────────────
 
 def _item(i, source, ts, seen, **kw):
-    return {"id": i, "source": source, "url": f"https://e.org/{i}", "title": f"Исследование номер {i} о банках",
+    names = ("нулевое", "о вкладах", "об ипотеке", "о кредитных картах", "о платежах", "о переводах", "о долговой нагрузке")
+    return {"id": i, "source": source, "url": f"https://e.org/{i}", "title": f"Исследование {names[i % len(names)]} граждан",
             "ts": ts, "first_seen": seen, "rel": 6, "value": None, "summary": None, "body": "", **kw}
 
 
@@ -283,6 +284,17 @@ def test_shelf_limits_one_source_and_hides_dates_it_does_not_know():
     assert by[6]["date"] == "2026-11-11" and by[6]["pdf"] is True
     assert by[6]["note"] == "ЦБ оценил долговую нагрузку заёмщиков."
     assert len(nf.shelf_pick(rows, 2, NOW)) == 2
+
+
+def test_shelf_shows_one_item_of_a_monthly_series():
+    msk = nf.MSK
+    day = datetime(2026, 10, 20, 12, tzinfo=msk)
+    rows = [_item(1, "asros_research", day, NOW, title="Кредитование субъектов МСП. Август 2026 г. (14.10.2026)"),
+            _item(2, "asros_research", day, NOW, title="Кредитование субъектов МСП. Июль 2026 г. (15.09.2026)"),
+            _item(3, "asros_research", day, NOW, title="Кредитование субъектов МСП. Июнь 2026 г. (13.08.2026)"),
+            _item(4, "asros_research", day, NOW, title="О рынке ипотечного жилищного кредитования. Август 2026 г."),
+            _item(5, "raexpert_research", day, NOW, title="Кредитование субъектов МСП: взгляд агентства")]
+    assert [g["id"] for g in nf.shelf_pick(rows, 8, NOW)] == [1, 4, 5]
 
 
 def test_shelf_note_is_empty_when_body_only_repeats_the_title():

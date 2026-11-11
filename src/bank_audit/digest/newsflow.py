@@ -1254,8 +1254,9 @@ def research_shelf(limit: int = 8) -> list[dict]:
     if not keys:
         return []
     with db.session() as s:
-        # по SHELF_PER_SOURCE самых свежих от каждого источника — иначе сотня
-        # докладов одного сайта вытеснила бы остальные из выборки
+        # по нескольку самых свежих от каждого источника — иначе сотня докладов
+        # одного сайта вытеснила бы остальные из выборки; с запасом, потому что
+        # повторы одной серии полка пропускает (shelf_pick)
         rows = s.execute(text("""
             SELECT id, source, url, title, ts, first_seen, rel, value, summary, body FROM (
                 SELECT id, source, url, title, ts, first_seen, rel, value,
@@ -1265,7 +1266,7 @@ def research_shelf(limit: int = 8) -> list[dict]:
                 WHERE source = ANY(:k) AND (rel IS NULL OR rel >= :m)) q
             WHERE rn <= :p
             ORDER BY ts DESC NULLS LAST, id DESC
-        """), {"k": keys, "m": SHELF_MIN_REL, "p": SHELF_PER_SOURCE}).mappings().all()
+        """), {"k": keys, "m": SHELF_MIN_REL, "p": SHELF_PER_SOURCE * 4}).mappings().all()
     return shelf_pick([dict(r) for r in rows], limit)
 
 
@@ -1273,10 +1274,17 @@ def shelf_pick(rows: list[dict], limit: int = 8, now: datetime | None = None) ->
     """Строки полки из записей, уже упорядоченных от новых к старым."""
     now = now or datetime.now(timezone.utc)
     per: dict[str, int] = {}
+    series: set[tuple[str, str]] = set()
     out = []
     for r in rows:
         if per.get(r["source"], 0) >= SHELF_PER_SOURCE:
             continue
+        # ежемесячные записки одной серии («Кредитование субъектов МСП. Июнь…»,
+        # «…Июль…», «…Август…») — на полке только свежая
+        stem = (r["source"], re.sub(r"[^a-zа-яё ]+", "", (r["title"] or "").lower())[:24].strip())
+        if stem in series:
+            continue
+        series.add(stem)
         per[r["source"]] = per.get(r["source"], 0) + 1
         ts, seen = r["ts"], r["first_seen"]
         # дата известна, если она взята со страницы (полдень по Москве) или
