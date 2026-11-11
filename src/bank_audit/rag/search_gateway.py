@@ -142,6 +142,7 @@ class _Breaker:
         self._lock = threading.Lock()
         self._open_until = 0.0
         self._fails = 0
+        self._trips = 0          # отключений подряд без единого успеха
         self.reason = ""
 
     def is_open(self) -> bool:
@@ -156,18 +157,25 @@ class _Breaker:
             log.error("%s: отключён на %d мин — %s; запросы идут на запасной поиск",
                       self.name, int(seconds // 60) or 1, reason)
 
-    def failure(self, reason: str, *, threshold: int = 3, seconds: float = 120) -> None:
+    def failure(self, reason: str, *, threshold: int = 3, seconds: float = 120,
+                escalate: float = 1.0, cap: float = 6 * 3600) -> None:
+        """escalate > 1 — каждое следующее отключение подряд длиннее прежнего в
+        это число раз (до cap): хост, который лежит неделями, не должен стоить
+        каждому отчёту пяти попыток с ожиданием."""
         with self._lock:
             self._fails += 1
             hit = self._fails >= threshold
             if hit:
                 self._fails = 0
+                self._trips += 1
+                seconds = min(seconds * (escalate ** (self._trips - 1)), cap)
         if hit:
             self.trip(seconds, f"{threshold} сбоя подряд: {reason}")
 
     def success(self) -> None:
         with self._lock:
             self._fails = 0
+            self._trips = 0
 
 
 _bucket = _Bucket()
@@ -509,7 +517,10 @@ def read_cached_copy(url: str, *, max_wait: float = 6.0) -> CachedCopy | None:
     try:
         r = _copy_http().get(cache_url)
     except httpx.HTTPError as e:
-        _copy_breaker.failure(type(e).__name__, threshold=5, seconds=300)
+        # 11.11: кэш Яндекса недоступен с 22.10 (сеть недостижима), и каждый отчёт
+        # заново тратил на него пять попыток по пять секунд. Теперь паузы растут:
+        # 5 минут → 20 → 80 → … до шести часов, первый же успех их сбрасывает.
+        _copy_breaker.failure(type(e).__name__, threshold=3, seconds=300, escalate=4.0)
         emit("web_read", "yandex_copy", DOWN, dur_ms=int((time.monotonic() - t0) * 1000))
         return None
     final = str(r.url)
