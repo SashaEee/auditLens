@@ -174,3 +174,33 @@ def test_unavailable_reranker_is_skipped_for_a_while(monkeypatch):
     assert len(calls) == 1
     monkeypatch.setattr(rd, "_rr_down_until", 0.0)                     # пауза истекла — пробуем снова
     assert rd._rerank("перевод не дошёл", ["a", "b"]) is None and len(calls) == 2
+
+
+# ── Короткий показ собственных данных, пока отчёт собирается ─────────────────
+def test_preview_shows_counted_things_and_no_loopholes():
+    from bank_audit.research.gptr import own_data as O
+    od = O.OwnData()
+    url = "#reviews?bank=ВТБ&view=stories"
+    line1 = "Сюжет «Ставку снизили после открытия»: 14 жалоб за 90 дней."
+    line2 = "Сюжет «Не закрывают вклад в приложении»: 9 жалоб за 90 дней."
+    od.page(url, "AuditLens · Отзывы: ВТБ · Вклады — сюжеты за 90 дней", [line1, line2], "complaints")
+    od.fact(subject="vtb", attribute="Жалобы: сюжет «Ставку снизили после открытия»", value="14",
+            verbatim=line1, url=url)
+    od.fact(subject="vtb", attribute="Жалобы: сюжет «Не закрывают вклад в приложении»", value="9",
+            verbatim=line2, url=url)
+    od.page("#market?cat=deposit", "AuditLens · Рынок: Вклады — лидеры",
+            ["Витрина «Рынок»: описание.", "ВТБ: 15,5 % годовых, 6 мес.", "Сбербанк: 15 % годовых, 6 мес.",
+             "Как сравнивать: по сроку."], O.MARKET)
+    od.page("https://news.example/a", "ВТБ изменил условия вкладов с 1 ноября", ["Текст новости."], O.NEWS)
+    od.page("#loophole", "AuditLens · Уязвимости: сводка раздела", ["Раздел «Аудит уязвимостей»: …"], "loopholes")
+    pv = O.preview(od)
+    kinds = [b["kind"] for b in pv["blocks"]]
+    assert kinds == ["complaints", "market", "news"]          # уязвимостей в показе нет
+    c = pv["blocks"][0]
+    assert c["link"] == url and "ВТБ · Вклады" in c["title"]
+    assert c["rows"][0] == {"label": "Ставку снизили после открытия", "value": "14 жалоб"}
+    assert O._count_ru("1") == "1 жалоба" and O._count_ru("3") == "3 жалобы" and O._count_ru("—") == "—"
+    m = pv["blocks"][1]
+    assert [r["label"] for r in m["rows"]] == ["ВТБ: 15,5 % годовых, 6 мес.", "Сбербанк: 15 % годовых, 6 мес."]
+    assert pv["blocks"][2]["rows"][0]["link"] == "https://news.example/a"
+    assert O.preview(O.OwnData()) is None                     # нечего показать — события нет

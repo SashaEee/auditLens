@@ -71,6 +71,17 @@ def _evt(d: dict) -> str:
     return json.dumps(d, ensure_ascii=False, default=str)
 
 
+def _own_preview(task) -> dict | None:
+    """Короткий показ собственных данных из готовой задачи сбора; сбой — молча."""
+    try:
+        if task.cancelled() or task.exception() is not None:
+            return None
+        return al_own.preview(task.result())
+    except Exception as e:  # noqa: BLE001 — показ необязателен
+        log.info("показ собственных данных: %s", type(e).__name__)
+        return None
+
+
 def _hosts(urls, top: int = 8) -> list[list]:
     """Какие сайты уже прочитаны: [[сайт, страниц], …] — для живого хода сбора."""
     seen: dict[str, int] = {}
@@ -286,6 +297,7 @@ async def stream_deep_research_gptr(question: str,
 
     # ── Сбор ─────────────────────────────────────────────────────────────
     yield _evt({"type": "phase", "value": "research"})
+    shown_own = False        # короткий показ собственных данных уже отдан
     registry = al_facts.FactRegistry()
     collecting = {"on": True}
     prior_ids: set = set()
@@ -358,6 +370,13 @@ async def stream_deep_research_gptr(question: str,
                     "blocked": len(state.unreadable),
                     "hosts": _hosts(list(state.pages))}):
                 yield ev
+                # Собственные данные готовы раньше сбора по сайтам — показываем
+                # их сразу: сюжеты жалоб, строки рынка, новости со ссылкой в раздел.
+                if not shown_own and own_task.done():
+                    shown_own = True
+                    pv = _own_preview(own_task)
+                    if pv:
+                        yield _evt({"type": "own_preview", **pv})
         except Exception:
             collecting["on"] = False
             log.exception("gptr: сбор")
@@ -376,6 +395,15 @@ async def stream_deep_research_gptr(question: str,
     # и жалобы из разметки тем же слоем, что вкладка «Отзывы»; веб даёт обзоры.
     runstate.bind(state)
     own = await own_task
+    if not shown_own:
+        # продолжение прошлого отчёта или быстрый сбор: показ — сразу после данных
+        try:
+            pv = al_own.preview(own)
+        except Exception as e:  # noqa: BLE001 — показ необязателен
+            log.info("показ собственных данных: %s", type(e).__name__)
+            pv = None
+        if pv:
+            yield _evt({"type": "own_preview", **pv})
     review_pages: dict[str, str] = {}
     if own.complaints or own.loopholes or own.pages or own.knowledge or own.knowledge_live:
         sc = own.scope or {}

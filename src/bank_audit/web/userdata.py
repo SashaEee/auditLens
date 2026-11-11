@@ -151,7 +151,9 @@ def list_sessions(username: str, limit: int = 100) -> list[dict]:
     есть ли ответ или отчёт, и подсказать «вы уже спрашивали» при наборе."""
     return _rows("""
         SELECT cs.session_id, cs.title, cs.pinned, cs.created_at, cs.updated_at,
-               (SELECT content FROM chat_message cm
+               -- только начало: целый отчёт в превью давал список на 2 МБ, который
+               -- стартовая страница помощника и «История» качали при каждом открытии
+               (SELECT left(content, 400) FROM chat_message cm
                  WHERE cm.session_id = cs.session_id
                  ORDER BY cm.created_at DESC LIMIT 1) AS last_preview,
                (SELECT count(*) FROM chat_message cm

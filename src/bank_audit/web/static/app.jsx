@@ -59,54 +59,59 @@ const awNorm=s=>String(s||"").toLowerCase().replace(/ё/g,"е").replace(/[^a-zа
 const AW_KIND={review_spike:"Жалобы · сигнал дня",news_alert:"Новость дня",tariff_move:"Тарифы",mass_move:"Тарифы · массово",
   rate_move:"Ключевая ставка",connection:"Новость и данные"};
 
-function AiWelcome({onFill,recent,onOpenHistory,onLoadSession,dayIns}){
+function AiWelcome({onFill,recent,onOpenHistory,onLoadSession,dayIns,composer}){
   const me=useMe();
   const tpl=awTemplates(me);
+  const mac=typeof navigator!=="undefined"&&/Mac|iPhone|iPad/.test(navigator.platform||"");
+  // Порядок — по тому, зачем сюда приходят: задать вопрос, вернуться к прошлому
+  // разговору, взять повод из сегодняшнего выпуска. Всё остальное — одной строкой.
   return <div className="ai-welcome fade-in">
-    <div className="aw-eyebrow">{me?`${greeting(me)} · ИИ-помощник`:"ИИ-помощник · AuditLens"}</div>
-    <h1 className="aw-title">Спросите о продуктах, жалобах и&nbsp;регулировании</h1>
-    <p className="aw-lede">Помощник отвечает по данным AuditLens — жалобам клиентов, тарифам банков, новостям и документам ЦБ — и ссылается на источники.</p>
-    <div className="aw-modes" role="note" aria-label="Как отвечает помощник">
-      <div><b>Короткая справка</b><span>ставка, лимит, норма, примеры жалоб — меньше минуты</span></div>
-      <div><b>Отчёт с источниками</b><span>сравнение, обзор продукта, разбор жалоб — 3–5 минут, числа сверены</span></div>
-      <p className="aw-modes-n">Выбирать не нужно: помощник сам поймёт по вопросу, что нужно, и сразу скажет, чем отвечает. Не угадал — поправите одним нажатием.</p>
+    <div className="aw-top">
+      <div className="aw-eyebrow">{me?greeting(me):"ИИ-помощник"}</div>
+      <button type="button" className="hist-btn aw-hist" onClick={onOpenHistory} title="Все прошлые разговоры и отчёты">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 1.8"/></svg>
+        История <kbd>{mac?"⌘K":"Ctrl K"}</kbd>
+      </button>
     </div>
+    <h1 className="aw-title">Спросите о продуктах, жалобах и&nbsp;регулировании</h1>
 
-    {dayIns&&dayIns.length>0&&<section className="aw-sec" aria-labelledby="aw-day-h">
-      <h2 className="eyebrow" id="aw-day-h">Сегодня в выпуске</h2>
-      <div className="aw-day">
-        {dayIns.map((ins,i)=><button key={i} type="button" className="aw-dcard" data-sev={ins.severity||undefined}
-            onClick={()=>onFill(ins.ai_prompt)}>
-          <span className="aw-dk">{AW_KIND[ins.kind]||"Повод дня"}</span>
-          <span className="aw-dt">{ins.title}</span>
-          <span className="aw-dgo">Подставить вопрос</span>
-        </button>)}
-      </div>
-    </section>}
-
-    <section className="aw-sec" aria-labelledby="aw-tpl-h">
-      <h2 className="eyebrow" id="aw-tpl-h">Начать с задачи</h2>
-      <div className="aw-tpls">
+    {/* Поле вопроса — главное на странице: сразу под заголовком, шаблоны задач при нём.
+        После первого вопроса оно переезжает вниз, под ленту. */}
+    <div className="aw-ask">
+      {composer}
+      <div className="aw-tpls" role="group" aria-label="Начать с задачи">
         {tpl.map(x=><button key={x.k} type="button" className="chip aw-tpl" data-tip={x.t}
             onClick={()=>onFill(x.t,x.slot)}>{x.k}</button>)}
       </div>
-    </section>
+      <p className="aw-how">Справка — за минуту, отчёт с источниками — за 3–5 минут. Что нужно, помощник поймёт по вопросу.</p>
+    </div>
 
     {recent&&recent.length>0&&<section className="aw-sec aw-recent" aria-labelledby="aw-rec-h">
-      <div className="aw-recent-h">
-        <h2 className="eyebrow" id="aw-rec-h">Продолжить</h2>
-        <button type="button" onClick={onOpenHistory}>Вся история
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-        </button>
-      </div>
-      <div className="aw-recent-grid">
-        {recent.map(s=>{
-          const st=s.report_id?"отчёт":s.n_answers>0?"ответ":"без ответа";
-          return <button key={s.session_id} type="button" className={"aw-rec"+(s.n_answers>0||s.report_id?"":" none")}
+      <div className="aw-sec-h"><h2 className="eyebrow" id="aw-rec-h">Продолжить</h2></div>
+      <div className="aw-rows">
+        {recent.slice(0,3).map(s=>{
+          const isRep=!!s.report_id, has=isRep||s.n_answers>0;
+          return <button key={s.session_id} type="button" className={"aw-row"+(has?"":" none")}
               onClick={()=>onLoadSession&&onLoadSession(s.session_id)} data-tip={s.first_q&&s.first_q.length>60?s.first_q:undefined}>
-            <span className="t">{s.title||s.first_q||"Без названия"}</span>
-            <span className="m">{fmtHistTime(s.updated_at)} · {st}{s.n_same>1?` · спрашивали ${s.n_same} ${plural(s.n_same,"раз","раза","раз")}`:""}</span>
+            <span className="aw-row-ic" aria-hidden="true">{isRep
+              ?<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>
+              :<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>}</span>
+            <span className="aw-row-t">{s.title||s.first_q||"Без названия"}</span>
+            <span className="aw-row-m">{isRep?"отчёт":has?"ответ":"без ответа"} · {fmtHistTime(s.updated_at)}{s.n_same>1?` · ${s.n_same} ${plural(s.n_same,"раз","раза","раз")}`:""}</span>
           </button>;})}
+      </div>
+    </section>}
+
+    {dayIns&&dayIns.length>0&&<section className="aw-sec" aria-labelledby="aw-day-h">
+      <div className="aw-sec-h"><h2 className="eyebrow" id="aw-day-h">Сегодня в выпуске</h2></div>
+      <div className="aw-rows">
+        {dayIns.map((ins,i)=><button key={i} type="button" className="aw-row aw-row-day" data-sev={ins.severity||undefined}
+            onClick={()=>onFill(ins.ai_prompt)} title="Подставить готовый вопрос по этому поводу в поле ввода">
+          <span className="aw-row-ic" aria-hidden="true"><i/></span>
+          <span className="aw-row-t"><span className="aw-row-k">{AW_KIND[ins.kind]||"Повод дня"}</span>{ins.title}</span>
+          <span className="aw-row-m">спросить
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+        </button>)}
       </div>
     </section>}
   </div>;
@@ -1469,19 +1474,19 @@ const FB_CSS=`
 .aifb button.tb{width:27px;height:27px;border-radius:7px;display:grid;place-items:center;color:var(--ink-3);
   border:1px solid transparent;transition:color .12s,background .12s,border-color .12s;}
 .aifb button.tb:hover{color:var(--ink-2);background:var(--paper-2);}
-.aifb button.tb.on{color:var(--accent-ink);background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 75%);}
+.aifb button.tb.on{color:var(--pos);background:color-mix(in oklab,var(--pos),transparent 90%);border-color:color-mix(in oklab,var(--pos),transparent 70%);}
 .aifb button.tb.on-neg{color:var(--neg);background:color-mix(in oklab,var(--neg),transparent 90%);border-color:color-mix(in oklab,var(--neg),transparent 75%);}
 .aifb-why{width:100%;display:flex;flex-wrap:wrap;gap:7px;align-items:center;animation:fade-in .2s ease-out;}
 .aifb-chip{font-size:11.5px;padding:5px 11px;border-radius:999px;border:1px solid var(--hair);color:var(--ink-3);transition:all .12s;}
-.aifb-chip.on{border-color:var(--accent);color:var(--accent-ink);background:var(--accent-soft);}
+.aifb-chip.on{border-color:color-mix(in oklab,var(--select),transparent 45%);color:var(--ink);background:var(--select-soft);}
 .aifb-inp{flex:1;min-width:170px;height:30px;padding:0 10px;font-size:12px;border:1px solid var(--hair);border-radius:8px;
   background:var(--paper);color:var(--ink);}
-.aifb-send{height:30px;padding:0 13px;border-radius:8px;background:var(--accent);color:#fff;font-size:12px;font-weight:500;}
+.aifb-send{height:30px;padding:0 13px;border-radius:8px;background:var(--ink);color:var(--paper);font-size:12px;font-weight:500;}
 .aifb-done{font-size:11.5px;color:var(--pos);}
 .shr{position:relative;display:inline-flex;}
 .shr-btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border:1px solid var(--hair);
   border-radius:8px;background:var(--surface);font-size:12px;color:var(--ink-2);transition:color .12s,border-color .12s;}
-.shr-btn:hover{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 75%);}
+.shr-btn:hover{color:var(--ink);border-color:var(--ink-4);}
 .shr-btn .n{font-family:inherit;font-size:11px;color:var(--accent-ink);background:var(--accent-soft);
   border-radius:999px;padding:1px 6px;font-variant-numeric:tabular-nums}
 .shr-pop{position:absolute;top:34px;right:0;z-index:90;width:302px;background:var(--surface);border:1px solid var(--hair);
@@ -1543,14 +1548,14 @@ function AiFbBar({q,text,sessionId,mode,fbMap,reportId}){
   const send=()=>{post(-1,{reasons:Object.keys(rs).filter(k=>rs[k]),comment:comment.slice(0,300)});
     setSent(true);setOpen(false);fbToast("Спасибо — команда разберёт этот ответ");};
   return <div className="aifb" onClick={e=>e.stopPropagation()}>
-    <span className="aifb-l">{mode==="deep"?"Пригодился отчёт?":"Оценить ответ"}</span>
+    <span className="aifb-l">{mode==="deep"?"Отчёт пригодился?":"Ответ пригодился?"}</span>
     <button className={"tb"+(v===1?" on":"")} title="Полезный ответ" onClick={like}><IcTUp/></button>
     <button className={"tb"+(v===-1?" on-neg":"")} title="Плохой ответ — команда разберёт" onClick={dislike}><IcTDn/></button>
-    {sent&&v===-1&&<span className="aifb-done">отправлено — разберём ✓</span>}
+    {sent&&v===-1&&<span className="aifb-done">отправлено — разберём</span>}
     {open&&v===-1&&<div className="aifb-why">
       {AIFB_REASONS.map(([k,l])=><button key={k} className={"aifb-chip"+(rs[k]?" on":"")}
         onClick={()=>setRs(r=>({...r,[k]:!r[k]}))}>{l}</button>)}
-      <input className="aifb-inp" placeholder="что не так? (необязательно)" value={comment}
+      <input className="aifb-inp" placeholder="Что не так? Можно не писать" aria-label="Что не так с ответом" value={comment}
         onChange={e=>setComment(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")send();}}/>
       <button className="aifb-send" onClick={send}>Отправить</button>
     </div>}
@@ -6654,9 +6659,20 @@ function MatrixExportButton({matrix, question, streaming}){
 // В тексте метка становится названием файла; недописанная в стриме — прячется.
 const AGF_MARK=/\[\[FILE:([0-9a-f]{32})\]\]/g;
 function stripFileMarks(text,files){
-  if(!text||text.indexOf("[[F")<0) return text;
+  if(!text) return text;
   const names={}; (files||[]).forEach(f=>{names[f.id]=f.name;});
-  return text.replace(AGF_MARK,(_,id)=>names[id]?`**${names[id]}**`:"").replace(/\[\[F[^\]\n]*$/,"");
+  let t=text;
+  if(t.indexOf("[[F")>=0){
+    // Метка отдельной строкой — убираем: файл показан карточкой под ответом, и
+    // повтор его имени абзацем выше только шумит. Упоминание внутри фразы остаётся.
+    t=t.replace(/^[ \t]*\[\[FILE:[0-9a-f]+\]\][ \t]*\n?/gm,"")
+       .replace(AGF_MARK,(_,id)=>names[id]?`**${names[id]}**`:"").replace(/\[\[F[^\]\n]*$/,"");
+  }
+  // В сохранённом ответе метка уже заменена на «имя файла» — та же строка-повтор.
+  (files||[]).forEach(f=>{ if(!f.name) return;
+    const esc=f.name.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+    t=t.replace(new RegExp("^[ \\t]*«"+esc+"»[ \\t]*\\n?","gm"),""); });
+  return t.replace(/\n{3,}/g,"\n\n").trimEnd();
 }
 function AgentFiles({files}){
   if(!files||!files.length) return null;
@@ -6821,6 +6837,15 @@ function ThinkingPanel({text, stage, active}){
   );
 }
 
+// Сбой ответа: что случилось и что сделать — с повтором.
+function AiError({text,onRetry}){
+  return <div className="ai-error" role="alert">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.2"/></svg>
+    <span className="ai-error-t">{text}</span>
+    {onRetry&&<button type="button" className="ai-error-b" onClick={onRetry}>Повторить</button>}
+  </div>;
+}
+
 // ─── Премиальный индикатор ожидания: пульс + подпись стадии + бегущие точки.
 //     Закрывает «тихие окна» (генерация вопросов, сборка запроса, старт
 //     research) — пользователь всегда видит, что система жива. ──────────────
@@ -6861,41 +6886,50 @@ function ClarifyCard({msg, onSubmit, onSkip}){
     }).filter(a=>a.selected.length||a.other);
     onSubmit(msg.question,msg.forceDeep,answers);
   };
-  return <div className="clarify-card fade-in">
+  // Варианты — настоящие переключатели: работают с клавиатуры и читаются экранным диктором.
+  const onKey=(e,fn)=>{ if(e.key===" "||e.key==="Enter"){ e.preventDefault(); fn(); } };
+  return <div className="clarify-card fade-in" role="group" aria-label="Уточнение вопроса">
     <div className="clarify-head">
-      <span className="dr-stage-pulse" style={{background:"var(--accent)"}}/>
-      <span className="eyebrow" style={{color:"var(--accent)"}}>Уточнение запроса · {qs.length} вопр.</span>
-      <button className="clarify-x" onClick={()=>onSkip(msg.question,msg.forceDeep)} aria-label="Пропустить">✕</button>
+      <span className="eyebrow">Уточнение · {qs.length} {plural(qs.length,"вопрос","вопроса","вопросов")}</span>
+      <button type="button" className="clarify-x" onClick={()=>onSkip(msg.question,msg.forceDeep)} aria-label="Пропустить уточнение">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
     </div>
-    <div className="clarify-sub">Ответьте, чтобы отчёт попал точно в цель — это займёт ~15 секунд.</div>
+    <div className="clarify-title">От ответа зависит, что войдёт в отчёт</div>
+    <div className="clarify-sub">Выберите подходящее — это полминуты. Можно пропустить: тогда помощник решит сам и скажет, как понял вопрос.</div>
     {qs.map((qq,qi)=>{
       const c=get(qq.id);
-      return <div className="clarify-q" key={qi}>
-        <div className="clarify-q-t">{qq.question}</div>
+      return <div className="clarify-q" key={qi} role={qq.type==="single"?"radiogroup":"group"} aria-label={qq.question}>
+        <div className="clarify-q-t"><span className="clarify-q-n">{qi+1}</span>{qq.question}
+          {qq.type==="multi"&&<span className="clarify-q-h">можно несколько</span>}</div>
         {qq.type==="text"
-          ? <input className="clarify-input" placeholder="свой ответ…"
+          ? <input className="clarify-input" placeholder="Ваш ответ" aria-label={qq.question}
                    value={(c.vals&&c.vals[0])||""} onChange={e=>setText(qq,e.target.value)}/>
           : <div className="clarify-chips">
               {(qq.options||[]).map((o,oi)=>{
                 const on=(c.vals||[]).includes(o.label);
-                return <span key={oi} className={"clarify-chip "+qq.type+(on?" on":"")}
-                             onClick={()=>toggle(qq,o.label)} title={o.hint||""}>
-                  <span className="clarify-box">{on&&<Ic.check/>}</span>{o.label}
-                  {o.recommended&&<span className="clarify-rec">реком.</span>}
+                return <span key={oi} className={"clarify-chip "+qq.type+(on?" on":"")} tabIndex={0}
+                             role={qq.type==="single"?"radio":"checkbox"} aria-checked={on}
+                             onClick={()=>toggle(qq,o.label)} onKeyDown={e=>onKey(e,()=>toggle(qq,o.label))} title={o.hint||undefined}>
+                  <span className="clarify-box" aria-hidden="true">{on&&<Ic.check/>}</span>
+                  <span className="clarify-lbl">{o.label}{o.recommended&&<span className="clarify-rec">рекомендуем</span>}</span>
                 </span>;
               })}
-              {qq.allow_other&&<span className={"clarify-chip dashed"+(c.otherOn?" on":"")}
-                onClick={()=>toggleOther(qq)}>Другое…</span>}
+              {qq.allow_other&&<span className={"clarify-chip dashed"+(c.otherOn?" on":"")} tabIndex={0} role="checkbox" aria-checked={!!c.otherOn}
+                onClick={()=>toggleOther(qq)} onKeyDown={e=>onKey(e,()=>toggleOther(qq))}>Свой вариант</span>}
             </div>}
         {qq.allow_other&&qq.type!=="text"&&c.otherOn&&
-          <input className="clarify-input" style={{marginTop:"8px"}} placeholder="свой вариант"
-                 value={c.other} onChange={e=>setOther(qq,e.target.value)}/>}
+          <input className="clarify-input" style={{marginTop:"8px"}} placeholder="Впишите свой вариант" aria-label="Свой вариант" autoFocus
+                 value={c.other} onChange={e=>setOther(qq,e.target.value)}
+                 onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();submit();}}}/>}
       </div>;
     })}
     <div className="clarify-foot">
-      <span className="clarify-count">отвечено {answered} / {qs.length}</span>
-      <button className="clarify-skip-btn" onClick={()=>onSkip(msg.question,msg.forceDeep)}>Пропустить</button>
-      <button className="clarify-go" onClick={submit}>Уточнить и запустить →</button>
+      <span className="clarify-count">отвечено {answered} из {qs.length}</span>
+      <button type="button" className="clarify-skip-btn" onClick={()=>onSkip(msg.question,msg.forceDeep)}>Пропустить</button>
+      <button type="button" className="clarify-go" onClick={submit}>Собрать отчёт
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </button>
     </div>
   </div>;
 }
@@ -6933,6 +6967,13 @@ function drEta(m){
   return {left:Math.round(after+curLeft), over:inPhase>cur*1.8+20,
           pct:Math.min(97,Math.max(2,Math.round((before+Math.min(inPhase,cur*0.95))/total*100)))};
 }
+// то же коротко — для узкого экрана
+const drLeftShort=e=>{
+  if(!e||e.left==null) return "";
+  if(e.over) return "дольше обычного";
+  if(e.left<40) return "меньше минуты";
+  return `ещё ~${Math.max(1,Math.round(e.left/60))} мин`;
+};
 const drLeftText=e=>{
   if(!e||e.left==null) return "";
   if(e.over) return "дольше обычного — работаю";
@@ -7177,29 +7218,56 @@ function DeepConsole({m, loading, elapsed, onFresh, onShort, compact, onToggle})
           </div>;
         })}
       </div>
+      {/* Собственные данные готовы раньше сбора по сайтам: числа разделов видны
+          уже через полминуты, со ссылкой в раздел. Это не вывод — на этом он будет стоять. */}
+      {(m.ownPreview||[]).length>0 &&
+        <div className="dr-con-own">
+          <div className="dr-con-sub-h">Уже нашлось в данных AuditLens</div>
+          <div className="dr-con-own-g">
+            {m.ownPreview.map((b,bi)=><div key={bi} className="dr-con-own-b">
+              <div className="dr-con-own-t">{b.link
+                ?<a href={b.link.startsWith("#")?location.pathname+location.search+b.link:b.link} target="_blank" rel="noopener noreferrer"
+                    title="Открыть в разделе — в новой вкладке, отчёт продолжит собираться">{b.title}<span aria-hidden="true"> ↗</span></a>
+                :b.title}</div>
+              {(b.rows||[]).map((r,ri)=><div key={ri} className="dr-con-own-r">
+                {r.link?<a href={r.link} target="_blank" rel="noopener noreferrer">{r.label}</a>:<span>{r.label}</span>}
+                {r.value&&<b className="mono">{r.value}</b>}
+              </div>)}
+            </div>)}
+          </div>
+          <div className="dr-con-note">Это числа из разделов AuditLens, а не вывод: отчёт сверит их с сайтами банков и нормами.</div>
+        </div>}
     </div>
   </div>;
 }
 
 // ─── Сводка завершённого прогона (collapsed bar над отчётом, редизайн). ────
-function ResearchSummary({m}){
-  // Итог прогона одной строкой: за сколько собран, на чём стоит, сошлись ли числа.
+// За сколько собран отчёт — словами.
+const rpTook=m=>{ const sec=Math.round(m.elapsedS||m.elapsed_s||0);
+  return sec>=60?`${Math.floor(sec/60)} мин${sec%60>=5?` ${sec%60} с`:""}`:(sec?`${sec} с`:""); };
+// На чём стоит отчёт — одной строкой под названием: сколько прочитано, сколько
+// фактов выписано, сколько источников в тексте и сошлись ли числа. Заменяет три
+// прежних места (серую плашку, «пилюли» над текстом и строку сводки).
+function RpMeta({m}){
   const srcN=(m.sources||[]).length;
   const fs=m.factStats||{};
-  const checked=m.verification?.numeric_checked||0, verified=m.verification?.verified||0;
-  const sec=Math.round(m.elapsedS||0);
-  const took=sec>=60?`${Math.floor(sec/60)} мин${sec%60>=5?` ${sec%60} с`:""}`:(sec?`${sec} с`:"");
-  return <div className="dr-summary-bar">
-    <span className="dr-summary-ok">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-        strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
-      Отчёт готов{took?` за ${took}`:""}
-    </span>
-    {!!fs.pages && <><span>·</span><span>прочитано <b>{fs.pages}</b> {plural(fs.pages,"страница","страницы","страниц")}</span></>}
-    {!!fs.total && <><span>·</span><span>выписано <b>{fs.total}</b> {plural(fs.total,"факт","факта","фактов")} с цитатами</span></>}
-    {!!srcN && <><span>·</span><span>в отчёте <b>{srcN}</b> {plural(srcN,"источник","источника","источников")}</span></>}
-    {checked>0 && <><span>·</span><span>сошлось <b>{verified}</b> из {checked} {plural(checked,"числа","чисел","чисел")}</span></>}
-  </div>;
+  const v=m.verification||{};
+  const checked=v.numeric_checked||0, verified=v.verified||0;
+  const facts=fs.total||v.facts_total||0;
+  const unver=(v.unverified||[]).length;
+  const toCheck=()=>{ const el=document.querySelector(".dr-verify");
+    if(el) el.scrollIntoView({behavior:"smooth",block:"center"}); };
+  const items=[
+    fs.pages?<span key="p">прочитано <b>{fs.pages}</b> {plural(fs.pages,"страница","страницы","страниц")}</span>:null,
+    facts?<span key="f">выписано <b>{facts}</b> {plural(facts,"факт","факта","фактов")} с цитатами</span>:null,
+    srcN?<span key="s">в тексте <b>{srcN}</b> {plural(srcN,"источник","источника","источников")}</span>:null,
+    checked?<span key="c" className={verified===checked?"ok":""}>сошлось <b>{verified}</b> из {checked} {plural(checked,"числа","чисел","чисел")}</span>:null,
+    unver?<button key="u" type="button" className="rp-meta-warn" onClick={toCheck}
+      title="Утверждения, которые не удалось сверить автоматически, — список в конце отчёта">
+      {unver} {plural(unver,"утверждение требует","утверждения требуют","утверждений требуют")} проверки</button>:null,
+  ].filter(Boolean);
+  if(!items.length) return null;
+  return <div className="rp-meta">{items}</div>;
 }
 
 function ClaimCheckRow({claimCheck, verification, sourcesCount}){
@@ -7658,6 +7726,17 @@ function TableOfContents({contentEl, activeId, onClick}){
 }
 
 // ─── Sources rail — sticky right column with bidirectional binding ────────
+// Дата источника. У публикаций и документов базы знаний известен только день:
+// «12.10 03:00 МСК» — выдуманная точность (полночь по Гринвичу), поэтому время
+// показываем, только когда оно действительно есть.
+const srcDay=v=>{
+  if(!v) return "";
+  const t=String(v);
+  const m=t.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/);
+  if(!m) return t.slice(0,16);
+  const day=`${m[3]}.${m[2]}.${m[1]}`;
+  return (!m[4]||(m[4]==="00"&&m[5]==="00"))?day:fmtDateMsk(t);
+};
 function SourcesRail({sources, activeN, onHover, onClick, failed}){
   if(!sources||!sources.length)return null;
   const officialN  = sources.filter(s=>s.source_kind==="bank_official").length;
@@ -7665,51 +7744,54 @@ function SourcesRail({sources, activeN, onHover, onClick, failed}){
                                     ||s.source_kind==="regulatory"
                                     ||s.source_kind==="government"
                                     ||s.source_kind==="legal_db").length;
-  return <aside className="dr-rail">
+  return <aside className="dr-rail" aria-label="Источники отчёта">
     <div className="dr-rail-h">
       <span>Источники · {sources.length}</span>
-      {(officialN+regulatorN)>0 && <span style={{color:"var(--ink-3)"}}>{officialN+regulatorN} офиц.</span>}
+      {(officialN+regulatorN)>0 && <span className="dr-rail-h-n" title="Сайты банков, регуляторы, правовые базы">из них официальных {officialN+regulatorN}</span>}
     </div>
     <ul className="dr-rail-list">
       {sources.map((s,i)=>{
         const kind = s.source_kind || "unknown";
         const kindLabel = SOURCE_KIND_LABELS[kind] || kind;
         const isActive = String(activeN)===String(s.n);
+        const dom = domainOf(s.url)||s.domain||"";
+        // Название страницы, а не вид источника: «Официальный сайт» двадцать раз
+        // подряд ничего не говорил о том, что именно прочитано.
+        const title = (s.title||"").replace(/^AuditLens · /,"").trim() || s.bank_name || kindLabel;
         return <li key={i}>
           <a id={`src-${s.n}`} href={s.url||"#"} target="_blank" rel="noopener noreferrer"
              className={`dr-rail-item${isActive?" active":""}`}
              onMouseEnter={()=>onHover&&onHover(s.n)}
              onMouseLeave={()=>onHover&&onHover(null)}
              onClick={(e)=>{onClick&&onClick(s.n,e);}}>
-            <div>
-              <span className="dr-rail-num">{s.n}.</span>
-              <span className="dr-rail-bank">{s.bank_name || kindLabel}</span>
-            </div>
-            <span className="dr-rail-domain">{domainOf(s.url)||"—"}</span>
-            <div className="dr-rail-meta">
-              <span>{kindLabel}</span>
-              <TrustMarks score={s.trust_score}/>
+            <span className="dr-rail-num">{s.n}</span>
+            <span className="dr-rail-body">
+              <span className="dr-rail-bank">{title}</span>
+              <span className="dr-rail-meta">
+                {dom&&dom!=="AuditLens"&&<span className="dr-rail-domain">{dom}</span>}
+                <span className="dr-rail-kind">{dom&&dom!=="AuditLens"?kindLabel.toLowerCase():kindLabel}<TrustMarks score={s.trust_score}/></span>
+              </span>
               {/* Дата ПУБЛИКАЦИИ источника, а не нашего сбора: «собрано
-                  сегодня» ничего не говорит о возрасте свидетельства, и
-                  аудитор читал свежим весь отчёт целиком. */}
-              {s.published
-                ? <span title="дата публикации источника">· {fmtDateMsk(s.published)}</span>
-                : s.fetched_at && <span title="дата сбора; сам источник даты не объявил">
-                    · собрано {formatRelDate(s.fetched_at)}</span>}
-              {s.kb_loaded && (s.kb_fallback
-                ? <span className="src-stale" title="Сегодня страница не открылась, поэтому в отчёте — её сохранённая копия из базы знаний. Условия могли измениться: сверьте на сайте">
-                    · страница не открылась — сохранённая копия от {fmtDateMsk(s.kb_loaded)}</span>
-                : <span title="Датированный документ из базы знаний AuditLens: текст на дату загрузки">
-                    · из базы знаний, загружено {fmtDateMsk(s.kb_loaded)}</span>)}
-              {s.dead && <span className="dr-rail-dead"
-                title="Страница источника сейчас не открывается — цитата и дата взяты при сборе">
-                ссылка не открывается</span>}
-            </div>
+                  сегодня» ничего не говорит о возрасте свидетельства. */}
+              {(s.published||s.fetched_at||s.kb_loaded||s.dead) && <span className="dr-rail-when">
+                {s.published
+                  ? <span title="Дата публикации источника">опубликовано {srcDay(s.published)}</span>
+                  : (!s.kb_loaded && s.fetched_at) && <span title="Дата сбора; сам источник даты не объявил">прочитано {formatRelDate(s.fetched_at)}</span>}
+                {s.kb_loaded && (s.kb_fallback
+                  ? <span className="src-stale" title="Сегодня страница не открылась, поэтому в отчёте — её сохранённая копия из базы знаний. Условия могли измениться: проверьте страницу перед тем, как ссылаться на число.">
+                      страница не открылась — копия от {srcDay(s.kb_loaded)}</span>
+                  : <span title="Датированный документ из базы знаний AuditLens: текст на дату загрузки">
+                      база знаний, текст на {srcDay(s.kb_loaded)}</span>)}
+                {s.dead && <span className="dr-rail-dead"
+                  title="Страница источника сейчас не открывается — цитата и дата взяты при сборе">
+                  ссылка не открывается</span>}
+              </span>}
+            </span>
           </a>
         </li>;
       })}
     </ul>
-    {failed>0&&<div className="dr-rail-failed">⚠ {failed} источник(ов) недоступны — исключены из списка</div>}
+    {failed>0&&<div className="dr-rail-failed">Не открылось и исключено из списка: {failed}</div>}
   </aside>;
 }
 
@@ -7739,19 +7821,21 @@ function DocTocSlot(){
     if(main){
       const obs = new MutationObserver(update);
       obs.observe(main,{childList:true,subtree:true,characterData:true});
-      // Active section через scroll
+      // Текущий раздел — по прокрутке. Прокручивается лента помощника, а не окно:
+      // раньше слушалось окно, и отметка текущего раздела не двигалась никогда.
+      const scroller = slot.closest(".chat-feed") || window;
       const onScroll=()=>{
         const hs = Array.from(main.querySelectorAll("h2,h3"));
-        const top = window.scrollY + 110;
+        const base = scroller===window ? 0 : scroller.getBoundingClientRect().top;
         let cur = null;
         for(const h of hs){
-          if(h.getBoundingClientRect().top + window.scrollY <= top) cur = h.id;
+          if(h.getBoundingClientRect().top - base <= 120) cur = h.id;
         }
         setActiveId(cur);
       };
-      window.addEventListener("scroll",onScroll,{passive:true});
+      scroller.addEventListener("scroll",onScroll,{passive:true});
       onScroll();
-      return ()=>{obs.disconnect();window.removeEventListener("scroll",onScroll);};
+      return ()=>{obs.disconnect();scroller.removeEventListener("scroll",onScroll);};
     }
   },[]);
 
@@ -7802,7 +7886,7 @@ const KBD_SHORTCUTS = [
   {keys:["Esc"],        action:"Закрыть окно"},
 ];
 function KbdHelp({onClose}){
-  return <div className="kbd-help" onClick={onClose}>
+  return ReactDOM.createPortal(<div className="kbd-help" onClick={onClose} role="dialog" aria-modal="true" aria-label="Горячие клавиши">
     <div className="kbd-help-card" onClick={(e)=>e.stopPropagation()}>
       <h3>Горячие клавиши</h3>
       {KBD_SHORTCUTS.map((row,i)=>(
@@ -7814,7 +7898,7 @@ function KbdHelp({onClose}){
         </div>
       ))}
     </div>
-  </div>;
+  </div>,document.body);
 }
 
 // ─── История чатов/отчётов: off-canvas drawer (премиальный, лёгкий) ───────────
@@ -7861,7 +7945,7 @@ const CP_CSS=`
 .cp-seg button{font-size:12px;color:var(--ink-3);padding:5px 11px;border-radius:7px;display:flex;
   align-items:center;gap:7px;transition:background .14s,color .14s;}
 .cp-seg button:hover{color:var(--ink-2);}
-.cp-seg button.on{background:var(--accent-soft);color:var(--accent-ink);font-weight:500;}
+.cp-seg button.on{background:var(--select-soft);color:var(--ink);font-weight:600;}
 .cp-seg .n{font-family:inherit;font-size:11px;font-variant-numeric:tabular-nums;opacity:.75;}
 .cp-list{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:3px 8px 10px;}
 .cp-group{font-family:inherit;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
@@ -7869,10 +7953,10 @@ const CP_CSS=`
 .cp-row{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:9px;cursor:pointer;
   scroll-margin:10px;transition:background .12s;}
 .cp-row:active{transform:scale(.97);}
-.cp-row.sel{background:var(--accent-soft);}
+.cp-row.sel{background:var(--select-soft);}
 .cp-ic{width:30px;height:30px;flex:none;border-radius:8px;display:grid;place-items:center;
   background:var(--paper-2);color:var(--ink-3);border:1px solid var(--hair);transition:color .12s,border-color .12s,background .12s;}
-.cp-row.sel .cp-ic{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 78%);background:var(--surface);}
+.cp-row.sel .cp-ic{color:var(--select);border-color:color-mix(in oklab,var(--select),transparent 70%);background:var(--surface);}
 .cp-main{flex:1;min-width:0;}
 .cp-t{font-size:13.5px;line-height:1.35;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .cp-p{font-size:12px;line-height:1.35;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;}
@@ -7883,11 +7967,11 @@ const CP_CSS=`
 .cp-acts button{width:28px;height:28px;border-radius:7px;color:var(--ink-3);display:grid;place-items:center;
   transition:background .12s,color .12s;}
 .cp-acts button:hover{background:var(--paper-2);color:var(--ink);}
-.cp-acts button.on{color:var(--accent);}
+.cp-acts button.on{color:var(--select);}
 .cp-banks{display:flex;gap:4px;}
 .cp-bank{font-family:inherit;font-size:11px;text-transform:uppercase;letter-spacing:.03em;
   color:var(--ink-3);background:var(--paper-2);border:1px solid var(--hair);border-radius:5px;padding:1px 6px;font-variant-numeric:tabular-nums}
-.cp-owner{font-size:11px;color:var(--accent);white-space:nowrap;}
+.cp-owner{font-size:11px;color:var(--ink-3);white-space:nowrap;}
 .cp-empty{display:flex;flex-direction:column;align-items:center;gap:12px;padding:52px 24px;color:var(--ink-3);text-align:center;}
 .cp-empty>svg{opacity:.45;}
 .cp-empty .t{font-size:14px;color:var(--ink-3);text-wrap:balance;max-width:320px;line-height:1.5;}
@@ -7923,7 +8007,8 @@ const CP_CSS=`
 .aw-rec:hover{border-color:var(--ink-4);transform:translateY(-2px);box-shadow:var(--shadow-1);}
 .aw-rec .t{font-size:12.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .aw-rec .m{font-family:inherit;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums;}
-@media(pointer:coarse){.aw-recent-h button{min-height:44px}}
+@media(max-width:640px){.cp-ov{padding:10px 10px calc(10px + env(safe-area-inset-bottom));place-items:start stretch}
+  .cp{width:auto;max-height:calc(100dvh - 20px)}.cp-foot{display:none}.cp-acts{display:flex}}
 `;
 
 // SVG-иконки (единый штрих, оптически выверенные)
@@ -8025,7 +8110,8 @@ function CommandPalette({open,onClose,onLoadSession,onLoadReport,refreshTick}){
         <div className="cp-ic"><IcChat/></div>
         <div className="cp-main">
           <div className="cp-t">{s.title||"Без названия"}</div>
-          <div className="cp-p">{(s.last_preview||"").replace(/[#*|>\n]/g," ").replace(/\s+/g," ").trim().slice(0,70)||"—"}</div>
+          <div className="cp-p">{(s.last_preview||"").replace(/\[\[[A-Z]+:[^\]]*\]\]/g," ").replace(/^\s*#+\s*Резюме[^\n]*\n/,"")
+            .replace(/[#*|>\n]/g," ").replace(/\s+/g," ").trim().slice(0,90)||"без ответа"}</div>
         </div>
         <div className="cp-meta">
           <span className="cp-time">{fmtHistTime(s.updated_at)}</span>
@@ -8060,7 +8146,10 @@ function CommandPalette({open,onClose,onLoadSession,onLoadReport,refreshTick}){
 
   const empty=(tab==="chats"?!fSessions.length:!reportRows.length);
 
-  return <div className={"cp-ov"+(vis?" in":"")} onClick={close}>
+  // Слой выносится в body: вкладка появляется со сдвигом (transform), и «прибитый»
+  // к экрану слой внутри неё занимал только её прямоугольник — затемнение и размытие
+  // обрывались у бокового меню и шапки.
+  return ReactDOM.createPortal(<div className={"cp-ov"+(vis?" in":"")} onClick={close} role="dialog" aria-modal="true" aria-label="История разговоров и отчётов">
     <div className="cp" onClick={e=>e.stopPropagation()}>
       <div className="cp-search">
         <IcSearch/>
@@ -8094,7 +8183,7 @@ function CommandPalette({open,onClose,onLoadSession,onLoadReport,refreshTick}){
         <span><kbd>esc</kbd> закрыть</span>
       </div>}
     </div>
-  </div>;
+  </div>,document.body);
 }
 
 function AIPage(){
@@ -8284,7 +8373,9 @@ function AIPage(){
       });
       if(!res.ok){
         const errData=await res.json().catch(()=>({detail:res.statusText}));
-        setMsgs(m=>{const u=[...m];u[u.length-1]={...u[u.length-1],text:`⚠ Ошибка ${res.status}: ${errData.detail||res.statusText}`};return u;});
+        // Ошибка — отдельным блоком с «Повторить», а не строкой внутри ответа
+        setMsgs(m=>{const u=[...m];u[u.length-1]={...u[u.length-1],
+          err:`Сервер ответил ошибкой ${res.status}${errData.detail||res.statusText?": "+(errData.detail||res.statusText):""}.`};return u;});
         return;
       }
       const reader=res.body.getReader();
@@ -8351,6 +8442,9 @@ function AIPage(){
               }else if(data.type==="phase"){
                 // phaseAt — когда начался этап: по нему считается «осталось примерно…»
                 updateLast(()=>({phase:data.value,phaseAt:Date.now()}));
+              }else if(data.type==="own_preview"&&Array.isArray(data.blocks)){
+                // что уже нашлось в данных AuditLens — показываем, пока идёт сбор по сайтам
+                updateLast(()=>({ownPreview:data.blocks}));
               }else if(data.type==="typical"&&data.steps){
                 updateLast(()=>({typical:{steps:data.steps,total:data.total}}));
               }else if(data.type==="plan"&&Array.isArray(data.steps)){
@@ -8467,7 +8561,7 @@ function AIPage(){
       }
       setMsgs(m=>{
         const u=[...m],last=u[u.length-1];
-        if(last.role==="ai"&&!last.text)u[u.length-1]={...last,text:"(модель не вернула текст — попробуйте переформулировать запрос)"};
+        if(last.role==="ai"&&!last.text&&!last.err)u[u.length-1]={...last,err:"Помощник не дал ответа. Повторите вопрос или задайте его иначе."};
         return u;
       });
     }catch(e){
@@ -8479,10 +8573,11 @@ function AIPage(){
         // Человек остановил сам — это не ошибка. Оставляем то, что успело
         // прийти, и честно помечаем, что продолжения не будет.
         setMsgs(m=>{const u=[...m];const last=u[u.length-1]||{};
-          u[u.length-1]={...last,text:(last.text||"")+"\n\n⏹ Остановлено. Показано то, что успело прийти.",phase:"done"};
+          u[u.length-1]={...last,stopped:true,phase:"done"};
           return u;});
       }else{
-        setMsgs(m=>{const u=[...m];u[u.length-1]={...u[u.length-1],text:`⚠ Ошибка соединения: ${e.message}`};return u;});
+        setMsgs(m=>{const u=[...m];u[u.length-1]={...u[u.length-1],phase:"done",
+          err:"Связь с сервером прервалась — ответ пришёл не полностью. Проверьте сеть и повторите вопрос."};return u;});
       }
     }finally{
       abortRef.current=null;
@@ -8573,6 +8668,13 @@ function AIPage(){
     setMsgs(m=>m.filter(x=>x.role!=="clarify"));
     runSend(srcQuestion,true,{route:"report",route_by:"model"});
   };
+  // «Повторить» после сбоя: неудачный ответ убираем, тот же вопрос уходит заново.
+  const retryLast=(srcQ)=>{
+    if(loading||!srcQ)return;
+    trkEvent({kind:"ui",page:"ai",payload:{action:"retry_after_error"}});
+    setMsgs(m=>(m.length&&m[m.length-1].role==="ai")?m.slice(0,-1):m);
+    setTimeout(()=>runSend(srcQ,null,{resend:true}),60);
+  };
   // Человек поправил глубину ответа. Пока ответ идёт — останавливаем его и под
   // тем же вопросом запускаем другой; готовый короткий ответ остаётся в ленте,
   // а отчёт приходит следом.
@@ -8621,6 +8723,12 @@ function AIPage(){
   };
 
   // Загрузка сессии из истории → в ленту (продолжение возможно, sessionId сохранён).
+  // Открыли сохранённое: отчёт показываем с начала (с названия), а не с последней
+  // строки — раньше лента прокручивалась в самый низ, к источникам и сверке.
+  const landOnAnswer=()=>setTimeout(()=>{ const el=feedRef.current; if(!el) return;
+    const last=el.querySelector(".chat-msg:last-child"), h=last&&last.querySelector(".rp-head");
+    if(h){ stickRef.current=false; el.scrollTop+=h.getBoundingClientRect().top-el.getBoundingClientRect().top-16; }
+    else el.scrollTop=el.scrollHeight; },90);
   const openSession=async(sid)=>{
     if(loading)return;
     setHistOpen(false);
@@ -8642,11 +8750,13 @@ function AIPage(){
           const r=await apiFetch(`/api/reports/${m.report_id}`); const p=r.payload||{};
           Object.assign(m,{charts:p.charts||[],viz:p.viz||[],verification:p.verification||null,
                            gaps:p.gaps||null,ranking:p.ranking||null,insights:p.insights||null,
-                           status:p.status||undefined,title:r.title||undefined});
+                           status:p.status||undefined,title:r.title||undefined,
+                           created_at:r.created_at||undefined,elapsedS:p.elapsed_s||undefined,
+                           report_owner:r.owner,owner_name:r.owner_name});
         }catch{}
       }));
       setMsgs(mapped); setSessionId(sid); setActiveCite(null); setHoverCite(null);
-      setTimeout(()=>{const el=feedRef.current;if(el)el.scrollTop=el.scrollHeight;},60);
+      landOnAnswer();
     }catch{}
   };
   // Открыть сохранённый отчёт (свой или расшаренный) в ленте.
@@ -8664,9 +8774,10 @@ function AIPage(){
                 verification:p.verification||null,gaps:p.gaps||null,
                 ranking:p.ranking||null,insights:p.insights||null,
                 report_id:r.report_id,report_owner:r.owner,owner_name:r.owner_name,
+                created_at:r.created_at||undefined,elapsedS:p.elapsed_s||undefined,
                 status:p.status||undefined,title:r.title||undefined,files:p.files||undefined}]);
       setSessionId(r.session_id||null); setActiveCite(null); setHoverCite(null);
-      setTimeout(()=>{const el=feedRef.current;if(el)el.scrollTop=el.scrollHeight;},60);
+      landOnAnswer();
     }catch{}
   };
   // Отчёт по ссылке: из колокольчика («С вами поделились отчётом») или #ai?report=ID.
@@ -8695,9 +8806,45 @@ function AIPage(){
   // Идёт активный deep-прогон (консоль + нижний бар, композер скрыт).
   const isRunning = loading && !!lastDeep && lastDeep.phase!=="done"
     && lastMsg?.role!=="clarify" && lastMsg?.role!=="pending";
+  // Появился первый раздел отчёта: консоль сворачивается в полоску, и лента встаёт
+  // на неё — человек видит и ход работы, и начало текста, а не середину страницы.
+  const hasDraft = isRunning && (lastDeep.text||"").length>400;
+  useEffect(()=>{
+    if(!hasDraft) return;
+    const el=feedRef.current; if(!el) return;
+    requestAnimationFrame(()=>{ const c=el.querySelector(".chat-msg:last-child .dr-con-wrap");
+      if(c){ stickRef.current=false; el.scrollTop+=c.getBoundingClientRect().top-el.getBoundingClientRect().top-10; } });
+  },[hasDraft]);
   const showThreadHead = !isEmpty && !isRunning && !isClarify;
   const showComposer   = !isRunning && !isClarify;
   const fmtEl = (s)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
+  // Поле вопроса — один узел: на стартовой он стоит под заголовком, в разговоре — под лентой.
+  const dupHit=isEmpty?(()=>{const n=awNorm(q); if(n.length<18)return null;
+    return sessAll.find(x=>{const f=awNorm(x.first_q||x.title); return f&&(x.n_answers>0||x.report_id)&&(f===n||(n.length>=30&&f.startsWith(n.slice(0,60))));})||null;})():null;
+  const composerEl=<div className="composer-inner">
+    {dupHit&&<div className="aw-dup" role="status">Вы уже спрашивали это {fmtHistTime(dupHit.updated_at)} —
+      <button type="button" onClick={()=>openSession(dupHit.session_id)}>открыть {dupHit.report_id?"отчёт":"ответ"}</button></div>}
+    {slotHint && <div className="aw-dup aw-slot" role="alert">{slotHint}</div>}
+    <div className="chat-input-wrap">
+      <textarea ref={inputRef} className="chat-textarea" rows={isEmpty?2:1}
+        aria-label="Вопрос ИИ-помощнику" autoFocus={isEmpty}
+        placeholder={isEmpty?"Спросите или поставьте задачу: ставка, жалобы, сравнение банков, нормы, новость…":"Следующий вопрос…"}
+        value={q} onChange={e=>{setQ(e.target.value); if(slotHint)setSlotHint("");}}
+        onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}/>
+      <div className="composer-bar">
+        {loading
+          ? <button className="composer-send composer-stop" onClick={()=>abortRef.current?.abort()}
+                    aria-label="Остановить ответ">
+              <span className="composer-send-t">Остановить</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
+            </button>
+          : <button className="composer-send" disabled={!q.trim()} onClick={()=>send()} aria-label="Отправить вопрос">
+              <span className="composer-send-t">Спросить</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </button>}
+      </div>
+    </div>
+  </div>;
   return <div className={"fade-in chat-shell"+(isEmpty?" is-welcome":"")}>
     <style>{CP_CSS}</style>
     {showKbd && <KbdHelp onClose={()=>setShowKbd(false)}/>}
@@ -8717,7 +8864,8 @@ function AIPage(){
               История <kbd>⌘K</kbd>
             </button>
           </div>}
-        {isEmpty && <AiWelcome onFill={fillQ} recent={recent} dayIns={dayIns} onOpenHistory={()=>setHistOpen(true)} onLoadSession={openSession}/>}
+        {isEmpty && <AiWelcome onFill={fillQ} recent={recent} dayIns={dayIns} onOpenHistory={()=>setHistOpen(true)} onLoadSession={openSession}
+                               composer={composerEl}/>}
         {!isEmpty && msgs.map((m,i)=>{
           if(m.role==="clarify"){
             return <div key={i} className="chat-msg ai">
@@ -8754,41 +8902,46 @@ function AIPage(){
                 <b>Отчёт пишется — можно читать.</b> Разделы появляются по мере готовности; резюме встанет в начало,
                 числа сверяются в конце.</div>}
               {(!consoleMode||draftMode) && (<>
-                <div className="dr-doc-toolbar">
-                  <span className="who" title={m.title?"AuditLens · аналитический отчёт":undefined}>{m.title||"AuditLens · аналитический отчёт"}</span>
-                  {m.report_owner&&me&&m.report_owner!==me.username&&
-                    <span className="shr-owner">поделился: {m.owner_name||m.report_owner}</span>}
-                  {m.report_id&&(!m.report_owner||(me&&m.report_owner===me.username))&&!streaming&&
-                    <ShareButton reportId={m.report_id}/>}
-                  {m.report_id&&!streaming&&<CaseAddBtn item={{kind:"report",ref_id:m.report_id}} src="ai_report"/>}
-                  {showPdfBtn &&
-                    <PdfExportButton question={userQ} report={m.text}
-                                     sources={m.sources||[]} verification={m.verification}
-                                     claimCheck={m.claimCheck} streaming={streaming}
-                                     charts={m.charts||[]} viz={m.viz||[]} ranking={m.ranking}
-                                     insights={m.insights} gaps={m.gaps}
-                                     reportId={m.report_id} title={m.title}/>}
-                  {showPdfBtn && !streaming && m.report_id && (m.text||"").length>1500 &&
-                    <DeckButton onClick={()=>askDeck(m.report_id)} streaming={streaming} busy={loading}/>}
-                  {m.matrix && <MatrixExportButton matrix={m.matrix} question={userQ} streaming={streaming}/>}
-                </div>
-                {/* «Пригодился?» — вверху, сразу после прогона: в подвале после
-                    PDF и сверки до оценки не доходили, оценок не было с августа */}
-                {!streaming&&m.text&&m.text.length>200&&
-                  <div className="ai-fb-top"><AiFbBar q={userQ} text={m.text} sessionId={sessionId} mode="deep"
-                                                      fbMap={aiFb} reportId={m.report_id}/></div>}
+                {/* Шапка отчёта: название — главным, под ним одна строка «на чём стоит»,
+                    действия и оценка. Раньше название было мелкой серой подписью, а сведения
+                    о прогоне дублировались в трёх местах. */}
+                <header className="rp-head">
+                  <div className="rp-eyebrow">
+                    <span>{streaming?"Отчёт пишется":(m.stopped||m.status==="stopped")?"Отчёт остановлен":"Отчёт"}</span>
+                    {!streaming&&(m.created_at||m.phase==="done")&&<span>{srcDay(m.created_at||new Date().toISOString().slice(0,10))}</span>}
+                    {!streaming&&rpTook(m)&&<span>собран за {rpTook(m)}</span>}
+                    {m.report_owner&&me&&m.report_owner!==me.username&&
+                      <span className="shr-owner">поделился: {m.owner_name||m.report_owner}</span>}
+                  </div>
+                  <h1 className="rp-title">{m.title||userQ}</h1>
+                  {!streaming&&<RpMeta m={m}/>}
+                  {!streaming&&<div className="rp-bar">
+                    <div className="rp-acts">
+                      {showPdfBtn &&
+                        <PdfExportButton question={userQ} report={m.text}
+                                         sources={m.sources||[]} verification={m.verification}
+                                         claimCheck={m.claimCheck} streaming={streaming}
+                                         charts={m.charts||[]} viz={m.viz||[]} ranking={m.ranking}
+                                         insights={m.insights} gaps={m.gaps}
+                                         reportId={m.report_id} title={m.title}/>}
+                      {showPdfBtn && m.report_id && (m.text||"").length>1500 &&
+                        <DeckButton onClick={()=>askDeck(m.report_id)} streaming={streaming} busy={loading}/>}
+                      {m.report_id&&<CaseAddBtn item={{kind:"report",ref_id:m.report_id}} src="ai_report"/>}
+                      {m.report_id&&(!m.report_owner||(me&&m.report_owner===me.username))&&
+                        <ShareButton reportId={m.report_id}/>}
+                      {m.matrix && <MatrixExportButton matrix={m.matrix} question={userQ} streaming={streaming}/>}
+                    </div>
+                    {m.text&&m.text.length>200&&
+                      <AiFbBar q={userQ} text={m.text} sessionId={sessionId} mode="deep"
+                               fbMap={aiFb} reportId={m.report_id}/>}
+                  </div>}
+                </header>
                 <div className="chat-bubble chat-bubble-deep">
-                  {/* Сводка завершённого прогона (collapsed bar над отчётом). */}
-                  {m.phase==="done" && m.plan && m.plan.length>0 && <ResearchSummary m={m}/>}
                   {/* Coverage — только как предупреждение о слабом покрытии. */}
                   {m.coverage?.warning && <CoverageBanner coverage={m.coverage}/>}
                   <div className="dr-doc">
                     {!hideToc && <DocTocSlot/>}
                     <article className="dr-doc-main" ref={(el)=>{ m._mainEl=el; }}>
-                      {(m.claimCheck || m.verification) &&
-                        <ClaimCheckRow claimCheck={m.claimCheck}
-                                        verification={m.verification}
-                                        sourcesCount={(m.sources||[]).length}/>}
                       <ClaimFlagWrap q={msgs[0]&&msgs[0].text} sessionId={sessionId}
                                       mode={m.mode} reportId={m.report_id}>
                         {renderMD(m.text, m.sources, m.charts, m.viz, {streaming})}
@@ -8805,8 +8958,9 @@ function AIPage(){
                       })()}
                       {m.ranking && <div className="dr-fade-in"><RankingWidget ranking={m.ranking}/></div>}
                       {m.insights && m.insights.length>0 && <div className="dr-fade-in"><InsightsWidget insights={m.insights}/></div>}
-                      {m.status==="stopped"&&!streaming&&<div className="t-cap" style={{margin:"8px 0"}}>
-                        ⏹ Отчёт остановлен до конца прогона — здесь то, что успело прийти.</div>}
+                      {(m.status==="stopped"||m.stopped)&&!streaming&&<div className="ai-stopped" role="status">
+                        Отчёт остановлен до конца прогона — здесь то, что успело прийти.</div>}
+                      {m.err&&!streaming&&<AiError text={m.err} onRetry={userQ&&userQ!=="Аудит-отчёт"?()=>retryLast(userQ):null}/>}
                       {m.verification&&<VerificationBanner verification={m.verification}/>}
                       {showPdfBtn && !streaming &&
                         <div className="dr-doc-footer">
@@ -8856,17 +9010,20 @@ function AIPage(){
                 <button type="button" className="ai-route-btn" onClick={()=>switchRoute(prevQ,"report")}
                   title="Остановить короткий ответ и собрать отчёт с источниками (3–5 минут)">Нужен отчёт</button>
               </div>}
+            {/* Где смотрел — строкой, а не рамкой: это пояснение к ответу, а не панель */}
             {m.tools&&m.tools.length>0 &&
-              <div className="quick-tools">
+              <div className="quick-tools" aria-label="Где помощник искал ответ">
+                <span className="quick-tools-k">{thinking?"Смотрю":"Смотрел"}</span>
                 {collapseTools(m.tools).map(({lbl,n},ti,arr)=>(
-                  <span key={ti} className="quick-tool">
-                    <span className="quick-tool-dot" style={ti===arr.length-1&&thinking?{background:"var(--accent)",animation:"pulse 1.4s ease-in-out infinite"}:null}/>
+                  <span key={ti} className={"quick-tool"+(ti===arr.length-1&&thinking?" now":"")}>
                     {lbl}{n>1?<span className="quick-tool-n"> ×{n}</span>:null}
                   </span>))}
               </div>}
             {thinking
               ? <PendingDots label="Думаю над ответом…"/>
-              : <div className="quick-answer chat-bubble">{renderMD(qText, m.sources)}</div>}
+              : qText && <div className="quick-answer chat-bubble">{renderMD(qText, m.sources)}</div>}
+            {m.stopped && <div className="ai-stopped" role="status">Остановлено{qText?". Показано то, что успело прийти.":" до ответа."}</div>}
+            {m.err && <AiError text={m.err} onRetry={prevQ?()=>retryLast(prevQ):null}/>}
             <AgentFiles files={m.files}/>
             {m.sources&&m.sources.length>0 &&
               <div className="quick-sources">
@@ -8877,81 +9034,52 @@ function AIPage(){
                     <span className="quick-src-dom">{domainOf(s.url)||"—"}</span>
                   </a>))}
               </div>}
-            {m.text && !loading && prevQ && !m.notice &&
-              <div className="quick-upsell">
-                <span className="quick-upsell-t">Нужен документ для аудит-дела — с источниками, рисками и сверкой чисел?</span>
-                <button className="quick-upsell-btn" onClick={()=>runDeepFromQuick(prevQ)}>
-                  Собрать отчёт
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-                </button>
-              </div>}
             {m.report_owner&&me&&m.report_owner!==me.username&&
               <div style={{marginTop:10}}><span className="shr-owner">поделился: {m.owner_name||m.report_owner}</span></div>}
-            {m.text&&!(loading&&i===msgs.length-1)&&<div className="quick-acts">
-              {m.report_id&&(!m.report_owner||(me&&m.report_owner===me.username))&&<ShareButton reportId={m.report_id}/>}
-              {/* PDF и у быстрого ответа: раньше кнопка была только у отчёта, и тот, кому
-                  ответ понравился, искал «Скачать PDF» и не находил (обращение 06.10) */}
-              {(qText||"").length>=100&&<PdfExportButton question={prevQ} report={qText} sources={m.sources||[]}
-                streaming={false} reportId={m.report_id} title={m.title} kind="quick"/>}
-              {/* ответ длиннее 800 знаков сохранён отчётом — приобщается им; короткий — как есть */}
-              <CaseAddBtn src="ai_answer" item={m.report_id?{kind:"report",ref_id:m.report_id}
-                :{kind:"answer",title:prevQ,meta:{question:prevQ,text:qText,
-                  sources:(m.sources||[]).slice(0,12).map(x=>({n:x.n,url:x.url,title:x.bank_name||domainOf(x.url)}))}}}/>
+            {/* Подвал ответа одной полосой: что сделать дальше — слева, оценка — справа.
+                Раньше это были четыре ряда: источники, плашка про отчёт, кнопки, оценка. */}
+            {m.text&&!(loading&&i===msgs.length-1)&&<div className="ans-foot">
+              <div className="ans-acts">
+                {prevQ && !m.notice &&
+                  <button type="button" className="btn-export ans-report" onClick={()=>runDeepFromQuick(prevQ)}
+                    title="Отчёт по этому вопросу: источники, риски, сверка чисел — 3–5 минут">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>
+                    <span>Собрать отчёт</span>
+                  </button>}
+                {/* PDF и у быстрого ответа: раньше кнопка была только у отчёта, и тот, кому
+                    ответ понравился, искал «Скачать PDF» и не находил (обращение 06.10) */}
+                {(qText||"").length>=100&&<PdfExportButton question={prevQ} report={qText} sources={m.sources||[]}
+                  streaming={false} reportId={m.report_id} title={m.title} kind="quick"/>}
+                {/* ответ длиннее 800 знаков сохранён отчётом — приобщается им; короткий — как есть */}
+                <CaseAddBtn src="ai_answer" item={m.report_id?{kind:"report",ref_id:m.report_id}
+                  :{kind:"answer",title:prevQ,meta:{question:prevQ,text:qText,
+                    sources:(m.sources||[]).slice(0,12).map(x=>({n:x.n,url:x.url,title:x.bank_name||domainOf(x.url)}))}}}/>
+                {m.report_id&&(!m.report_owner||(me&&m.report_owner===me.username))&&<ShareButton reportId={m.report_id}/>}
+              </div>
+              <AiFbBar q={prevQ} text={m.text} sessionId={sessionId} mode="quick" fbMap={aiFb} reportId={m.report_id}/>
             </div>}
-            {m.text&&!(loading&&i===msgs.length-1)&&
-              <AiFbBar q={prevQ} text={m.text} sessionId={sessionId} mode="quick" fbMap={aiFb} reportId={m.report_id}/>}
           </div>;
         })}
       </div>
       {isRunning &&
         <div className="al-runbar">
           <span className="al-runbar-dot"/>
-          <span className="al-runbar-text">Собираю отчёт{lastDeep&&drLeftText(drEta(lastDeep))?" — "+drLeftText(drEta(lastDeep)):""}</span>
+          <span className="al-runbar-text">
+            <span className="al-runbar-full">Собираю отчёт{lastDeep&&drLeftText(drEta(lastDeep))?" — "+drLeftText(drEta(lastDeep)):""}</span>
+            <span className="al-runbar-short">{lastDeep&&drLeftShort(drEta(lastDeep))||"Собираю отчёт"}</span>
+          </span>
           <span className="al-runbar-el mono">{fmtEl(elapsed)}</span>
           {/* кнопка появляется, когда читать уже есть что: первый раздел написан */}
           {lastDeep&&(lastDeep.text||"").length>400&&
             <button className="al-runbar-btn" onClick={()=>{const el=feedRef.current, d=el&&el.querySelector(".dr-draft-note");
-              if(d){stickRef.current=false;d.scrollIntoView({behavior:"smooth",block:"start"});}}}>Читать отчёт ↑</button>}
+              if(d){stickRef.current=false;d.scrollIntoView({behavior:"smooth",block:"start"});}}}>Читать отчёт
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>}
           {/* раньше остановить отчёт было нечем: поле ввода с кнопкой скрыто на время прогона */}
           <button className={"al-runbar-btn al-runbar-stop"+(stopArm?" arm":"")} onClick={askStop}
             aria-label={stopArm?"Подтвердить остановку отчёта":"Остановить отчёт"}>
             {stopArm?"Точно остановить?":"Остановить"}</button>
         </div>}
-      {showComposer &&
-      <div className="composer-dock">
-        <div className="composer-inner">
-          {isEmpty&&(()=>{const n=awNorm(q); if(n.length<18)return null;
-            const hit=sessAll.find(x=>{const f=awNorm(x.first_q||x.title); return f&&(x.n_answers>0||x.report_id)&&(f===n||(n.length>=30&&f.startsWith(n.slice(0,60))));});
-            return hit?<div className="aw-dup" role="status">Вы уже спрашивали это {fmtHistTime(hit.updated_at)} —
-              <button type="button" onClick={()=>openSession(hit.session_id)}>открыть {hit.report_id?"отчёт":"ответ"}</button></div>:null;})()}
-          {slotHint && <div className="aw-dup aw-slot" role="alert">{slotHint}</div>}
-          <div className="chat-input-wrap">
-            <textarea ref={inputRef} className="chat-textarea" rows={1}
-              aria-label="Вопрос ИИ-помощнику"
-              placeholder="Спросите или поставьте задачу: ставка, жалобы, сравнение банков, нормы, новость…"
-              value={q} onChange={e=>{setQ(e.target.value); if(slotHint)setSlotHint("");}}
-              onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}/>
-            <div className="composer-bar">
-              {/* Режим выбирать не нужно: глубину ответа помощник определяет по вопросу
-                  и показывает решение в ленте, где его можно поменять одним нажатием. */}
-              <span className="composer-hint composer-auto" title="Короткая справка приходит меньше чем за минуту, отчёт с источниками — за 3–5 минут. Что нужно, помощник решает по вопросу; своё решение он показывает сразу, и его можно поменять. Можно и написать прямо: «коротко» или «нужен отчёт».">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>
-                справка или отчёт — решу по вопросу</span>
-              <span className="composer-kbd">Enter ↵</span>
-              {loading
-                ? <button className="composer-send composer-stop" onClick={()=>abortRef.current?.abort()}
-                          aria-label="Остановить прогон">
-                    Остановить
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
-                  </button>
-                : <button className="composer-send" disabled={!q.trim()} onClick={()=>send()} aria-label="Отправить">
-                Спросить
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-                  </button>}
-            </div>
-          </div>
-        </div>
-      </div>}
+      {showComposer && !isEmpty && <div className="composer-dock">{composerEl}</div>}
     </div>
   </div>;
 }

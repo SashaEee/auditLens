@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 16c3faa3b194f7b144b9430d73d7a41ba568a969790cb4004029a73dc604ffad): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 f06d94eb79022b9c9033d4a846aec68de9fb0db14fa627a9c986c191d0110f75): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -133,70 +133,135 @@ function AiWelcome({
   recent,
   onOpenHistory,
   onLoadSession,
-  dayIns
+  dayIns,
+  composer
 }) {
   const me = useMe();
   const tpl = awTemplates(me);
+  const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || "");
+  // Порядок — по тому, зачем сюда приходят: задать вопрос, вернуться к прошлому
+  // разговору, взять повод из сегодняшнего выпуска. Всё остальное — одной строкой.
   return /*#__PURE__*/React.createElement("div", {
     className: "ai-welcome fade-in"
   }, /*#__PURE__*/React.createElement("div", {
+    className: "aw-top"
+  }, /*#__PURE__*/React.createElement("div", {
     className: "aw-eyebrow"
-  }, me ? `${greeting(me)} · ИИ-помощник` : "ИИ-помощник · AuditLens"), /*#__PURE__*/React.createElement("h1", {
-    className: "aw-title"
-  }, "\u0421\u043F\u0440\u043E\u0441\u0438\u0442\u0435 \u043E \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0430\u0445, \u0436\u0430\u043B\u043E\u0431\u0430\u0445 \u0438\xA0\u0440\u0435\u0433\u0443\u043B\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u0438"), /*#__PURE__*/React.createElement("p", {
-    className: "aw-lede"
-  }, "\u041F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u043E\u0442\u0432\u0435\u0447\u0430\u0435\u0442 \u043F\u043E \u0434\u0430\u043D\u043D\u044B\u043C AuditLens \u2014 \u0436\u0430\u043B\u043E\u0431\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432, \u0442\u0430\u0440\u0438\u0444\u0430\u043C \u0431\u0430\u043D\u043A\u043E\u0432, \u043D\u043E\u0432\u043E\u0441\u0442\u044F\u043C \u0438 \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442\u0430\u043C \u0426\u0411 \u2014 \u0438 \u0441\u0441\u044B\u043B\u0430\u0435\u0442\u0441\u044F \u043D\u0430 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438."), /*#__PURE__*/React.createElement("div", {
-    className: "aw-modes",
-    role: "note",
-    "aria-label": "\u041A\u0430\u043A \u043E\u0442\u0432\u0435\u0447\u0430\u0435\u0442 \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, "\u041A\u043E\u0440\u043E\u0442\u043A\u0430\u044F \u0441\u043F\u0440\u0430\u0432\u043A\u0430"), /*#__PURE__*/React.createElement("span", null, "\u0441\u0442\u0430\u0432\u043A\u0430, \u043B\u0438\u043C\u0438\u0442, \u043D\u043E\u0440\u043C\u0430, \u043F\u0440\u0438\u043C\u0435\u0440\u044B \u0436\u0430\u043B\u043E\u0431 \u2014 \u043C\u0435\u043D\u044C\u0448\u0435 \u043C\u0438\u043D\u0443\u0442\u044B")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, "\u041E\u0442\u0447\u0451\u0442 \u0441 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430\u043C\u0438"), /*#__PURE__*/React.createElement("span", null, "\u0441\u0440\u0430\u0432\u043D\u0435\u043D\u0438\u0435, \u043E\u0431\u0437\u043E\u0440 \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0430, \u0440\u0430\u0437\u0431\u043E\u0440 \u0436\u0430\u043B\u043E\u0431 \u2014 3\u20135 \u043C\u0438\u043D\u0443\u0442, \u0447\u0438\u0441\u043B\u0430 \u0441\u0432\u0435\u0440\u0435\u043D\u044B")), /*#__PURE__*/React.createElement("p", {
-    className: "aw-modes-n"
-  }, "\u0412\u044B\u0431\u0438\u0440\u0430\u0442\u044C \u043D\u0435 \u043D\u0443\u0436\u043D\u043E: \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u0441\u0430\u043C \u043F\u043E\u0439\u043C\u0451\u0442 \u043F\u043E \u0432\u043E\u043F\u0440\u043E\u0441\u0443, \u0447\u0442\u043E \u043D\u0443\u0436\u043D\u043E, \u0438 \u0441\u0440\u0430\u0437\u0443 \u0441\u043A\u0430\u0436\u0435\u0442, \u0447\u0435\u043C \u043E\u0442\u0432\u0435\u0447\u0430\u0435\u0442. \u041D\u0435 \u0443\u0433\u0430\u0434\u0430\u043B \u2014 \u043F\u043E\u043F\u0440\u0430\u0432\u0438\u0442\u0435 \u043E\u0434\u043D\u0438\u043C \u043D\u0430\u0436\u0430\u0442\u0438\u0435\u043C.")), dayIns && dayIns.length > 0 && /*#__PURE__*/React.createElement("section", {
-    className: "aw-sec",
-    "aria-labelledby": "aw-day-h"
-  }, /*#__PURE__*/React.createElement("h2", {
-    className: "eyebrow",
-    id: "aw-day-h"
-  }, "\u0421\u0435\u0433\u043E\u0434\u043D\u044F \u0432 \u0432\u044B\u043F\u0443\u0441\u043A\u0435"), /*#__PURE__*/React.createElement("div", {
-    className: "aw-day"
-  }, dayIns.map((ins, i) => /*#__PURE__*/React.createElement("button", {
-    key: i,
+  }, me ? greeting(me) : "ИИ-помощник"), /*#__PURE__*/React.createElement("button", {
     type: "button",
-    className: "aw-dcard",
-    "data-sev": ins.severity || undefined,
-    onClick: () => onFill(ins.ai_prompt)
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "aw-dk"
-  }, AW_KIND[ins.kind] || "Повод дня"), /*#__PURE__*/React.createElement("span", {
-    className: "aw-dt"
-  }, ins.title), /*#__PURE__*/React.createElement("span", {
-    className: "aw-dgo"
-  }, "\u041F\u043E\u0434\u0441\u0442\u0430\u0432\u0438\u0442\u044C \u0432\u043E\u043F\u0440\u043E\u0441"))))), /*#__PURE__*/React.createElement("section", {
-    className: "aw-sec",
-    "aria-labelledby": "aw-tpl-h"
-  }, /*#__PURE__*/React.createElement("h2", {
-    className: "eyebrow",
-    id: "aw-tpl-h"
-  }, "\u041D\u0430\u0447\u0430\u0442\u044C \u0441 \u0437\u0430\u0434\u0430\u0447\u0438"), /*#__PURE__*/React.createElement("div", {
-    className: "aw-tpls"
+    className: "hist-btn aw-hist",
+    onClick: onOpenHistory,
+    title: "\u0412\u0441\u0435 \u043F\u0440\u043E\u0448\u043B\u044B\u0435 \u0440\u0430\u0437\u0433\u043E\u0432\u043E\u0440\u044B \u0438 \u043E\u0442\u0447\u0451\u0442\u044B"
+  }, /*#__PURE__*/React.createElement("svg", {
+    width: "13",
+    height: "13",
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("circle", {
+    cx: "12",
+    cy: "12",
+    r: "9"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M12 7.5V12l3 1.8"
+  })), "\u0418\u0441\u0442\u043E\u0440\u0438\u044F ", /*#__PURE__*/React.createElement("kbd", null, mac ? "⌘K" : "Ctrl K"))), /*#__PURE__*/React.createElement("h1", {
+    className: "aw-title"
+  }, "\u0421\u043F\u0440\u043E\u0441\u0438\u0442\u0435 \u043E \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0430\u0445, \u0436\u0430\u043B\u043E\u0431\u0430\u0445 \u0438\xA0\u0440\u0435\u0433\u0443\u043B\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u0438"), /*#__PURE__*/React.createElement("div", {
+    className: "aw-ask"
+  }, composer, /*#__PURE__*/React.createElement("div", {
+    className: "aw-tpls",
+    role: "group",
+    "aria-label": "\u041D\u0430\u0447\u0430\u0442\u044C \u0441 \u0437\u0430\u0434\u0430\u0447\u0438"
   }, tpl.map(x => /*#__PURE__*/React.createElement("button", {
     key: x.k,
     type: "button",
     className: "chip aw-tpl",
     "data-tip": x.t,
     onClick: () => onFill(x.t, x.slot)
-  }, x.k)))), recent && recent.length > 0 && /*#__PURE__*/React.createElement("section", {
+  }, x.k))), /*#__PURE__*/React.createElement("p", {
+    className: "aw-how"
+  }, "\u0421\u043F\u0440\u0430\u0432\u043A\u0430 \u2014 \u0437\u0430 \u043C\u0438\u043D\u0443\u0442\u0443, \u043E\u0442\u0447\u0451\u0442 \u0441 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430\u043C\u0438 \u2014 \u0437\u0430 3\u20135 \u043C\u0438\u043D\u0443\u0442. \u0427\u0442\u043E \u043D\u0443\u0436\u043D\u043E, \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u043F\u043E\u0439\u043C\u0451\u0442 \u043F\u043E \u0432\u043E\u043F\u0440\u043E\u0441\u0443.")), recent && recent.length > 0 && /*#__PURE__*/React.createElement("section", {
     className: "aw-sec aw-recent",
     "aria-labelledby": "aw-rec-h"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "aw-recent-h"
+    className: "aw-sec-h"
   }, /*#__PURE__*/React.createElement("h2", {
     className: "eyebrow",
     id: "aw-rec-h"
-  }, "\u041F\u0440\u043E\u0434\u043E\u043B\u0436\u0438\u0442\u044C"), /*#__PURE__*/React.createElement("button", {
+  }, "\u041F\u0440\u043E\u0434\u043E\u043B\u0436\u0438\u0442\u044C")), /*#__PURE__*/React.createElement("div", {
+    className: "aw-rows"
+  }, recent.slice(0, 3).map(s => {
+    const isRep = !!s.report_id,
+      has = isRep || s.n_answers > 0;
+    return /*#__PURE__*/React.createElement("button", {
+      key: s.session_id,
+      type: "button",
+      className: "aw-row" + (has ? "" : " none"),
+      onClick: () => onLoadSession && onLoadSession(s.session_id),
+      "data-tip": s.first_q && s.first_q.length > 60 ? s.first_q : undefined
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "aw-row-ic",
+      "aria-hidden": "true"
+    }, isRep ? /*#__PURE__*/React.createElement("svg", {
+      width: "15",
+      height: "15",
+      viewBox: "0 0 24 24",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: "1.6",
+      strokeLinecap: "round",
+      strokeLinejoin: "round"
+    }, /*#__PURE__*/React.createElement("path", {
+      d: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M14 3v5h5M9 13h6M9 17h4"
+    })) : /*#__PURE__*/React.createElement("svg", {
+      width: "15",
+      height: "15",
+      viewBox: "0 0 24 24",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: "1.6",
+      strokeLinecap: "round",
+      strokeLinejoin: "round"
+    }, /*#__PURE__*/React.createElement("path", {
+      d: "M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"
+    }))), /*#__PURE__*/React.createElement("span", {
+      className: "aw-row-t"
+    }, s.title || s.first_q || "Без названия"), /*#__PURE__*/React.createElement("span", {
+      className: "aw-row-m"
+    }, isRep ? "отчёт" : has ? "ответ" : "без ответа", " \xB7 ", fmtHistTime(s.updated_at), s.n_same > 1 ? ` · ${s.n_same} ${plural(s.n_same, "раз", "раза", "раз")}` : ""));
+  }))), dayIns && dayIns.length > 0 && /*#__PURE__*/React.createElement("section", {
+    className: "aw-sec",
+    "aria-labelledby": "aw-day-h"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "aw-sec-h"
+  }, /*#__PURE__*/React.createElement("h2", {
+    className: "eyebrow",
+    id: "aw-day-h"
+  }, "\u0421\u0435\u0433\u043E\u0434\u043D\u044F \u0432 \u0432\u044B\u043F\u0443\u0441\u043A\u0435")), /*#__PURE__*/React.createElement("div", {
+    className: "aw-rows"
+  }, dayIns.map((ins, i) => /*#__PURE__*/React.createElement("button", {
+    key: i,
     type: "button",
-    onClick: onOpenHistory
-  }, "\u0412\u0441\u044F \u0438\u0441\u0442\u043E\u0440\u0438\u044F", /*#__PURE__*/React.createElement("svg", {
+    className: "aw-row aw-row-day",
+    "data-sev": ins.severity || undefined,
+    onClick: () => onFill(ins.ai_prompt),
+    title: "\u041F\u043E\u0434\u0441\u0442\u0430\u0432\u0438\u0442\u044C \u0433\u043E\u0442\u043E\u0432\u044B\u0439 \u0432\u043E\u043F\u0440\u043E\u0441 \u043F\u043E \u044D\u0442\u043E\u043C\u0443 \u043F\u043E\u0432\u043E\u0434\u0443 \u0432 \u043F\u043E\u043B\u0435 \u0432\u0432\u043E\u0434\u0430"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "aw-row-ic",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("i", null)), /*#__PURE__*/React.createElement("span", {
+    className: "aw-row-t"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "aw-row-k"
+  }, AW_KIND[ins.kind] || "Повод дня"), ins.title), /*#__PURE__*/React.createElement("span", {
+    className: "aw-row-m"
+  }, "\u0441\u043F\u0440\u043E\u0441\u0438\u0442\u044C", /*#__PURE__*/React.createElement("svg", {
     width: "12",
     height: "12",
     viewBox: "0 0 24 24",
@@ -208,22 +273,7 @@ function AiWelcome({
     "aria-hidden": "true"
   }, /*#__PURE__*/React.createElement("path", {
     d: "M5 12h14M13 6l6 6-6 6"
-  })))), /*#__PURE__*/React.createElement("div", {
-    className: "aw-recent-grid"
-  }, recent.map(s => {
-    const st = s.report_id ? "отчёт" : s.n_answers > 0 ? "ответ" : "без ответа";
-    return /*#__PURE__*/React.createElement("button", {
-      key: s.session_id,
-      type: "button",
-      className: "aw-rec" + (s.n_answers > 0 || s.report_id ? "" : " none"),
-      onClick: () => onLoadSession && onLoadSession(s.session_id),
-      "data-tip": s.first_q && s.first_q.length > 60 ? s.first_q : undefined
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "t"
-    }, s.title || s.first_q || "Без названия"), /*#__PURE__*/React.createElement("span", {
-      className: "m"
-    }, fmtHistTime(s.updated_at), " \xB7 ", st, s.n_same > 1 ? ` · спрашивали ${s.n_same} ${plural(s.n_same, "раз", "раза", "раз")}` : ""));
-  }))));
+  }))))))));
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -3008,19 +3058,19 @@ const FB_CSS = `
 .aifb button.tb{width:27px;height:27px;border-radius:7px;display:grid;place-items:center;color:var(--ink-3);
   border:1px solid transparent;transition:color .12s,background .12s,border-color .12s;}
 .aifb button.tb:hover{color:var(--ink-2);background:var(--paper-2);}
-.aifb button.tb.on{color:var(--accent-ink);background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent),transparent 75%);}
+.aifb button.tb.on{color:var(--pos);background:color-mix(in oklab,var(--pos),transparent 90%);border-color:color-mix(in oklab,var(--pos),transparent 70%);}
 .aifb button.tb.on-neg{color:var(--neg);background:color-mix(in oklab,var(--neg),transparent 90%);border-color:color-mix(in oklab,var(--neg),transparent 75%);}
 .aifb-why{width:100%;display:flex;flex-wrap:wrap;gap:7px;align-items:center;animation:fade-in .2s ease-out;}
 .aifb-chip{font-size:11.5px;padding:5px 11px;border-radius:999px;border:1px solid var(--hair);color:var(--ink-3);transition:all .12s;}
-.aifb-chip.on{border-color:var(--accent);color:var(--accent-ink);background:var(--accent-soft);}
+.aifb-chip.on{border-color:color-mix(in oklab,var(--select),transparent 45%);color:var(--ink);background:var(--select-soft);}
 .aifb-inp{flex:1;min-width:170px;height:30px;padding:0 10px;font-size:12px;border:1px solid var(--hair);border-radius:8px;
   background:var(--paper);color:var(--ink);}
-.aifb-send{height:30px;padding:0 13px;border-radius:8px;background:var(--accent);color:#fff;font-size:12px;font-weight:500;}
+.aifb-send{height:30px;padding:0 13px;border-radius:8px;background:var(--ink);color:var(--paper);font-size:12px;font-weight:500;}
 .aifb-done{font-size:11.5px;color:var(--pos);}
 .shr{position:relative;display:inline-flex;}
 .shr-btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border:1px solid var(--hair);
   border-radius:8px;background:var(--surface);font-size:12px;color:var(--ink-2);transition:color .12s,border-color .12s;}
-.shr-btn:hover{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 75%);}
+.shr-btn:hover{color:var(--ink);border-color:var(--ink-4);}
 .shr-btn .n{font-family:inherit;font-size:11px;color:var(--accent-ink);background:var(--accent-soft);
   border-radius:999px;padding:1px 6px;font-variant-numeric:tabular-nums}
 .shr-pop{position:absolute;top:34px;right:0;z-index:90;width:302px;background:var(--surface);border:1px solid var(--hair);
@@ -3169,7 +3219,7 @@ function AiFbBar({
     onClick: e => e.stopPropagation()
   }, /*#__PURE__*/React.createElement("span", {
     className: "aifb-l"
-  }, mode === "deep" ? "Пригодился отчёт?" : "Оценить ответ"), /*#__PURE__*/React.createElement("button", {
+  }, mode === "deep" ? "Отчёт пригодился?" : "Ответ пригодился?"), /*#__PURE__*/React.createElement("button", {
     className: "tb" + (v === 1 ? " on" : ""),
     title: "\u041F\u043E\u043B\u0435\u0437\u043D\u044B\u0439 \u043E\u0442\u0432\u0435\u0442",
     onClick: like
@@ -3179,7 +3229,7 @@ function AiFbBar({
     onClick: dislike
   }, /*#__PURE__*/React.createElement(IcTDn, null)), sent && v === -1 && /*#__PURE__*/React.createElement("span", {
     className: "aifb-done"
-  }, "\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E \u2014 \u0440\u0430\u0437\u0431\u0435\u0440\u0451\u043C \u2713"), open && v === -1 && /*#__PURE__*/React.createElement("div", {
+  }, "\u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E \u2014 \u0440\u0430\u0437\u0431\u0435\u0440\u0451\u043C"), open && v === -1 && /*#__PURE__*/React.createElement("div", {
     className: "aifb-why"
   }, AIFB_REASONS.map(([k, l]) => /*#__PURE__*/React.createElement("button", {
     key: k,
@@ -3190,7 +3240,8 @@ function AiFbBar({
     }))
   }, l)), /*#__PURE__*/React.createElement("input", {
     className: "aifb-inp",
-    placeholder: "\u0447\u0442\u043E \u043D\u0435 \u0442\u0430\u043A? (\u043D\u0435\u043E\u0431\u044F\u0437\u0430\u0442\u0435\u043B\u044C\u043D\u043E)",
+    placeholder: "\u0427\u0442\u043E \u043D\u0435 \u0442\u0430\u043A? \u041C\u043E\u0436\u043D\u043E \u043D\u0435 \u043F\u0438\u0441\u0430\u0442\u044C",
+    "aria-label": "\u0427\u0442\u043E \u043D\u0435 \u0442\u0430\u043A \u0441 \u043E\u0442\u0432\u0435\u0442\u043E\u043C",
     value: comment,
     onChange: e => setComment(e.target.value),
     onKeyDown: e => {
@@ -13372,12 +13423,24 @@ function MatrixExportButton({
 // В тексте метка становится названием файла; недописанная в стриме — прячется.
 const AGF_MARK = /\[\[FILE:([0-9a-f]{32})\]\]/g;
 function stripFileMarks(text, files) {
-  if (!text || text.indexOf("[[F") < 0) return text;
+  if (!text) return text;
   const names = {};
   (files || []).forEach(f => {
     names[f.id] = f.name;
   });
-  return text.replace(AGF_MARK, (_, id) => names[id] ? `**${names[id]}**` : "").replace(/\[\[F[^\]\n]*$/, "");
+  let t = text;
+  if (t.indexOf("[[F") >= 0) {
+    // Метка отдельной строкой — убираем: файл показан карточкой под ответом, и
+    // повтор его имени абзацем выше только шумит. Упоминание внутри фразы остаётся.
+    t = t.replace(/^[ \t]*\[\[FILE:[0-9a-f]+\]\][ \t]*\n?/gm, "").replace(AGF_MARK, (_, id) => names[id] ? `**${names[id]}**` : "").replace(/\[\[F[^\]\n]*$/, "");
+  }
+  // В сохранённом ответе метка уже заменена на «имя файла» — та же строка-повтор.
+  (files || []).forEach(f => {
+    if (!f.name) return;
+    const esc = f.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    t = t.replace(new RegExp("^[ \\t]*«" + esc + "»[ \\t]*\\n?", "gm"), "");
+  });
+  return t.replace(/\n{3,}/g, "\n\n").trimEnd();
 }
 function AgentFiles({
   files
@@ -13653,6 +13716,39 @@ function ThinkingPanel({
   })));
 }
 
+// Сбой ответа: что случилось и что сделать — с повтором.
+function AiError({
+  text,
+  onRetry
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    className: "ai-error",
+    role: "alert"
+  }, /*#__PURE__*/React.createElement("svg", {
+    width: "16",
+    height: "16",
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "1.8",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("circle", {
+    cx: "12",
+    cy: "12",
+    r: "9"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M12 7.5v5.5M12 16.5v.2"
+  })), /*#__PURE__*/React.createElement("span", {
+    className: "ai-error-t"
+  }, text), onRetry && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "ai-error-b",
+    onClick: onRetry
+  }, "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C"));
+}
+
 // ─── Премиальный индикатор ожидания: пульс + подпись стадии + бегущие точки.
 //     Закрывает «тихие окна» (генерация вопросов, сборка запроса, старт
 //     research) — пользователь всегда видит, что система жива. ──────────────
@@ -13747,36 +13843,58 @@ function ClarifyCard({
     }).filter(a => a.selected.length || a.other);
     onSubmit(msg.question, msg.forceDeep, answers);
   };
+  // Варианты — настоящие переключатели: работают с клавиатуры и читаются экранным диктором.
+  const onKey = (e, fn) => {
+    if (e.key === " " || e.key === "Enter") {
+      e.preventDefault();
+      fn();
+    }
+  };
   return /*#__PURE__*/React.createElement("div", {
-    className: "clarify-card fade-in"
+    className: "clarify-card fade-in",
+    role: "group",
+    "aria-label": "\u0423\u0442\u043E\u0447\u043D\u0435\u043D\u0438\u0435 \u0432\u043E\u043F\u0440\u043E\u0441\u0430"
   }, /*#__PURE__*/React.createElement("div", {
     className: "clarify-head"
   }, /*#__PURE__*/React.createElement("span", {
-    className: "dr-stage-pulse",
-    style: {
-      background: "var(--accent)"
-    }
-  }), /*#__PURE__*/React.createElement("span", {
-    className: "eyebrow",
-    style: {
-      color: "var(--accent)"
-    }
-  }, "\u0423\u0442\u043E\u0447\u043D\u0435\u043D\u0438\u0435 \u0437\u0430\u043F\u0440\u043E\u0441\u0430 \xB7 ", qs.length, " \u0432\u043E\u043F\u0440."), /*#__PURE__*/React.createElement("button", {
+    className: "eyebrow"
+  }, "\u0423\u0442\u043E\u0447\u043D\u0435\u043D\u0438\u0435 \xB7 ", qs.length, " ", plural(qs.length, "вопрос", "вопроса", "вопросов")), /*#__PURE__*/React.createElement("button", {
+    type: "button",
     className: "clarify-x",
     onClick: () => onSkip(msg.question, msg.forceDeep),
-    "aria-label": "\u041F\u0440\u043E\u043F\u0443\u0441\u0442\u0438\u0442\u044C"
-  }, "\u2715")), /*#__PURE__*/React.createElement("div", {
+    "aria-label": "\u041F\u0440\u043E\u043F\u0443\u0441\u0442\u0438\u0442\u044C \u0443\u0442\u043E\u0447\u043D\u0435\u043D\u0438\u0435"
+  }, /*#__PURE__*/React.createElement("svg", {
+    width: "14",
+    height: "14",
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M6 6l12 12M18 6L6 18"
+  })))), /*#__PURE__*/React.createElement("div", {
+    className: "clarify-title"
+  }, "\u041E\u0442 \u043E\u0442\u0432\u0435\u0442\u0430 \u0437\u0430\u0432\u0438\u0441\u0438\u0442, \u0447\u0442\u043E \u0432\u043E\u0439\u0434\u0451\u0442 \u0432 \u043E\u0442\u0447\u0451\u0442"), /*#__PURE__*/React.createElement("div", {
     className: "clarify-sub"
-  }, "\u041E\u0442\u0432\u0435\u0442\u044C\u0442\u0435, \u0447\u0442\u043E\u0431\u044B \u043E\u0442\u0447\u0451\u0442 \u043F\u043E\u043F\u0430\u043B \u0442\u043E\u0447\u043D\u043E \u0432 \u0446\u0435\u043B\u044C \u2014 \u044D\u0442\u043E \u0437\u0430\u0439\u043C\u0451\u0442 ~15 \u0441\u0435\u043A\u0443\u043D\u0434."), qs.map((qq, qi) => {
+  }, "\u0412\u044B\u0431\u0435\u0440\u0438\u0442\u0435 \u043F\u043E\u0434\u0445\u043E\u0434\u044F\u0449\u0435\u0435 \u2014 \u044D\u0442\u043E \u043F\u043E\u043B\u043C\u0438\u043D\u0443\u0442\u044B. \u041C\u043E\u0436\u043D\u043E \u043F\u0440\u043E\u043F\u0443\u0441\u0442\u0438\u0442\u044C: \u0442\u043E\u0433\u0434\u0430 \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u0440\u0435\u0448\u0438\u0442 \u0441\u0430\u043C \u0438 \u0441\u043A\u0430\u0436\u0435\u0442, \u043A\u0430\u043A \u043F\u043E\u043D\u044F\u043B \u0432\u043E\u043F\u0440\u043E\u0441."), qs.map((qq, qi) => {
     const c = get(qq.id);
     return /*#__PURE__*/React.createElement("div", {
       className: "clarify-q",
-      key: qi
+      key: qi,
+      role: qq.type === "single" ? "radiogroup" : "group",
+      "aria-label": qq.question
     }, /*#__PURE__*/React.createElement("div", {
       className: "clarify-q-t"
-    }, qq.question), qq.type === "text" ? /*#__PURE__*/React.createElement("input", {
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "clarify-q-n"
+    }, qi + 1), qq.question, qq.type === "multi" && /*#__PURE__*/React.createElement("span", {
+      className: "clarify-q-h"
+    }, "\u043C\u043E\u0436\u043D\u043E \u043D\u0435\u0441\u043A\u043E\u043B\u044C\u043A\u043E")), qq.type === "text" ? /*#__PURE__*/React.createElement("input", {
       className: "clarify-input",
-      placeholder: "\u0441\u0432\u043E\u0439 \u043E\u0442\u0432\u0435\u0442\u2026",
+      placeholder: "\u0412\u0430\u0448 \u043E\u0442\u0432\u0435\u0442",
+      "aria-label": qq.question,
       value: c.vals && c.vals[0] || "",
       onChange: e => setText(qq, e.target.value)
     }) : /*#__PURE__*/React.createElement("div", {
@@ -13786,36 +13904,69 @@ function ClarifyCard({
       return /*#__PURE__*/React.createElement("span", {
         key: oi,
         className: "clarify-chip " + qq.type + (on ? " on" : ""),
+        tabIndex: 0,
+        role: qq.type === "single" ? "radio" : "checkbox",
+        "aria-checked": on,
         onClick: () => toggle(qq, o.label),
-        title: o.hint || ""
+        onKeyDown: e => onKey(e, () => toggle(qq, o.label)),
+        title: o.hint || undefined
       }, /*#__PURE__*/React.createElement("span", {
-        className: "clarify-box"
-      }, on && /*#__PURE__*/React.createElement(Ic.check, null)), o.label, o.recommended && /*#__PURE__*/React.createElement("span", {
+        className: "clarify-box",
+        "aria-hidden": "true"
+      }, on && /*#__PURE__*/React.createElement(Ic.check, null)), /*#__PURE__*/React.createElement("span", {
+        className: "clarify-lbl"
+      }, o.label, o.recommended && /*#__PURE__*/React.createElement("span", {
         className: "clarify-rec"
-      }, "\u0440\u0435\u043A\u043E\u043C."));
+      }, "\u0440\u0435\u043A\u043E\u043C\u0435\u043D\u0434\u0443\u0435\u043C")));
     }), qq.allow_other && /*#__PURE__*/React.createElement("span", {
       className: "clarify-chip dashed" + (c.otherOn ? " on" : ""),
-      onClick: () => toggleOther(qq)
-    }, "\u0414\u0440\u0443\u0433\u043E\u0435\u2026")), qq.allow_other && qq.type !== "text" && c.otherOn && /*#__PURE__*/React.createElement("input", {
+      tabIndex: 0,
+      role: "checkbox",
+      "aria-checked": !!c.otherOn,
+      onClick: () => toggleOther(qq),
+      onKeyDown: e => onKey(e, () => toggleOther(qq))
+    }, "\u0421\u0432\u043E\u0439 \u0432\u0430\u0440\u0438\u0430\u043D\u0442")), qq.allow_other && qq.type !== "text" && c.otherOn && /*#__PURE__*/React.createElement("input", {
       className: "clarify-input",
       style: {
         marginTop: "8px"
       },
-      placeholder: "\u0441\u0432\u043E\u0439 \u0432\u0430\u0440\u0438\u0430\u043D\u0442",
+      placeholder: "\u0412\u043F\u0438\u0448\u0438\u0442\u0435 \u0441\u0432\u043E\u0439 \u0432\u0430\u0440\u0438\u0430\u043D\u0442",
+      "aria-label": "\u0421\u0432\u043E\u0439 \u0432\u0430\u0440\u0438\u0430\u043D\u0442",
+      autoFocus: true,
       value: c.other,
-      onChange: e => setOther(qq, e.target.value)
+      onChange: e => setOther(qq, e.target.value),
+      onKeyDown: e => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          submit();
+        }
+      }
     }));
   }), /*#__PURE__*/React.createElement("div", {
     className: "clarify-foot"
   }, /*#__PURE__*/React.createElement("span", {
     className: "clarify-count"
-  }, "\u043E\u0442\u0432\u0435\u0447\u0435\u043D\u043E ", answered, " / ", qs.length), /*#__PURE__*/React.createElement("button", {
+  }, "\u043E\u0442\u0432\u0435\u0447\u0435\u043D\u043E ", answered, " \u0438\u0437 ", qs.length), /*#__PURE__*/React.createElement("button", {
+    type: "button",
     className: "clarify-skip-btn",
     onClick: () => onSkip(msg.question, msg.forceDeep)
   }, "\u041F\u0440\u043E\u043F\u0443\u0441\u0442\u0438\u0442\u044C"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
     className: "clarify-go",
     onClick: submit
-  }, "\u0423\u0442\u043E\u0447\u043D\u0438\u0442\u044C \u0438 \u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u044C \u2192")));
+  }, "\u0421\u043E\u0431\u0440\u0430\u0442\u044C \u043E\u0442\u0447\u0451\u0442", /*#__PURE__*/React.createElement("svg", {
+    width: "14",
+    height: "14",
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M5 12h14M13 6l6 6-6 6"
+  })))));
 }
 
 // ─── Консоль хода отчёта ─────────────────────────────────────────────────────
@@ -13883,6 +14034,13 @@ function drEta(m) {
     pct: Math.min(97, Math.max(2, Math.round((before + Math.min(inPhase, cur * 0.95)) / total * 100)))
   };
 }
+// то же коротко — для узкого экрана
+const drLeftShort = e => {
+  if (!e || e.left == null) return "";
+  if (e.over) return "дольше обычного";
+  if (e.left < 40) return "меньше минуты";
+  return `ещё ~${Math.max(1, Math.round(e.left / 60))} мин`;
+};
 const drLeftText = e => {
   if (!e || e.left == null) return "";
   if (e.over) return "дольше обычного — работаю";
@@ -14276,36 +14434,84 @@ function DeepConsole({
     }, "\u2014"), /*#__PURE__*/React.createElement("span", {
       className: "dr-con-gap-w"
     }, g)))))));
-  }))));
+  })), (m.ownPreview || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "dr-con-own"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "dr-con-sub-h"
+  }, "\u0423\u0436\u0435 \u043D\u0430\u0448\u043B\u043E\u0441\u044C \u0432 \u0434\u0430\u043D\u043D\u044B\u0445 AuditLens"), /*#__PURE__*/React.createElement("div", {
+    className: "dr-con-own-g"
+  }, m.ownPreview.map((b, bi) => /*#__PURE__*/React.createElement("div", {
+    key: bi,
+    className: "dr-con-own-b"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "dr-con-own-t"
+  }, b.link ? /*#__PURE__*/React.createElement("a", {
+    href: b.link.startsWith("#") ? location.pathname + location.search + b.link : b.link,
+    target: "_blank",
+    rel: "noopener noreferrer",
+    title: "\u041E\u0442\u043A\u0440\u044B\u0442\u044C \u0432 \u0440\u0430\u0437\u0434\u0435\u043B\u0435 \u2014 \u0432 \u043D\u043E\u0432\u043E\u0439 \u0432\u043A\u043B\u0430\u0434\u043A\u0435, \u043E\u0442\u0447\u0451\u0442 \u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0438\u0442 \u0441\u043E\u0431\u0438\u0440\u0430\u0442\u044C\u0441\u044F"
+  }, b.title, /*#__PURE__*/React.createElement("span", {
+    "aria-hidden": "true"
+  }, " \u2197")) : b.title), (b.rows || []).map((r, ri) => /*#__PURE__*/React.createElement("div", {
+    key: ri,
+    className: "dr-con-own-r"
+  }, r.link ? /*#__PURE__*/React.createElement("a", {
+    href: r.link,
+    target: "_blank",
+    rel: "noopener noreferrer"
+  }, r.label) : /*#__PURE__*/React.createElement("span", null, r.label), r.value && /*#__PURE__*/React.createElement("b", {
+    className: "mono"
+  }, r.value)))))), /*#__PURE__*/React.createElement("div", {
+    className: "dr-con-note"
+  }, "\u042D\u0442\u043E \u0447\u0438\u0441\u043B\u0430 \u0438\u0437 \u0440\u0430\u0437\u0434\u0435\u043B\u043E\u0432 AuditLens, \u0430 \u043D\u0435 \u0432\u044B\u0432\u043E\u0434: \u043E\u0442\u0447\u0451\u0442 \u0441\u0432\u0435\u0440\u0438\u0442 \u0438\u0445 \u0441 \u0441\u0430\u0439\u0442\u0430\u043C\u0438 \u0431\u0430\u043D\u043A\u043E\u0432 \u0438 \u043D\u043E\u0440\u043C\u0430\u043C\u0438."))));
 }
 
 // ─── Сводка завершённого прогона (collapsed bar над отчётом, редизайн). ────
-function ResearchSummary({
+// За сколько собран отчёт — словами.
+const rpTook = m => {
+  const sec = Math.round(m.elapsedS || m.elapsed_s || 0);
+  return sec >= 60 ? `${Math.floor(sec / 60)} мин${sec % 60 >= 5 ? ` ${sec % 60} с` : ""}` : sec ? `${sec} с` : "";
+};
+// На чём стоит отчёт — одной строкой под названием: сколько прочитано, сколько
+// фактов выписано, сколько источников в тексте и сошлись ли числа. Заменяет три
+// прежних места (серую плашку, «пилюли» над текстом и строку сводки).
+function RpMeta({
   m
 }) {
-  // Итог прогона одной строкой: за сколько собран, на чём стоит, сошлись ли числа.
   const srcN = (m.sources || []).length;
   const fs = m.factStats || {};
-  const checked = m.verification?.numeric_checked || 0,
-    verified = m.verification?.verified || 0;
-  const sec = Math.round(m.elapsedS || 0);
-  const took = sec >= 60 ? `${Math.floor(sec / 60)} мин${sec % 60 >= 5 ? ` ${sec % 60} с` : ""}` : sec ? `${sec} с` : "";
+  const v = m.verification || {};
+  const checked = v.numeric_checked || 0,
+    verified = v.verified || 0;
+  const facts = fs.total || v.facts_total || 0;
+  const unver = (v.unverified || []).length;
+  const toCheck = () => {
+    const el = document.querySelector(".dr-verify");
+    if (el) el.scrollIntoView({
+      behavior: "smooth",
+      block: "center"
+    });
+  };
+  const items = [fs.pages ? /*#__PURE__*/React.createElement("span", {
+    key: "p"
+  }, "\u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043E ", /*#__PURE__*/React.createElement("b", null, fs.pages), " ", plural(fs.pages, "страница", "страницы", "страниц")) : null, facts ? /*#__PURE__*/React.createElement("span", {
+    key: "f"
+  }, "\u0432\u044B\u043F\u0438\u0441\u0430\u043D\u043E ", /*#__PURE__*/React.createElement("b", null, facts), " ", plural(facts, "факт", "факта", "фактов"), " \u0441 \u0446\u0438\u0442\u0430\u0442\u0430\u043C\u0438") : null, srcN ? /*#__PURE__*/React.createElement("span", {
+    key: "s"
+  }, "\u0432 \u0442\u0435\u043A\u0441\u0442\u0435 ", /*#__PURE__*/React.createElement("b", null, srcN), " ", plural(srcN, "источник", "источника", "источников")) : null, checked ? /*#__PURE__*/React.createElement("span", {
+    key: "c",
+    className: verified === checked ? "ok" : ""
+  }, "\u0441\u043E\u0448\u043B\u043E\u0441\u044C ", /*#__PURE__*/React.createElement("b", null, verified), " \u0438\u0437 ", checked, " ", plural(checked, "числа", "чисел", "чисел")) : null, unver ? /*#__PURE__*/React.createElement("button", {
+    key: "u",
+    type: "button",
+    className: "rp-meta-warn",
+    onClick: toCheck,
+    title: "\u0423\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043D\u0438\u044F, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u043D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u0432\u0435\u0440\u0438\u0442\u044C \u0430\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u0435\u0441\u043A\u0438, \u2014 \u0441\u043F\u0438\u0441\u043E\u043A \u0432 \u043A\u043E\u043D\u0446\u0435 \u043E\u0442\u0447\u0451\u0442\u0430"
+  }, unver, " ", plural(unver, "утверждение требует", "утверждения требуют", "утверждений требуют"), " \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438") : null].filter(Boolean);
+  if (!items.length) return null;
   return /*#__PURE__*/React.createElement("div", {
-    className: "dr-summary-bar"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "dr-summary-ok"
-  }, /*#__PURE__*/React.createElement("svg", {
-    width: "13",
-    height: "13",
-    viewBox: "0 0 24 24",
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth: "2.5",
-    strokeLinecap: "round",
-    strokeLinejoin: "round"
-  }, /*#__PURE__*/React.createElement("path", {
-    d: "M20 6L9 17l-5-5"
-  })), "\u041E\u0442\u0447\u0451\u0442 \u0433\u043E\u0442\u043E\u0432", took ? ` за ${took}` : ""), !!fs.pages && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "\xB7"), /*#__PURE__*/React.createElement("span", null, "\u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043E ", /*#__PURE__*/React.createElement("b", null, fs.pages), " ", plural(fs.pages, "страница", "страницы", "страниц"))), !!fs.total && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "\xB7"), /*#__PURE__*/React.createElement("span", null, "\u0432\u044B\u043F\u0438\u0441\u0430\u043D\u043E ", /*#__PURE__*/React.createElement("b", null, fs.total), " ", plural(fs.total, "факт", "факта", "фактов"), " \u0441 \u0446\u0438\u0442\u0430\u0442\u0430\u043C\u0438")), !!srcN && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "\xB7"), /*#__PURE__*/React.createElement("span", null, "\u0432 \u043E\u0442\u0447\u0451\u0442\u0435 ", /*#__PURE__*/React.createElement("b", null, srcN), " ", plural(srcN, "источник", "источника", "источников"))), checked > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "\xB7"), /*#__PURE__*/React.createElement("span", null, "\u0441\u043E\u0448\u043B\u043E\u0441\u044C ", /*#__PURE__*/React.createElement("b", null, verified), " \u0438\u0437 ", checked, " ", plural(checked, "числа", "чисел", "чисел"))));
+    className: "rp-meta"
+  }, items);
 }
 function ClaimCheckRow({
   claimCheck,
@@ -14959,6 +15165,17 @@ function TableOfContents({
 }
 
 // ─── Sources rail — sticky right column with bidirectional binding ────────
+// Дата источника. У публикаций и документов базы знаний известен только день:
+// «12.10 03:00 МСК» — выдуманная точность (полночь по Гринвичу), поэтому время
+// показываем, только когда оно действительно есть.
+const srcDay = v => {
+  if (!v) return "";
+  const t = String(v);
+  const m = t.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/);
+  if (!m) return t.slice(0, 16);
+  const day = `${m[3]}.${m[2]}.${m[1]}`;
+  return !m[4] || m[4] === "00" && m[5] === "00" ? day : fmtDateMsk(t);
+};
 function SourcesRail({
   sources,
   activeN,
@@ -14970,19 +15187,23 @@ function SourcesRail({
   const officialN = sources.filter(s => s.source_kind === "bank_official").length;
   const regulatorN = sources.filter(s => s.source_kind === "regulator" || s.source_kind === "regulatory" || s.source_kind === "government" || s.source_kind === "legal_db").length;
   return /*#__PURE__*/React.createElement("aside", {
-    className: "dr-rail"
+    className: "dr-rail",
+    "aria-label": "\u0418\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438 \u043E\u0442\u0447\u0451\u0442\u0430"
   }, /*#__PURE__*/React.createElement("div", {
     className: "dr-rail-h"
   }, /*#__PURE__*/React.createElement("span", null, "\u0418\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438 \xB7 ", sources.length), officialN + regulatorN > 0 && /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--ink-3)"
-    }
-  }, officialN + regulatorN, " \u043E\u0444\u0438\u0446.")), /*#__PURE__*/React.createElement("ul", {
+    className: "dr-rail-h-n",
+    title: "\u0421\u0430\u0439\u0442\u044B \u0431\u0430\u043D\u043A\u043E\u0432, \u0440\u0435\u0433\u0443\u043B\u044F\u0442\u043E\u0440\u044B, \u043F\u0440\u0430\u0432\u043E\u0432\u044B\u0435 \u0431\u0430\u0437\u044B"
+  }, "\u0438\u0437 \u043D\u0438\u0445 \u043E\u0444\u0438\u0446\u0438\u0430\u043B\u044C\u043D\u044B\u0445 ", officialN + regulatorN)), /*#__PURE__*/React.createElement("ul", {
     className: "dr-rail-list"
   }, sources.map((s, i) => {
     const kind = s.source_kind || "unknown";
     const kindLabel = SOURCE_KIND_LABELS[kind] || kind;
     const isActive = String(activeN) === String(s.n);
+    const dom = domainOf(s.url) || s.domain || "";
+    // Название страницы, а не вид источника: «Официальный сайт» двадцать раз
+    // подряд ничего не говорил о том, что именно прочитано.
+    const title = (s.title || "").replace(/^AuditLens · /, "").trim() || s.bank_name || kindLabel;
     return /*#__PURE__*/React.createElement("li", {
       key: i
     }, /*#__PURE__*/React.createElement("a", {
@@ -14996,32 +15217,38 @@ function SourcesRail({
       onClick: e => {
         onClick && onClick(s.n, e);
       }
-    }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
+    }, /*#__PURE__*/React.createElement("span", {
       className: "dr-rail-num"
-    }, s.n, "."), /*#__PURE__*/React.createElement("span", {
+    }, s.n), /*#__PURE__*/React.createElement("span", {
+      className: "dr-rail-body"
+    }, /*#__PURE__*/React.createElement("span", {
       className: "dr-rail-bank"
-    }, s.bank_name || kindLabel)), /*#__PURE__*/React.createElement("span", {
-      className: "dr-rail-domain"
-    }, domainOf(s.url) || "—"), /*#__PURE__*/React.createElement("div", {
+    }, title), /*#__PURE__*/React.createElement("span", {
       className: "dr-rail-meta"
-    }, /*#__PURE__*/React.createElement("span", null, kindLabel), /*#__PURE__*/React.createElement(TrustMarks, {
+    }, dom && dom !== "AuditLens" && /*#__PURE__*/React.createElement("span", {
+      className: "dr-rail-domain"
+    }, dom), /*#__PURE__*/React.createElement("span", {
+      className: "dr-rail-kind"
+    }, dom && dom !== "AuditLens" ? kindLabel.toLowerCase() : kindLabel, /*#__PURE__*/React.createElement(TrustMarks, {
       score: s.trust_score
-    }), s.published ? /*#__PURE__*/React.createElement("span", {
-      title: "\u0434\u0430\u0442\u0430 \u043F\u0443\u0431\u043B\u0438\u043A\u0430\u0446\u0438\u0438 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430"
-    }, "\xB7 ", fmtDateMsk(s.published)) : s.fetched_at && /*#__PURE__*/React.createElement("span", {
-      title: "\u0434\u0430\u0442\u0430 \u0441\u0431\u043E\u0440\u0430; \u0441\u0430\u043C \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A \u0434\u0430\u0442\u044B \u043D\u0435 \u043E\u0431\u044A\u044F\u0432\u0438\u043B"
-    }, "\xB7 \u0441\u043E\u0431\u0440\u0430\u043D\u043E ", formatRelDate(s.fetched_at)), s.kb_loaded && (s.kb_fallback ? /*#__PURE__*/React.createElement("span", {
+    }))), (s.published || s.fetched_at || s.kb_loaded || s.dead) && /*#__PURE__*/React.createElement("span", {
+      className: "dr-rail-when"
+    }, s.published ? /*#__PURE__*/React.createElement("span", {
+      title: "\u0414\u0430\u0442\u0430 \u043F\u0443\u0431\u043B\u0438\u043A\u0430\u0446\u0438\u0438 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430"
+    }, "\u043E\u043F\u0443\u0431\u043B\u0438\u043A\u043E\u0432\u0430\u043D\u043E ", srcDay(s.published)) : !s.kb_loaded && s.fetched_at && /*#__PURE__*/React.createElement("span", {
+      title: "\u0414\u0430\u0442\u0430 \u0441\u0431\u043E\u0440\u0430; \u0441\u0430\u043C \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A \u0434\u0430\u0442\u044B \u043D\u0435 \u043E\u0431\u044A\u044F\u0432\u0438\u043B"
+    }, "\u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043E ", formatRelDate(s.fetched_at)), s.kb_loaded && (s.kb_fallback ? /*#__PURE__*/React.createElement("span", {
       className: "src-stale",
-      title: "\u0421\u0435\u0433\u043E\u0434\u043D\u044F \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u043B\u0430\u0441\u044C, \u043F\u043E\u044D\u0442\u043E\u043C\u0443 \u0432 \u043E\u0442\u0447\u0451\u0442\u0435 \u2014 \u0435\u0451 \u0441\u043E\u0445\u0440\u0430\u043D\u0451\u043D\u043D\u0430\u044F \u043A\u043E\u043F\u0438\u044F \u0438\u0437 \u0431\u0430\u0437\u044B \u0437\u043D\u0430\u043D\u0438\u0439. \u0423\u0441\u043B\u043E\u0432\u0438\u044F \u043C\u043E\u0433\u043B\u0438 \u0438\u0437\u043C\u0435\u043D\u0438\u0442\u044C\u0441\u044F: \u0441\u0432\u0435\u0440\u044C\u0442\u0435 \u043D\u0430 \u0441\u0430\u0439\u0442\u0435"
-    }, "\xB7 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u043B\u0430\u0441\u044C \u2014 \u0441\u043E\u0445\u0440\u0430\u043D\u0451\u043D\u043D\u0430\u044F \u043A\u043E\u043F\u0438\u044F \u043E\u0442 ", fmtDateMsk(s.kb_loaded)) : /*#__PURE__*/React.createElement("span", {
+      title: "\u0421\u0435\u0433\u043E\u0434\u043D\u044F \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u043B\u0430\u0441\u044C, \u043F\u043E\u044D\u0442\u043E\u043C\u0443 \u0432 \u043E\u0442\u0447\u0451\u0442\u0435 \u2014 \u0435\u0451 \u0441\u043E\u0445\u0440\u0430\u043D\u0451\u043D\u043D\u0430\u044F \u043A\u043E\u043F\u0438\u044F \u0438\u0437 \u0431\u0430\u0437\u044B \u0437\u043D\u0430\u043D\u0438\u0439. \u0423\u0441\u043B\u043E\u0432\u0438\u044F \u043C\u043E\u0433\u043B\u0438 \u0438\u0437\u043C\u0435\u043D\u0438\u0442\u044C\u0441\u044F: \u043F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443 \u043F\u0435\u0440\u0435\u0434 \u0442\u0435\u043C, \u043A\u0430\u043A \u0441\u0441\u044B\u043B\u0430\u0442\u044C\u0441\u044F \u043D\u0430 \u0447\u0438\u0441\u043B\u043E."
+    }, "\u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u043B\u0430\u0441\u044C \u2014 \u043A\u043E\u043F\u0438\u044F \u043E\u0442 ", srcDay(s.kb_loaded)) : /*#__PURE__*/React.createElement("span", {
       title: "\u0414\u0430\u0442\u0438\u0440\u043E\u0432\u0430\u043D\u043D\u044B\u0439 \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442 \u0438\u0437 \u0431\u0430\u0437\u044B \u0437\u043D\u0430\u043D\u0438\u0439 AuditLens: \u0442\u0435\u043A\u0441\u0442 \u043D\u0430 \u0434\u0430\u0442\u0443 \u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0438"
-    }, "\xB7 \u0438\u0437 \u0431\u0430\u0437\u044B \u0437\u043D\u0430\u043D\u0438\u0439, \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D\u043E ", fmtDateMsk(s.kb_loaded))), s.dead && /*#__PURE__*/React.createElement("span", {
+    }, "\u0431\u0430\u0437\u0430 \u0437\u043D\u0430\u043D\u0438\u0439, \u0442\u0435\u043A\u0441\u0442 \u043D\u0430 ", srcDay(s.kb_loaded))), s.dead && /*#__PURE__*/React.createElement("span", {
       className: "dr-rail-dead",
       title: "\u0421\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430 \u0441\u0435\u0439\u0447\u0430\u0441 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u0435\u0442\u0441\u044F \u2014 \u0446\u0438\u0442\u0430\u0442\u0430 \u0438 \u0434\u0430\u0442\u0430 \u0432\u0437\u044F\u0442\u044B \u043F\u0440\u0438 \u0441\u0431\u043E\u0440\u0435"
-    }, "\u0441\u0441\u044B\u043B\u043A\u0430 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u0435\u0442\u0441\u044F"))));
+    }, "\u0441\u0441\u044B\u043B\u043A\u0430 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u0435\u0442\u0441\u044F")))));
   })), failed > 0 && /*#__PURE__*/React.createElement("div", {
     className: "dr-rail-failed"
-  }, "\u26A0 ", failed, " \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A(\u043E\u0432) \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u044B \u2014 \u0438\u0441\u043A\u043B\u044E\u0447\u0435\u043D\u044B \u0438\u0437 \u0441\u043F\u0438\u0441\u043A\u0430"));
+  }, "\u041D\u0435 \u043E\u0442\u043A\u0440\u044B\u043B\u043E\u0441\u044C \u0438 \u0438\u0441\u043A\u043B\u044E\u0447\u0435\u043D\u043E \u0438\u0437 \u0441\u043F\u0438\u0441\u043A\u0430: ", failed));
 }
 
 // ─── DocTocSlot: автоматическое оглавление из ближайшего .dr-doc-main ────
@@ -15057,23 +15284,25 @@ function DocTocSlot() {
         subtree: true,
         characterData: true
       });
-      // Active section через scroll
+      // Текущий раздел — по прокрутке. Прокручивается лента помощника, а не окно:
+      // раньше слушалось окно, и отметка текущего раздела не двигалась никогда.
+      const scroller = slot.closest(".chat-feed") || window;
       const onScroll = () => {
         const hs = Array.from(main.querySelectorAll("h2,h3"));
-        const top = window.scrollY + 110;
+        const base = scroller === window ? 0 : scroller.getBoundingClientRect().top;
         let cur = null;
         for (const h of hs) {
-          if (h.getBoundingClientRect().top + window.scrollY <= top) cur = h.id;
+          if (h.getBoundingClientRect().top - base <= 120) cur = h.id;
         }
         setActiveId(cur);
       };
-      window.addEventListener("scroll", onScroll, {
+      scroller.addEventListener("scroll", onScroll, {
         passive: true
       });
       onScroll();
       return () => {
         obs.disconnect();
-        window.removeEventListener("scroll", onScroll);
+        scroller.removeEventListener("scroll", onScroll);
       };
     }
   }, []);
@@ -15165,9 +15394,12 @@ const KBD_SHORTCUTS = [{
 function KbdHelp({
   onClose
 }) {
-  return /*#__PURE__*/React.createElement("div", {
+  return ReactDOM.createPortal(/*#__PURE__*/React.createElement("div", {
     className: "kbd-help",
-    onClick: onClose
+    onClick: onClose,
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-label": "\u0413\u043E\u0440\u044F\u0447\u0438\u0435 \u043A\u043B\u0430\u0432\u0438\u0448\u0438"
   }, /*#__PURE__*/React.createElement("div", {
     className: "kbd-help-card",
     onClick: e => e.stopPropagation()
@@ -15178,7 +15410,7 @@ function KbdHelp({
     className: "kbd-help-keys"
   }, row.keys.map((k, j) => /*#__PURE__*/React.createElement("kbd", {
     key: j
-  }, k)))))));
+  }, k))))))), document.body);
 }
 
 // ─── История чатов/отчётов: off-canvas drawer (премиальный, лёгкий) ───────────
@@ -15237,7 +15469,7 @@ const CP_CSS = `
 .cp-seg button{font-size:12px;color:var(--ink-3);padding:5px 11px;border-radius:7px;display:flex;
   align-items:center;gap:7px;transition:background .14s,color .14s;}
 .cp-seg button:hover{color:var(--ink-2);}
-.cp-seg button.on{background:var(--accent-soft);color:var(--accent-ink);font-weight:500;}
+.cp-seg button.on{background:var(--select-soft);color:var(--ink);font-weight:600;}
 .cp-seg .n{font-family:inherit;font-size:11px;font-variant-numeric:tabular-nums;opacity:.75;}
 .cp-list{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:3px 8px 10px;}
 .cp-group{font-family:inherit;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
@@ -15245,10 +15477,10 @@ const CP_CSS = `
 .cp-row{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:9px;cursor:pointer;
   scroll-margin:10px;transition:background .12s;}
 .cp-row:active{transform:scale(.97);}
-.cp-row.sel{background:var(--accent-soft);}
+.cp-row.sel{background:var(--select-soft);}
 .cp-ic{width:30px;height:30px;flex:none;border-radius:8px;display:grid;place-items:center;
   background:var(--paper-2);color:var(--ink-3);border:1px solid var(--hair);transition:color .12s,border-color .12s,background .12s;}
-.cp-row.sel .cp-ic{color:var(--accent);border-color:color-mix(in oklab,var(--accent),transparent 78%);background:var(--surface);}
+.cp-row.sel .cp-ic{color:var(--select);border-color:color-mix(in oklab,var(--select),transparent 70%);background:var(--surface);}
 .cp-main{flex:1;min-width:0;}
 .cp-t{font-size:13.5px;line-height:1.35;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .cp-p{font-size:12px;line-height:1.35;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;}
@@ -15259,11 +15491,11 @@ const CP_CSS = `
 .cp-acts button{width:28px;height:28px;border-radius:7px;color:var(--ink-3);display:grid;place-items:center;
   transition:background .12s,color .12s;}
 .cp-acts button:hover{background:var(--paper-2);color:var(--ink);}
-.cp-acts button.on{color:var(--accent);}
+.cp-acts button.on{color:var(--select);}
 .cp-banks{display:flex;gap:4px;}
 .cp-bank{font-family:inherit;font-size:11px;text-transform:uppercase;letter-spacing:.03em;
   color:var(--ink-3);background:var(--paper-2);border:1px solid var(--hair);border-radius:5px;padding:1px 6px;font-variant-numeric:tabular-nums}
-.cp-owner{font-size:11px;color:var(--accent);white-space:nowrap;}
+.cp-owner{font-size:11px;color:var(--ink-3);white-space:nowrap;}
 .cp-empty{display:flex;flex-direction:column;align-items:center;gap:12px;padding:52px 24px;color:var(--ink-3);text-align:center;}
 .cp-empty>svg{opacity:.45;}
 .cp-empty .t{font-size:14px;color:var(--ink-3);text-wrap:balance;max-width:320px;line-height:1.5;}
@@ -15299,7 +15531,8 @@ const CP_CSS = `
 .aw-rec:hover{border-color:var(--ink-4);transform:translateY(-2px);box-shadow:var(--shadow-1);}
 .aw-rec .t{font-size:12.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .aw-rec .m{font-family:inherit;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums;}
-@media(pointer:coarse){.aw-recent-h button{min-height:44px}}
+@media(max-width:640px){.cp-ov{padding:10px 10px calc(10px + env(safe-area-inset-bottom));place-items:start stretch}
+  .cp{width:auto;max-height:calc(100dvh - 20px)}.cp-foot{display:none}.cp-acts{display:flex}}
 `;
 
 // SVG-иконки (единый штрих, оптически выверенные)
@@ -15564,7 +15797,7 @@ function CommandPalette({
       className: "cp-t"
     }, s.title || "Без названия"), /*#__PURE__*/React.createElement("div", {
       className: "cp-p"
-    }, (s.last_preview || "").replace(/[#*|>\n]/g, " ").replace(/\s+/g, " ").trim().slice(0, 70) || "—")), /*#__PURE__*/React.createElement("div", {
+    }, (s.last_preview || "").replace(/\[\[[A-Z]+:[^\]]*\]\]/g, " ").replace(/^\s*#+\s*Резюме[^\n]*\n/, "").replace(/[#*|>\n]/g, " ").replace(/\s+/g, " ").trim().slice(0, 90) || "без ответа")), /*#__PURE__*/React.createElement("div", {
       className: "cp-meta"
     }, /*#__PURE__*/React.createElement("span", {
       className: "cp-time"
@@ -15634,9 +15867,16 @@ function CommandPalette({
     });
   }
   const empty = tab === "chats" ? !fSessions.length : !reportRows.length;
-  return /*#__PURE__*/React.createElement("div", {
+
+  // Слой выносится в body: вкладка появляется со сдвигом (transform), и «прибитый»
+  // к экрану слой внутри неё занимал только её прямоугольник — затемнение и размытие
+  // обрывались у бокового меню и шапки.
+  return ReactDOM.createPortal(/*#__PURE__*/React.createElement("div", {
     className: "cp-ov" + (vis ? " in" : ""),
-    onClick: close
+    onClick: close,
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-label": "\u0418\u0441\u0442\u043E\u0440\u0438\u044F \u0440\u0430\u0437\u0433\u043E\u0432\u043E\u0440\u043E\u0432 \u0438 \u043E\u0442\u0447\u0451\u0442\u043E\u0432"
   }, /*#__PURE__*/React.createElement("div", {
     className: "cp",
     onClick: e => e.stopPropagation()
@@ -15692,7 +15932,7 @@ function CommandPalette({
     onClick: undoGone
   }, "\u041E\u0442\u043C\u0435\u043D\u0438\u0442\u044C")) : /*#__PURE__*/React.createElement("div", {
     className: "cp-foot"
-  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("kbd", null, "\u2191"), /*#__PURE__*/React.createElement("kbd", null, "\u2193"), " \u043D\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u044F"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("kbd", null, "\u21B5"), " \u043E\u0442\u043A\u0440\u044B\u0442\u044C"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("kbd", null, "esc"), " \u0437\u0430\u043A\u0440\u044B\u0442\u044C"))));
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("kbd", null, "\u2191"), /*#__PURE__*/React.createElement("kbd", null, "\u2193"), " \u043D\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u044F"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("kbd", null, "\u21B5"), " \u043E\u0442\u043A\u0440\u044B\u0442\u044C"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("kbd", null, "esc"), " \u0437\u0430\u043A\u0440\u044B\u0442\u044C")))), document.body);
 }
 function AIPage() {
   // Пустая лента → показывается welcome-экран (он и есть приветствие). Отдельным
@@ -15977,11 +16217,12 @@ function AIPage() {
         const errData = await res.json().catch(() => ({
           detail: res.statusText
         }));
+        // Ошибка — отдельным блоком с «Повторить», а не строкой внутри ответа
         setMsgs(m => {
           const u = [...m];
           u[u.length - 1] = {
             ...u[u.length - 1],
-            text: `⚠ Ошибка ${res.status}: ${errData.detail || res.statusText}`
+            err: `Сервер ответил ошибкой ${res.status}${errData.detail || res.statusText ? ": " + (errData.detail || res.statusText) : ""}.`
           };
           return u;
         });
@@ -16107,6 +16348,11 @@ function AIPage() {
                 updateLast(() => ({
                   phase: data.value,
                   phaseAt: Date.now()
+                }));
+              } else if (data.type === "own_preview" && Array.isArray(data.blocks)) {
+                // что уже нашлось в данных AuditLens — показываем, пока идёт сбор по сайтам
+                updateLast(() => ({
+                  ownPreview: data.blocks
                 }));
               } else if (data.type === "typical" && data.steps) {
                 updateLast(() => ({
@@ -16318,9 +16564,9 @@ function AIPage() {
       setMsgs(m => {
         const u = [...m],
           last = u[u.length - 1];
-        if (last.role === "ai" && !last.text) u[u.length - 1] = {
+        if (last.role === "ai" && !last.text && !last.err) u[u.length - 1] = {
           ...last,
-          text: "(модель не вернула текст — попробуйте переформулировать запрос)"
+          err: "Помощник не дал ответа. Повторите вопрос или задайте его иначе."
         };
         return u;
       });
@@ -16337,7 +16583,7 @@ function AIPage() {
           const last = u[u.length - 1] || {};
           u[u.length - 1] = {
             ...last,
-            text: (last.text || "") + "\n\n⏹ Остановлено. Показано то, что успело прийти.",
+            stopped: true,
             phase: "done"
           };
           return u;
@@ -16347,7 +16593,8 @@ function AIPage() {
           const u = [...m];
           u[u.length - 1] = {
             ...u[u.length - 1],
-            text: `⚠ Ошибка соединения: ${e.message}`
+            phase: "done",
+            err: "Связь с сервером прервалась — ответ пришёл не полностью. Проверьте сеть и повторите вопрос."
           };
           return u;
         });
@@ -16511,6 +16758,21 @@ function AIPage() {
       route_by: "model"
     });
   };
+  // «Повторить» после сбоя: неудачный ответ убираем, тот же вопрос уходит заново.
+  const retryLast = srcQ => {
+    if (loading || !srcQ) return;
+    trkEvent({
+      kind: "ui",
+      page: "ai",
+      payload: {
+        action: "retry_after_error"
+      }
+    });
+    setMsgs(m => m.length && m[m.length - 1].role === "ai" ? m.slice(0, -1) : m);
+    setTimeout(() => runSend(srcQ, null, {
+      resend: true
+    }), 60);
+  };
   // Человек поправил глубину ответа. Пока ответ идёт — останавливаем его и под
   // тем же вопросом запускаем другой; готовый короткий ответ остаётся в ленте,
   // а отчёт приходит следом.
@@ -16621,6 +16883,18 @@ function AIPage() {
   };
 
   // Загрузка сессии из истории → в ленту (продолжение возможно, sessionId сохранён).
+  // Открыли сохранённое: отчёт показываем с начала (с названия), а не с последней
+  // строки — раньше лента прокручивалась в самый низ, к источникам и сверке.
+  const landOnAnswer = () => setTimeout(() => {
+    const el = feedRef.current;
+    if (!el) return;
+    const last = el.querySelector(".chat-msg:last-child"),
+      h = last && last.querySelector(".rp-head");
+    if (h) {
+      stickRef.current = false;
+      el.scrollTop += h.getBoundingClientRect().top - el.getBoundingClientRect().top - 16;
+    } else el.scrollTop = el.scrollHeight;
+  }, 90);
   const openSession = async sid => {
     if (loading) return;
     setHistOpen(false);
@@ -16658,7 +16932,11 @@ function AIPage() {
             ranking: p.ranking || null,
             insights: p.insights || null,
             status: p.status || undefined,
-            title: r.title || undefined
+            title: r.title || undefined,
+            created_at: r.created_at || undefined,
+            elapsedS: p.elapsed_s || undefined,
+            report_owner: r.owner,
+            owner_name: r.owner_name
           });
         } catch {}
       }));
@@ -16666,10 +16944,7 @@ function AIPage() {
       setSessionId(sid);
       setActiveCite(null);
       setHoverCite(null);
-      setTimeout(() => {
-        const el = feedRef.current;
-        if (el) el.scrollTop = el.scrollHeight;
-      }, 60);
+      landOnAnswer();
     } catch {}
   };
   // Открыть сохранённый отчёт (свой или расшаренный) в ленте.
@@ -16699,6 +16974,8 @@ function AIPage() {
         report_id: r.report_id,
         report_owner: r.owner,
         owner_name: r.owner_name,
+        created_at: r.created_at || undefined,
+        elapsedS: p.elapsed_s || undefined,
         status: p.status || undefined,
         title: r.title || undefined,
         files: p.files || undefined
@@ -16706,10 +16983,7 @@ function AIPage() {
       setSessionId(r.session_id || null);
       setActiveCite(null);
       setHoverCite(null);
-      setTimeout(() => {
-        const el = feedRef.current;
-        if (el) el.scrollTop = el.scrollHeight;
-      }, 60);
+      landOnAnswer();
     } catch {}
   };
   // Отчёт по ссылке: из колокольчика («С вами поделились отчётом») или #ai?report=ID.
@@ -16756,9 +17030,103 @@ function AIPage() {
   const lastDeep = [...msgs].reverse().find(m => m.mode === "deep");
   // Идёт активный deep-прогон (консоль + нижний бар, композер скрыт).
   const isRunning = loading && !!lastDeep && lastDeep.phase !== "done" && lastMsg?.role !== "clarify" && lastMsg?.role !== "pending";
+  // Появился первый раздел отчёта: консоль сворачивается в полоску, и лента встаёт
+  // на неё — человек видит и ход работы, и начало текста, а не середину страницы.
+  const hasDraft = isRunning && (lastDeep.text || "").length > 400;
+  useEffect(() => {
+    if (!hasDraft) return;
+    const el = feedRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      const c = el.querySelector(".chat-msg:last-child .dr-con-wrap");
+      if (c) {
+        stickRef.current = false;
+        el.scrollTop += c.getBoundingClientRect().top - el.getBoundingClientRect().top - 10;
+      }
+    });
+  }, [hasDraft]);
   const showThreadHead = !isEmpty && !isRunning && !isClarify;
   const showComposer = !isRunning && !isClarify;
   const fmtEl = s => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+  // Поле вопроса — один узел: на стартовой он стоит под заголовком, в разговоре — под лентой.
+  const dupHit = isEmpty ? (() => {
+    const n = awNorm(q);
+    if (n.length < 18) return null;
+    return sessAll.find(x => {
+      const f = awNorm(x.first_q || x.title);
+      return f && (x.n_answers > 0 || x.report_id) && (f === n || n.length >= 30 && f.startsWith(n.slice(0, 60)));
+    }) || null;
+  })() : null;
+  const composerEl = /*#__PURE__*/React.createElement("div", {
+    className: "composer-inner"
+  }, dupHit && /*#__PURE__*/React.createElement("div", {
+    className: "aw-dup",
+    role: "status"
+  }, "\u0412\u044B \u0443\u0436\u0435 \u0441\u043F\u0440\u0430\u0448\u0438\u0432\u0430\u043B\u0438 \u044D\u0442\u043E ", fmtHistTime(dupHit.updated_at), " \u2014", /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => openSession(dupHit.session_id)
+  }, "\u043E\u0442\u043A\u0440\u044B\u0442\u044C ", dupHit.report_id ? "отчёт" : "ответ")), slotHint && /*#__PURE__*/React.createElement("div", {
+    className: "aw-dup aw-slot",
+    role: "alert"
+  }, slotHint), /*#__PURE__*/React.createElement("div", {
+    className: "chat-input-wrap"
+  }, /*#__PURE__*/React.createElement("textarea", {
+    ref: inputRef,
+    className: "chat-textarea",
+    rows: isEmpty ? 2 : 1,
+    "aria-label": "\u0412\u043E\u043F\u0440\u043E\u0441 \u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u0443",
+    autoFocus: isEmpty,
+    placeholder: isEmpty ? "Спросите или поставьте задачу: ставка, жалобы, сравнение банков, нормы, новость…" : "Следующий вопрос…",
+    value: q,
+    onChange: e => {
+      setQ(e.target.value);
+      if (slotHint) setSlotHint("");
+    },
+    onKeyDown: e => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        send();
+      }
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "composer-bar"
+  }, loading ? /*#__PURE__*/React.createElement("button", {
+    className: "composer-send composer-stop",
+    onClick: () => abortRef.current?.abort(),
+    "aria-label": "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u0442\u044C \u043E\u0442\u0432\u0435\u0442"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "composer-send-t"
+  }, "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u0442\u044C"), /*#__PURE__*/React.createElement("svg", {
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("rect", {
+    x: "7",
+    y: "7",
+    width: "10",
+    height: "10",
+    rx: "2"
+  }))) : /*#__PURE__*/React.createElement("button", {
+    className: "composer-send",
+    disabled: !q.trim(),
+    onClick: () => send(),
+    "aria-label": "\u041E\u0442\u043F\u0440\u0430\u0432\u0438\u0442\u044C \u0432\u043E\u043F\u0440\u043E\u0441"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "composer-send-t"
+  }, "\u0421\u043F\u0440\u043E\u0441\u0438\u0442\u044C"), /*#__PURE__*/React.createElement("svg", {
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M5 12h14M13 6l6 6-6 6"
+  }))))));
   return /*#__PURE__*/React.createElement("div", {
     className: "fade-in chat-shell" + (isEmpty ? " is-welcome" : "")
   }, /*#__PURE__*/React.createElement("style", null, CP_CSS), showKbd && /*#__PURE__*/React.createElement(KbdHelp, {
@@ -16821,7 +17189,8 @@ function AIPage() {
     recent: recent,
     dayIns: dayIns,
     onOpenHistory: () => setHistOpen(true),
-    onLoadSession: openSession
+    onLoadSession: openSession,
+    composer: composerEl
   }), !isEmpty && msgs.map((m, i) => {
     if (m.role === "clarify") {
       return /*#__PURE__*/React.createElement("div", {
@@ -16875,22 +17244,21 @@ function AIPage() {
       }, "\u0421\u0432\u0435\u0440\u043D\u0443\u0442\u044C \u0445\u043E\u0434 \u0440\u0430\u0431\u043E\u0442\u044B"))), draftMode && /*#__PURE__*/React.createElement("div", {
         className: "dr-draft-note",
         role: "status"
-      }, /*#__PURE__*/React.createElement("b", null, "\u041E\u0442\u0447\u0451\u0442 \u043F\u0438\u0448\u0435\u0442\u0441\u044F \u2014 \u043C\u043E\u0436\u043D\u043E \u0447\u0438\u0442\u0430\u0442\u044C."), " \u0420\u0430\u0437\u0434\u0435\u043B\u044B \u043F\u043E\u044F\u0432\u043B\u044F\u044E\u0442\u0441\u044F \u043F\u043E \u043C\u0435\u0440\u0435 \u0433\u043E\u0442\u043E\u0432\u043D\u043E\u0441\u0442\u0438; \u0440\u0435\u0437\u044E\u043C\u0435 \u0432\u0441\u0442\u0430\u043D\u0435\u0442 \u0432 \u043D\u0430\u0447\u0430\u043B\u043E, \u0447\u0438\u0441\u043B\u0430 \u0441\u0432\u0435\u0440\u044F\u044E\u0442\u0441\u044F \u0432 \u043A\u043E\u043D\u0446\u0435."), (!consoleMode || draftMode) && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-        className: "dr-doc-toolbar"
-      }, /*#__PURE__*/React.createElement("span", {
-        className: "who",
-        title: m.title ? "AuditLens · аналитический отчёт" : undefined
-      }, m.title || "AuditLens · аналитический отчёт"), m.report_owner && me && m.report_owner !== me.username && /*#__PURE__*/React.createElement("span", {
+      }, /*#__PURE__*/React.createElement("b", null, "\u041E\u0442\u0447\u0451\u0442 \u043F\u0438\u0448\u0435\u0442\u0441\u044F \u2014 \u043C\u043E\u0436\u043D\u043E \u0447\u0438\u0442\u0430\u0442\u044C."), " \u0420\u0430\u0437\u0434\u0435\u043B\u044B \u043F\u043E\u044F\u0432\u043B\u044F\u044E\u0442\u0441\u044F \u043F\u043E \u043C\u0435\u0440\u0435 \u0433\u043E\u0442\u043E\u0432\u043D\u043E\u0441\u0442\u0438; \u0440\u0435\u0437\u044E\u043C\u0435 \u0432\u0441\u0442\u0430\u043D\u0435\u0442 \u0432 \u043D\u0430\u0447\u0430\u043B\u043E, \u0447\u0438\u0441\u043B\u0430 \u0441\u0432\u0435\u0440\u044F\u044E\u0442\u0441\u044F \u0432 \u043A\u043E\u043D\u0446\u0435."), (!consoleMode || draftMode) && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("header", {
+        className: "rp-head"
+      }, /*#__PURE__*/React.createElement("div", {
+        className: "rp-eyebrow"
+      }, /*#__PURE__*/React.createElement("span", null, streaming ? "Отчёт пишется" : m.stopped || m.status === "stopped" ? "Отчёт остановлен" : "Отчёт"), !streaming && (m.created_at || m.phase === "done") && /*#__PURE__*/React.createElement("span", null, srcDay(m.created_at || new Date().toISOString().slice(0, 10))), !streaming && rpTook(m) && /*#__PURE__*/React.createElement("span", null, "\u0441\u043E\u0431\u0440\u0430\u043D \u0437\u0430 ", rpTook(m)), m.report_owner && me && m.report_owner !== me.username && /*#__PURE__*/React.createElement("span", {
         className: "shr-owner"
-      }, "\u043F\u043E\u0434\u0435\u043B\u0438\u043B\u0441\u044F: ", m.owner_name || m.report_owner), m.report_id && (!m.report_owner || me && m.report_owner === me.username) && !streaming && /*#__PURE__*/React.createElement(ShareButton, {
-        reportId: m.report_id
-      }), m.report_id && !streaming && /*#__PURE__*/React.createElement(CaseAddBtn, {
-        item: {
-          kind: "report",
-          ref_id: m.report_id
-        },
-        src: "ai_report"
-      }), showPdfBtn && /*#__PURE__*/React.createElement(PdfExportButton, {
+      }, "\u043F\u043E\u0434\u0435\u043B\u0438\u043B\u0441\u044F: ", m.owner_name || m.report_owner)), /*#__PURE__*/React.createElement("h1", {
+        className: "rp-title"
+      }, m.title || userQ), !streaming && /*#__PURE__*/React.createElement(RpMeta, {
+        m: m
+      }), !streaming && /*#__PURE__*/React.createElement("div", {
+        className: "rp-bar"
+      }, /*#__PURE__*/React.createElement("div", {
+        className: "rp-acts"
+      }, showPdfBtn && /*#__PURE__*/React.createElement(PdfExportButton, {
         question: userQ,
         report: m.text,
         sources: m.sources || [],
@@ -16904,28 +17272,32 @@ function AIPage() {
         gaps: m.gaps,
         reportId: m.report_id,
         title: m.title
-      }), showPdfBtn && !streaming && m.report_id && (m.text || "").length > 1500 && /*#__PURE__*/React.createElement(DeckButton, {
+      }), showPdfBtn && m.report_id && (m.text || "").length > 1500 && /*#__PURE__*/React.createElement(DeckButton, {
         onClick: () => askDeck(m.report_id),
         streaming: streaming,
         busy: loading
+      }), m.report_id && /*#__PURE__*/React.createElement(CaseAddBtn, {
+        item: {
+          kind: "report",
+          ref_id: m.report_id
+        },
+        src: "ai_report"
+      }), m.report_id && (!m.report_owner || me && m.report_owner === me.username) && /*#__PURE__*/React.createElement(ShareButton, {
+        reportId: m.report_id
       }), m.matrix && /*#__PURE__*/React.createElement(MatrixExportButton, {
         matrix: m.matrix,
         question: userQ,
         streaming: streaming
-      })), !streaming && m.text && m.text.length > 200 && /*#__PURE__*/React.createElement("div", {
-        className: "ai-fb-top"
-      }, /*#__PURE__*/React.createElement(AiFbBar, {
+      })), m.text && m.text.length > 200 && /*#__PURE__*/React.createElement(AiFbBar, {
         q: userQ,
         text: m.text,
         sessionId: sessionId,
         mode: "deep",
         fbMap: aiFb,
         reportId: m.report_id
-      })), /*#__PURE__*/React.createElement("div", {
+      }))), /*#__PURE__*/React.createElement("div", {
         className: "chat-bubble chat-bubble-deep"
-      }, m.phase === "done" && m.plan && m.plan.length > 0 && /*#__PURE__*/React.createElement(ResearchSummary, {
-        m: m
-      }), m.coverage?.warning && /*#__PURE__*/React.createElement(CoverageBanner, {
+      }, m.coverage?.warning && /*#__PURE__*/React.createElement(CoverageBanner, {
         coverage: m.coverage
       }), /*#__PURE__*/React.createElement("div", {
         className: "dr-doc"
@@ -16934,11 +17306,7 @@ function AIPage() {
         ref: el => {
           m._mainEl = el;
         }
-      }, (m.claimCheck || m.verification) && /*#__PURE__*/React.createElement(ClaimCheckRow, {
-        claimCheck: m.claimCheck,
-        verification: m.verification,
-        sourcesCount: (m.sources || []).length
-      }), /*#__PURE__*/React.createElement(ClaimFlagWrap, {
+      }, /*#__PURE__*/React.createElement(ClaimFlagWrap, {
         q: msgs[0] && msgs[0].text,
         sessionId: sessionId,
         mode: m.mode,
@@ -16968,12 +17336,13 @@ function AIPage() {
         className: "dr-fade-in"
       }, /*#__PURE__*/React.createElement(InsightsWidget, {
         insights: m.insights
-      })), m.status === "stopped" && !streaming && /*#__PURE__*/React.createElement("div", {
-        className: "t-cap",
-        style: {
-          margin: "8px 0"
-        }
-      }, "\u23F9 \u041E\u0442\u0447\u0451\u0442 \u043E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D \u0434\u043E \u043A\u043E\u043D\u0446\u0430 \u043F\u0440\u043E\u0433\u043E\u043D\u0430 \u2014 \u0437\u0434\u0435\u0441\u044C \u0442\u043E, \u0447\u0442\u043E \u0443\u0441\u043F\u0435\u043B\u043E \u043F\u0440\u0438\u0439\u0442\u0438."), m.verification && /*#__PURE__*/React.createElement(VerificationBanner, {
+      })), (m.status === "stopped" || m.stopped) && !streaming && /*#__PURE__*/React.createElement("div", {
+        className: "ai-stopped",
+        role: "status"
+      }, "\u041E\u0442\u0447\u0451\u0442 \u043E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D \u0434\u043E \u043A\u043E\u043D\u0446\u0430 \u043F\u0440\u043E\u0433\u043E\u043D\u0430 \u2014 \u0437\u0434\u0435\u0441\u044C \u0442\u043E, \u0447\u0442\u043E \u0443\u0441\u043F\u0435\u043B\u043E \u043F\u0440\u0438\u0439\u0442\u0438."), m.err && !streaming && /*#__PURE__*/React.createElement(AiError, {
+        text: m.err,
+        onRetry: userQ && userQ !== "Аудит-отчёт" ? () => retryLast(userQ) : null
+      }), m.verification && /*#__PURE__*/React.createElement(VerificationBanner, {
         verification: m.verification
       }), showPdfBtn && !streaming && /*#__PURE__*/React.createElement("div", {
         className: "dr-doc-footer"
@@ -17042,26 +17411,29 @@ function AIPage() {
       onClick: () => switchRoute(prevQ, "report"),
       title: "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u0442\u044C \u043A\u043E\u0440\u043E\u0442\u043A\u0438\u0439 \u043E\u0442\u0432\u0435\u0442 \u0438 \u0441\u043E\u0431\u0440\u0430\u0442\u044C \u043E\u0442\u0447\u0451\u0442 \u0441 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430\u043C\u0438 (3\u20135 \u043C\u0438\u043D\u0443\u0442)"
     }, "\u041D\u0443\u0436\u0435\u043D \u043E\u0442\u0447\u0451\u0442")), m.tools && m.tools.length > 0 && /*#__PURE__*/React.createElement("div", {
-      className: "quick-tools"
-    }, collapseTools(m.tools).map(({
+      className: "quick-tools",
+      "aria-label": "\u0413\u0434\u0435 \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u0438\u0441\u043A\u0430\u043B \u043E\u0442\u0432\u0435\u0442"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "quick-tools-k"
+    }, thinking ? "Смотрю" : "Смотрел"), collapseTools(m.tools).map(({
       lbl,
       n
     }, ti, arr) => /*#__PURE__*/React.createElement("span", {
       key: ti,
-      className: "quick-tool"
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "quick-tool-dot",
-      style: ti === arr.length - 1 && thinking ? {
-        background: "var(--accent)",
-        animation: "pulse 1.4s ease-in-out infinite"
-      } : null
-    }), lbl, n > 1 ? /*#__PURE__*/React.createElement("span", {
+      className: "quick-tool" + (ti === arr.length - 1 && thinking ? " now" : "")
+    }, lbl, n > 1 ? /*#__PURE__*/React.createElement("span", {
       className: "quick-tool-n"
     }, " \xD7", n) : null))), thinking ? /*#__PURE__*/React.createElement(PendingDots, {
       label: "\u0414\u0443\u043C\u0430\u044E \u043D\u0430\u0434 \u043E\u0442\u0432\u0435\u0442\u043E\u043C\u2026"
-    }) : /*#__PURE__*/React.createElement("div", {
+    }) : qText && /*#__PURE__*/React.createElement("div", {
       className: "quick-answer chat-bubble"
-    }, renderMD(qText, m.sources)), /*#__PURE__*/React.createElement(AgentFiles, {
+    }, renderMD(qText, m.sources)), m.stopped && /*#__PURE__*/React.createElement("div", {
+      className: "ai-stopped",
+      role: "status"
+    }, "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043E", qText ? ". Показано то, что успело прийти." : " до ответа."), m.err && /*#__PURE__*/React.createElement(AiError, {
+      text: m.err,
+      onRetry: prevQ ? () => retryLast(prevQ) : null
+    }), /*#__PURE__*/React.createElement(AgentFiles, {
       files: m.files
     }), m.sources && m.sources.length > 0 && /*#__PURE__*/React.createElement("div", {
       className: "quick-sources"
@@ -17077,33 +17449,36 @@ function AIPage() {
       className: "quick-src-bank"
     }, s.bank_name || domainOf(s.url) || "источник"), /*#__PURE__*/React.createElement("span", {
       className: "quick-src-dom"
-    }, domainOf(s.url) || "—")))), m.text && !loading && prevQ && !m.notice && /*#__PURE__*/React.createElement("div", {
-      className: "quick-upsell"
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "quick-upsell-t"
-    }, "\u041D\u0443\u0436\u0435\u043D \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442 \u0434\u043B\u044F \u0430\u0443\u0434\u0438\u0442-\u0434\u0435\u043B\u0430 \u2014 \u0441 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430\u043C\u0438, \u0440\u0438\u0441\u043A\u0430\u043C\u0438 \u0438 \u0441\u0432\u0435\u0440\u043A\u043E\u0439 \u0447\u0438\u0441\u0435\u043B?"), /*#__PURE__*/React.createElement("button", {
-      className: "quick-upsell-btn",
-      onClick: () => runDeepFromQuick(prevQ)
-    }, "\u0421\u043E\u0431\u0440\u0430\u0442\u044C \u043E\u0442\u0447\u0451\u0442", /*#__PURE__*/React.createElement("svg", {
-      viewBox: "0 0 24 24",
-      fill: "none",
-      stroke: "currentColor",
-      strokeWidth: "2",
-      strokeLinecap: "round",
-      strokeLinejoin: "round"
-    }, /*#__PURE__*/React.createElement("path", {
-      d: "M5 12h14M13 6l6 6-6 6"
-    })))), m.report_owner && me && m.report_owner !== me.username && /*#__PURE__*/React.createElement("div", {
+    }, domainOf(s.url) || "—")))), m.report_owner && me && m.report_owner !== me.username && /*#__PURE__*/React.createElement("div", {
       style: {
         marginTop: 10
       }
     }, /*#__PURE__*/React.createElement("span", {
       className: "shr-owner"
     }, "\u043F\u043E\u0434\u0435\u043B\u0438\u043B\u0441\u044F: ", m.owner_name || m.report_owner)), m.text && !(loading && i === msgs.length - 1) && /*#__PURE__*/React.createElement("div", {
-      className: "quick-acts"
-    }, m.report_id && (!m.report_owner || me && m.report_owner === me.username) && /*#__PURE__*/React.createElement(ShareButton, {
-      reportId: m.report_id
-    }), (qText || "").length >= 100 && /*#__PURE__*/React.createElement(PdfExportButton, {
+      className: "ans-foot"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "ans-acts"
+    }, prevQ && !m.notice && /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "btn-export ans-report",
+      onClick: () => runDeepFromQuick(prevQ),
+      title: "\u041E\u0442\u0447\u0451\u0442 \u043F\u043E \u044D\u0442\u043E\u043C\u0443 \u0432\u043E\u043F\u0440\u043E\u0441\u0443: \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438, \u0440\u0438\u0441\u043A\u0438, \u0441\u0432\u0435\u0440\u043A\u0430 \u0447\u0438\u0441\u0435\u043B \u2014 3\u20135 \u043C\u0438\u043D\u0443\u0442"
+    }, /*#__PURE__*/React.createElement("svg", {
+      width: "13",
+      height: "13",
+      viewBox: "0 0 24 24",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: "1.8",
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      "aria-hidden": "true"
+    }, /*#__PURE__*/React.createElement("path", {
+      d: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M14 3v5h5M9 13h6M9 17h4"
+    })), /*#__PURE__*/React.createElement("span", null, "\u0421\u043E\u0431\u0440\u0430\u0442\u044C \u043E\u0442\u0447\u0451\u0442")), (qText || "").length >= 100 && /*#__PURE__*/React.createElement(PdfExportButton, {
       question: prevQ,
       report: qText,
       sources: m.sources || [],
@@ -17129,21 +17504,27 @@ function AIPage() {
           }))
         }
       }
-    })), m.text && !(loading && i === msgs.length - 1) && /*#__PURE__*/React.createElement(AiFbBar, {
+    }), m.report_id && (!m.report_owner || me && m.report_owner === me.username) && /*#__PURE__*/React.createElement(ShareButton, {
+      reportId: m.report_id
+    })), /*#__PURE__*/React.createElement(AiFbBar, {
       q: prevQ,
       text: m.text,
       sessionId: sessionId,
       mode: "quick",
       fbMap: aiFb,
       reportId: m.report_id
-    }));
+    })));
   })), isRunning && /*#__PURE__*/React.createElement("div", {
     className: "al-runbar"
   }, /*#__PURE__*/React.createElement("span", {
     className: "al-runbar-dot"
   }), /*#__PURE__*/React.createElement("span", {
     className: "al-runbar-text"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "al-runbar-full"
   }, "\u0421\u043E\u0431\u0438\u0440\u0430\u044E \u043E\u0442\u0447\u0451\u0442", lastDeep && drLeftText(drEta(lastDeep)) ? " — " + drLeftText(drEta(lastDeep)) : ""), /*#__PURE__*/React.createElement("span", {
+    className: "al-runbar-short"
+  }, lastDeep && drLeftShort(drEta(lastDeep)) || "Собираю отчёт")), /*#__PURE__*/React.createElement("span", {
     className: "al-runbar-el mono"
   }, fmtEl(elapsed)), lastDeep && (lastDeep.text || "").length > 400 && /*#__PURE__*/React.createElement("button", {
     className: "al-runbar-btn",
@@ -17158,58 +17539,9 @@ function AIPage() {
         });
       }
     }
-  }, "\u0427\u0438\u0442\u0430\u0442\u044C \u043E\u0442\u0447\u0451\u0442 \u2191"), /*#__PURE__*/React.createElement("button", {
-    className: "al-runbar-btn al-runbar-stop" + (stopArm ? " arm" : ""),
-    onClick: askStop,
-    "aria-label": stopArm ? "Подтвердить остановку отчёта" : "Остановить отчёт"
-  }, stopArm ? "Точно остановить?" : "Остановить")), showComposer && /*#__PURE__*/React.createElement("div", {
-    className: "composer-dock"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "composer-inner"
-  }, isEmpty && (() => {
-    const n = awNorm(q);
-    if (n.length < 18) return null;
-    const hit = sessAll.find(x => {
-      const f = awNorm(x.first_q || x.title);
-      return f && (x.n_answers > 0 || x.report_id) && (f === n || n.length >= 30 && f.startsWith(n.slice(0, 60)));
-    });
-    return hit ? /*#__PURE__*/React.createElement("div", {
-      className: "aw-dup",
-      role: "status"
-    }, "\u0412\u044B \u0443\u0436\u0435 \u0441\u043F\u0440\u0430\u0448\u0438\u0432\u0430\u043B\u0438 \u044D\u0442\u043E ", fmtHistTime(hit.updated_at), " \u2014", /*#__PURE__*/React.createElement("button", {
-      type: "button",
-      onClick: () => openSession(hit.session_id)
-    }, "\u043E\u0442\u043A\u0440\u044B\u0442\u044C ", hit.report_id ? "отчёт" : "ответ")) : null;
-  })(), slotHint && /*#__PURE__*/React.createElement("div", {
-    className: "aw-dup aw-slot",
-    role: "alert"
-  }, slotHint), /*#__PURE__*/React.createElement("div", {
-    className: "chat-input-wrap"
-  }, /*#__PURE__*/React.createElement("textarea", {
-    ref: inputRef,
-    className: "chat-textarea",
-    rows: 1,
-    "aria-label": "\u0412\u043E\u043F\u0440\u043E\u0441 \u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u0443",
-    placeholder: "\u0421\u043F\u0440\u043E\u0441\u0438\u0442\u0435 \u0438\u043B\u0438 \u043F\u043E\u0441\u0442\u0430\u0432\u044C\u0442\u0435 \u0437\u0430\u0434\u0430\u0447\u0443: \u0441\u0442\u0430\u0432\u043A\u0430, \u0436\u0430\u043B\u043E\u0431\u044B, \u0441\u0440\u0430\u0432\u043D\u0435\u043D\u0438\u0435 \u0431\u0430\u043D\u043A\u043E\u0432, \u043D\u043E\u0440\u043C\u044B, \u043D\u043E\u0432\u043E\u0441\u0442\u044C\u2026",
-    value: q,
-    onChange: e => {
-      setQ(e.target.value);
-      if (slotHint) setSlotHint("");
-    },
-    onKeyDown: e => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        send();
-      }
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "composer-bar"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "composer-hint composer-auto",
-    title: "\u041A\u043E\u0440\u043E\u0442\u043A\u0430\u044F \u0441\u043F\u0440\u0430\u0432\u043A\u0430 \u043F\u0440\u0438\u0445\u043E\u0434\u0438\u0442 \u043C\u0435\u043D\u044C\u0448\u0435 \u0447\u0435\u043C \u0437\u0430 \u043C\u0438\u043D\u0443\u0442\u0443, \u043E\u0442\u0447\u0451\u0442 \u0441 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430\u043C\u0438 \u2014 \u0437\u0430 3\u20135 \u043C\u0438\u043D\u0443\u0442. \u0427\u0442\u043E \u043D\u0443\u0436\u043D\u043E, \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u0440\u0435\u0448\u0430\u0435\u0442 \u043F\u043E \u0432\u043E\u043F\u0440\u043E\u0441\u0443; \u0441\u0432\u043E\u0451 \u0440\u0435\u0448\u0435\u043D\u0438\u0435 \u043E\u043D \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0435\u0442 \u0441\u0440\u0430\u0437\u0443, \u0438 \u0435\u0433\u043E \u043C\u043E\u0436\u043D\u043E \u043F\u043E\u043C\u0435\u043D\u044F\u0442\u044C. \u041C\u043E\u0436\u043D\u043E \u0438 \u043D\u0430\u043F\u0438\u0441\u0430\u0442\u044C \u043F\u0440\u044F\u043C\u043E: \xAB\u043A\u043E\u0440\u043E\u0442\u043A\u043E\xBB \u0438\u043B\u0438 \xAB\u043D\u0443\u0436\u0435\u043D \u043E\u0442\u0447\u0451\u0442\xBB."
-  }, /*#__PURE__*/React.createElement("svg", {
-    width: "13",
-    height: "13",
+  }, "\u0427\u0438\u0442\u0430\u0442\u044C \u043E\u0442\u0447\u0451\u0442", /*#__PURE__*/React.createElement("svg", {
+    width: "12",
+    height: "12",
     viewBox: "0 0 24 24",
     fill: "none",
     stroke: "currentColor",
@@ -17218,40 +17550,14 @@ function AIPage() {
     strokeLinejoin: "round",
     "aria-hidden": "true"
   }, /*#__PURE__*/React.createElement("path", {
-    d: "M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"
-  })), "\u0441\u043F\u0440\u0430\u0432\u043A\u0430 \u0438\u043B\u0438 \u043E\u0442\u0447\u0451\u0442 \u2014 \u0440\u0435\u0448\u0443 \u043F\u043E \u0432\u043E\u043F\u0440\u043E\u0441\u0443"), /*#__PURE__*/React.createElement("span", {
-    className: "composer-kbd"
-  }, "Enter \u21B5"), loading ? /*#__PURE__*/React.createElement("button", {
-    className: "composer-send composer-stop",
-    onClick: () => abortRef.current?.abort(),
-    "aria-label": "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u0442\u044C \u043F\u0440\u043E\u0433\u043E\u043D"
-  }, "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u0442\u044C", /*#__PURE__*/React.createElement("svg", {
-    viewBox: "0 0 24 24",
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth: "2",
-    strokeLinecap: "round"
-  }, /*#__PURE__*/React.createElement("rect", {
-    x: "7",
-    y: "7",
-    width: "10",
-    height: "10",
-    rx: "2"
-  }))) : /*#__PURE__*/React.createElement("button", {
-    className: "composer-send",
-    disabled: !q.trim(),
-    onClick: () => send(),
-    "aria-label": "\u041E\u0442\u043F\u0440\u0430\u0432\u0438\u0442\u044C"
-  }, "\u0421\u043F\u0440\u043E\u0441\u0438\u0442\u044C", /*#__PURE__*/React.createElement("svg", {
-    viewBox: "0 0 24 24",
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth: "2",
-    strokeLinecap: "round",
-    strokeLinejoin: "round"
-  }, /*#__PURE__*/React.createElement("path", {
-    d: "M5 12h14M13 6l6 6-6 6"
-  })))))))));
+    d: "M12 19V5M6 11l6-6 6 6"
+  }))), /*#__PURE__*/React.createElement("button", {
+    className: "al-runbar-btn al-runbar-stop" + (stopArm ? " arm" : ""),
+    onClick: askStop,
+    "aria-label": stopArm ? "Подтвердить остановку отчёта" : "Остановить отчёт"
+  }, stopArm ? "Точно остановить?" : "Остановить")), showComposer && !isEmpty && /*#__PURE__*/React.createElement("div", {
+    className: "composer-dock"
+  }, composerEl)));
 }
 
 // ─── BANKS PAGE ───────────────────────────────────────────────────────────────

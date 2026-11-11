@@ -573,11 +573,8 @@ tbody tr.is-sber td:first-child{box-shadow:inset 3px 0 0 var(--sber)}
 .dr-rail-domain{
   font-family:inherit;font-size:11px;color:var(--ink-3);
   margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;font-variant-numeric:tabular-nums}
-.dr-rail-meta{
+.dr-rail-meta{display:flex;gap:6px;margin-top:4px;font-size:11px;color:var(--ink-3)}
 .dr-rail-dead{display:block;margin-top:2px;color:var(--warn);font-size:11px}
-  display:flex;gap:6px;margin-top:4px;
-  font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-3);
-}
 .dr-trust-marks{font-family:'Source Serif 4',serif;letter-spacing:.5px;font-size:11px}
 .dr-trust-marks-h{color:var(--pos)}
 .dr-trust-marks-m{color:var(--ink-3)}
@@ -806,6 +803,19 @@ td .dr-conflict{padding:0 4px 0px;font-size:11px}
 .dr-con-host{display:inline-flex;align-items:baseline;gap:6px;padding:2px 8px;border:1px solid var(--hair);border-radius:6px;background:var(--paper-2);font-size:12px;color:var(--ink-2)}
 .dr-con-host b{font-size:11px;font-weight:500;color:var(--ink-3)}
 .dr-con-note{margin-top:8px;font-size:12px;line-height:1.5;color:var(--ink-3)}
+/* что уже нашлось в данных AuditLens */
+.dr-con-own{padding:12px 16px 14px;border-top:1px solid var(--hair)}
+.dr-con-own-g{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}
+.dr-con-own-b{min-width:0;padding:10px 12px;border:1px solid var(--hair);border-radius:8px;background:var(--paper-2)}
+.dr-con-own-t{margin-bottom:6px;font-size:12.5px;font-weight:600;color:var(--ink);line-height:1.4;overflow-wrap:anywhere}
+.dr-con-own-t a{color:inherit;text-decoration:none}
+.dr-con-own-t a:hover{text-decoration:underline;text-underline-offset:3px}
+.dr-con-own-r{display:flex;align-items:baseline;gap:10px;padding:3px 0;font-size:12.5px;line-height:1.45;color:var(--ink-2)}
+.dr-con-own-r>span,.dr-con-own-r>a{min-width:0;overflow-wrap:anywhere}
+.dr-con-own-r>a{color:var(--ink-2);text-decoration:underline;text-decoration-color:var(--hair-2);text-underline-offset:3px}
+.dr-con-own-r>a:hover{color:var(--ink)}
+.dr-con-own-r>b{margin-left:auto;flex:none;font-size:11.5px;font-weight:500;color:var(--ink-3);white-space:nowrap}
+.dr-con-own a:focus-visible{outline:2px solid var(--select);outline-offset:2px;border-radius:3px}
 /* оглавление отчёта: готов / пишется / впереди */
 .dr-con-secs{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:2px}
 .dr-con-secs li{display:flex;align-items:baseline;gap:10px;padding:4px 0;font-size:13px;color:var(--ink-3)}
@@ -4292,6 +4302,233 @@ thead th{font-weight:600}
   .turb-chip{padding:0 8px}
   .turb-chip-l{display:none}
   .chat-shell{height:calc(100dvh - var(--topbar) - var(--turb-h))}
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   ИИ-помощник · единый стиль вкладки (11.11.2026)
+   Правила системы: основное действие — чернильная кнопка; красный — только
+   риск; выбор и фокус — графит (--select); весь текст — Geist с табличными
+   цифрами, моноширинный — только клавиши и код; не мельче 11 px.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── Стартовая: вопрос — главное; история — рядом, а не внизу ── */
+.chat-shell .ai-welcome{max-width:760px;margin:0 auto;padding:clamp(20px,6vh,64px) 32px 56px}
+.aw-top{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:30px;margin-bottom:12px}
+/* надзаголовок — фирменным красным: это подпись бренда, а не сигнал */
+.chat-shell .aw-eyebrow{margin:0;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
+.chat-shell .aw-title{margin:0 0 22px;font-size:38px;line-height:1.1}
+.chat-shell .aw-lede{margin:0 0 20px;max-width:64ch;font-size:15.5px;line-height:1.55;text-wrap:pretty}
+.aw-ask{margin:0}
+.aw-ask .composer-inner{max-width:none;margin:0}
+.aw-ask .aw-tpls{margin-top:12px}
+.aw-how{margin:12px 2px 0;font-size:12.5px;line-height:1.5;color:var(--ink-3)}
+.chat-shell .aw-sec{margin-top:28px}
+.aw-sec-h{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:24px;margin-bottom:6px}
+.chat-shell .aw-sec-h h2.eyebrow{margin:0}
+.aw-more{display:inline-flex;align-items:center;gap:5px;padding:0;border:0;background:none;font:inherit;font-size:12.5px;font-weight:500;color:var(--select);cursor:pointer}
+.aw-more:hover{text-decoration:underline;text-underline-offset:3px}
+.chat-shell .aw-tpl{height:30px;padding:0 12px;font-size:12.5px;background:var(--surface)}
+/* строки «Продолжить» и «Сегодня в выпуске» — один вид: значок, название, подпись справа */
+.aw-rows{display:flex;flex-direction:column;border-top:1px solid var(--hair)}
+.aw-row{display:flex;align-items:center;gap:12px;width:100%;min-height:44px;padding:8px 6px;border:0;border-bottom:1px solid var(--hair);
+  background:none;font:inherit;color:inherit;text-align:left;cursor:pointer;transition:background .12s}
+.aw-row:hover{background:var(--paper-2)}
+.aw-row:focus-visible{outline:2px solid var(--select);outline-offset:-2px;border-radius:6px}
+.aw-row-ic{flex:none;width:18px;display:grid;place-items:center;color:var(--ink-3)}
+.aw-row:hover .aw-row-ic{color:var(--ink)}
+.aw-row-t{flex:1;min-width:0;font-size:14px;line-height:1.4;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aw-row-m{flex:none;display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.aw-row.none .aw-row-m{color:var(--warn-ink,var(--warn))}
+.aw-row-day .aw-row-ic i{width:8px;height:8px;border-radius:50%;background:var(--sev,var(--ink-4))}
+.aw-row-day[data-sev=risk]{--sev:var(--neg)}
+.aw-row-day[data-sev=watch]{--sev:var(--warn)}
+.aw-row-day[data-sev=good]{--sev:var(--pos)}
+.aw-row-k{margin-right:10px;font-size:12px;color:var(--ink-3)}
+.aw-row-day .aw-row-m{color:var(--select);opacity:0;transition:opacity .12s}
+.aw-row-day:hover .aw-row-m,.aw-row-day:focus-visible .aw-row-m{opacity:1}
+@media(hover:none){.aw-row-day .aw-row-m{opacity:1}}
+
+/* ── Поле вопроса ── */
+.chat-shell .composer-dock{padding:10px 32px 18px}
+.chat-shell .chat-input-wrap{border:1px solid var(--hair-2);border-radius:16px;background:var(--surface);box-shadow:var(--shadow-2);
+  transition:border-color .15s,box-shadow .15s}
+.chat-shell .chat-input-wrap:focus-within{border-color:color-mix(in oklab,var(--select),transparent 35%);
+  box-shadow:var(--shadow-2),0 0 0 3px var(--select-soft)}
+.chat-shell .chat-textarea{padding:15px 18px 4px;font-size:15px;line-height:1.55}
+/* фокус показывает рамка всего поля — отдельная обводка у текста не нужна */
+.chat-shell .chat-textarea:focus,.chat-shell .chat-textarea:focus-visible{outline:none}
+/* фокус во вкладке — графитом, как выбор; красная обводка читалась как ошибка */
+.chat-shell :where(a,button,[role="button"],[role="radio"],[role="checkbox"],input,select,textarea,summary,[tabindex]):focus-visible{outline-color:var(--select)}
+.aw-ask .chat-textarea{min-height:58px}
+.chat-shell .composer-bar{flex-wrap:nowrap;gap:12px;padding:4px 10px 10px 18px}
+.chat-shell .composer-hint{min-width:0;font-size:12px;color:var(--ink-4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-shell .composer-send{flex:none;margin-left:auto;height:36px;padding:0 14px;border-radius:10px;font-size:13px;font-weight:500}
+.chat-shell .composer-send:not(:disabled):hover{opacity:.9}
+.chat-shell .composer-send:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.chat-shell .aw-dup{border-radius:12px}
+
+.al-runbar-short{display:none}
+.clarify-lbl{min-width:0}
+/* ── Лента ── */
+.chat-shell .chat-msg .who{font-size:11.5px;color:var(--ink-3)}
+.chat-shell .chat-msg.user .chat-bubble{border-radius:16px 16px 4px 16px;padding:11px 16px;font-size:14.5px}
+.chat-shell .pending-label{font-size:13px;color:var(--ink-2)}
+.chat-shell .al-thread-head{max-width:1180px;margin:0 auto 6px}
+
+/* ── Уточнение перед отчётом ── */
+.chat-shell .clarify-card{padding:18px 20px 16px;border:1px solid var(--hair);border-radius:16px;background:var(--surface);box-shadow:var(--shadow-1)}
+.chat-shell .clarify-head{margin-bottom:8px}
+.chat-shell .clarify-head .eyebrow{color:var(--ink-3)}
+.chat-shell .clarify-x{margin-left:auto;width:28px;height:28px;padding:0;display:grid;place-items:center;border:0;border-radius:8px;background:none;color:var(--ink-3);cursor:pointer}
+.chat-shell .clarify-x:hover{background:var(--paper-2);color:var(--ink)}
+.chat-shell .clarify-x:focus-visible,.chat-shell .clarify-chip:focus-visible,.chat-shell .clarify-go:focus-visible,.chat-shell .clarify-skip-btn:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.clarify-title{font-family:'Source Serif 4',Georgia,serif;font-size:19px;font-weight:600;line-height:1.3;color:var(--ink);text-wrap:balance}
+.chat-shell .clarify-sub{margin:4px 0 18px;max-width:66ch;font-size:13px;line-height:1.5;color:var(--ink-3)}
+.chat-shell .clarify-q{margin-bottom:18px}
+.chat-shell .clarify-q-t{display:flex;align-items:baseline;gap:10px;margin-bottom:10px;font-size:14px;font-weight:600;color:var(--ink)}
+.clarify-q-n{flex:none;font-size:12px;font-weight:500;color:var(--ink-4);font-variant-numeric:tabular-nums}
+.clarify-q-h{font-size:12px;font-weight:400;color:var(--ink-3)}
+.chat-shell .clarify-chip{gap:8px;min-height:36px;padding:6px 12px;border:1px solid var(--hair-2);border-radius:10px;background:var(--surface);color:var(--ink-2);font-size:13px}
+.chat-shell .clarify-chip:hover{border-color:var(--ink-4);color:var(--ink)}
+.chat-shell .clarify-chip.on{border-color:color-mix(in oklab,var(--select),transparent 30%);background:var(--select-soft);color:var(--ink)}
+.chat-shell .clarify-box{width:15px;height:15px;border:1.5px solid var(--ink-4);background:var(--surface)}
+.chat-shell .clarify-chip.on .clarify-box{border-color:var(--select);background:var(--select);color:var(--paper)}
+.chat-shell .clarify-chip.dashed{border-style:dashed;border-color:var(--hair-2);background:none;color:var(--ink-3)}
+.chat-shell .clarify-chip.dashed.on{border-style:solid;border-color:color-mix(in oklab,var(--select),transparent 30%);background:var(--select-soft);color:var(--ink)}
+.chat-shell .clarify-rec{padding:0;border:0;font-size:11.5px;letter-spacing:0;text-transform:none;color:var(--ink-3)}
+.chat-shell .clarify-rec::before{content:"· "}
+.chat-shell .clarify-input{height:38px;padding:0 12px;border:1px solid var(--hair-2);border-radius:10px;background:var(--surface);font-size:13.5px}
+.chat-shell .clarify-foot{gap:10px;margin-top:4px;padding-top:14px}
+.chat-shell .clarify-count{font-size:12px}
+.chat-shell .clarify-skip-btn{height:36px;padding:0 14px;border:1px solid var(--hair-2);border-radius:10px;background:none;color:var(--ink-2);font-size:13px;font-weight:500}
+.chat-shell .clarify-skip-btn:hover{border-color:var(--ink-4);color:var(--ink)}
+.chat-shell .clarify-go{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 16px;border:0;border-radius:10px;background:var(--ink);color:var(--paper);font-size:13px;font-weight:500}
+.chat-shell .clarify-go:hover{filter:none;opacity:.9}
+
+/* ── Короткий ответ ── */
+.chat-shell .quick-tools{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 0;margin:0 0 12px;padding:0;border:0;border-radius:0;background:none;font-size:12px;color:var(--ink-3)}
+.quick-tools-k{margin-right:8px;color:var(--ink-4)}
+.chat-shell .quick-tool{display:inline;gap:0}
+.chat-shell .quick-tool+.quick-tool::before{content:"·";margin:0 8px;color:var(--ink-4)}
+.chat-shell .quick-tool.now{color:var(--ink)}
+.chat-shell .quick-tool-n{color:var(--ink-4)}
+.chat-shell .quick-answer.chat-bubble{padding:0;border:0;background:none;font-size:15px;line-height:1.7}
+.chat-shell .quick-answer ol,.chat-shell .quick-answer ul{margin:8px 0;padding-left:22px}
+.chat-shell .quick-answer li{margin:4px 0}
+.chat-shell .quick-answer p{margin:0 0 10px}
+.chat-shell .quick-sources{margin-top:16px;gap:6px}
+.chat-shell .quick-src{gap:8px;padding:5px 10px;border-radius:999px;border-color:var(--hair)}
+.chat-shell .quick-src-n{font-family:inherit;font-size:11px;font-weight:600;color:var(--ink-3);font-variant-numeric:tabular-nums}
+/* подвал ответа: действия слева, оценка справа */
+.ans-foot{display:flex;align-items:center;flex-wrap:wrap;gap:10px 16px;margin-top:18px;padding-top:14px;border-top:1px solid var(--hair)}
+.ans-acts{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.ans-foot .aifb{margin:0 0 0 auto}
+.ans-foot .aifb:has(.aifb-why){flex-basis:100%;margin-left:0}
+
+/* ── Сбой и остановка ── */
+.ai-error{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:10px 0 0;padding:10px 14px;border:1px solid color-mix(in oklab,var(--neg),transparent 70%);
+  border-radius:12px;background:color-mix(in oklab,var(--neg),transparent 94%);font-size:13.5px;line-height:1.5;color:var(--ink)}
+.ai-error>svg{flex:none;color:var(--neg)}
+.ai-error-t{flex:1;min-width:200px}
+.ai-error-b{flex:none;height:32px;padding:0 14px;border:0;border-radius:9px;background:var(--ink);color:var(--paper);font:inherit;font-size:12.5px;font-weight:500;cursor:pointer}
+.ai-error-b:hover{opacity:.9}
+.ai-stopped{margin:10px 0 0;font-size:13px;color:var(--ink-3)}
+
+/* ── Кнопки действий — одного вида: отчёт, PDF, презентация, «В дело», «Поделиться» ── */
+.chat-shell .btn-export,.chat-shell .shr-btn,.chat-shell .ca-btn{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 12px;
+  border:1px solid var(--hair-2);border-radius:9px;background:var(--surface);color:var(--ink-2);
+  font:inherit;font-size:12.5px;font-weight:500;letter-spacing:0;cursor:pointer;transition:border-color .15s,color .15s,background .15s}
+.chat-shell .btn-export:hover:not(:disabled),.chat-shell .shr-btn:hover,.chat-shell .ca-btn:hover{background:var(--surface);color:var(--ink);border-color:var(--ink-4)}
+.chat-shell .btn-export:focus-visible,.chat-shell .shr-btn:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.chat-shell .btn-export:disabled{opacity:.55;cursor:default}
+.chat-shell .btn-export svg,.chat-shell .shr-btn svg,.chat-shell .ca-btn svg{flex:none;opacity:1;color:var(--ink-3)}
+.chat-shell .btn-export:hover:not(:disabled) svg,.chat-shell .shr-btn:hover svg,.chat-shell .ca-btn:hover svg{color:var(--ink)}
+.chat-shell .ans-report{border-color:var(--ink-4);color:var(--ink)}
+.chat-shell .ans-report svg{color:var(--ink)}
+
+/* ── Оценка ответа ── */
+.chat-shell .aifb{gap:6px}
+.chat-shell .aifb-l{margin-right:2px;font-size:12px;letter-spacing:0;text-transform:none;color:var(--ink-3)}
+.chat-shell .aifb button.tb{width:30px;height:30px;border-radius:8px}
+.chat-shell .aifb button.tb:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+
+/* ── Шапка отчёта ── */
+.rp-head{max-width:1180px;margin:6px auto 22px;padding-bottom:18px;border-bottom:1px solid var(--hair)}
+.rp-eyebrow{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin-bottom:8px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.rp-eyebrow>span:first-child{color:var(--accent)}   /* «Отчёт» — фирменным красным, как надзаголовок стартовой */
+.rp-eyebrow>span+span::before{content:"·";margin-right:10px;color:var(--ink-4)}
+.rp-eyebrow .shr-owner{letter-spacing:0;text-transform:none;font-weight:500}
+.rp-title{margin:0;max-width:26ch;font-family:'Source Serif 4',Georgia,serif;font-size:34px;font-weight:600;line-height:1.14;letter-spacing:-.016em;color:var(--ink);text-wrap:balance}
+.rp-meta{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 0;margin-top:12px;font-size:13px;line-height:1.5;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.rp-meta>*+*::before{content:"·";margin:0 9px;color:var(--ink-4)}
+.rp-meta b{font-weight:600;color:var(--ink)}
+.rp-meta .ok b{color:var(--pos)}
+.rp-meta-warn{padding:0;border:0;background:none;font:inherit;color:var(--warn-ink,var(--warn));cursor:pointer;text-decoration:underline;text-decoration-color:color-mix(in oklab,currentColor,transparent 55%);text-underline-offset:3px}
+.rp-meta-warn::before{display:inline-block;text-decoration:none}
+.rp-meta-warn:hover{text-decoration-color:currentColor}
+.rp-meta-warn:focus-visible{outline:2px solid var(--select);outline-offset:2px;border-radius:3px}
+.rp-bar{display:flex;align-items:center;flex-wrap:wrap;gap:10px 16px;margin-top:16px}
+.rp-acts{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.rp-bar .aifb{margin:0 0 0 auto}
+.rp-bar .aifb:has(.aifb-why){flex-basis:100%;margin-left:0}
+.chat-shell .dr-doc{margin-top:0}
+.chat-shell .dr-doc-main>:first-child{margin-top:0}
+.chat-shell .dr-doc-main>h2:first-child,.chat-shell .dr-doc-main>div:first-child>h2:first-child{margin-top:0;padding-top:0;border-top:0}
+
+/* ── Источники отчёта ── */
+.chat-shell .dr-rail-h{justify-content:space-between;padding:0 0 10px;margin-bottom:4px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+.dr-rail-h-n{font-weight:400;letter-spacing:0;text-transform:none}
+.chat-shell .dr-rail-item{display:flex;align-items:baseline;gap:10px;padding:10px 6px 10px 10px;border-left:2px solid transparent;border-bottom:1px solid var(--hair)}
+.chat-shell .dr-rail-num{flex:none;min-width:18px;margin:0;font-family:inherit;font-size:11.5px;font-weight:600;color:var(--ink-3);font-variant-numeric:tabular-nums;text-align:right}
+.dr-rail-body{display:flex;flex-direction:column;gap:3px;min-width:0}
+.chat-shell .dr-rail-bank{max-width:none;margin:0;font-size:13px;font-weight:500;line-height:1.35;color:var(--ink);white-space:normal;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.chat-shell .dr-rail-meta{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;margin:0;font-family:inherit;font-size:11.5px;color:var(--ink-3)}
+.chat-shell .dr-rail-domain{display:inline;margin:0;font-size:11.5px;color:var(--ink-2);white-space:nowrap}
+.dr-rail-kind{display:inline-flex;align-items:baseline;gap:6px;white-space:nowrap}
+.chat-shell .dr-toc-h{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+/* оглавление и источники держатся у верха ленты и не уходят под поле вопроса */
+.chat-shell .dr-doc-toc,.chat-shell .dr-doc-rail{top:12px;max-height:calc(100dvh - var(--topbar) - 190px)}
+.dr-rail-when{display:flex;flex-direction:column;gap:1px;font-size:11.5px;line-height:1.4;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.chat-shell .dr-rail-dead{margin:0;font-size:11.5px}
+
+/* ── Ход отчёта и нижняя полоса: цифры табличные, без моноширинного ── */
+.chat-shell .dr-con .mono,.chat-shell .al-runbar .mono{font-family:inherit;font-variant-numeric:tabular-nums}
+.chat-shell .dr-con{border-radius:16px}
+.chat-shell .dr-con-title{font-size:15px}
+.chat-shell .al-runbar{padding:12px 4px}
+.chat-shell .al-runbar-btn{border-radius:9px}
+
+@media(max-width:640px){
+  .chat-shell .ai-welcome{padding:20px 16px 40px}
+  .chat-shell .aw-title{font-size:28px}
+  .aw-ask .chat-input-wrap{margin:0}
+  .chat-shell .composer-hint{display:none}
+  .rp-title{font-size:26px}
+  /* нижняя полоса прогона — в одну строку: короткая подпись и две кнопки */
+  .al-runbar-full{display:none}
+  .al-runbar-short{display:inline}
+  .chat-shell .al-runbar{flex-wrap:nowrap;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom))}
+  .chat-shell .al-runbar-text{flex:1 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chat-shell .al-runbar-btn{height:34px;padding:0 10px}
+  .chat-shell .clarify-chip{align-items:flex-start}
+  .chat-shell .clarify-box{margin-top:2px}
+  .chat-shell .clarify-rec{display:block}
+  .chat-shell .clarify-rec::before{content:""}
+  /* поле вопроса в разговоре — одной строкой: текст и круглая кнопка отправки */
+  .composer-dock .chat-input-wrap{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end}
+  .composer-dock .chat-textarea{padding:12px 6px 12px 14px}
+  .composer-dock .composer-bar{padding:6px 6px 6px 0}
+  .composer-dock .composer-send{width:38px;height:38px;padding:0;justify-content:center;border-radius:12px}
+  .composer-dock .composer-send-t{display:none}
+  .aw-row-t{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .aw-how{font-size:12px}
+  .rp-head{margin-bottom:16px;padding-bottom:14px}
+  .rp-bar .aifb,.ans-foot .aifb{margin-left:0}
+  .chat-shell .clarify-card{padding:16px 14px 14px}
+  .chat-shell .clarify-foot{flex-wrap:wrap}
+  .chat-shell .clarify-count{flex-basis:100%}
+  .chat-shell .clarify-skip-btn{margin-left:0}
 }
 </style>
 <style id="vsp-css">

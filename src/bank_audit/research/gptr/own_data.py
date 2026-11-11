@@ -1126,6 +1126,72 @@ def collect_news(od: OwnData, plan, question: str) -> None:
             break
 
 
+# ── что уже нашлось: короткий показ в ходе прогона ───────────────────────────
+
+_STORY = "Жалобы: сюжет «"
+
+
+def _short(text_: str, limit: int = 170) -> str:
+    t = " ".join(str(text_ or "").split())
+    return t if len(t) <= limit else t[:limit].rsplit(" ", 1)[0] + "…"
+
+
+def _count_ru(value) -> str:
+    """«14» → «14 жалоб», «1» → «1 жалоба»: число из факта с верным падежом."""
+    digits = "".join(ch for ch in str(value) if ch.isdigit())
+    return f"{value} {_plural(int(digits), 'жалоба', 'жалобы', 'жалоб')}" if digits else str(value)
+
+
+def preview(od: OwnData, *, rows: int = 4) -> dict | None:
+    """Что уже есть в данных AuditLens по вопросу — показать, пока отчёт собирается.
+
+    Собственные данные готовы через полминуты, отчёт — через несколько минут.
+    Здесь только посчитанное разделами: сюжеты жалоб с числом жалоб, строки
+    витрины «Рынок», заголовки новостей — и ссылка в раздел. Выводов модели
+    нет: это не ответ, а то, на чём он будет стоять. Уязвимости не показываем:
+    их оценки предварительные и без пояснения читаются как установленный факт.
+    """
+    blocks: list[dict] = []
+    stories: dict[str, list[dict]] = {}
+    for f in od.facts:
+        if str(f.get("attribute") or "").startswith(_STORY):
+            stories.setdefault(f["url"], []).append(f)
+    for url, fs in list(stories.items())[:2]:
+        title = (od.meta.get(url) or {}).get("title", "").removeprefix("AuditLens · Отзывы: ")
+        blocks.append({"kind": "complaints", "title": f"Жалобы клиентов · {title}", "link": url,
+                       "rows": [{"label": f["attribute"][len(_STORY):].rstrip("»"),
+                                 "value": _count_ru(f["value"])} for f in fs[:rows]]})
+    if not stories:
+        for url, meta in od.meta.items():
+            if meta.get("kind") != "complaints":
+                continue
+            lines = od.pages.get(url, "").split("\n")[1:]
+            if lines:
+                blocks.append({"kind": "complaints", "link": url,
+                               "title": "Жалобы клиентов · "
+                                        + meta.get("title", "").removeprefix("AuditLens · Отзывы: "),
+                               "rows": [{"label": _short(x)} for x in lines[:2]]})
+                break
+    for url, meta in od.meta.items():
+        if meta.get("kind") != MARKET:
+            continue
+        lines = od.pages.get(url, "").split("\n")[1:]
+        # первая строка — описание витрины, дальше — предложения банков
+        body = [x for x in lines[1:] if not x.startswith("Как сравнивать")] or lines[:1]
+        blocks.append({"kind": "market", "link": url,
+                       "title": meta.get("title", "").removeprefix("AuditLens · "),
+                       "rows": [{"label": _short(x, 150)} for x in body[:rows]]})
+        if sum(1 for b in blocks if b["kind"] == "market") >= 2:
+            break
+    news = [{"label": _short(meta.get("title", ""), 140), "link": url}
+            for url, meta in od.meta.items() if meta.get("kind") == NEWS]
+    if news:
+        blocks.append({"kind": "news", "title": "Новости по теме", "rows": news[:rows]})
+    if not blocks:
+        return None
+    return {"blocks": blocks[:5]}
+
+
 # ── вход ─────────────────────────────────────────────────────────────────────
 
 async def collect(client, model: str, question: str, plan, state=None) -> OwnData:
