@@ -243,7 +243,7 @@ def test_waves_hotspots_shelves_queue_on_model_cards(scene):
     w = c.get("/api/vsp/waves").json()
     assert w["has_motifs"] and {x["level"] for x in w["waves"]} == {"kind", "motif"} and w["counts"]["kind"]["new"] >= 1
     bio = next(x for x in w["waves"] if x["level"] == "motif" and x["kind"] == 15)
-    assert bio["hot"] == 1 and bio["text"] and bio["accent"] and len(bio["series"]) == 48 and bio["status_label"]
+    assert bio["hot"] == 1 and bio["text"] and bio["accent"] and 16 <= len(bio["series"]) <= 17 and bio["status_label"]
     card = c.get(f"/api/vsp/waves/{bio['id']}").json()
     assert card["hotspots"] and card["examples"] and card["profile"]["n"] == 12 and card["ops"] == "платежи за биометрию"
     assert card["request"]["what"] == "Платежи за биометрию" and card["request"]["metric"] == "доля возвратов"
@@ -419,3 +419,78 @@ def test_wave_notice_first_run_goes_to_owner_only(monkeypatch):
                   "last": {**store["v"]["last"], "k:16": old}}
     fire(6, ws + [wave("k:16", "rising", kind=16)])
     assert [x[2] for x in sent] == ["k:16"]
+
+
+def test_responses_are_compressed_and_series_go_by_quarters(scene):
+    """Скорость запуска: большие ответы вкладки сжимаются (прокси перед приложением этого не делает),
+    а ряд способа действия отдаётся по кварталам — помесячный делал «Схемы» втрое тяжелее."""
+    import gzip
+    c = scene
+    r = c.get("/api/vsp/waves", headers={"Accept-Encoding": "gzip"})
+    assert r.status_code == 200 and r.headers.get("content-encoding") == "gzip" and "accept-encoding" in r.headers["vary"].lower()
+    w = r.json()["waves"]                                                         # клиент распаковал сам
+    assert w and all(x["series"] and x["series"][0]["m"][5:] in ("01", "04", "07", "10") for x in w)
+    assert sum(q["n"] for q in w[0]["series"]) <= w[0]["clients"]
+    raw = c.get("/api/vsp/waves", headers={"Accept-Encoding": "identity"})
+    assert "content-encoding" not in raw.headers and raw.json()["waves"] == w
+    assert int(r.headers["content-length"]) < len(raw.content) / 3
+    assert len(gzip.compress(raw.content)) < len(raw.content) / 3
+    small = c.get("/api/vsp/hotspots", params={"subject": "MOW"}, headers={"Accept-Encoding": "gzip"})
+    assert "content-encoding" not in small.headers                                 # короткий ответ не сжимаем
+    x = c.get("/api/vsp/export/stories.xlsx", headers={"Accept-Encoding": "gzip"})
+    assert x.status_code == 200 and "content-encoding" not in x.headers           # выгрузки не трогаем
+
+
+def test_run_is_loaded_once_and_new_one_arrives_in_background(scene, db_url, monkeypatch):
+    """Расчёт грузится один раз. Появился новый — запрос его не ждёт: отдаётся прежний, новый подменяется в фоне."""
+    import threading
+    import time
+    c = scene
+    loads = []
+    real = vsp_api._load_run
+    monkeypatch.setattr(vsp_api, "_load_run", lambda swap=True: (loads.append(1), real(swap))[1])
+    vsp_api._CACHE.update(run=None, at=0.0)
+    got = []
+    ts = [threading.Thread(target=lambda: got.append(vsp_api._run()["id"])) for _ in range(4)]   # без HTTP: тестовый
+    [t.start() for t in ts]                                                        # клиент не рассчитан на потоки
+    [t.join() for t in ts]
+    assert len(loads) == 1 and len(set(got)) == 1 and len(got) == 4                # четыре запроса разом — одна загрузка
+    rid = vsp_api._CACHE["run"]["id"]
+    run(Store(db_url))                                                            # ночной расчёт: появился новый прогон
+    vsp_api._CACHE["at"] = 0.0                                                     # «прошло пять минут»
+    assert c.get("/api/vsp/meta").json()["run"]["id"] == rid                      # сразу — прежний
+    for _ in range(200):
+        if vsp_api._CACHE["run"]["id"] != rid and not vsp_api._REFRESH["busy"]:
+            break
+        time.sleep(0.02)
+    new = vsp_api._CACHE["run"]
+    assert new["id"] > rid and "_waves" in new and "_hots" in new                # новый прогрет до подмены
+    assert c.get("/api/vsp/meta").json()["run"]["id"] == new["id"] and len(loads) == 2
+
+
+def test_progress_never_blocks_the_first_request(scene, monkeypatch):
+    """Счётчики по всей таблице отзывов считаются в фоне: запрос отдаёт прошлое значение, а не ждёт пересчёта."""
+    import time
+    c = scene
+    slow = {"n": 0}
+    real = vsp_api._progress_compute
+
+    def compute():
+        slow["n"] += 1
+        time.sleep(0.6)
+        return real()
+
+    monkeypatch.setattr(vsp_api, "_progress_compute", compute)
+    vsp_api._PROG.update(v=None, at=0.0, busy=False)
+    t0 = time.monotonic()
+    m = c.get("/api/vsp/meta").json()
+    assert time.monotonic() - t0 < 0.55 and m["progress"] is None and m["run"]["id"]   # не дождались — строки пока нет
+    for _ in range(100):
+        if vsp_api._PROG["v"] is not None:
+            break
+        time.sleep(0.02)
+    p = c.get("/api/vsp/meta").json()["progress"]
+    assert p and p["with_text"] == p["screened"] and slow["n"] == 1                # всё прочитано: ждущих нет
+    vsp_api._PROG["at"] = time.monotonic() - vsp_api.PROGRESS_TTL_S - 1           # устарело: отдаём прежнее сразу
+    t0 = time.monotonic()
+    assert c.get("/api/vsp/meta").json()["progress"] == p and time.monotonic() - t0 < 0.3

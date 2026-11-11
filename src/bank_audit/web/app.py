@@ -126,6 +126,14 @@ async def lifespan(app: FastAPI):
             await asyncio.to_thread(loophole_repo.reap_stale_runs)
         except Exception:
             log.warning("[lifespan] reap_stale_runs failed", exc_info=True)
+        # «Аудит сети ВСП»: расчёт (десятки мегабайт) и счётчики грузим заранее, в фоне, — первый посетитель
+        # после запуска не ждёт. Ошибки внутри не роняют старт: вкладка загрузит всё сама по первому запросу.
+        try:
+            import threading
+            from . import vsp_api
+            threading.Thread(target=vsp_api.warm, name="vsp-warm", daemon=True).start()
+        except Exception:
+            log.warning("[lifespan] vsp warm failed", exc_info=True)
         yield
     finally:
         await mcp_stack.aclose()
@@ -5824,7 +5832,46 @@ app.mount("/static/loophole", StaticFiles(directory=LOOPHOLE_STATIC_DIR), name="
 
 # ── static (SPA) ─────────────────────────────────────────────────────────────
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+class _GzipStatic(StaticFiles):
+    """Текстовые файлы интерфейса отдаём сжатыми: прокси перед приложением ответы не сжимает, а собранный
+    app.js — два мегабайта (сжатым — около пятисот килобайт). Файл с версией в адресе (?v=…) браузер может
+    держать без перепроверки: при новой сборке адрес меняется."""
+
+    _TEXT = (".js", ".css", ".json", ".svg", ".html", ".txt", ".map")
+    _gz: dict = {}
+
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        try:
+            if (resp.status_code != 200 or scope.get("method") != "GET" or not isinstance(resp, FileResponse)
+                    or not str(path).lower().endswith(self._TEXT)):
+                return resp
+            hdrs = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers") or []}
+            if b"v=" in (scope.get("query_string") or b""):
+                resp.headers["cache-control"] = "public, max-age=31536000, immutable"
+            resp.headers["vary"] = "Accept-Encoding"
+            if "range" in hdrs or "gzip" not in hdrs.get("accept-encoding", "").lower():
+                return resp
+            import gzip as _gzip
+            st = os.stat(resp.path)
+            key = (str(resp.path), st.st_mtime_ns, st.st_size)
+            data = self._gz.get(key)
+            if data is None:
+                with open(resp.path, "rb") as f:
+                    data = _gzip.compress(f.read(), compresslevel=6)
+                for k in [k for k in self._gz if k[0] == key[0]]:      # прежняя версия файла больше не нужна
+                    self._gz.pop(k, None)
+                self._gz[key] = data
+            if len(data) >= st.st_size * 0.9:
+                return resp
+            keep = {k: resp.headers[k] for k in ("etag", "last-modified", "cache-control", "vary") if k in resp.headers}
+            return Response(content=data, media_type=resp.media_type, headers={**keep, "content-encoding": "gzip"})
+        except Exception:  # noqa: BLE001 — сжатие не должно ломать раздачу файлов
+            log.warning("static: файл отдан без сжатия", exc_info=True)
+            return resp
+
+
+app.mount("/static", _GzipStatic(directory=STATIC_DIR), name="static")
 
 
 _BUILT_SHA: dict = {}
@@ -5878,14 +5925,38 @@ def _index_html_with_bust() -> str:
     return html
 
 
+_INDEX: dict = {}
+
+
+def _index_response(request: Request) -> Response:
+    """Страница приложения: 370 КБ разметки и стилей. Браузер проверяет её при каждом заходе — отвечаем
+    «не изменилась» (304), а если изменилась — отдаём сжатой. Собранная страница кэшируется по времени файлов."""
+    import gzip as _gzip
+    import hashlib
+    key = []
+    for name in ("index.html", "app.js", "app.jsx"):
+        try:
+            st = (STATIC_DIR / name).stat()
+            key.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            key.append(None)
+    if _INDEX.get("key") != key:
+        raw = _index_html_with_bust().encode("utf-8")
+        _INDEX.update(key=key, raw=raw, gz=_gzip.compress(raw, compresslevel=6),
+                      etag='"' + hashlib.sha1(raw).hexdigest()[:20] + '"')
+    headers = {"Cache-Control": "no-cache, must-revalidate", "ETag": _INDEX["etag"], "Vary": "Accept-Encoding"}
+    if _INDEX["etag"] in (request.headers.get("if-none-match") or ""):
+        return Response(status_code=304, headers=headers)
+    if "gzip" in (request.headers.get("accept-encoding") or "").lower():
+        return Response(content=_INDEX["gz"], media_type="text/html; charset=utf-8",
+                        headers={**headers, "Content-Encoding": "gzip"})
+    return Response(content=_INDEX["raw"], media_type="text/html; charset=utf-8", headers=headers)
+
+
 @app.get("/")
-def index():
-    return Response(content=_index_html_with_bust(),
-                    media_type="text/html; charset=utf-8",
-                    headers={"Cache-Control": "no-cache, must-revalidate"})
+def index(request: Request):
+    return _index_response(request)
 
 @app.get("/{full_path:path}")
-def spa_fallback(full_path: str):
-    return Response(content=_index_html_with_bust(),
-                    media_type="text/html; charset=utf-8",
-                    headers={"Cache-Control": "no-cache, must-revalidate"})
+def spa_fallback(full_path: str, request: Request):
+    return _index_response(request)

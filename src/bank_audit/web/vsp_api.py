@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import gzip
 import io
 import json
 import logging
@@ -25,10 +26,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import quote, urlsplit, urlunsplit
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
+from fastapi.routing import APIRoute
 from pydantic import BaseModel
-from sqlalchemy import and_, case, create_engine, event, func, or_, select
+from sqlalchemy import and_, case, create_engine, event, func, select
 
 from ..vsp.regions import BY_CODE, subject_name
 from ..vsp.signals.kinds import TYPED_SINCE
@@ -39,7 +41,35 @@ from .auth import CurrentUser, get_current_user
 from . import telemetry
 
 log = logging.getLogger(__name__)
-router = APIRouter()
+GZIP_MIN = 2048           # ответы короче не сжимаем
+
+
+class _GzipRoute(APIRoute):
+    """Ответы вкладки — JSON до сотен килобайт, а прокси перед приложением ответы не сжимает.
+    Сжимаем сами, если браузер это понимает: «Схемы» 420 КБ → ≈30 КБ. Выгрузки (xlsx, docx) не трогаем."""
+
+    def get_route_handler(self):
+        orig = super().get_route_handler()
+
+        async def handler(request: Request) -> Response:
+            resp = await orig(request)
+            try:
+                body = getattr(resp, "body", None)
+                if (body and len(body) >= GZIP_MIN and "content-encoding" not in resp.headers
+                        and (resp.headers.get("content-type") or "").startswith("application/json")
+                        and "gzip" in request.headers.get("accept-encoding", "").lower()):
+                    data = gzip.compress(body, compresslevel=5)
+                    resp.body = data
+                    resp.headers["content-encoding"] = "gzip"
+                    resp.headers["content-length"] = str(len(data))
+                    resp.headers["vary"] = "Accept-Encoding"
+            except Exception:  # noqa: BLE001 — сжатие не должно ронять ответ
+                log.warning("vsp: ответ не сжат", exc_info=True)
+            return resp
+        return handler
+
+
+router = APIRouter(route_class=_GzipRoute)
 UTC = timezone.utc
 
 
@@ -145,16 +175,86 @@ _CACHE: dict = {"run": None, "at": 0.0}
 CACHE_S = 300
 
 
+_RUN_LOCK = threading.Lock()          # расчёт грузит один поток: параллельные запросы ждут его, а не грузят сами
+_REFRESH = {"busy": False}
+
+
+def _latest_rid(c):
+    r = c.execute(select(signal_runs).where(signal_runs.c.status == "done")
+                  .order_by(signal_runs.c.run_id.desc()).limit(1)).mappings().first()
+    if not r:
+        raise HTTPException(404, "сигналы ещё не рассчитаны")
+    return r
+
+
 def _run() -> dict:
-    """Последний завершённый прогон: витрина точек, эпизоды, сеть — в памяти на 5 минут."""
+    """Последний завершённый прогон: витрина точек, эпизоды, сеть — в памяти.
+
+    Загрузка расчёта — десятки мегабайт JSON, секунды. Поэтому запрос её ждёт только один раз — сразу после
+    запуска приложения (и то обычно не ждёт: расчёт греется при старте, см. warm). Дальше раз в CACHE_S
+    проверяется, не появился ли новый расчёт, — в фоне; пока новый грузится, отдаётся прежний."""
     now = time.monotonic()
-    if _CACHE["run"] and now - _CACHE["at"] < CACHE_S:
-        return _CACHE["run"]
+    run = _CACHE["run"]
+    if run and now - _CACHE["at"] < CACHE_S:
+        return run
+    if run:
+        _refresh_async()
+        return run
+    with _RUN_LOCK:
+        if _CACHE["run"]:
+            return _CACHE["run"]
+        return _load_run()
+
+
+def _refresh_async() -> None:
+    """Проверить в фоне, не появился ли новый расчёт; появился — загрузить, прогреть и подменить."""
+    if _REFRESH["busy"]:
+        return
+    _REFRESH["busy"] = True
+    _CACHE["at"] = time.monotonic()                 # следующая проверка — через CACHE_S, а не на каждом запросе
+
+    def work():
+        try:
+            with engine().connect() as c:
+                rid = _latest_rid(c)["run_id"]
+            if _CACHE["run"] and _CACHE["run"]["id"] == rid:
+                return
+            with _RUN_LOCK:
+                run = _load_run(swap=False)
+            _warm_run(run)
+            _CACHE.update(run=run, at=time.monotonic())
+        except Exception:  # noqa: BLE001 — остаёмся на прежнем расчёте
+            log.warning("vsp: новый расчёт не загружен", exc_info=True)
+        finally:
+            _REFRESH["busy"] = False
+
+    threading.Thread(target=work, name="vsp-run-refresh", daemon=True).start()
+
+
+def _warm_run(run: dict) -> None:
+    """Посчитать заранее то, что иначе считалось бы на первом запросе: волны, очаги, список историй."""
+    for fn in (_waves, _hots, _stories, _kinds, _tiles):
+        try:
+            fn(run)
+        except Exception:  # noqa: BLE001
+            log.warning("vsp: прогрев %s не удался", getattr(fn, "__name__", fn), exc_info=True)
+
+
+def warm() -> None:
+    """Прогрев при запуске приложения: первый посетитель не ждёт загрузку расчёта и счётчики."""
+    try:
+        if not vsp_db_url():
+            return
+        _warm_run(_run())
+        _progress(wait_s=0)
+    except Exception:  # noqa: BLE001 — база сборщика может быть недоступна; вкладка загрузит сама
+        log.info("vsp: прогрев при запуске не выполнен", exc_info=True)
+
+
+def _load_run(swap: bool = True) -> dict:
+    now = time.monotonic()
     with engine().connect() as c:
-        r = c.execute(select(signal_runs).where(signal_runs.c.status == "done")
-                      .order_by(signal_runs.c.run_id.desc()).limit(1)).mappings().first()
-        if not r:
-            raise HTTPException(404, "сигналы ещё не рассчитаны")
+        r = _latest_rid(c)
         rid = r["run_id"]
         if _CACHE["run"] and _CACHE["run"]["id"] == rid:
             _CACHE["at"] = now
@@ -206,7 +306,8 @@ def _run() -> dict:
     run = {"id": rid, "version": r["version"], "case_by_rid": case_by_rid, "review_point": review_point, "finished_at": r["finished_at"],
            "stats": json.loads(r["stats_json"] or "{}"), "points": pts, "episodes": eps, "network": net,
            "groups": groups, "praisers": auth, "ep_rids": ep_rids, "cases": case_rows, "persons": pers}
-    _CACHE.update(run=run, at=now)
+    if swap:
+        _CACHE.update(run=run, at=now)
     return run
 
 
@@ -1081,6 +1182,21 @@ def _period(a, b) -> str:
 
 # ── волны и очаги ─────────────────────────────────────────────────────────────
 
+def _quarters(series) -> list[dict]:
+    """Ряд по месяцам → по кварталам. Экран рисует только кварталы, а помесячный ряд у 175 способов делал
+    ответ «Схем» втрое тяжелее. Квартал записан своим первым месяцем — разбор на экране не меняется."""
+    out: list[dict] = []
+    for x in series or []:
+        y, m = str(x["m"]).split("-")
+        q0 = f"{y}-{(int(m) - 1) // 3 * 3 + 1:02d}"
+        if out and out[-1]["m"] == q0:
+            out[-1]["n"] += x.get("n") or 0
+            out[-1]["c"] += x.get("c") or 0
+        else:
+            out.append({"m": q0, "n": x.get("n") or 0, "c": x.get("c") or 0})
+    return out
+
+
 def _waves(run) -> list[dict]:
     if "_waves" not in run:
         hot: Counter = Counter()
@@ -1088,7 +1204,7 @@ def _waves(run) -> list[dict]:
             hot.update(_hot_keys(h))
         out = []
         for w in run["network"].get("waves") or []:
-            out.append({**w, "id": _wave_id(w["key"]),
+            out.append({**w, "id": _wave_id(w["key"]), "series": _quarters(w.get("series")),
                         "status_label": "возможно, растёт" if w.get("hint") == "up" else STATUS_LABEL.get(w.get("status"), ""),
                         "hot": hot.get(w["key"], 0),
                         "inside_kind": bool((_kinds(run).get(w.get("kind")) or {}).get("inside"))})
@@ -1264,14 +1380,39 @@ def _tiles(run) -> list[dict]:
     return tiles
 
 
-_PROG: dict = {"at": 0.0, "v": None}
+_PROG: dict = {"at": 0.0, "v": None, "busy": False}
+PROGRESS_TTL_S = 900
 
 
-def _progress() -> dict:
-    """Ход сбора и чтения моделью — для полосы «Идёт сбор и чтение» (кэш 2 минуты)."""
+def _progress(wait_s: float = 0.25) -> dict | None:
+    """Ход сбора и чтения моделью — строка под «Главным» и числа в обучении.
+
+    Это счётчики по всей таблице отзывов (сотни тысяч строк): раньше их ждал первый запрос вкладки, и ждал
+    заново каждые две минуты. Теперь запрос отдаёт прошлое значение, а пересчёт идёт в фоне раз в
+    PROGRESS_TTL_S. Самый первый раз ждём не дольше wait_s: не успели — None, вкладка покажет строку позже."""
     now = time.monotonic()
-    if _PROG["v"] is not None and now - _PROG["at"] < 120:
-        return _PROG["v"]
+    if _PROG["v"] is None or now - _PROG["at"] >= PROGRESS_TTL_S:
+        if not _PROG["busy"]:
+            _PROG["busy"] = True
+            done = threading.Event()
+
+            def work():
+                try:
+                    _PROG.update(v=_progress_compute(), at=time.monotonic())
+                except Exception:  # noqa: BLE001 — строка прогресса не должна ронять вкладку
+                    log.exception("vsp: прогресс не посчитан")
+                    _PROG["at"] = time.monotonic() - PROGRESS_TTL_S + 60          # повтор через минуту
+                finally:
+                    _PROG["busy"] = False
+                    done.set()
+
+            threading.Thread(target=work, name="vsp-progress", daemon=True).start()
+            if _PROG["v"] is None and wait_s:
+                done.wait(wait_s)
+    return _PROG["v"]
+
+
+def _progress_compute() -> dict:
     from ..vsp.storage import kv
     v: dict = {}
     with engine().connect() as c:
@@ -1285,14 +1426,6 @@ def _progress() -> dict:
             .group_by(source_branches.c.source))}
         v["synced"] = {s: n for s, n in c.execute(select(sync_state.c.source, func.count()).where(
             sync_state.c.status == "done").group_by(sync_state.c.source))}
-        # знаменатель — как отбор модели: текст от 60 знаков, без массовых аккаунтов-рассыльщиков
-        from ..vsp.signals.llm_read import MIN_CHARS, MIN_CHARS_NEG, SPAM_AUTHOR_MIN
-        spam = select(reviews.c.author_ref).where(reviews.c.author_ref.isnot(None), reviews.c.review_text.isnot(None)) \
-            .group_by(reviews.c.author_ref).having(func.count() >= SPAM_AUTHOR_MIN)
-        v["with_text"] = c.execute(select(func.count()).select_from(reviews).where(
-            or_(func.length(func.trim(reviews.c.review_text)) >= MIN_CHARS,
-                and_(reviews.c.rating <= 3, func.length(func.trim(reviews.c.review_text)) >= MIN_CHARS_NEG)),
-            or_(reviews.c.author_ref.is_(None), reviews.c.author_ref.notin_(spam)))).scalar() or 0
         try:
             from ..vsp.signals.llm_read import PROMPT_VERSION, SCREEN_VERSION, review_llm
             byv = {s: n for s, n in c.execute(select(review_llm.c.prompt_version, func.count())
@@ -1304,6 +1437,15 @@ def _progress() -> dict:
         except Exception:  # noqa: BLE001 — модель ещё не читала
             c.rollback()
             v["screened"] = v["carded"] = v["relevant"] = 0
+        # «отзывов с текстом» = прочитанные моделью + ждущие чтения (их считает сторож). Прежний подсчёт — длина
+        # каждого текста и отсев массовых аккаунтов по всей таблице — стоил секунд на каждом пересчёте
+        try:
+            raw = c.execute(select(kv.c.value).where(kv.c.key == "llm:last")).scalar()
+            waiting = ((json.loads(raw or "{}") or {}).get("waiting") or {}).get("screen") or 0
+        except Exception:  # noqa: BLE001
+            c.rollback()
+            waiting = 0
+        v["with_text"] = v["screened"] + int(waiting)
         try:
             raw = c.execute(select(kv.c.value).where(kv.c.key == "discover:yandex")).scalar()
             y = json.loads(raw or "{}") or {}
@@ -1312,7 +1454,6 @@ def _progress() -> dict:
         except Exception:  # noqa: BLE001
             c.rollback()
             v["yandex_search"] = None
-    _PROG.update(at=now, v=v)
     return v
 
 
@@ -1349,11 +1490,7 @@ def meta_(user: CurrentUser = Depends(get_current_user)):
     """Лёгкое: плитки карты (регионы для фильтра), дата расчёта, ход сбора и чтения, счётчики разделов."""
     _need(user)
     run = _run()
-    try:
-        prog = _progress()
-    except Exception:  # noqa: BLE001 — полоса прогресса не должна ронять вкладку
-        log.exception("vsp: прогресс не посчитан")
-        prog = None
+    prog = _progress()
     owner = telemetry.is_admin(user.username)
     waves = _waves(run)
     shelves = Counter((p.get("risk") or {}).get("shelf") for p in run["points"].values()
