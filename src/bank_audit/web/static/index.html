@@ -4354,6 +4354,38 @@ thead th{font-weight:600}
 .aw-row-day:hover .aw-row-m,.aw-row-day:focus-visible .aw-row-m{opacity:1}
 @media(hover:none){.aw-row-day .aw-row-m{opacity:1}}
 
+.aw-top .aw-eyebrow{margin-right:auto}
+.aw-news{padding:0 2px;border:0;background:none;font:inherit;font-size:12.5px;font-weight:500;color:var(--select);cursor:pointer}
+.aw-news:hover{text-decoration:underline;text-underline-offset:3px}
+
+/* ── «Что нового»: окно после обновления (по образцу знакомства с ВСП, но коротко) ── */
+.wn-wrap{position:fixed;inset:0;z-index:400;display:grid;place-items:center;padding:16px;background:color-mix(in oklab,var(--ink),transparent 58%);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);animation:fade-in var(--dur-base,280ms) ease-out}
+html.dark .wn-wrap{background:color-mix(in oklab,var(--paper),transparent 30%)}
+.wn-modal{width:min(680px,100%);max-height:calc(100dvh - 32px);overflow:auto;border-radius:18px;background:var(--surface);color:var(--ink);
+  box-shadow:var(--shadow-2),0 24px 70px color-mix(in oklab,var(--ink),transparent 80%),inset 0 0 0 1px var(--hair);outline:none;
+  animation:wnIn var(--dur-slow,420ms) var(--ease-spring,cubic-bezier(.32,.72,0,1))}
+@keyframes wnIn{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
+.wn-top{display:grid;gap:10px;padding:28px 32px 2px}
+.wn-eyebrow{color:var(--accent)}
+.wn-title{margin:0;font-family:'Instrument Serif',Georgia,serif;font-weight:400;font-size:clamp(30px,5vw,40px);line-height:1.05;letter-spacing:-.012em;text-wrap:balance}
+.wn-title em{font-style:italic;color:var(--accent)}
+.wn-lede{margin:0;font-family:'Source Serif 4',Georgia,serif;font-size:16.5px;line-height:1.55;color:var(--ink-2);text-wrap:pretty}
+.wn-items{list-style:none;margin:0;padding:20px 32px 0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 24px}
+.wn-items li{display:grid;gap:4px;align-content:start;padding-top:10px;border-top:2px solid var(--ink);font-size:13.5px;line-height:1.5;color:var(--ink-2)}
+.wn-items b{font-size:15px;line-height:1.3;color:var(--ink)}
+.wn-n{font-family:'Source Serif 4',Georgia,serif;font-size:13px;font-weight:600;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.wn-more{margin:18px 32px 0;padding:11px 14px;border-radius:10px;background:var(--select-soft);font-size:13px;line-height:1.5;color:var(--ink-2);text-wrap:pretty}
+.wn-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:22px 32px 26px}
+.wn-go{display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 16px;border:0;border-radius:10px;background:var(--ink);color:var(--paper);font:inherit;font-size:13.5px;font-weight:500;cursor:pointer}
+.wn-go:hover{opacity:.9}
+.wn-ok{height:38px;padding:0 16px;border:1px solid var(--hair-2);border-radius:10px;background:none;color:var(--ink-2);font:inherit;font-size:13.5px;font-weight:500;cursor:pointer}
+.wn-ok:hover{border-color:var(--ink-4);color:var(--ink)}
+.wn-go:focus-visible,.wn-ok:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+@media(prefers-reduced-motion:reduce){.wn-wrap,.wn-modal{animation:none}}
+@media(max-width:640px){.wn-top{padding:22px 20px 2px}.wn-items{grid-template-columns:1fr;gap:14px;padding:16px 20px 0}
+  .wn-more{margin:16px 20px 0}.wn-actions{padding:18px 20px 20px}}
+
 /* ── Поле вопроса ── */
 .chat-shell .composer-dock{padding:10px 32px 18px}
 .chat-shell .chat-input-wrap{border:1px solid var(--hair-2);border-radius:16px;background:var(--surface);box-shadow:var(--shadow-2);

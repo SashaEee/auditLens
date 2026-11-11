@@ -68,6 +68,7 @@ function AiWelcome({onFill,recent,onOpenHistory,onLoadSession,dayIns,composer}){
   return <div className="ai-welcome fade-in">
     <div className="aw-top">
       <div className="aw-eyebrow">{me?`${greeting(me)} · ИИ-помощник`:"ИИ-помощник · AuditLens"}</div>
+      {wnFresh()&&<button type="button" className="aw-news" onClick={()=>{ try{ window.dispatchEvent(new Event("al-whats-new")); }catch(e){} }}>Что нового</button>}
       <button type="button" className="hist-btn aw-hist" onClick={onOpenHistory} title="Все прошлые разговоры и отчёты">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 1.8"/></svg>
         История <kbd>{mac?"⌘K":"Ctrl K"}</kbd>
@@ -17382,6 +17383,53 @@ function journalRenderError(e,info,where){
 
 // Граница для выплывающих панелей (дела, колокольчик, обратная связь, «В дело»):
 // раньше ошибка в любой из них роняла всё приложение в белый экран (аудит 03.10)
+// ── «Что нового»: одно окно после крупного обновления ───────────────────────
+// Показывается один раз каждому, кто застал прежнюю версию (новичку «что изменилось»
+// ни о чём); отметка — в профиле (prefs.whats_new). Только главное для работы, без
+// перечня исправлений. Открыть снова — «Что нового» на стартовой ИИ-помощника
+// (ссылка видна две недели после обновления). Следующее обновление — новый id.
+const WN={
+  id:"2026-11-12-ai", date:"2026-11-12", day:"12 ноября 2026",
+  lede:"Помощник стал проще: режим выбирать не нужно, а спросить можно о чём угодно — не только сравнить банки.",
+  items:[
+    ["Режим выбирать не нужно","Переключателя «Быстрый / Deep Research» больше нет. Помощник сам понимает, хватит ли короткой справки или нужен отчёт, и сразу говорит, чем отвечает. Не угадал — поправите одним нажатием."],
+    ["Вопрос о чём угодно","Один продукт или сервис, жалобы, нормы, цифры рынка, новость. Отчёт отвечает на ваш вопрос и не добавляет конкурентов, если вы о них не просили."],
+    ["Отчёт видно, пока он пишется","Понятно, сколько осталось и что уже найдено. Готовые разделы можно читать, не дожидаясь конца."],
+    ["Презентация по отчёту","Кнопка «Презентация» под отчётом собирает слайды в стиле AuditLens одним файлом — он открывается без интернета."],
+  ],
+  more:"Ещё: следующий вопрос по той же теме продолжает уже собранное, а жалобы помощник берёт сюжетами из раздела «Аудит отзывов».",
+};
+const wnFresh=()=>{ try{ return (Date.now()-new Date(WN.date+"T00:00:00").getTime())<14*864e5; }catch(e){ return false; } };
+function WhatsNew({onTry,onClose}){
+  const ref=useRef(null);
+  const closeRef=useRef(onClose); closeRef.current=onClose;   // не в deps: иначе фокус прыгал бы при каждой перерисовке
+  useEffect(()=>{
+    const t=setTimeout(()=>{ try{ ref.current&&ref.current.focus(); }catch(e){} },40);
+    const k=e=>{ if(e.key==="Escape"){ e.stopPropagation(); closeRef.current(); } };
+    window.addEventListener("keydown",k,true);
+    return ()=>{ clearTimeout(t); window.removeEventListener("keydown",k,true); };
+  },[]);
+  return ReactDOM.createPortal(<div className="wn-wrap" role="dialog" aria-modal="true" aria-labelledby="wn-title"
+      onClick={e=>{ if(e.target===e.currentTarget) onClose(); }}>
+    <section className="wn-modal" ref={ref} tabIndex={-1}>
+      <div className="wn-top">
+        <div className="eyebrow wn-eyebrow">Обновление · {WN.day}</div>
+        <h2 id="wn-title" className="wn-title">Что нового в <em>ИИ-помощнике</em></h2>
+        <p className="wn-lede">{WN.lede}</p>
+      </div>
+      <ol className="wn-items">
+        {WN.items.map(([t,x],i)=><li key={i}><span className="wn-n" aria-hidden="true">0{i+1}</span><b>{t}</b><span>{x}</span></li>)}
+      </ol>
+      <p className="wn-more">{WN.more}</p>
+      <div className="wn-actions">
+        <button type="button" className="wn-go" onClick={onTry}>Задать вопрос
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+        <button type="button" className="wn-ok" onClick={onClose}>Понятно</button>
+      </div>
+    </section>
+  </div>,document.body);
+}
+
 class OverlayBoundary extends React.Component{
   constructor(p){super(p);this.state={err:null};}
   static getDerivedStateFromError(e){return{err:e};}
@@ -18348,6 +18396,26 @@ function Shell(){
   // повтора; mail_promo_at — когда закрыли. Первый раз «Не сейчас» — через неделю
   // покажем ещё раз, второй — больше никогда (на другом компьютере тоже).
   const[mailPromoOff,setMailPromoOff]=useState(false);
+  // «Что нового»: один раз тем, кто застал прежнюю версию; не поверх другого окна
+  const[wnOpen,setWnOpen]=useState(false);
+  const wnSeen=!!(me&&me.prefs&&me.prefs.whats_new===WN.id);
+  const wnOld=!!(me&&me.created_at&&String(me.created_at).slice(0,10)<WN.date);
+  useEffect(()=>{
+    if(!me||wnSeen||!wnOld||wnOpen) return;
+    const t=setTimeout(()=>{
+      if(document.querySelector(".vt-wrap,.vt-root,.rv-ovl,.cp-ov.in,.kbd-help")) return;   // занято — покажем при следующем переходе
+      setWnOpen(true); trkEvent({kind:"ui",page,payload:{action:"whats_new",step:"shown",id:WN.id}});
+    },1400);
+    return ()=>clearTimeout(t);
+  },[me&&me.username,wnSeen,wnOld,page]); // eslint-disable-line
+  useEffect(()=>{ const on=()=>setWnOpen(true);
+    window.addEventListener("al-whats-new",on); return ()=>window.removeEventListener("al-whats-new",on); },[]);
+  const wnDone=(step)=>{ setWnOpen(false);
+    trkEvent({kind:"ui",page,payload:{action:"whats_new",step,id:WN.id}});
+    if(!wnSeen){ setMe(m=>m?{...m,prefs:{...(m.prefs||{}),whats_new:WN.id}}:m);
+      apiPut("/api/me",{prefs:{whats_new:WN.id}}).catch(()=>{}); }
+    if(step==="try"){ setPage("ai"); setPageParams({}); setNavOpen(false);
+      setTimeout(()=>{ try{ const el=document.querySelector("textarea.chat-textarea"); el&&el.focus(); }catch(e){} },350); } };
   const[mailPromoReady,setMailPromoReady]=useState(false);
   useEffect(()=>{ const t=setTimeout(()=>setMailPromoReady(true),6000); return ()=>clearTimeout(t); },[]);
   const mailPromoShown=useRef(false);
@@ -18715,7 +18783,9 @@ function Shell(){
           {bellToast.link&&<button className="btn btn-primary btn-sm" onClick={()=>{ const t=bellToast; bellSeen(t.id);
             sayPost("/api/bell/read",{ids:[t.id]}).then(loadBell).catch(()=>{}); goBell(t); }}>Открыть</button>}
           <button className="btn btn-sm" onClick={()=>bellSeen(bellToast.id)}>{bellToast.link?"Позже":"Понятно"}</button></div></div>}
-      {(()=>{ if(!mailPromoShow) return null;
+      {wnOpen&&<OverlayBoundary name="whats-new" onClose={()=>setWnOpen(false)}>
+        <WhatsNew onTry={()=>wnDone("try")} onClose={()=>wnDone("ok")}/></OverlayBoundary>}
+      {(()=>{ if(!mailPromoShow||wnOpen) return null;
         const round=mailPromoRound, mark=round>1?"again":"seen";
         const done=(step)=>{ setMailPromoOff(true);
           trkEvent({kind:"ui",page,payload:{action:"mail_promo",step,round}});
