@@ -95,6 +95,51 @@ def _is_skeleton(text: str) -> bool:
     headings = sum(1 for l in lines if l.startswith("#"))
     return prose == 0 and (headings >= 3 or len(lines) >= 6)
 
+# ── Сайт не отвечает: не тратим на него весь отчёт ──────────────────────────
+# Ночь 12.11: banki.ru перестал отвечать с нашего адреса, и каждый отчёт, где в
+# выдаче были его страницы, ждал соединения и браузера по каждой ссылке —
+# 13 минут вместо четырёх. Три пустых ответа подряд от одного сайта — и его
+# страницы пропускаются десять минут (с пометкой «сайт не отвечает» в пробелах),
+# первый же успешный ответ снимает паузу.
+_HOST_FAILS = int(os.getenv("GPTR_HOST_FAILS", "3"))
+_HOST_PAUSE_S = float(os.getenv("GPTR_HOST_PAUSE_S", "600"))
+_host_state: dict[str, dict] = {}
+_host_lock = threading.Lock()
+
+
+def _host_of(url: str) -> str:
+    from urllib.parse import urlparse
+    try:
+        return (urlparse(url).hostname or "").lower().removeprefix("www.")
+    except ValueError:
+        return ""
+
+
+def host_down(url: str) -> bool:
+    """Сайт на паузе: его страницы сейчас не запрашиваем."""
+    h = _host_of(url)
+    with _host_lock:
+        st = _host_state.get(h)
+        return bool(st and time.time() < st.get("until", 0))
+
+
+def note_host(url: str, ok: bool) -> None:
+    """Итог чтения страницы: ответ есть — счётчик сбрасывается, пусто — растёт."""
+    h = _host_of(url)
+    if not h:
+        return
+    with _host_lock:
+        st = _host_state.setdefault(h, {"fails": 0, "until": 0.0})
+        if ok:
+            st["fails"], st["until"] = 0, 0.0
+            return
+        st["fails"] += 1
+        if st["fails"] >= _HOST_FAILS and time.time() >= st["until"]:
+            st["until"] = time.time() + _HOST_PAUSE_S
+            log.warning("сайт %s не отвечает (%d пустых ответов подряд) — его страницы "
+                        "пропускаются %d мин", h, st["fails"], int(_HOST_PAUSE_S // 60))
+
+
 class AuditLensScraper:
     """Забор страницы нашим fetcher-ом с эскалацией до браузера."""
 
@@ -229,6 +274,9 @@ class AuditLensScraper:
         pre = self.state.preloaded.get(self.link) if self.state is not None else None
         if pre:
             return pre, [], (self.state.kb_meta.get(self.link) or {}).get("title", "")
+        if host_down(self.link):
+            self.state.note_unreadable(self.link, "сайт не отвечает")
+            return "", [], ""
         self._last_raw = None
         text, title = self._read(browser=False)
         self._raw = self._last_raw
@@ -253,6 +301,7 @@ class AuditLensScraper:
                 if len(btext) > len(text):
                     text, title = btext, btitle
                     self._raw = self._last_raw
+        note_host(self.link, bool(text))
         # Причину фиксируем ВСЕГДА, даже если текст всё же вернули: отчёт
         # обязан отличать «нет данных» от «не смогли прочитать».
         if not text:

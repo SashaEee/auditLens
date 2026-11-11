@@ -174,3 +174,29 @@ def test_unnamed_rejection_with_several_extra_keys_is_not_remembered(monkeypatch
     assert not U.remember_extra_rejected("m", Err("400"), {"thinking": 1, "reasoning_effort": "low"})
     assert not U.remember_extra_rejected("m", RuntimeError("Connection error."), {"thinking": 1})
     assert U._DROP_PARAMS == {}
+
+
+# ── Сайт не отвечает: три пустых ответа — и его страницы пропускаются ───────
+def test_dead_host_is_skipped_after_three_empty_answers(monkeypatch):
+    from bank_audit.research.gptr import runstate, scraper as S
+    monkeypatch.setattr(S, "_host_state", {})
+    calls: list = []
+
+    def read(self, *, browser):
+        calls.append((self.link, browser))
+        return ("", "") if "dead.example" in self.link else ("текст " * 200, "Страница")
+    monkeypatch.setattr(S.AuditLensScraper, "_read", read)
+    monkeypatch.setattr(S.AuditLensScraper, "_read_copy", lambda self: ("", "", None))
+    monkeypatch.setattr(S.AuditLensScraper, "_to_archive", lambda self: None)
+    st = runstate.new_run()
+    for i in range(5):
+        S.AuditLensScraper(f"https://www.dead.example/p{i}", state=st).scrape()
+    # три страницы прочитаны обоими способами (HTTP и браузер), остальные пропущены сразу
+    assert len([c for c in calls if "dead.example" in c[0]]) == 6
+    assert S.host_down("https://dead.example/any") and not S.host_down("https://live.example/a")
+    assert st.unreadable["https://www.dead.example/p4"] == "сайт не отвечает"
+    # другой сайт читается как обычно, и успех снимает паузу со своего сайта
+    text, _, _ = S.AuditLensScraper("https://live.example/a", state=st).scrape()
+    assert text and "https://live.example/a" in st.pages
+    S.note_host("https://dead.example/x", True)
+    assert not S.host_down("https://dead.example/any")
