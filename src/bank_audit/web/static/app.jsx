@@ -8872,7 +8872,7 @@ function AIPage(){
     <div className="chat-stream">
       <div className="chat-feed" ref={feedRef}>
         {showThreadHead &&
-          <div className="al-thread-head" style={{display:"flex",gap:8,alignItems:"center"}}>
+          <div className={"al-thread-head"+(lastDeep?" wide":"")} style={{display:"flex",gap:8,alignItems:"center"}}>
             <button className="al-newq" onClick={newQuery}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>
               Новый запрос

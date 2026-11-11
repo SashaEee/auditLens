@@ -1265,7 +1265,7 @@ def preview(od: OwnData, *, rows: int = 4) -> dict | None:
         body = [x for x in lines[1:] if not x.startswith("Как сравнивать")] or lines[:1]
         blocks.append({"kind": "market", "link": url,
                        "title": meta.get("title", "").removeprefix("AuditLens · "),
-                       "rows": [{"label": _short(x, 150)} for x in body[:rows]]})
+                       "rows": [{"label": _short(x, 150)} for x in body[:min(rows, 3)]]})
         if sum(1 for b in blocks if b["kind"] == "market") >= 2:
             break
     news = [{"label": _short(meta.get("title", ""), 140), "link": url}

@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 1ca146c8e480a0a2eefdaf1707e0f1c67af80689052c231ead6f3ea5f62468ba): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 f5ed355a69a5e8174d95de3198f4cd7aa9bd20a3985a10ef2e6a2411d656ee6b): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -17220,7 +17220,7 @@ function AIPage() {
     className: "chat-feed",
     ref: feedRef
   }, showThreadHead && /*#__PURE__*/React.createElement("div", {
-    className: "al-thread-head",
+    className: "al-thread-head" + (lastDeep ? " wide" : ""),
     style: {
       display: "flex",
       gap: 8,
