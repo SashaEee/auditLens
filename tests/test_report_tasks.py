@@ -297,6 +297,8 @@ def test_knowledge_base_documents_become_run_pages(monkeypatch):
     chunks = [{"idx": i, "text": f"Абзац {i} о сервисе Своё дело: условия подключения и комиссия. " * 6}
               for i in range(4)]
     monkeypatch.setattr(T, "_q", lambda sql, params=None: chunks)
+    # сайт банка сегодня не открылся — остаётся сохранённая копия
+    monkeypatch.setattr(own_data, "_read_live", lambda urls, state, wait_s: {})
     state = runstate.new_run()
     p = plan(task="product", scope="sber", anchor="sberbank", subjects=["sberbank"],
              product="сервис Своё дело")
@@ -305,9 +307,51 @@ def test_knowledge_base_documents_become_run_pages(monkeypatch):
     url = "https://www.sberbank.ru/svoedelo"
     assert od.knowledge == 1 and url in state.pages and state.pages[url].startswith("# Своё дело")
     assert state.kb_meta[url]["loaded"] == "2026-11-03" and state.kb_meta[url]["doc"] == 7
+    # копия помечена, факты получат её дату, в пробелах — предупреждение
+    assert state.kb_meta[url]["fallback"] is True and state.page_dates[url] == "2026-11-03"
+    assert od.notes and "сохранённой копии" in od.notes[0] and "03.11.2026" in od.notes[0]
     # скрапер не скачивает страницу заново — отдаёт текст базы знаний
     text, _, title = scraper.AuditLensScraper(url, state=state).scrape()
     assert text == state.pages[url] and title == "Своё дело"
+
+
+def test_changeable_page_is_read_live_and_the_copy_is_not_used(monkeypatch):
+    from bank_audit.rag import retriever
+    monkeypatch.setattr(retriever, "hybrid_search", lambda query, **kw: {"groups": [
+        {"document_id": 7, "url": "https://www.sberbank.ru/svoedelo", "title": "Своё дело",
+         "fetched_at": "2026-08-01T10:00:00", "hits": [{"idx": 0}]},
+        {"document_id": 8, "url": "https://www.consultant.ru/document/npd/", "title": "422-ФЗ о налоге",
+         "fetched_at": "2026-08-01T10:00:00", "hits": [{"idx": 0}]}]})
+    monkeypatch.setattr(T, "_q", lambda sql, params=None: [
+        {"idx": 0, "text": "Сервис Своё дело: старая комиссия 1% за приём оплаты, условия подключения. " * 8}])
+    asked = []
+
+    def live(urls, state, wait_s):
+        asked.extend(urls)
+        return {u: "Сервис Своё дело сегодня: комиссия 0% за приём оплаты, новые условия. " * 8 for u in urls}
+    monkeypatch.setattr(own_data, "_read_live", live)
+    state = runstate.new_run()
+    p = plan(task="product", scope="sber", anchor="sberbank", subjects=["sberbank"],
+             product="сервис Своё дело")
+    od = own_data.OwnData()
+    own_data.collect_knowledge(od, p, "Сервис Своё дело", state)
+    bank, law = "https://www.sberbank.ru/svoedelo", "https://www.consultant.ru/document/npd/"
+    assert asked == [bank]                                  # закон вживую не перечитываем
+    assert "комиссия 0%" in state.pages[bank] and "старая комиссия" not in state.pages[bank]
+    assert bank not in state.kb_meta and bank in state.preloaded      # разбирается вне очереди, но это не «копия»
+    assert state.kb_meta[law]["doc"] == 8 and "fallback" not in state.kb_meta[law]
+    assert (od.knowledge_live, od.knowledge) == (1, 1) and not od.notes
+
+
+def test_which_pages_change_without_notice():
+    assert own_data.is_volatile("https://www.sberbank.ru/ru/person/credits/money")
+    assert own_data.is_volatile("https://online.vtb.ru/tariffs.pdf")
+    assert own_data.is_volatile("https://www.banki.ru/products/credits/sberbank/")
+    assert not own_data.is_volatile("https://www.cbr.ru/statistics/bank_sector/")
+    assert not own_data.is_volatile("https://www.consultant.ru/document/cons_doc_LAW_155986/")
+    assert not own_data.is_volatile("https://www.kommersant.ru/doc/123")
+    assert not own_data.is_volatile("https://publication.pravo.gov.ru/document/1")
+    assert not own_data.is_volatile("не адрес")
 
 
 def test_knowledge_document_about_another_subject_is_skipped(monkeypatch):

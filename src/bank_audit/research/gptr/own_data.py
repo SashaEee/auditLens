@@ -52,7 +52,8 @@ class OwnData:
     complaints: int = 0
     loopholes: int = 0
     market: int = 0
-    knowledge: int = 0
+    knowledge: int = 0           # документов из базы знаний (сохранённые копии)
+    knowledge_live: int = 0      # страниц базы знаний, перечитанных сегодня вживую
     news: int = 0
     # Что искали в собственных данных и не нашли — строками для «Честных пробелов»
     notes: list[str] = field(default_factory=list)
@@ -749,6 +750,65 @@ _KB_DOCS = int(os.getenv("GPTR_KB_DOCS", "8"))             # документо�
 _KB_DOCS_OTHER = int(os.getenv("GPTR_KB_DOCS_OTHER", "3"))  # на каждого конкурента
 _KB_CHARS = int(os.getenv("GPTR_KB_CHARS", "12000"))        # знаков одного документа
 _KB_MAX_AGE = int(os.getenv("GPTR_KB_MAX_AGE_DAYS", "120"))
+# Сколько ждём живую страницу, прежде чем взять её сохранённую копию.
+_KB_LIVE_S = float(os.getenv("GPTR_KB_LIVE_S", "25"))
+# Сайты, где условия меняются без предупреждения: витрины и сравнения. Сайты
+# банков добавляются из справочника.
+_VOLATILE_HOSTS = ("banki.ru", "sravni.ru", "finuslugi.ru", "bankiros.ru", "vbr.ru", "brobank.ru",
+                   "mainfin.ru", "vsezaimyonline.ru")
+
+
+def is_volatile(url: str) -> bool:
+    """Страница, чьё содержание меняется задним числом: тарифы и условия на
+    сайте банка, витрина агрегатора. Закон, акт регулятора, статья, обзор —
+    датированные документы: их сохранённая копия остаётся верной.
+
+    Владелец 11.11: тарифы меняются часто, и копия из базы знаний не должна
+    выдаваться за сегодняшние условия. Такие страницы читаем вживую, копию
+    берём, только когда страница не открылась, — и с датой копии.
+    """
+    from urllib.parse import urlparse
+
+    from ..entity_extractor import _BANK_DOMAINS
+    from ..v2.tools.web_tools import REGULATOR_DOMAINS
+    host = urlparse(url or "").netloc.lower().removeprefix("www.")
+    if not host:
+        return False
+
+    def under(h: str, domains) -> bool:
+        return any(h == d or h.endswith("." + d) for d in domains if d)
+    if under(host, REGULATOR_DOMAINS) or host.endswith(".gov.ru"):
+        return False
+    return under(host, _BANK_DOMAINS.values()) or under(host, _VOLATILE_HOSTS)
+
+
+def _read_live(urls: list[str], state, wait_s: float) -> dict[str, str]:
+    """Читает страницы вживую, не дольше wait_s на все. Возвращает прочитанные."""
+    from concurrent.futures import ThreadPoolExecutor, wait
+
+    def one(url: str) -> str:
+        from .scraper import AuditLensScraper
+        try:
+            return AuditLensScraper(url, state=state).scrape()[0] or ""
+        except Exception as e:  # noqa: BLE001 — не открылась: останется копия
+            log.info("база знаний, живое чтение %s: %s", url[:70], type(e).__name__)
+            return ""
+    if not urls:
+        return {}
+    pool = ThreadPoolExecutor(max_workers=min(8, len(urls)))
+    futs = {pool.submit(one, u): u for u in urls}
+    done, _late = wait(futs, timeout=wait_s)
+    pool.shutdown(wait=False, cancel_futures=True)
+    out: dict[str, str] = {}
+    for f in done:
+        url = futs[f]
+        try:
+            text_ = f.result()
+        except Exception:  # noqa: BLE001
+            text_ = ""
+        if len(text_) >= 400 and url not in state.unreadable:
+            out[url] = text_
+    return out
 
 
 def _kb_text(document_id: int, hit_idx: list[int], words: set[str], budget: int) -> str:
@@ -798,6 +858,7 @@ def collect_knowledge(od: OwnData, plan, question: str, state=None) -> None:
     stems = [st.replace("ё", "е") for st in subject_stems(plan, question)]
     targets: list[tuple[str | None, int]] = [(s, _KB_DOCS if s == anchor else _KB_DOCS_OTHER)
                                              for s in subjects] or [(None, _KB_DOCS)]
+    found: dict[str, tuple[str, dict]] = {}          # url → (текст копии, сведения)
     for slug, n in targets:
         try:
             res = hybrid_search(query, limit=n, per_doc=4, bank_slugs=[slug] if slug else None,
@@ -807,7 +868,7 @@ def collect_knowledge(od: OwnData, plan, question: str, state=None) -> None:
             continue
         for g in (res.get("groups") or [])[:n]:
             url = (g.get("url") or "").strip()
-            if not url or url in state.preloaded:
+            if not url or url in state.preloaded or url in found:
                 continue
             text_ = _kb_text(g["document_id"], [h.get("idx") for h in g.get("hits") or []
                                                  if h.get("idx") is not None], words, _KB_CHARS)
@@ -821,12 +882,43 @@ def collect_knowledge(od: OwnData, plan, question: str, state=None) -> None:
                 continue
             title = (g.get("title") or "").strip()
             page = (f"# {title}\n\n" if title else "") + text_
-            state.preloaded[url] = page
-            state.kb_meta[url] = {"doc": g["document_id"], "title": title,
-                                  "loaded": str(g.get("fetched_at") or "")[:10],
-                                  "link": T.link_doc(g["document_id"]), "subject": slug or ""}
-            state.note_page(url, page)
-            od.knowledge += 1
+            found[url] = (page, {"doc": g["document_id"], "title": title,
+                                 "loaded": str(g.get("fetched_at") or "")[:10],
+                                 "link": T.link_doc(g["document_id"]), "subject": slug or ""})
+    # Изменчивые страницы (тарифы на сайте банка, витрины) — сначала вживую:
+    # копия из базы знаний могла устареть. Не открылась — берём копию, но с её
+    # датой и строкой в пробелах. Датированные документы (законы, акты, обзоры)
+    # берём из базы сразу: их текст задним числом не меняется.
+    volatile = [u for u in found if is_volatile(u)]
+    live = _read_live(volatile, state, _KB_LIVE_S)
+    stale: list[str] = []
+    for url, (page, meta) in found.items():
+        if url in live:
+            # прочитана сегодня: обычная страница прогона, разбирается вне очереди
+            state.preloaded[url] = live[url]
+            state.note_page(url, live[url])
+            od.knowledge_live += 1
+            continue
+        if url in volatile:
+            meta["fallback"] = True
+            stale.append(meta["loaded"])
+            if meta["loaded"]:
+                state.page_dates[url] = meta["loaded"]      # факты получат дату копии
+        state.preloaded[url] = page
+        state.kb_meta[url] = meta
+        state.note_page(url, page)
+        od.knowledge += 1
+    if stale:
+        dates = sorted(d for d in stale if d)
+        od.notes.append(
+            f"Страниц, которые сейчас не открылись и взяты из сохранённой копии базы знаний: "
+            f"{len(stale)}" + (f" (самая ранняя копия — от {_ru_date(dates[0])})" if dates else "")
+            + ". Условия на них могли измениться — сверьте на сайте.")
+
+
+def _ru_date(iso: str) -> str:
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", iso or "")
+    return f"{m.group(3)}.{m.group(2)}.{m.group(1)}" if m else iso
 
 
 # ── ссылки из вопроса ────────────────────────────────────────────────────────
