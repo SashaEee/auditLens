@@ -596,3 +596,29 @@ def test_lead_prompt_names_its_own_section():
     p = plan(task="regulation", scope="none", checks="short")
     text = D.section_prompt("summary", p, "Что изменилось в 115-ФЗ", {}, facts_text="f", prior_text="тело")
     assert "ТВОЙ РАЗДЕЛ — «" in text and "без вступления" in text
+
+
+def test_banks_are_collected_at_once_and_merged_in_plan_order(tools, monkeypatch):
+    import threading
+    import time as _time
+    seen_threads: set = set()
+    orig = own_data._on_topic
+
+    def slow_on_topic(od, slug, bank, *a, **kw):
+        seen_threads.add(threading.get_ident())
+        _time.sleep(0.15 if slug == "sberbank" else 0.01)       # первый банк отвечает позже остальных
+        od.page(f"auditlens://t/{slug}", f"Жалобы {bank}", [f"по предмету: {slug} — пять жалоб за период"], "complaints")
+        od.fact(subject=slug, attribute="жалобы", value="5", url=f"auditlens://t/{slug}",
+                verbatim=f"по предмету: {slug} — пять жалоб за период")
+        od.complaints += 1
+    monkeypatch.setattr(own_data, "_on_topic", slow_on_topic)
+    monkeypatch.setattr(own_data, "_complaints_for_bank", lambda *a, **kw: [])
+    p = plan(task="compare", scope="named", anchor="sberbank", subjects=["sberbank", "vtb", "tinkoff"],
+             product="потребительский кредит")
+    od = own_data.OwnData()
+    t0 = _time.time()
+    own_data.collect_complaints(od, p, {"product": "Потребительский кредит", "themes": [], "days": 90}, "Сравни кредиты")
+    assert [f["subject"] for f in od.facts] == ["sberbank", "vtb", "tinkoff"]      # порядок плана, а не ответа
+    assert od.complaints == 3 and len(od.pages) == 3 and len(seen_threads) == 3
+    assert _time.time() - t0 < 0.4
+    assert orig is not slow_on_topic

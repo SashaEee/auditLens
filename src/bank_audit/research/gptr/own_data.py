@@ -477,23 +477,44 @@ def collect_complaints(od: OwnData, plan, scope: dict, question: str) -> None:
     # за 90 дней, блокировки, справки (аудит 11.11, «Своё дело», драгметаллы).
     overview = bool(scope["product"] or scope["themes"]) or bank_level(plan, scope, question)
     stems = subject_stems(plan, question)
-    for slug in subjects:
+    state = runstate.current()
+
+    def per_bank(slug: str) -> OwnData:
+        runstate.bind(state)                 # поток пула: контекст прогона не наследуется
+        part = OwnData(scope=od.scope)
         bank = _bank_name(slug, labels)
         done: list[str] = []
         if overview:
             try:
-                done = _complaints_for_bank(od, slug, bank, scope, slug == anchor, signal_themes)
+                done = _complaints_for_bank(part, slug, bank, scope, slug == anchor, signal_themes)
             except Exception as e:  # noqa: BLE001 — банк без корпуса не должен ронять сбор
                 log.info("жалобы %s: %s", bank, type(e).__name__)
-                continue
+                return part
         # Жалобы-цитаты по предмету — конкурентам и точке отсчёта, если темы не
         # разобраны (для темы они уже пришли выборкой сигнала или лентой).
         if slug != anchor or not done:
             try:
-                _on_topic(od, slug, bank, plan, scope, question, stems, overview,
+                _on_topic(part, slug, bank, plan, scope, question, stems, overview,
                           _COMPLAINTS_PER_BANK if slug == anchor else 8)
             except Exception as e:  # noqa: BLE001
                 log.info("жалобы по предмету %s: %s", bank, type(e).__name__)
+        return part
+
+    # Банки — одновременно. Поиск жалоб по предмету — это до трёх запросов к
+    # корпусу на банк с проверкой смысла моделью; по очереди два банка занимали
+    # 100 секунд (замер 11.11), и в продолжении отчёта это был весь «сбор».
+    if len(subjects) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=len(subjects)) as pool:
+            parts = list(pool.map(per_bank, subjects))
+    else:
+        parts = [per_bank(subjects[0])]
+    for part in parts:                       # в порядке объектов: точка отсчёта — первой
+        od.pages.update(part.pages)
+        od.meta.update(part.meta)
+        od.facts.extend(part.facts)
+        od.notes.extend(part.notes)
+        od.complaints += part.complaints
 
 
 def _on_topic(od: OwnData, slug: str, bank: str, plan, scope: dict, question: str,
