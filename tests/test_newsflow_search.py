@@ -223,3 +223,46 @@ def test_issue_takes_late_search_finds_and_keeps_a_single_site_incident_out_of_t
     assert got == {1: 8, 2: nf.SEARCH_SOLO_CAP, 3: 9, 4: 9}     # событие из лент старше суток — мимо, как и раньше
     assert nf.SEARCH_SOLO_CAP < 7                                # поводом дня становится новость от 7
 
+
+def test_undated_page_is_dated_only_when_two_dates_agree():
+    now = datetime(2026, 11, 11, 11, 0, tzinfo=timezone.utc)
+    noon = lambda d: datetime(2026, 11, d, 12, tzinfo=nf.MSK)  # noqa: E731
+    f = nf.page_date_fallback
+    # число в адресе совпало с датой документа у Яндекса
+    assert f("<html></html>", "https://newsvl.ru/society/2026/11/09/236/", "2026-11-09", now) == noon(9)
+    # число у заголовка — полное и без года
+    page = "<div>9 ноября 2026, 14:10</div><h1>Сбербанк признал повторное списание</h1><p>текст</p>"
+    assert f(page, "https://www.yugopolis.ru/news/1", "2026-11-09", now) == noon(9)
+    assert f("<h1>Заголовок новости</h1><span>09 ноября</span>", "https://e.org/n/2", "2026-11-10", now) == noon(9)
+    # майская статья с ноябрьской датой обхода — не новость
+    assert f("<h1>Кто звонит с номера 0321</h1><time>15.05.2026</time>", "https://e.org/a", "2026-11-09", now) is None
+    # дата далеко от заголовка (лента сбоку) или в скрипте — не в счёт
+    far = "<h1>Заголовок</h1>" + "<p>" + "слово " * 800 + "</p><aside>09.11.2026</aside>"
+    assert f(far, "https://e.org/b", "2026-11-09", now) is None
+    assert f("<script>var d='09.11.2026'</script><h1>Заголовок</h1>", "https://e.org/c", "2026-11-09", now) is None
+    # без даты Яндекса сверять не с чем
+    assert f(page, "https://www.yugopolis.ru/news/1", None, now) is None
+    # сегодняшняя до полудня — не из будущего
+    early = datetime(2026, 11, 11, 6, 0, tzinfo=timezone.utc)
+    assert f("<h1>Новость</h1><i>11.11.2026</i>", "https://e.org/d", "2026-11-11", early) == early
+
+
+def test_rejected_page_is_not_downloaded_again_every_pass(monkeypatch):
+    from bank_audit.rag import search_gateway as sg
+    item = {"url": "https://undated.example/news/1", "title": "Сбербанк: новость без даты", "snippet": "", "date": None}
+    fetched = []
+
+    class S:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, q, p=None): return SimpleNamespace(rowcount=0, all=lambda: [], scalar=lambda: None)
+    monkeypatch.setattr(nf.db, "session", lambda: S())
+    monkeypatch.setattr(nf, "_SEARCH_REJECTED", {})
+    monkeypatch.setattr(nf, "SEARCH_QUERIES", ("Сбербанк хищение",))
+    monkeypatch.setattr(sg, "enabled", lambda: True)
+    monkeypatch.setattr(sg, "yandex_search", lambda q, **k: SimpleNamespace(status="ok", detail="", items=[item]))
+    monkeypatch.setattr(nf.nm, "_get", lambda u: fetched.append(u) or SimpleNamespace(status_code=200, text="<html>без даты</html>"))
+    assert nf.collect_search(force=True)["dropped"]["no_date"] == 1
+    again = nf.collect_search(force=True)
+    assert again["candidates"] == 0 and len(fetched) == 1
+

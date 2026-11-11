@@ -479,6 +479,62 @@ def _og_title(page: str) -> str:
     return " ".join(_html.unescape(m.group(1) or m.group(2)).split()) if m else ""
 
 
+_H1_RE = re.compile(r"<h1[^>]*>.*?</h1>", re.S | re.I)
+_NOSCRIPT_RE = re.compile(r"<script.*?</script>|<style.*?</style>", re.S | re.I)
+_D_RU_ANY = re.compile(r"(?<!\d)(\d{1,2})\s+(" + "|".join(_RU_MONTHS) + r")(?:\s+(20\d\d))?", re.I)
+
+
+def page_date_fallback(page: str, url: str, hint: str | None,
+                       now: datetime | None = None) -> datetime | None:
+    """Дата публикации страницы, у которой её нет в разметке (так у большинства
+    региональных изданий: 11.11.2026 из-за этого отброшено 13 кандидатов из 22).
+
+    Берём число из адреса («/2026/11/09/») или стоящее рядом с заголовком — но
+    только если оно сходится с датой документа у Яндекса (hint) с точностью до
+    дня. Сама дата Яндекса — время обхода, а не публикации: у майской статьи она
+    была ноябрьской; совпадение двух независимых дат такую статью отсекает."""
+    try:
+        hd = date.fromisoformat((hint or "")[:10])
+    except ValueError:
+        return None
+    cands: list[date] = []
+    m = nm._URL_DATE_RE.search(url or "")
+    if m:
+        try:
+            cands.append(date(int(m.group(1)), int(m.group(2)), int(m.group(3))))
+        except ValueError:
+            pass
+    body = _NOSCRIPT_RE.sub(" ", page or "")
+    h1 = _H1_RE.search(body)
+    if h1:
+        near = nm._strip_html(body[max(0, h1.start() - 1500): h1.end() + 2500])
+        hits = [(x.start(), int(x.group(3)), int(x.group(2)), int(x.group(1))) for x in _D_NUM.finditer(near)]
+        hits += [(x.start(), int(x.group(3) or hd.year), _RU_MONTHS.index(x.group(2).lower()) + 1, int(x.group(1)))
+                 for x in _D_RU_ANY.finditer(near)]
+        for _pos, y, mo, d in sorted(hits):
+            try:
+                cands.append(date(y, mo, d))
+            except ValueError:
+                continue
+    hit = next((c for c in cands if abs((c - hd).days) <= 1), None)
+    if not hit:
+        return None
+    now = now or datetime.now(timezone.utc)
+    return min(datetime(hit.year, hit.month, hit.day, 12, tzinfo=MSK), now)
+
+
+# Отброшенное (нет даты, старше окна) держится в выдаче двое суток: без памяти
+# каждая такая страница скачивалась бы заново каждые два часа.
+_SEARCH_REJECTED: dict[str, float] = {}
+_SEARCH_REJECT_TTL_S = 48 * 3600
+
+
+def _rejected_recently(url: str, now_s: float) -> bool:
+    for u in [u for u, t in _SEARCH_REJECTED.items() if now_s - t > _SEARCH_REJECT_TTL_S]:
+        _SEARCH_REJECTED.pop(u, None)
+    return url in _SEARCH_REJECTED
+
+
 def _search_due() -> bool:
     with db.session() as s:
         last = s.execute(text("SELECT last_ok_at FROM news_source_state WHERE source = :s"),
@@ -526,6 +582,7 @@ def collect_search(force: bool = False) -> dict:
                 {"h": [nm._url_hash(c["url"]) for c in cands]}).all()}
         cands = [c for c in cands if nm._url_hash(c["url"]) not in have]
     now = datetime.now(timezone.utc)
+    cands = [c for c in cands if not _rejected_recently(c["url"], now.timestamp())]
     rows, dropped = [], {"no_date": 0, "old": 0, "http": 0}
     for c in cands[:SEARCH_MAX_FETCH]:
         try:
@@ -534,15 +591,17 @@ def collect_search(force: bool = False) -> dict:
                 dropped["http"] += 1
                 continue
             page = r.text
-            ts = nm.date_from_html(page)
+            ts = nm.date_from_html(page) or page_date_fallback(page, c["url"], c.get("date"), now)
         except Exception:  # noqa: BLE001 — одна страница, не весь проход
             dropped["http"] += 1
             continue
         if not ts:
             dropped["no_date"] += 1
+            _SEARCH_REJECTED[c["url"]] = now.timestamp()
             continue
         if ts < now - timedelta(hours=SEARCH_MAX_AGE_H) or ts > now + timedelta(hours=3):
             dropped["old"] += 1
+            _SEARCH_REJECTED[c["url"]] = now.timestamp()
             continue
         title = _og_title(page) or clean_title(c.get("title") or "")
         if not _SBER_RE.search(title):
