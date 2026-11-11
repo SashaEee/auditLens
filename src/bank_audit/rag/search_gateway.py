@@ -177,6 +177,21 @@ class _Breaker:
             self._fails = 0
             self._trips = 0
 
+    def reset(self, why: str = "") -> None:
+        """Снять отключение досрочно: фоновая проверка увидела, что хост ожил."""
+        with self._lock:
+            was_open = time.monotonic() < self._open_until
+            self._open_until = 0.0
+            self._fails = 0
+            self._trips = 0
+            self.reason = ""
+        if was_open:
+            log.warning("%s: снова работает%s", self.name, f" — {why}" if why else "")
+
+    def retry_in(self) -> int:
+        """Сколько секунд осталось до следующей попытки (0 — не отключён)."""
+        return max(0, int(self._open_until - time.monotonic()))
+
 
 _bucket = _Bucket()
 _breaker = _Breaker("шлюз поиска")
@@ -467,6 +482,62 @@ class CachedCopy:
 _copy_bucket = _Bucket(lambda: max(0.5, float(os.getenv("SEARCH_COPY_RPS", "3") or 3)))
 
 
+# ── Сторож копий: хост лежит — проверяем его в фоне и возвращаем сами ─────────
+# Кэш Яндекса (отдельный хост) бывает недоступен неделями, а потом возвращается.
+# Отчёты за это платить не должны: пока хост лежит, копии не запрашиваем вовсе,
+# а фоновый поток раз в десять минут делает одну дешёвую попытку. Ответил —
+# отключение снимается сразу, следующая же страница читается из копии.
+_watch_lock = threading.Lock()
+_watch_thread: threading.Thread | None = None
+_watch_state: dict = {"since": None, "checked": None, "checks": 0}
+
+
+def _probe_every() -> float:
+    try:
+        return max(30.0, float(os.getenv("SEARCH_COPY_PROBE_S", "600") or 600))
+    except ValueError:
+        return 600.0
+
+
+def _copies_reachable(url: str) -> bool:
+    """Одна короткая попытка открыть копию. Капча — ещё не «работает»."""
+    try:
+        r = _copy_http().get(url, timeout=httpx.Timeout(connect=5, read=10, write=5, pool=5))
+    except httpx.HTTPError:
+        return False
+    return "captcha" not in str(r.url).lower() and b"showcaptcha" not in r.content[:20000]
+
+
+def _watch_copies(url: str, *, sleep=time.sleep, max_checks: int | None = None) -> bool:
+    """Держит копии отключёнными, пока хост не ответит; True — вернулись."""
+    every = _probe_every()
+    while True:
+        # Пауза чуть длиннее шага проверки: между проверками отчёты хост не трогают.
+        _copy_breaker.trip(every + 60, "хост копий Яндекса недоступен, проверяю в фоне")
+        sleep(every)
+        _watch_state["checked"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        _watch_state["checks"] += 1
+        if _copies_reachable(url):
+            _copy_breaker.reset("хост копий Яндекса ответил на фоновую проверку")
+            _watch_state.update(since=None)
+            return True
+        if max_checks is not None and _watch_state["checks"] >= max_checks:
+            return False
+
+
+def _start_copy_watch(url: str) -> None:
+    """Запускает сторожа, если он ещё не работает (один поток на процесс)."""
+    global _watch_thread
+    with _watch_lock:
+        if _watch_thread is not None and _watch_thread.is_alive():
+            return
+        _watch_state.update(since=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                            checked=None, checks=0)
+        _watch_thread = threading.Thread(target=_watch_copies, args=(url,),
+                                         name="copy-watch", daemon=True)
+        _watch_thread.start()
+
+
 def _copy_date(cache_url: str) -> str | None:
     """Параметр la в ссылке на копию — момент сохранения (unix-время)."""
     try:
@@ -518,9 +589,12 @@ def read_cached_copy(url: str, *, max_wait: float = 6.0) -> CachedCopy | None:
         r = _copy_http().get(cache_url)
     except httpx.HTTPError as e:
         # 11.11: кэш Яндекса недоступен с 22.10 (сеть недостижима), и каждый отчёт
-        # заново тратил на него пять попыток по пять секунд. Теперь паузы растут:
-        # 5 минут → 20 → 80 → … до шести часов, первый же успех их сбрасывает.
-        _copy_breaker.failure(type(e).__name__, threshold=3, seconds=300, escalate=4.0)
+        # заново тратил на него пять попыток по пять секунд. Три сбоя подряд —
+        # копии отключаются, дальше хост проверяет фоновый сторож (см. выше):
+        # вернётся — включит обратно сам, без перезапуска и без потерь для отчётов.
+        _copy_breaker.failure(type(e).__name__, threshold=3, seconds=300)
+        if _copy_breaker.is_open():
+            _start_copy_watch(cache_url)
         emit("web_read", "yandex_copy", DOWN, dur_ms=int((time.monotonic() - t0) * 1000))
         return None
     final = str(r.url)
@@ -544,4 +618,9 @@ def status() -> dict:
     """Для диагностики и «Пульса»: настроен ли, основной ли, не отключён ли."""
     return {"enabled": enabled(), "primary": primary() if enabled() else "fleet",
             "breaker_open": _breaker.is_open(), "breaker_reason": _breaker.reason,
-            "copies_breaker_open": _copy_breaker.is_open(), "rps": _rps()}
+            "copies_breaker_open": _copy_breaker.is_open(),
+            "copies_reason": _copy_breaker.reason if _copy_breaker.is_open() else "",
+            "copies_down_since": _watch_state["since"] if _copy_breaker.is_open() else None,
+            "copies_checked_at": _watch_state["checked"] if _copy_breaker.is_open() else None,
+            "copies_check_every_min": int(_probe_every() // 60) or 1,
+            "rps": _rps()}

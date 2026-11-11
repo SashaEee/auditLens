@@ -42,6 +42,7 @@ def fresh_gw(monkeypatch):
     monkeypatch.setattr(gw, "_copy_breaker", gw._Breaker("t2"))
     monkeypatch.setattr(gw, "emit", lambda *a, **k: None)
     monkeypatch.setattr(gw, "_META", gw.OrderedDict())
+    monkeypatch.setattr(gw, "_start_copy_watch", lambda url: None)   # без фоновых потоков в тестах
     return gw
 
 
@@ -364,3 +365,63 @@ def test_news_uses_search_date_hint_last(monkeypatch):
     kept = news._resolve_undated(items)
     assert kept and kept[0]["ts"].date().isoformat() == "2026-09-23"
     assert "ts_hint" not in kept[0]
+
+
+# ── Сторож копий: хост лежит → не трогаем → вернулся → включаем сами ─────────
+def _down(req):
+    raise httpx.ConnectError("сеть недостижима")
+
+
+def test_copies_down_start_watch_and_stop_costing_reports(fresh_gw, monkeypatch):
+    _mock_client(monkeypatch, lambda req: httpx.Response(200, json={"raw_text": XML_OK}))
+    calls = []
+    _mock_client(monkeypatch, lambda req: calls.append(1) or _down(req), attr="_copy_client")
+    started = []
+    monkeypatch.setattr(gw, "_start_copy_watch", lambda url: started.append(url))
+    for _ in range(5):
+        assert gw.read_cached_copy("https://www.sberbank.ru/a") is None
+    assert len(calls) == 3                  # после трёх сбоев отчёты хост не трогают
+    assert len(started) == 1 and "yandexwebcache" in started[0]
+    assert gw._copy_breaker.is_open() and not gw._breaker.is_open()
+
+
+def test_copies_come_back_on_their_own(fresh_gw, monkeypatch):
+    """Хост не отвечает две проверки, на третьей ожил: отключение снято без участия людей."""
+    monkeypatch.setattr(gw, "_watch_state", {"since": "x", "checked": None, "checks": 0})
+    answers = iter([False, False, True])
+    monkeypatch.setattr(gw, "_copies_reachable", lambda url: next(answers))
+    slept = []
+
+    def sleep(sec):
+        slept.append(sec)
+        assert gw._copy_breaker.is_open()   # между проверками копии выключены
+
+    assert gw._watch_copies("https://yandexwebcache.net/x", sleep=sleep) is True
+    assert len(slept) == 3 and not gw._copy_breaker.is_open()
+    assert gw.status()["copies_breaker_open"] is False
+    # и сразу читаются снова
+    _mock_client(monkeypatch, lambda req: httpx.Response(200, json={"raw_text": XML_OK}))
+    _mock_client(monkeypatch, lambda req: httpx.Response(200, text=COPY_HTML), attr="_copy_client")
+    assert gw.read_cached_copy("https://www.sberbank.ru/ru/person/credits/home/family") is not None
+
+
+def test_copy_probe_captcha_is_not_recovery(fresh_gw, monkeypatch):
+    _mock_client(monkeypatch, lambda req: httpx.Response(
+        200, text="<html>" + "x" * 600 + "showcaptcha</html>"), attr="_copy_client")
+    assert gw._copies_reachable("https://yandexwebcache.net/x") is False
+    _mock_client(monkeypatch, _down, attr="_copy_client")
+    assert gw._copies_reachable("https://yandexwebcache.net/x") is False
+    _mock_client(monkeypatch, lambda req: httpx.Response(200, text=COPY_HTML), attr="_copy_client")
+    assert gw._copies_reachable("https://yandexwebcache.net/x") is True
+
+
+def test_status_tells_when_copies_are_checked(fresh_gw, monkeypatch):
+    monkeypatch.setattr(gw, "_watch_state", {"since": "2026-11-11T20:00:00+00:00",
+                                             "checked": "2026-11-11T20:10:00+00:00", "checks": 1})
+    gw._copy_breaker.trip(600, "хост копий Яндекса недоступен, проверяю в фоне")
+    st = gw.status()
+    assert st["copies_breaker_open"] and st["copies_checked_at"].startswith("2026-11-11T20:10")
+    assert st["copies_check_every_min"] == 10
+    gw._copy_breaker.reset("ответил")
+    st = gw.status()
+    assert not st["copies_breaker_open"] and st["copies_checked_at"] is None
