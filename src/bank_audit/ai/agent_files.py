@@ -36,6 +36,8 @@ TYPES = {
     "doc": "application/msword",
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "pdf": "application/pdf",
+    # презентация ИИ-помощника: один файл, отдаётся только вложением (с нашего адреса не открывается)
+    "html": "text/html; charset=utf-8",
     "txt": "text/plain; charset=utf-8",
     "md": "text/markdown; charset=utf-8",
     "json": "application/json",
