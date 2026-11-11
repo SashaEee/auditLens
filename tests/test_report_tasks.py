@@ -352,6 +352,11 @@ def test_which_pages_change_without_notice():
     assert not own_data.is_volatile("https://www.kommersant.ru/doc/123")
     assert not own_data.is_volatile("https://publication.pravo.gov.ru/document/1")
     assert not own_data.is_volatile("не адрес")
+    # вид из справочника источников базы знаний важнее догадки по адресу
+    assert own_data.is_volatile("https://compare.example/vklady", "aggregator")
+    assert own_data.is_volatile("https://bank.example/tariffs", "bank_official")
+    assert not own_data.is_volatile("https://www.banki.ru/news/lenta/?id=1", "press")
+    assert not own_data.is_volatile("https://www.sberbank.ru/ru/analytics/review", "analyst")
 
 
 def test_knowledge_document_about_another_subject_is_skipped(monkeypatch):
@@ -622,3 +627,63 @@ def test_banks_are_collected_at_once_and_merged_in_plan_order(tools, monkeypatch
     assert od.complaints == 3 and len(od.pages) == 3 and len(seen_threads) == 3
     assert _time.time() - t0 < 0.4
     assert orig is not slow_on_topic
+
+
+# ── План: медленную основную модель страхует запасная ───────────────────────
+def _plan_client(delays: dict, calls: list, answers: dict | None = None):
+    """Модель отвечает через delays[model] секунд; answers — что вернуть (иначе годный план)."""
+    class Client:
+        class chat:
+            class completions:
+                @staticmethod
+                async def create(**kw):
+                    m = kw["model"]
+                    calls.append(m)
+                    await asyncio.sleep(delays.get(m, 0))
+                    body = (answers or {}).get(m) or json.dumps({
+                        "intent": m, "task": "explain", "scope": "none", "subjects": [],
+                        "topics": ["т"], "queries": [{"q": "запрос"}]})
+                    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=body))])
+    return Client()
+
+
+def test_slow_planner_is_hedged_by_the_fallback_model(monkeypatch):
+    """Основная модель молчит дольше порога — запасная стартует параллельно, берётся первый план."""
+    monkeypatch.setenv("GPTR_PLAN_FALLBACK", "запасная")
+    monkeypatch.setenv("GPTR_PLAN_HEDGE_S", "0.05")
+    calls: list = []
+    p = asyncio.run(C.plan_research(_plan_client({"основная": 5, "запасная": 0.01}, calls),
+                                    "основная", "история кредитной карты"))
+    assert calls == ["основная", "запасная"] and p.intent == "запасная"
+
+
+def test_fast_planner_does_not_wake_the_fallback(monkeypatch):
+    monkeypatch.setenv("GPTR_PLAN_FALLBACK", "запасная")
+    monkeypatch.setenv("GPTR_PLAN_HEDGE_S", "2")
+    calls: list = []
+    p = asyncio.run(C.plan_research(_plan_client({"основная": 0.01}, calls), "основная", "история кредитной карты"))
+    assert calls == ["основная"] and p.intent == "основная"
+
+
+def test_hedge_takes_the_main_plan_if_it_arrives_first_after_all(monkeypatch):
+    """Запасная запущена, но основная ответила раньше — план основной, лишний вызов отменён."""
+    monkeypatch.setenv("GPTR_PLAN_FALLBACK", "запасная")
+    monkeypatch.setenv("GPTR_PLAN_HEDGE_S", "0.05")
+    calls: list = []
+    p = asyncio.run(C.plan_research(_plan_client({"основная": 0.12, "запасная": 5}, calls),
+                                    "основная", "история кредитной карты"))
+    assert calls == ["основная", "запасная"] and p.intent == "основная"
+
+
+def test_hedge_survives_garbage_from_the_first_to_answer(monkeypatch):
+    monkeypatch.setenv("GPTR_PLAN_FALLBACK", "запасная")
+    monkeypatch.setenv("GPTR_PLAN_HEDGE_S", "0.05")
+    calls: list = []
+    p = asyncio.run(C.plan_research(
+        _plan_client({"основная": 0.2, "запасная": 0.01}, calls, answers={"запасная": "не знаю"}),
+        "основная", "история кредитной карты"))
+    assert p.intent == "основная"            # мусор запасной не помешал дождаться основной
+    monkeypatch.setenv("GPTR_PLAN_HEDGE_S", "0")
+    calls.clear()
+    asyncio.run(C.plan_research(_plan_client({}, calls), "основная", "история кредитной карты"))
+    assert calls == ["основная"]             # порог 0 — прежний порядок: запасная только после сбоя

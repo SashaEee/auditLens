@@ -204,3 +204,55 @@ def test_preview_shows_counted_things_and_no_loopholes():
     assert [r["label"] for r in m["rows"]] == ["ВТБ: 15,5 % годовых, 6 мес.", "Сбербанк: 15 % годовых, 6 мес."]
     assert pv["blocks"][2]["rows"][0]["link"] == "https://news.example/a"
     assert O.preview(O.OwnData()) is None                     # нечего показать — события нет
+
+
+# ── Новости для отчёта: отбор моделью, запасной — по словам ──────────────────
+def _news_env(monkeypatch, answer):
+    """news_find отдаёт три новости; модель отвечает answer (текст или исключение)."""
+    import json as _json
+    import types
+
+    from bank_audit.research.gptr import facts as F
+    from bank_audit.research.gptr import own_data as O
+    rows = [{"url": "https://n.example/1", "title": "Сбер обновил сервис для плательщиков НПД", "text": "текст",
+             "summary": "новые условия", "source": "РБК", "ts": "2026-11-01T10:00:00"},
+            {"url": "https://n.example/2", "title": "Возбуждено уголовное дело о хищении", "text": "текст",
+             "summary": "", "source": "ТАСС", "ts": "2026-11-02T10:00:00"},
+            {"url": "https://n.example/3", "title": "Своё дело: Сбер поднял лимит для самозанятых", "text": "текст",
+             "summary": "лимит вырос", "source": "Ведомости", "ts": "2026-11-03T10:00:00"}]
+    monkeypatch.setattr(O, "_j", lambda tool, **kw: {"news": rows})
+    seen: dict = {}
+
+    async def call_model(client, model, kw):
+        seen.update(kw)
+        if isinstance(answer, Exception):
+            raise answer
+        return types.SimpleNamespace(choices=[types.SimpleNamespace(
+            message=types.SimpleNamespace(content=answer))])
+    monkeypatch.setattr(F, "call_model", call_model)
+    plan = types.SimpleNamespace(product="Своё дело", product_synonyms=["самозанятые"], intent_summary="")
+    return O, plan, seen, _json
+
+
+def test_news_are_picked_by_the_model_not_by_word_stems(monkeypatch):
+    import asyncio
+    O, plan, seen, _ = _news_env(monkeypatch, '{"keep": [1, 3, 9]}')
+    cands = O.news_candidates(plan, "Сервис Своё дело для самозанятых")
+    keep = asyncio.run(O.pick_news(None, "m", "Сервис Своё дело для самозанятых", plan, cands))
+    assert keep == [0, 2]                      # «уголовное дело» отсеяно, НПД без слова «самозанятый» взято
+    user = seen["messages"][1]["content"]
+    assert "1. Сбер обновил сервис" in user and "2. Возбуждено уголовное дело" in user
+    od = O.OwnData()
+    O.add_news(od, cands, keep)
+    assert od.news == 2 and list(od.pages) == ["https://n.example/1", "https://n.example/3"]
+
+
+def test_news_fall_back_to_words_when_the_model_is_silent(monkeypatch):
+    import asyncio
+    O, plan, _seen, _ = _news_env(monkeypatch, RuntimeError("шлюз"))
+    cands = O.news_candidates(plan, "Сервис Своё дело для самозанятых")
+    assert asyncio.run(O.pick_news(None, "m", "вопрос", plan, cands)) is None
+    assert O.news_by_words(cands, plan, "вопрос") == [1, 2]      # прежний отбор: по основам слов
+    O2, plan2, _s, _ = _news_env(monkeypatch, "не JSON")
+    assert asyncio.run(O2.pick_news(None, "m", "вопрос", plan2, cands)) is None
+    assert asyncio.run(O.pick_news(None, "m", "вопрос", plan, [])) == []

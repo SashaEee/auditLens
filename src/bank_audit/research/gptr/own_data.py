@@ -892,13 +892,18 @@ _KB_CHARS = int(os.getenv("GPTR_KB_CHARS", "12000"))        # знаков од�
 _KB_MAX_AGE = int(os.getenv("GPTR_KB_MAX_AGE_DAYS", "120"))
 # Сколько ждём живую страницу, прежде чем взять её сохранённую копию.
 _KB_LIVE_S = float(os.getenv("GPTR_KB_LIVE_S", "25"))
-# Сайты, где условия меняются без предупреждения: витрины и сравнения. Сайты
-# банков добавляются из справочника.
+# Вид источника берётся из справочника «Источники» базы знаний (source_kind):
+# сайт банка и витрина-агрегатор меняют условия без предупреждения, а закон,
+# акт регулятора, статья и обзор — датированные документы. Список сайтов ниже —
+# только запасной путь для документа, вид которого в справочнике не указан.
+_LIVE_KINDS = frozenset({"bank_official", "aggregator"})
+_DATED_KINDS = frozenset({"regulator", "regulatory", "government", "legal_db", "press", "analyst",
+                          "news", "forum", "blog", "review"})
 _VOLATILE_HOSTS = ("banki.ru", "sravni.ru", "finuslugi.ru", "bankiros.ru", "vbr.ru", "brobank.ru",
                    "mainfin.ru", "vsezaimyonline.ru")
 
 
-def is_volatile(url: str) -> bool:
+def is_volatile(url: str, kind: str | None = None) -> bool:
     """Страница, чьё содержание меняется задним числом: тарифы и условия на
     сайте банка, витрина агрегатора. Закон, акт регулятора, статья, обзор —
     датированные документы: их сохранённая копия остаётся верной.
@@ -911,6 +916,11 @@ def is_volatile(url: str) -> bool:
 
     from ..entity_extractor import _BANK_DOMAINS
     from ..v2.tools.web_tools import REGULATOR_DOMAINS
+    k = (kind or "").strip().lower()
+    if k in _LIVE_KINDS:
+        return True
+    if k in _DATED_KINDS:
+        return False
     host = urlparse(url or "").netloc.lower().removeprefix("www.")
     if not host:
         return False
@@ -1024,12 +1034,13 @@ def collect_knowledge(od: OwnData, plan, question: str, state=None) -> None:
             page = (f"# {title}\n\n" if title else "") + text_
             found[url] = (page, {"doc": g["document_id"], "title": title,
                                  "loaded": str(g.get("fetched_at") or "")[:10],
-                                 "link": T.link_doc(g["document_id"]), "subject": slug or ""})
+                                 "link": T.link_doc(g["document_id"]), "subject": slug or "",
+                                 "kind": g.get("source_kind") or ""})
     # Изменчивые страницы (тарифы на сайте банка, витрины) — сначала вживую:
     # копия из базы знаний могла устареть. Не открылась — берём копию, но с её
     # датой и строкой в пробелах. Датированные документы (законы, акты, обзоры)
     # берём из базы сразу: их текст задним числом не меняется.
-    volatile = [u for u in found if is_volatile(u)]
+    volatile = [u for u, (_page, meta) in found.items() if is_volatile(u, meta.get("kind"))]
     live = _read_live(volatile, state, _KB_LIVE_S)
     stale: list[str] = []
     for url, (page, meta) in found.items():
@@ -1099,31 +1110,99 @@ def collect_named_urls(od: OwnData, question: str, state=None) -> None:
 
 NEWS = "news"
 _NEWS_MAX = int(os.getenv("GPTR_OWN_NEWS", "6"))
+_NEWS_POOL = int(os.getenv("GPTR_OWN_NEWS_POOL", "14"))        # кандидатов на отбор
+_NEWS_PICK_S = float(os.getenv("GPTR_OWN_NEWS_PICK_S", "15"))  # сколько ждём отбор моделью
 
 
-def collect_news(od: OwnData, plan, question: str) -> None:
-    """Новости AuditLens по предмету вопроса за 60 дней: заголовок и суть с датой.
-    Берутся только те, где предмет назван — близкие «по смыслу» отсеиваются."""
+def news_candidates(plan, question: str) -> list[dict]:
+    """Новости AuditLens за 60 дней, близкие к предмету вопроса: кандидаты до отбора."""
     topic = (getattr(plan, "product", "") or "").strip() or (question or "")[:200]
     res = _j("news_find", query=topic[:200], days=60)
-    stems = subject_stems(plan, question)
+    out, seen = [], set()
     for r in (res.get("news") or []):
         url, title = (r.get("url") or "").strip(), (r.get("title") or "").strip()
-        body = (r.get("text") or "").strip()
-        if not url or len(title) < 12 or url in od.pages:
+        if not url or len(title) < 12 or url in seen:
             continue
-        low = f"{title} {body}".lower().replace("ё", "е")
-        if stems and not any(st.replace("ё", "е") in low for st in stems):
+        seen.add(url)
+        out.append({"url": url, "title": title, "body": (r.get("text") or "").strip(),
+                    "summary": (r.get("summary") or "").strip(), "source": r.get("source") or "",
+                    "when": str(r.get("ts") or "")[:10]})
+        if len(out) >= _NEWS_POOL:
+            break
+    return out
+
+
+def news_by_words(cands: list[dict], plan, question: str) -> list[int]:
+    """Запасной отбор — по основам слов предмета: когда модель не ответила."""
+    stems = [st.replace("ё", "е") for st in subject_stems(plan, question)]
+    if not stems:
+        return list(range(len(cands)))
+    return [i for i, c in enumerate(cands)
+            if any(st in f"{c['title']} {c['body']}".lower().replace("ё", "е") for st in stems)]
+
+
+_NEWS_SYSTEM = """Ты отбираешь новости для аудиторского отчёта. Дан вопрос аудитора, его предмет и пронумерованный список новостей.
+Оставь только те, что ПРЯМО относятся к предмету вопроса: тот же продукт, сервис, событие, норма или тот же банк в связи с этим предметом. Предмет может быть назван иначе («самозанятые» и «плательщики НПД» — одно и то же).
+Не относятся: новости, где совпало только общее слово («дело», «карта», «банк»), другой продукт того же банка, общий фон рынка без связи с предметом.
+Сомневаешься — не бери. Пустой список — нормальный ответ.
+Верни СТРОГО JSON: {"keep": [номера]}"""
+
+
+async def pick_news(client, model: str, question: str, plan, cands: list[dict]) -> list[int] | None:
+    """Какие новости относятся к вопросу — решает модель. None — модель не ответила.
+
+    Раньше новость проходила, если в ней встречалась основа слова из предмета:
+    на «Своё дело» проходило «уголовное дело», а новость о плательщиках НПД
+    терялась, потому что слова «самозанятый» в ней нет."""
+    if not cands:
+        return []
+    from .facts import call_model
+    listing = "\n".join(
+        f"{i + 1}. {c['title']}" + (f" — {(c['summary'] or c['body'])[:220]}"
+                                   if (c['summary'] or c['body']) else "")
+        for i, c in enumerate(cands))
+    user = (f"# Вопрос\n{question}\n\n# Предмет\n"
+            f"{getattr(plan, 'product', '') or getattr(plan, 'intent_summary', '') or '—'}\n\n"
+            f"# Новости\n{listing}")
+    kw: dict = {"model": model, "temperature": 0.0, "max_tokens": 200,
+                "response_format": {"type": "json_object"},
+                "messages": [{"role": "system", "content": _NEWS_SYSTEM},
+                             {"role": "user", "content": user}],
+                "extra_body": {"thinking": {"type": "disabled"}}}
+    try:
+        import asyncio
+        resp = await asyncio.wait_for(call_model(client, model, kw), timeout=_NEWS_PICK_S)
+        data = json.loads((resp.choices[0].message.content or "").strip())
+        keep = data.get("keep")
+        if not isinstance(keep, list):
+            return None
+        return [n - 1 for n in dict.fromkeys(int(x) for x in keep if str(x).strip().lstrip("-").isdigit())
+                if 0 < n <= len(cands)]
+    except Exception as e:  # noqa: BLE001 — без модели остаётся отбор по словам
+        log.info("отбор новостей: %s — отбираю по словам предмета", type(e).__name__)
+        return None
+
+
+def add_news(od: OwnData, cands: list[dict], keep: list[int]) -> None:
+    """Отобранные новости — в страницы и факты прогона: заголовок и суть с датой."""
+    for i in keep:
+        c = cands[i]
+        if c["url"] in od.pages:
             continue
-        when = str(r.get("ts") or "")[:10]
-        lines = [x for x in (body, f"Суть: {r['summary']}" if r.get("summary") else "",
-                             f"Источник: {r.get('source') or '—'}; дата: {_dm(when)}.") if x]
-        od.page(url, title, lines, NEWS)
-        od.fact(subject="", attribute="Новость", value=(r.get("summary") or title)[:300],
-                verbatim=title, url=url, date=when)
+        lines = [x for x in (c["body"], f"Суть: {c['summary']}" if c["summary"] else "",
+                             f"Источник: {c['source'] or '—'}; дата: {_dm(c['when'])}.") if x]
+        od.page(c["url"], c["title"], lines, NEWS)
+        od.fact(subject="", attribute="Новость", value=(c["summary"] or c["title"])[:300],
+                verbatim=c["title"], url=c["url"], date=c["when"])
         od.news += 1
         if od.news >= _NEWS_MAX:
             break
+
+
+def collect_news(od: OwnData, plan, question: str) -> None:
+    """Новости по предмету с отбором по словам — путь без модели (и для тестов)."""
+    cands = news_candidates(plan, question)
+    add_news(od, cands, news_by_words(cands, plan, question))
 
 
 # ── что уже нашлось: короткий показ в ходе прогона ───────────────────────────
@@ -1211,15 +1290,25 @@ async def collect(client, model: str, question: str, plan, state=None) -> OwnDat
                                (has_task, collect_knowledge, (od, plan, question, state)),
                                (scope["complaints"], collect_complaints, (od, plan, scope, question)),
                                (scope["loopholes"], collect_loopholes, (od, plan, question)),
-                               (scope["market"], collect_market, (od, plan, scope)),
-                               (has_task, collect_news, (od, plan, question))):
+                               (scope["market"], collect_market, (od, plan, scope))):
             if not need:
                 continue
             try:
                 fn(*args)
             except Exception:
                 log.exception("собственные данные: %s", fn.__name__)
+        if has_task:
+            try:
+                news.extend(news_candidates(plan, question))
+            except Exception:
+                log.exception("собственные данные: новости")
+    news: list[dict] = []
     await asyncio.to_thread(work)
+    if news:
+        # Какие новости относятся к вопросу — решает модель; не ответила — по словам.
+        keep = await pick_news(client, model, question, plan, news)
+        runstate.bind(state)
+        add_news(od, news, keep if keep is not None else news_by_words(news, plan, question))
     state.own_meta.update(od.meta)
     state.own_scope = dict(scope)
     log.info("собственные данные: срез %s; страниц %d, фактов %d (жалоб %d, лазеек %d, "

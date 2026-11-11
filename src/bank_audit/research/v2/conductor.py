@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -263,6 +264,14 @@ _PLAN_EFFORT = ({"reasoning_effort": os.getenv("CONDUCTOR_REASONING_EFFORT", "lo
                 else None)
 
 
+def _plan_hedge_s() -> float:
+    """Через сколько секунд молчания основной модели спрашивать запасную (0 — не спрашивать)."""
+    try:
+        return max(0.0, float(os.getenv("GPTR_PLAN_HEDGE_S", "14") or 0))
+    except ValueError:
+        return 14.0
+
+
 async def plan_research(client: AsyncOpenAI, model: str,
                           question: str, history: list[dict] | None = None,
                           on_reasoning=None, prior: str | None = None,
@@ -342,17 +351,44 @@ async def plan_research(client: AsyncOpenAI, model: str,
         if m and m not in models:
             models.append(m)
             break
-    data = None
-    for use in models:
+    async def attempt(use: str) -> dict | None:
+        """План от одной модели или None; не бросает."""
         try:
             raw = await ask(use)
         except Exception as e:
             log.warning("[conductor] %s не ответила: %s", use, str(e)[:160])
-            continue
-        data = _parse_plan_json(raw)
-        if data:
-            break
-        log.warning("[conductor] %s: ответ не разобран, начало=%r", use, raw[:200])
+            return None
+        got = _parse_plan_json(raw)
+        if not got:
+            log.warning("[conductor] %s: ответ не разобран, начало=%r", use, raw[:200])
+        return got
+
+    # План ждёт каждый отчёт. Основная модель обычно отвечает за 8–10 секунд, но
+    # иногда думает 30–40 (замер 11.11). Если она молчит дольше порога, запасная
+    # стартует параллельно, и берётся первый годный план: худший случай — порог
+    # плюс ответ запасной, а не минута у пустого экрана.
+    data = None
+    hedge = _plan_hedge_s()
+    if len(models) > 1 and hedge > 0:
+        first = asyncio.ensure_future(attempt(models[0]))
+        done, _ = await asyncio.wait({first}, timeout=hedge)
+        if done:
+            data = first.result() or await attempt(models[1])
+        else:
+            log.warning("[conductor] %s думает дольше %.0f с — параллельно спрашиваю %s",
+                        models[0], hedge, models[1])
+            pending = {first, asyncio.ensure_future(attempt(models[1]))}
+            while pending and not data:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for t in done:
+                    data = data or t.result()
+            for t in pending:
+                t.cancel()
+    else:
+        for use in models:
+            data = await attempt(use)
+            if data:
+                break
     if not data:
         log.warning("[conductor] план по словам вопроса — модели не ответили")
         return _fallback_plan(q, hinted_banks)
