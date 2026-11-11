@@ -435,6 +435,9 @@ position:relative;z-index:1;font-family:var(--mono);font-size:25px;color:var(--i
 font-size:23px;line-height:1.35;color:var(--ink);break-inside:avoid}
 .al-src li b{font-family:var(--mono);font-weight:500;font-size:22px;color:var(--accent)}
 .al-src li span{color:var(--ink-3)}
+.al-dense ol{margin-top:28px}
+.al-dense li{padding:9px 0;font-size:20px;grid-template-columns:60px 1fr}
+.al-dense li b{font-size:19px}
 .al-note{margin-top:auto;padding-top:22px;border-top:1px solid var(--hair-2);font-family:var(--mono);font-size:22px;
 line-height:1.45;color:var(--ink-3)}
 .al-ui{position:fixed;left:0;right:0;bottom:0;height:3px;background:rgba(255,255,255,.08);z-index:9}
@@ -512,7 +515,7 @@ def _wrap(slide: str, n: int, total: int, *, context: str, day: str) -> str:
 
 
 def sources_slides(sources: list[dict] | None, used: list[int], note: str = "",
-                   per_page: int = 18) -> list[str]:
+                   per_page: int = 24) -> list[str]:
     by_n = {int(s["n"]): s for s in (sources or []) if str(s.get("n") or "").isdigit()}
     rows = [(n, by_n[n]) for n in used if n in by_n]
     if not rows and not note:
@@ -526,7 +529,8 @@ def sources_slides(sources: list[dict] | None, used: list[int], note: str = "",
             for n, s in page)
         tail = f'<p class="al-note">{_esc(note)}</p>' if note and k == len(pages) - 1 else ""
         head = "Источники" if len(pages) == 1 else f"Источники · {k + 1}"
-        out.append(f'<section class="slide al-src" data-label="Источники"><div class="body">'
+        dense = " al-dense" if len(page) > 16 else ""
+        out.append(f'<section class="slide al-src{dense}" data-label="Источники"><div class="body">'
                    f'<h1 class="title">{head}</h1><ol>{items}</ol>{tail}</div></section>')
     return out
 
@@ -539,7 +543,7 @@ def assemble(css: str, slides: list[str], *, title: str, sources: list[dict] | N
     body = [link_citations(s, known) for s in slides] + sources_slides(sources, used, note)
     total = len(body)
     day = (when or datetime.now()).strftime("%d.%m.%Y")
-    context = title if len(title) <= 54 else title[:53].rstrip() + "…"
+    context = title if len(title) <= 42 else title[:41].rstrip(" ,:;—-") + "…"
     wrapped = "\n".join(_wrap(s, i, total, context=context, day=day)
                         for i, s in enumerate(body, start=1))
     return (
