@@ -523,3 +523,32 @@ def test_short_checks_prompt_has_no_other_sections_tasks():
     # резюме по-прежнему видит задания разделов
     lead = D.section_prompt("summary", p, "Сравни кредиты", {}, facts_text="f", prior_text="тело", brief=b)
     assert "сводная таблица условий" in lead
+
+
+def test_model_preamble_before_summary_is_dropped():
+    from bank_audit.research.gptr import dossier as D
+    raw = """Нет единого раздела, который мне назначен для написания. Судя по структуре задания и уже готовому телу отчёта, мне нужно написать раздел **«Резюме»** для руководителя проверки. Пишу его по фактам и телу отчёта.
+
+---
+
+### Резюме
+
+Главный действующий пакет изменений связан с законом 462-ФЗ: поправки вступили в силу 14.06.2026 [f:1].
+
+Проверить первым: правила внутреннего контроля [f:12]."""
+    out = D.drop_preamble(raw, "Резюме для руководителя проверки")
+    assert out.startswith("Главный действующий пакет изменений") and "мне нужно" not in out
+    assert out.endswith("[f:12].") and "---" not in out
+    # обычный текст не трогается, даже если в нём есть похожие слова дальше начала
+    plain = "Сбербанк дешевле по нижней границе [f:3].\n\nСудя по структуре тарифов, разница в комиссии [f:4]."
+    assert D.drop_preamble(plain, "Главное") == plain
+    # содержательный абзац со ссылкой на факт в начале остаётся
+    cited = "Судя по структуре тарифа, ставка 19,4% [f:2]."
+    assert D.drop_preamble(cited, "Главное") == cited
+
+
+def test_lead_prompt_names_its_own_section():
+    from bank_audit.research.gptr import dossier as D
+    p = plan(task="regulation", scope="none", checks="short")
+    text = D.section_prompt("summary", p, "Что изменилось в 115-ФЗ", {}, facts_text="f", prior_text="тело")
+    assert "ТВОЙ РАЗДЕЛ — «" in text and "без вступления" in text

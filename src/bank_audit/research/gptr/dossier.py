@@ -671,6 +671,12 @@ def section_prompt(section: str, plan, question: str, labels: dict[str, str],
     if section == "checks" and mode == "full":
         parts += ["", _CHECKS_LOOPHOLES if "loopholes" in (order or ()) else _CHECKS_NO_LOOPHOLES]
     if section in LEAD:
+        # Без этой строки писатель резюме однажды начал с рассуждения вслух:
+        # «Нет единого раздела, который мне назначен… мне нужно написать
+        # «Резюме»» (прогон 11.11) — в перечне разделов брифа его раздела нет.
+        parts += ["", f"ТВОЙ РАЗДЕЛ — «{titles(plan).get(section, section)}». Разделы "
+                      "из перечня выше уже написаны. Начинай сразу с содержания: без "
+                      "заголовка, без вступления о том, что и по чему ты пишешь."]
         if prior_text:
             parts += ["", "ТЕЛО ОТЧЁТА (уже написано, опирайся на него):", prior_text]
         if gaps_text:
@@ -713,6 +719,34 @@ _LEAD_SCOPE = (
     "тела сохраняй: если раздел пишет, что цитата взята из материала о другом "
     "(для бизнеса, о другом продукте, общий совет), не превращай её в «банк сам "
     "признаёт» и не строй на ней главный вывод.")
+
+
+_PREAMBLE = re.compile(
+    r"мне (нужно|назначен|поручен|следует|предстоит)|назначен\w* для написания|"
+    r"судя по (структуре|заданию)|пишу (его|раздел|резюме|текст) по|"
+    r"^(вот|ниже)\b[^.\n]{0,60}(раздел|резюме|текст)|раздел, который", re.I)
+_RULE = ("---", "***", "___")
+
+
+def drop_preamble(text: str, title: str = "") -> str:
+    """Срезает служебное вступление модели перед текстом резюме или плана.
+
+    Прогон 11.11: резюме началось с «Нет единого раздела, который мне назначен
+    для написания… Пишу его по фактам и телу отчёта», черты и повторного
+    заголовка «Резюме». Срезаем только с начала и только короткие абзацы без
+    ссылок на факты: содержательный абзац не пострадает.
+    """
+    paras = re.split(r"\n\s*\n", (text or "").strip())
+    names = {title.lower(), "резюме", "главное", "что проверить", "что проверять"}
+    while paras:
+        p = paras[0].strip()
+        bare = re.sub(r"^[#*\s]+|[*\s:.]+$", "", p).lower()
+        meta = len(p) < 400 and _PREAMBLE.search(p) and not re.search(r"\[f:\d+\]", p)
+        if p in _RULE or bare in names or meta:
+            paras.pop(0)
+            continue
+        break
+    return "\n\n".join(paras)
 
 
 _ITEM = re.compile(r"^\s*(\d{1,2})[.)]\s+\S")
@@ -994,6 +1028,7 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
         async with gate_w:
             text = "".join([p async for p in al_viz.without_markers(
                 _without_heading(_stream_section(client, model, prompt), ttl[key]))])
+        text = drop_preamble(text, ttl[key])
         if key == "checks" and short_checks:
             text = only_actions(text)
         return _demote_text(text).strip()
