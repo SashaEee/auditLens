@@ -67,13 +67,14 @@ function AiWelcome({onFill,recent,onOpenHistory,onLoadSession,dayIns,composer}){
   // разговору, взять повод из сегодняшнего выпуска. Всё остальное — одной строкой.
   return <div className="ai-welcome fade-in">
     <div className="aw-top">
-      <div className="aw-eyebrow">{me?greeting(me):"ИИ-помощник"}</div>
+      <div className="aw-eyebrow">{me?`${greeting(me)} · ИИ-помощник`:"ИИ-помощник · AuditLens"}</div>
       <button type="button" className="hist-btn aw-hist" onClick={onOpenHistory} title="Все прошлые разговоры и отчёты">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 1.8"/></svg>
         История <kbd>{mac?"⌘K":"Ctrl K"}</kbd>
       </button>
     </div>
     <h1 className="aw-title">Спросите о продуктах, жалобах и&nbsp;регулировании</h1>
+    <p className="aw-lede">Отвечает по данным AuditLens — жалобам клиентов, тарифам банков, новостям и документам ЦБ — и ссылается на источники.</p>
 
     {/* Поле вопроса — главное на странице: сразу под заголовком, шаблоны задач при нём.
         После первого вопроса оно переезжает вниз, под ленту. */}
@@ -83,13 +84,23 @@ function AiWelcome({onFill,recent,onOpenHistory,onLoadSession,dayIns,composer}){
         {tpl.map(x=><button key={x.k} type="button" className="chip aw-tpl" data-tip={x.t}
             onClick={()=>onFill(x.t,x.slot)}>{x.k}</button>)}
       </div>
-      <p className="aw-how">Справка — за минуту, отчёт с источниками — за 3–5 минут. Что нужно, помощник поймёт по вопросу.</p>
+      {/* Два вида ответа — значками и одной строкой: выбирать между ними не нужно */}
+      <p className="aw-how">
+        <span className="aw-how-i"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 1.8"/></svg>Короткая справка — меньше минуты</span>
+        <span className="aw-how-i"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>Отчёт с источниками — 3–5 минут</span>
+        <span className="aw-how-t">что нужно — решит сам</span>
+      </p>
     </div>
 
     {recent&&recent.length>0&&<section className="aw-sec aw-recent" aria-labelledby="aw-rec-h">
-      <div className="aw-sec-h"><h2 className="eyebrow" id="aw-rec-h">Продолжить</h2></div>
+      <div className="aw-sec-h">
+        <h2 className="eyebrow" id="aw-rec-h">Продолжить</h2>
+        <button type="button" className="aw-more" onClick={onOpenHistory}>Вся история
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+      </div>
       <div className="aw-rows">
-        {recent.slice(0,3).map(s=>{
+        {recent.map(s=>{
           const isRep=!!s.report_id, has=isRep||s.n_answers>0;
           return <button key={s.session_id} type="button" className={"aw-row"+(has?"":" none")}
               onClick={()=>onLoadSession&&onLoadSession(s.session_id)} data-tip={s.first_q&&s.first_q.length>60?s.first_q:undefined}>
@@ -97,7 +108,8 @@ function AiWelcome({onFill,recent,onOpenHistory,onLoadSession,dayIns,composer}){
               ?<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>
               :<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>}</span>
             <span className="aw-row-t">{s.title||s.first_q||"Без названия"}</span>
-            <span className="aw-row-m">{isRep?"отчёт":has?"ответ":"без ответа"} · {fmtHistTime(s.updated_at)}{s.n_same>1?` · ${s.n_same} ${plural(s.n_same,"раз","раза","раз")}`:""}</span>
+            <span className="aw-row-m"><span className="aw-row-kind">{isRep?"отчёт":has?"ответ":"без ответа"}</span>
+              <span className="aw-row-when">{fmtHistTime(s.updated_at)}</span></span>
           </button>;})}
       </div>
     </section>}
@@ -8832,6 +8844,7 @@ function AIPage(){
         value={q} onChange={e=>{setQ(e.target.value); if(slotHint)setSlotHint("");}}
         onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}/>
       <div className="composer-bar">
+        <span className="composer-hint">Enter — отправить · Shift + Enter — новая строка</span>
         {loading
           ? <button className="composer-send composer-stop" onClick={()=>abortRef.current?.abort()}
                     aria-label="Остановить ответ">

@@ -4316,12 +4316,16 @@ thead th{font-weight:600}
 .aw-top{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:30px;margin-bottom:12px}
 /* надзаголовок — фирменным красным: это подпись бренда, а не сигнал */
 .chat-shell .aw-eyebrow{margin:0;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
-.chat-shell .aw-title{margin:0 0 22px;font-size:38px;line-height:1.1}
+.chat-shell .aw-title{margin:0 0 12px;font-size:38px;line-height:1.1}
 .chat-shell .aw-lede{margin:0 0 20px;max-width:64ch;font-size:15.5px;line-height:1.55;text-wrap:pretty}
 .aw-ask{margin:0}
 .aw-ask .composer-inner{max-width:none;margin:0}
 .aw-ask .aw-tpls{margin-top:12px}
-.aw-how{margin:12px 2px 0;font-size:12.5px;line-height:1.5;color:var(--ink-3)}
+.aw-how{display:flex;flex-wrap:wrap;align-items:center;gap:6px 18px;margin:14px 2px 0;font-size:12.5px;line-height:1.5;color:var(--ink-3)}
+.aw-how-i{display:inline-flex;align-items:center;gap:6px;color:var(--ink-2);white-space:nowrap}
+.aw-how-i svg{flex:none;color:var(--ink-3)}
+.aw-how-t{white-space:nowrap}
+.aw-how-t::before{content:"·";margin-right:18px;color:var(--ink-4)}
 .chat-shell .aw-sec{margin-top:28px}
 .aw-sec-h{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:24px;margin-bottom:6px}
 .chat-shell .aw-sec-h h2.eyebrow{margin:0}
@@ -4337,7 +4341,9 @@ thead th{font-weight:600}
 .aw-row-ic{flex:none;width:18px;display:grid;place-items:center;color:var(--ink-3)}
 .aw-row:hover .aw-row-ic{color:var(--ink)}
 .aw-row-t{flex:1;min-width:0;font-size:14px;line-height:1.4;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.aw-row-m{flex:none;display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.aw-row-m{flex:none;display:inline-flex;align-items:center;gap:10px;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.aw-row-kind{padding:1px 7px;border:1px solid var(--hair);border-radius:999px;font-size:11px;color:var(--ink-3);background:var(--surface)}
+.aw-row-when{min-width:38px;text-align:right}
 .aw-row.none .aw-row-m{color:var(--warn-ink,var(--warn))}
 .aw-row-day .aw-row-ic i{width:8px;height:8px;border-radius:50%;background:var(--sev,var(--ink-4))}
 .aw-row-day[data-sev=risk]{--sev:var(--neg)}
@@ -4360,7 +4366,7 @@ thead th{font-weight:600}
 /* фокус во вкладке — графитом, как выбор; красная обводка читалась как ошибка */
 .chat-shell :where(a,button,[role="button"],[role="radio"],[role="checkbox"],input,select,textarea,summary,[tabindex]):focus-visible{outline-color:var(--select)}
 .aw-ask .chat-textarea{min-height:58px}
-.chat-shell .composer-bar{flex-wrap:nowrap;gap:12px;padding:4px 10px 10px 18px}
+.chat-shell .composer-bar{flex-wrap:nowrap;gap:12px;padding:6px 10px 10px 18px}
 .chat-shell .composer-hint{min-width:0;font-size:12px;color:var(--ink-4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chat-shell .composer-send{flex:none;margin-left:auto;height:36px;padding:0 14px;border-radius:10px;font-size:13px;font-weight:500}
 .chat-shell .composer-send:not(:disabled):hover{opacity:.9}
@@ -4522,7 +4528,8 @@ thead th{font-weight:600}
   .composer-dock .composer-send{width:38px;height:38px;padding:0;justify-content:center;border-radius:12px}
   .composer-dock .composer-send-t{display:none}
   .aw-row-t{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-  .aw-how{font-size:12px}
+  .aw-how{font-size:12px;gap:4px 14px}
+  .aw-how-t::before{content:none}
   .rp-head{margin-bottom:16px;padding-bottom:14px}
   .rp-bar .aifb,.ans-foot .aifb{margin-left:0}
   .chat-shell .clarify-card{padding:16px 14px 14px}

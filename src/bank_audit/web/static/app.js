@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 f06d94eb79022b9c9033d4a846aec68de9fb0db14fa627a9c986c191d0110f75): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 ed545b5addd5297be580d54c91170d2df972ce81ecdfc1d9eb9463191e4e91a8): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -147,7 +147,7 @@ function AiWelcome({
     className: "aw-top"
   }, /*#__PURE__*/React.createElement("div", {
     className: "aw-eyebrow"
-  }, me ? greeting(me) : "ИИ-помощник"), /*#__PURE__*/React.createElement("button", {
+  }, me ? `${greeting(me)} · ИИ-помощник` : "ИИ-помощник · AuditLens"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "hist-btn aw-hist",
     onClick: onOpenHistory,
@@ -170,7 +170,9 @@ function AiWelcome({
     d: "M12 7.5V12l3 1.8"
   })), "\u0418\u0441\u0442\u043E\u0440\u0438\u044F ", /*#__PURE__*/React.createElement("kbd", null, mac ? "⌘K" : "Ctrl K"))), /*#__PURE__*/React.createElement("h1", {
     className: "aw-title"
-  }, "\u0421\u043F\u0440\u043E\u0441\u0438\u0442\u0435 \u043E \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0430\u0445, \u0436\u0430\u043B\u043E\u0431\u0430\u0445 \u0438\xA0\u0440\u0435\u0433\u0443\u043B\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u0438"), /*#__PURE__*/React.createElement("div", {
+  }, "\u0421\u043F\u0440\u043E\u0441\u0438\u0442\u0435 \u043E \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0430\u0445, \u0436\u0430\u043B\u043E\u0431\u0430\u0445 \u0438\xA0\u0440\u0435\u0433\u0443\u043B\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u0438"), /*#__PURE__*/React.createElement("p", {
+    className: "aw-lede"
+  }, "\u041E\u0442\u0432\u0435\u0447\u0430\u0435\u0442 \u043F\u043E \u0434\u0430\u043D\u043D\u044B\u043C AuditLens \u2014 \u0436\u0430\u043B\u043E\u0431\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432, \u0442\u0430\u0440\u0438\u0444\u0430\u043C \u0431\u0430\u043D\u043A\u043E\u0432, \u043D\u043E\u0432\u043E\u0441\u0442\u044F\u043C \u0438 \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442\u0430\u043C \u0426\u0411 \u2014 \u0438 \u0441\u0441\u044B\u043B\u0430\u0435\u0442\u0441\u044F \u043D\u0430 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438."), /*#__PURE__*/React.createElement("div", {
     className: "aw-ask"
   }, composer, /*#__PURE__*/React.createElement("div", {
     className: "aw-tpls",
@@ -184,7 +186,43 @@ function AiWelcome({
     onClick: () => onFill(x.t, x.slot)
   }, x.k))), /*#__PURE__*/React.createElement("p", {
     className: "aw-how"
-  }, "\u0421\u043F\u0440\u0430\u0432\u043A\u0430 \u2014 \u0437\u0430 \u043C\u0438\u043D\u0443\u0442\u0443, \u043E\u0442\u0447\u0451\u0442 \u0441 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430\u043C\u0438 \u2014 \u0437\u0430 3\u20135 \u043C\u0438\u043D\u0443\u0442. \u0427\u0442\u043E \u043D\u0443\u0436\u043D\u043E, \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u043F\u043E\u0439\u043C\u0451\u0442 \u043F\u043E \u0432\u043E\u043F\u0440\u043E\u0441\u0443.")), recent && recent.length > 0 && /*#__PURE__*/React.createElement("section", {
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "aw-how-i"
+  }, /*#__PURE__*/React.createElement("svg", {
+    width: "14",
+    height: "14",
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "1.7",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("circle", {
+    cx: "12",
+    cy: "12",
+    r: "9"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M12 7.5V12l3 1.8"
+  })), "\u041A\u043E\u0440\u043E\u0442\u043A\u0430\u044F \u0441\u043F\u0440\u0430\u0432\u043A\u0430 \u2014 \u043C\u0435\u043D\u044C\u0448\u0435 \u043C\u0438\u043D\u0443\u0442\u044B"), /*#__PURE__*/React.createElement("span", {
+    className: "aw-how-i"
+  }, /*#__PURE__*/React.createElement("svg", {
+    width: "14",
+    height: "14",
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "1.7",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M14 3v5h5M9 13h6M9 17h4"
+  })), "\u041E\u0442\u0447\u0451\u0442 \u0441 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430\u043C\u0438 \u2014 3\u20135 \u043C\u0438\u043D\u0443\u0442"), /*#__PURE__*/React.createElement("span", {
+    className: "aw-how-t"
+  }, "\u0447\u0442\u043E \u043D\u0443\u0436\u043D\u043E \u2014 \u0440\u0435\u0448\u0438\u0442 \u0441\u0430\u043C"))), recent && recent.length > 0 && /*#__PURE__*/React.createElement("section", {
     className: "aw-sec aw-recent",
     "aria-labelledby": "aw-rec-h"
   }, /*#__PURE__*/React.createElement("div", {
@@ -192,9 +230,25 @@ function AiWelcome({
   }, /*#__PURE__*/React.createElement("h2", {
     className: "eyebrow",
     id: "aw-rec-h"
-  }, "\u041F\u0440\u043E\u0434\u043E\u043B\u0436\u0438\u0442\u044C")), /*#__PURE__*/React.createElement("div", {
+  }, "\u041F\u0440\u043E\u0434\u043E\u043B\u0436\u0438\u0442\u044C"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "aw-more",
+    onClick: onOpenHistory
+  }, "\u0412\u0441\u044F \u0438\u0441\u0442\u043E\u0440\u0438\u044F", /*#__PURE__*/React.createElement("svg", {
+    width: "12",
+    height: "12",
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M5 12h14M13 6l6 6-6 6"
+  })))), /*#__PURE__*/React.createElement("div", {
     className: "aw-rows"
-  }, recent.slice(0, 3).map(s => {
+  }, recent.map(s => {
     const isRep = !!s.report_id,
       has = isRep || s.n_answers > 0;
     return /*#__PURE__*/React.createElement("button", {
@@ -234,7 +288,11 @@ function AiWelcome({
       className: "aw-row-t"
     }, s.title || s.first_q || "Без названия"), /*#__PURE__*/React.createElement("span", {
       className: "aw-row-m"
-    }, isRep ? "отчёт" : has ? "ответ" : "без ответа", " \xB7 ", fmtHistTime(s.updated_at), s.n_same > 1 ? ` · ${s.n_same} ${plural(s.n_same, "раз", "раза", "раз")}` : ""));
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "aw-row-kind"
+    }, isRep ? "отчёт" : has ? "ответ" : "без ответа"), /*#__PURE__*/React.createElement("span", {
+      className: "aw-row-when"
+    }, fmtHistTime(s.updated_at))));
   }))), dayIns && dayIns.length > 0 && /*#__PURE__*/React.createElement("section", {
     className: "aw-sec",
     "aria-labelledby": "aw-day-h"
@@ -17090,7 +17148,9 @@ function AIPage() {
     }
   }), /*#__PURE__*/React.createElement("div", {
     className: "composer-bar"
-  }, loading ? /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "composer-hint"
+  }, "Enter \u2014 \u043E\u0442\u043F\u0440\u0430\u0432\u0438\u0442\u044C \xB7 Shift + Enter \u2014 \u043D\u043E\u0432\u0430\u044F \u0441\u0442\u0440\u043E\u043A\u0430"), loading ? /*#__PURE__*/React.createElement("button", {
     className: "composer-send composer-stop",
     onClick: () => abortRef.current?.abort(),
     "aria-label": "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u0442\u044C \u043E\u0442\u0432\u0435\u0442"
