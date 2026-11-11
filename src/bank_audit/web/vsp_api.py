@@ -2190,7 +2190,7 @@ def _conclusion_line(con: dict | None) -> str:
         return "общего почерка нет: жалобы разные" + (f" — {con['why']}" if con.get("why") else "")
     t = f"{con.get('pattern_name') or 'общий почерк'} ({con.get('clients') or 0} кл., {con.get('period') or ''}); уверенность {con.get('confidence')}"
     if con.get("wave_only"):
-        t += "; по сети это встречается так же часто — отделение этим не выделяется"
+        t += "; отделение этим не выделяется: столько историй могло набраться и случайно"
     return t
 
 

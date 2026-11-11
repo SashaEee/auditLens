@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import random
+from collections import Counter, defaultdict
 from datetime import timedelta, timezone
 
 from sqlalchemy import select
@@ -144,8 +145,10 @@ def test_shelves_clients_queue_waves_hotspots(db_url, monkeypatch):
     assert a6["lead"]["rid"] in pat["rids"]                              # главный случай — из историй самой причины
     assert a6["req_from"][:10] == pat["first"][:10] and a6["request"] and a6["request"][0]["kind"] == 7
     assert a6["benign"]["resolve"] and a6["check"]
-    # по одному числу историй не выделяется никто; второй почерк — три клиента с биометрией в одном отделении очага
-    assert out["shelves"] == {"pattern": 2} and det[f"b{ids['100']}"]["risk"]["patterns"][0]["kind"] == 15
+    # по одному числу историй не выделяется никто. Три клиента с биометрией в одном отделении очага на полку
+    # не попадают: при честном счёте сравнений (каждая пара «отделение × способ») такое складывается и случайно;
+    # их видно в очаге
+    assert out["shelves"] == {"pattern": 1} and not det[f"b{ids['100']}"]["risk"]["include"]
     # «изнутри»: одна история — не полка отделения, а верх очереди случаев
     a7 = det[f"b{ids['7']}"]["risk"]
     assert not a7["include"] and a7["severity"] == 3 and a7["flags"]["inside"] == 1
@@ -233,3 +236,47 @@ def test_kind_from_actions_and_request():
     assert r["kind"] == 15 and "9038/1" in r["text"] and r["metric"] and r["benign"]
     assert rk.request_for(25, where="x", period="y") is None or rk.request_for(25, where="x", period="y")["text"]
     assert rk.code_key("№ 9038/01919") == "9038/1919" and rk.code_key("СберБанк") is None
+
+
+def test_uniform_background_rarely_fills_branch_shelves():
+    """Ровный фон: истории четырёх типов раскиданы по 60 отделениям случайно. Тройки «один способ за год»
+    складываются и так — на полку отделение попадать не должно. Раньше в поправку шли только пары «отделение ×
+    способ», где уже набралось три истории, и на перемешанных данных прода на полке оказывалось 1–12 отделений
+    при 19 настоящих. «Модель», которая про любое отделение отвечает «почерк есть» и называет все его истории,
+    полку тоже не раздувает (на проде 11.11 она ответила так про 424 отделения из 594)."""
+    import test_waves_hotspots as tw
+    expo = tw._expo(tw.PTS)
+    pts = {p: {"gosb": v["gosb"], "subject": v["subject"], "city": v["city"], "code": None, "hq": False}
+           for p, v in tw.PTS.items()}
+
+    def rich(s):
+        return {**s, "actions": ["другое"], "vulnerable": False, "quote": "x", "summary": "x", "employee": "",
+                "money": None, "date": s["at"].strftime("%d.%m.%Y"), "text": "x", "quote_ok": True}
+
+    def background(seed):
+        return [rich(s) for kind, rate in ((7, 12), (5, 6), (15, 3), (9, 3)) for s in tw._steady(kind, rate, seed)]
+
+    def yes_model(stories):
+        by = defaultdict(list)
+        for s in stories:
+            by[s["point"]].append(s["rid"])
+        return {p: {"pattern": True, "confidence": "высокая", "rids": rids, "pattern_name": "всё подряд"}
+                for p, rids in by.items() if len(rids) >= 3}
+
+    runs, hit, hit_llm, triples = 60, 0, 0, 0
+    for seed in range(runs):
+        st = background(seed)
+        a = rk.assess(pts, st, expo, now=tw.NOW, source="модель")
+        hit += any(x["shelf"] for x in a.values())
+        b = rk.assess(pts, st, expo, now=tw.NOW, source="модель", conclusions=yes_model(st))
+        hit_llm += any(x["shelf"] for x in b.values())
+        per = Counter((s["point"], s["kind"], s["at"].year) for s in st)
+        triples += sum(1 for n in per.values() if n >= 3)
+    assert triples >= runs                                    # троек на фоне много — проверка не пустая
+    assert hit <= 0.1 * runs and hit_llm <= 0.15 * runs, (hit, hit_llm)
+    # а настоящее сгущение — пять клиентов за три месяца в одном отделении — на полку попадает
+    st = background(1) + [rich(tw._story(900 + i, "ta0", tw.NOW - timedelta(days=20 + 15 * i), 7, tw.PTS["ta0"]))
+                          for i in range(5)]
+    a = rk.assess(pts, st, expo, now=tw.NOW, source="модель")
+    assert a["ta0"]["shelf"] == "pattern" and a["ta0"]["patterns"][0]["window_clients"] >= 5
+    assert sum(1 for x in a.values() if x["shelf"]) == 1

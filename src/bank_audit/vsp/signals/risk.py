@@ -546,9 +546,13 @@ def assess(points: dict[str, dict], stories: list[dict], exposure: Exposure, *, 
             if s.get("kind") and s["kind"] != 25:
                 groups[("kind", s["kind"])].append(s)
         for (lvl, key), ev in groups.items():
+            # сравнение — каждая пара «отделение × способ», где есть хоть одна история, а не только те, где
+            # набралось три: иначе поправка считает лишь «удачные» пары. На ровном фоне (истории раскиданы по
+            # отделениям пропорционально прочитанным отзывам, 11.11) при прежнем счёте на полку попадало
+            # 1–12 отделений против 19 настоящих; при этом — 0,1 против 3
+            groups_tested += 1
             if len(ev) < PATTERN_MIN:
                 continue
-            groups_tested += 1
             i, j = _best_window(ev, PATTERN_WINDOW_D)
             if j - i + 1 < PATTERN_MIN:
                 continue
@@ -560,26 +564,35 @@ def assess(points: dict[str, dict], stories: list[dict], exposure: Exposure, *, 
             e, pv = hot_excess(Counter(story_cell(s) for s in inw), exposure.point_cells(p, a, b),
                                Exposure._cells(key_msc[(lvl, key)], a, b), net_cache[(a, b)])
             cand[(p, lvl, key)] = {"p": min(1.0, pv * years_of(p, a)), "expected": e, "ev": inw, "all": ev}
-    # вывод модели по отделению (branch_llm) проходит ту же проверку: названные истории против частоты
-    # их типов по остальной сети за тот же срок — иначе «почерком» окажется волна, которая идёт везде
+    # вывод модели по отделению (branch_llm) проходит ту же проверку и по тем же правилам: три и больше клиента
+    # из названных моделью за год — против частоты их типов по остальной сети за тот же год. Модель почти всегда
+    # отвечает «общий почерк есть» (11.11: 424 отделения из 594), а истории чаще растянуты на годы — такое
+    # складывается и случайно. Модель сама выбирает, какие типы объединить, — за это отдельная поправка:
+    # на число наборов типов, которые можно было собрать из историй отделения
     for p, con in conclusions.items():
-        if p not in ev_clients or not con.get("pattern") or con.get("confidence") not in ("средняя", "высокая"):
+        if p not in ev_clients:
+            continue
+        groups_tested += 1
+        if not con.get("pattern") or con.get("confidence") not in ("средняя", "высокая"):
             continue
         rids = set(con.get("rids") or [])
         ev = [s for s in ev_clients[p] if s["rid"] in rids]
         if len(ev) < PATTERN_MIN:
             continue
-        groups_tested += 1
-        days = max(PATTERN_WINDOW_D, (ev[-1]["at"] - ev[0]["at"]).days + 1)
-        a, b = ym(ev[-1]["at"] - timedelta(days=days)), ym(ev[-1]["at"])
+        i, j = _best_window(ev, PATTERN_WINDOW_D)
+        if j - i + 1 < PATTERN_MIN:
+            continue
+        b = ym(ev[j]["at"])
+        a = ym(ev[j]["at"] - timedelta(days=PATTERN_WINDOW_D))
+        inw = [s for s in ev if a <= ym(s["at"]) <= b]
         if (a, b) not in net_cache:
             net_cache[(a, b)] = exposure.net_cells(a, b)
         net_ev: Counter = Counter()
-        for k in {s.get("kind") for s in ev}:
+        for k in {s.get("kind") for s in inw}:
             net_ev += Exposure._cells(key_msc[("kind", k)], a, b)
-        e, pv = hot_excess(Counter(story_cell(s) for s in ev), exposure.point_cells(p, a, b), net_ev, net_cache[(a, b)])
-        cand[(p, "llm", "")] = {"p": min(1.0, pv * max(1.0, years_of(p, a) * 365 / days)), "expected": e,
-                                "ev": ev, "all": ev}
+        e, pv = hot_excess(Counter(story_cell(s) for s in inw), exposure.point_cells(p, a, b), net_ev, net_cache[(a, b)])
+        subsets = 2 ** min(10, len({s.get("kind") for s in ev_clients[p]})) - 1
+        cand[(p, "llm", "")] = {"p": min(1.0, pv * years_of(p, a) * subsets), "expected": e, "ev": inw, "all": ev}
     pat_ok = bh({k: v["p"] for k, v in cand.items()}, PATTERN_Q, m=groups_tested)
     cand_by: dict[str, list] = defaultdict(list)
     for (pp, lvl, key), c in cand.items():
