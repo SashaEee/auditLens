@@ -78,11 +78,20 @@ def test_neighbour_cells_do_not_merge_into_one_number():
     assert H.unknown_numbers(cells, "В 2026 году 162 жалобы") == []
 
 
+def test_years_dates_and_small_counts_are_not_findings():
+    # годы на шкале времени и номера пунктов в отчёте дословно не встречаются
+    slide = ['<section class="slide"><p>2022 · 2024 · 2027 · 2029, шаг 03, ставка 18,4%, сумма 5 000 000 ₽</p></section>']
+    assert H.unknown_numbers(slide, "Ставка 18,4%, сумма до 5 000 000 ₽") == []
+    assert H.numbers("ПСК 18,4% [6], сумма 5 000 000 ₽, 162 жалобы [17][3], 2 раза") == {"18.4", "5000000", "162"}
+    assert H.cites("рост [1][3], затем [6, 17]") == [1, 3, 6, 17]
+    assert H.file_name('Потребкредиты: Сбер/ВТБ?') == "Потребкредиты Сбер ВТБ.html"
+
+
 def test_assembled_file_is_self_contained():
     css, raw = H.split_answer(ANSWER)
     slides = [H.sanitize(x) for x in raw]
     doc = H.assemble(H.clean_css(css), slides, title="Потребкредиты: Сбер и ВТБ", sources=SOURCES,
-                     stamp="Экспортировано из AuditLens", note="Сверьте вручную: 1.5.")
+                     stamp="Экспортировано из AuditLens")
     assert doc.startswith("<!doctype html>") and doc.count("<section") == 5       # 4 слайда + источники
     # ни одного обращения в сеть: шрифты внутри, внешних адресов нет
     assert not re.findall(r'(?:src|href)\s*=\s*"https?://', doc)
@@ -94,7 +103,7 @@ def test_assembled_file_is_self_contained():
     # сноски и источники: только те, на кого сослались слайды и кто есть в списке
     assert '<sup class="cite">1,3</sup>' in doc and "[2]" in doc          # источника 2 в списке нет
     src = doc[doc.index("al-src"):]
-    assert "sberbank.ru · 01.11.2026" in src and "vtb.ru" in src and "Сверьте вручную: 1.5." in src
+    assert "sberbank.ru · 01.11.2026" in src and "vtb.ru" in src and "вручную" not in doc.lower()
     # механика листания защищена от стилей модели
     assert "width:1920px!important" in doc and "ArrowRight" in doc and "@media print" in doc
 
@@ -117,10 +126,10 @@ def test_build_fixes_numbers_by_text_and_reports_what_is_left():
                                      report=REPORT, sources=SOURCES, model="m"))
     assert info["slides"] == 4 and info["fixed"] == 1 and info["unknown"] == []
     assert b"1,5" not in data.split(b"</style>")[-1]
-    # исправление не удалось — файл всё равно собран, а число названо
+    # исправление не удалось — файл собран как есть, без приписок; остаток только в сводке для журнала
     data, info = asyncio.run(H.build(_client([ANSWER, "не JSON"]), question="Сравни", title="Потребкредиты",
                                      report=REPORT, sources=SOURCES, model="m"))
-    assert info["unknown"] == ["1.5"] and "сверьте вручную".encode() in data.lower()
+    assert info["unknown"] == ["1.5"] and "вручную".encode() not in data.lower()
 
 
 def test_too_few_slides_is_an_error_not_an_empty_file():

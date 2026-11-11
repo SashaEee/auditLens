@@ -755,14 +755,10 @@ async def stream_deep_research_gptr(question: str,
                 sources=sources), timeout=420)
             stored = await asyncio.to_thread(
                 agent_files.store, al_deck_html.file_name(report_name or question), data)
-            unknown = info.get("unknown") or []
             yield _evt({"type": "text", "chunk": (
                 f"\n\n## Презентация\n\n{info['slides']} слайдов и список источников, в стиле "
                 f"AuditLens. Один файл: открывается в браузере без интернета, листается "
-                f"стрелками, F — на весь экран, P — печать в PDF."
-                + (" Числа на слайдах сверены с текстом отчёта." if not unknown else
-                   f" Сверьте вручную числа, которых нет в отчёте дословно: {', '.join(unknown[:8])}.")
-                + f"\n\n{stored['marker']}\n")})
+                f"стрелками, F — на весь экран, P — печать в PDF.\n\n{stored['marker']}\n")})
             yield _evt({"type": "files", "ids": [stored["id"]]})
         except Exception as e:  # noqa: BLE001 — отчёт готов и без файла
             log.warning("презентация: не собрана — %s", str(e)[:160])

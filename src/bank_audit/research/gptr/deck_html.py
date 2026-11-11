@@ -9,9 +9,9 @@ AuditLens, а не как шаблон с подставленным текст�
     полный экран, печать в PDF — ни одного обращения в сеть;
   • чистит: никаких скриптов, внешних адресов и картинок из сети — файл
     открывают локально, и он обязан быть безвредным;
-  • сверяет числа с текстом отчёта. Ничего не вырезает: неточное место
-    исправляется заменой текста, а что исправить не удалось — честно названо
-    на слайде источников и в ответе помощника;
+  • сверяет числа с текстом отчёта — тихо. Ничего не вырезает и ничего не
+    приписывает: неточное место исправляется точечной заменой текста, остаток
+    уходит только в журнал;
   • добавляет слайд источников и номера страниц.
 """
 from __future__ import annotations
@@ -25,8 +25,6 @@ import re
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
-
-from . import deck as al_deck
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +49,52 @@ _FONTS = [
     ("Instrument Serif", "instrumentserif-5.woff2", "normal", "400", _LATIN),
     ("Instrument Serif", "instrumentserif-8.woff2", "italic", "400", _LATIN),
 ]
+
+
+# ── Общие помощники ──────────────────────────────────────────────────────────
+def clean_report(md: str) -> str:
+    """Отчёт для модели и для сверки: без маркеров блоков и служебных меток."""
+    text = re.sub(r"\[\[(VIZ|CHART|FILE):[^\]]*\]\]", "", md or "")
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+_CITE = re.compile(r"\[\d+(?:\s*[,–-]\s*\d+)*\]")
+# Пробел внутри числа — только разделитель тысяч («5 000 000»): иначе год и
+# соседнее число из другой ячейки склеивались в «20266».
+_NUM = re.compile(r"(?<![\d.,])(?:\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d+)(?:[.,]\d+)?(?!\d)")
+_YEAR = re.compile(r"(?:19|20)\d\d")
+
+
+def numbers(text: str) -> set[str]:
+    """Числа текста в едином виде: без пробелов, запятая → точка. Не числа для
+    сверки: ссылки [n]; малые целые до 12 («три банка», номера пунктов); годы —
+    дизайнер ставит их на шкалу времени, и в отчёте их может не быть дословно
+    (владелец 11.11: такие «находки» только мешают)."""
+    out: set[str] = set()
+    for m in _NUM.findall(_CITE.sub(" ¦ ", text or "")):
+        n = re.sub(r"[\s\u00a0\u202f]", "", m).replace(",", ".").rstrip(".")
+        if not n:
+            continue
+        if "." not in n and (int(n) <= 12 or _YEAR.fullmatch(n)):
+            continue
+        out.add(n)
+    return out
+
+
+def cites(text: str) -> list[int]:
+    return [int(x) for grp in _CITE.findall(text or "") for x in re.findall(r"\d+", grp)]
+
+
+def _ru_day(iso: str) -> str:
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", iso or "")
+    return f"{m.group(3)}.{m.group(2)}.{m.group(1)}" if m else ""
+
+
+def file_name(title: str) -> str:
+    """Имя файла презентации по названию отчёта."""
+    stem = re.sub(r"\s+", " ", re.sub(r'[\\/:*?"<>|\n\r\t]+', " ", title or "")).strip(" .")[:90]
+    stem = stem or "Отчёт AuditLens"
+    return f"{stem}.html"
 
 
 def model_for() -> str:
@@ -180,7 +224,7 @@ def user_message(*, question: str, title: str, report: str, sources: list[dict] 
     return (f"# Название отчёта\n{title or '—'}\n\n# Вопрос аудитора\n{question or '—'}\n\n"
             f"# Дата отчёта\n{day}\n\n# Источники отчёта (номер — название — сайт)\n"
             f"{_sources_digest(sources) or '—'}\n\n# Отчёт\n"
-            f"{al_deck.clean_report(report)[:_REPORT_CHARS]}")
+            f"{clean_report(report)[:_REPORT_CHARS]}")
 
 
 # ── Очистка ──────────────────────────────────────────────────────────────────
@@ -280,10 +324,10 @@ def visible_text(markup: str, sep: str = " ") -> str:
 
 def unknown_numbers(slides: list[str], report: str) -> list[str]:
     """Числа слайдов, которых нет в отчёте. Только сообщает — ничего не трогает."""
-    base = al_deck.numbers(report)
+    base = numbers(report)
     out: list[str] = []
     for s in slides:
-        for n in sorted(al_deck.numbers(visible_text(s, " ¦ ")) - base):
+        for n in sorted(numbers(visible_text(s, " ¦ ")) - base):
             if n not in out:
                 out.append(n)
     return out
@@ -525,7 +569,7 @@ def sources_slides(sources: list[dict] | None, used: list[int], note: str = "",
     for k, page in enumerate(pages):
         items = "".join(
             f"<li><b>{n}</b><div>{_esc(str(s.get('title') or s.get('bank_name') or s.get('domain') or '')[:96])}"
-            f"<span> — {_esc(' · '.join(x for x in (str(s.get('domain') or ''), al_deck._ru_day(str(s.get('published') or ''))) if x))}</span></div></li>"
+            f"<span> — {_esc(' · '.join(x for x in (str(s.get('domain') or ''), _ru_day(str(s.get('published') or ''))) if x))}</span></div></li>"
             for n, s in page)
         tail = f'<p class="al-note">{_esc(note)}</p>' if note and k == len(pages) - 1 else ""
         head = "Источники" if len(pages) == 1 else f"Источники · {k + 1}"
@@ -539,7 +583,7 @@ def assemble(css: str, slides: list[str], *, title: str, sources: list[dict] | N
              stamp: str = "", note: str = "", when: datetime | None = None) -> str:
     """Очищенные стили и слайды → один самодостаточный HTML-файл."""
     known = {int(s["n"]) for s in (sources or []) if str(s.get("n") or "").isdigit()}
-    used = sorted({n for s in slides for n in al_deck.cites(visible_text(s))} & known) if known else []
+    used = sorted({n for s in slides for n in cites(visible_text(s))} & known) if known else []
     body = [link_citations(s, known) for s in slides] + sources_slides(sources, used, note)
     total = len(body)
     day = (when or datetime.now()).strftime("%d.%m.%Y")
@@ -583,13 +627,13 @@ def _context(slides: list[str], number: str, width: int = 70) -> list[str]:
 def apply_fixes(slides: list[str], fixes: list[dict], report: str) -> tuple[list[str], int]:
     """Точечные замены текста. Применяется только то, что встречается ровно один
     раз вне тегов и не вносит новых чужих чисел — макет не меняется."""
-    base = al_deck.numbers(report)
+    base = numbers(report)
     done = 0
     for fx in fixes or []:
         find, repl = str(fx.get("find") or ""), str(fx.get("replace") or "")
         if len(find) < 4 or "<" in find or "<" in repl or ">" in repl:
             continue
-        if not al_deck.numbers(repl) <= base:
+        if not numbers(repl) <= base:
             continue
         esc = _html.escape(find, quote=False)
         for needle in (find, esc):
@@ -609,7 +653,7 @@ async def _fix_numbers(client, model: str, slides: list[str], unknown: list[str]
     listing = "\n".join(f"- {n}: " + " | ".join(f"«…{c}…»" for c in _context(slides, n))
                         for n in unknown[:25])
     user = (f"# Числа слайдов, которых нет в отчёте\n{listing}\n\n# Отчёт\n"
-            f"{al_deck.clean_report(report)[:_REPORT_CHARS]}")
+            f"{clean_report(report)[:_REPORT_CHARS]}")
     kw = {"model": model, "max_tokens": 2500,
           "messages": [{"role": "system", "content": _FIX_SYSTEM},
                        {"role": "user", "content": user}]}
@@ -623,10 +667,6 @@ async def _fix_numbers(client, model: str, slides: list[str], unknown: list[str]
 
 
 # ── Сборка ───────────────────────────────────────────────────────────────────
-def file_name(title: str) -> str:
-    return al_deck.file_name(title).rsplit(".", 1)[0] + ".html"
-
-
 async def build(client, *, question: str, title: str, report: str,
                 sources: list[dict] | None = None, when: datetime | None = None,
                 model: str | None = None) -> tuple[bytes, dict]:
@@ -634,7 +674,7 @@ async def build(client, *, question: str, title: str, report: str,
     from ...web import export_brand as B
     from .facts import call_model
     use = model or model_for()
-    text = al_deck.clean_report(report)
+    text = clean_report(report)
     kw = {"model": use, "max_tokens": _MAX_TOKENS,
           "messages": [{"role": "system", "content": _SYSTEM},
                        {"role": "user", "content": user_message(
@@ -656,10 +696,10 @@ async def build(client, *, question: str, title: str, report: str,
         except Exception as e:  # noqa: BLE001 — исправление необязательно
             log.info("презентация: числа не исправлены — %s", type(e).__name__)
         unknown = unknown_numbers(slides, text)
-    note = ("Числа на слайдах, которых нет в тексте отчёта дословно (сверьте вручную): "
-            + ", ".join(unknown[:12]) + ".") if unknown else ""
+    # Что исправить не удалось — только в журнал: пометка «сверьте вручную» на
+    # слайде и в ответе портила впечатление и чаще всего была ложной (владелец 11.11).
     html_doc = assemble(clean_css(css), slides, title=title or "Отчёт AuditLens", sources=sources,
-                        stamp=B.stamp_line(when), note=note, when=when)
+                        stamp=B.stamp_line(when), when=when)
     info = {"slides": len(slides), "unknown": unknown[:12], "fixed": fixed, "model": use,
             "kb": round(len(html_doc.encode("utf-8")) / 1024)}
     log.info("презентация html: %s", {k: v for k, v in info.items() if k != "unknown"} |

@@ -61,7 +61,6 @@ def test_deck_request_is_a_short_ask_after_an_answer():
     hist = [{"role": "user", "content": "Сравни кредиты"}, {"role": "assistant", "content": "отчёт " * 400}]
     assert A.is_deck_request("сделай презентацию", hist)
     assert A.is_deck_request("Собери слайды по этому отчёту для руководителя", hist)
-    assert A.is_deck_request("выгрузи в pptx", hist)
     # новый содержательный вопрос с презентацией — это исследование, а не реплика
     assert not A.is_deck_request("Сравни вклады Сбера и ВТБ и сделай презентацию", hist)
     # без ответа в разговоре собирать не из чего
@@ -71,7 +70,6 @@ def test_deck_request_is_a_short_ask_after_an_answer():
 
 def _deck_env(monkeypatch, built):
     from bank_audit.ai import agent_files
-    from bank_audit.research.gptr import deck as D
     from bank_audit.research.gptr import deck_html as H
     from bank_audit.web import runctx, userdata
 
@@ -83,13 +81,8 @@ def _deck_env(monkeypatch, built):
 
     async def html_build(client, **kw):
         built.append(("html", kw["title"], kw["sources"][0]["n"]))
-        return b"<!doctype html>", {"slides": 9, "unknown": [], "fixed": 0}
-
-    async def pptx_build(client, **kw):
-        built.append(("pptx", kw["title"], kw["sources"][0]["n"]))
-        return b"PK-deck", {"slides": 6, "dropped": 2, "fallback": False}
+        return b"<!doctype html>", {"slides": 9, "unknown": ["2027"], "fixed": 0}
     monkeypatch.setattr(H, "build", html_build)
-    monkeypatch.setattr(D, "build", pptx_build)
     monkeypatch.setattr(agent_files, "store", lambda name, data: {
         "id": "a" * 32, "name": name, "size": len(data), "marker": "[[FILE:" + "a" * 32 + "]]"})
     monkeypatch.setenv("LLM_BASE_URL", "http://x/v1")
@@ -114,15 +107,10 @@ def test_deck_reply_builds_an_offline_html_from_the_last_report(monkeypatch):
     assert built == [("html", "Потребкредиты", 1)]
     assert "без нового исследования" in evs[0]["text"] and evs[1]["value"] == "quick"
     assert "[[FILE:" in evs[3]["chunk"] and "без интернета" in evs[3]["chunk"] and "9 слайдов" in evs[3]["chunk"]
+    # ответ не просит ничего сверять вручную и не предлагает другой формат
+    low = evs[3]["chunk"].lower()
+    assert "вручную" not in low and "pptx" not in low and "powerpoint" not in low and "2027" not in low
     assert evs[4]["ids"] == ["a" * 32]
-
-
-def test_powerpoint_is_built_only_when_asked_by_name(monkeypatch):
-    built: list = []
-    _deck_env(monkeypatch, built)
-    evs = _run("сделай pptx", [{"role": "assistant", "content": "отчёт"}])
-    assert built == [("pptx", "Потребкредиты", 1)]
-    assert "PowerPoint" in evs[3]["chunk"] and "слайдов — 7" in evs[3]["chunk"]
 
 
 def test_deck_button_names_the_report_and_needs_no_history(monkeypatch):
