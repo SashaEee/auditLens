@@ -303,3 +303,24 @@ def test_prepare_asks_questions_only_for_a_report(monkeypatch):
     monkeypatch.setattr(C, "generate_clarifications", hangs)
     res = asyncio.run(C.prepare("Сравни условия с конкурентами", [], timeout=0.05))
     assert res["route"] == "report" and res["complete"] is True and res["reason"] == "timeout"
+
+
+def test_explicit_wish_beats_the_model(monkeypatch):
+    """«В двух словах» — справка, даже если модель решила собрать отчёт; и наоборот."""
+    from bank_audit.ai import router as R
+    r, _ = _decide(monkeypatch, '{"route": "report"}', "В двух словах: что изменилось в 115-ФЗ для банков?")
+    assert (r.route, r.by) == ("answer", "model")
+    r, _ = _decide(monkeypatch, '{"route": "answer"}', "Нужен отчёт по дебетовым картам Сбера")
+    assert r.route == "report"
+    # реплики к ответу и презентации желание не трогает; спорный случай — как решила модель
+    r, _ = _decide(monkeypatch, '{"route": "reply"}', "коротко перескажи", [REPORT])
+    assert r.route == "reply"
+    r, _ = _decide(monkeypatch, '{"route": "deck"}', "собери слайды, нужен отчёт руководителю", [REPORT])
+    assert r.route == "deck"
+    assert R.explicit_wish("Что должно быть в отчёте по 115-ФЗ?") is None       # слово «отчёт» — не просьба
+    assert R.explicit_wish("Без отчёта: какая ставка?") == "answer"
+    assert R.explicit_wish("Кратко, но сделай полный разбор") is None           # оба желания — решает модель
+    assert R.explicit_wish("подготовь подробный отчёт о вкладах") == "report"
+    monkeypatch.setenv("AI_ROUTER", "0")
+    import asyncio
+    assert asyncio.run(R.decide("Сравни вклады Сбера и ВТБ по ставкам, срокам и пополнению — коротко", [])).route == "answer"

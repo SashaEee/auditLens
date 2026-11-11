@@ -66,7 +66,7 @@ SYSTEM = """Ты — диспетчер ИИ-помощника AuditLens. Им 
 • deck — просьба сделать презентацию или слайды по отчёту, который уже есть в разговоре.
 
 Правила:
-1. Прямо сказанное желание аудитора главнее всего остального. «Коротко», «кратко», «в двух словах», «быстро», «без отчёта» → answer. «Отчёт», «исследование», «подробно», «детально», «полный разбор», «справку для дела» → report.
+1. Прямо сказанное желание аудитора главнее всего остального, в том числе правил ниже. «Коротко», «кратко», «в двух словах», «быстро», «без отчёта» → answer, даже если тема просит сбора и сверки: отчёт аудитор попросит следующим шагом. «Отчёт», «исследование», «подробно», «детально», «полный разбор», «справку для дела» → report.
 2. Не завышай: вопрос, на который честно отвечает один абзац, — answer, даже если тема серьёзная. Не занижай: если нужно сопоставить несколько банков, продуктов или периодов либо сложить картину из разных источников — report. Реплика из одного названия продукта, сервиса или темы без конкретного вопроса («Сервис Своё дело для самозанятых в Сбере», «Ипотека с господдержкой») — просьба рассказать о нём целиком: report.
 3. После отчёта. Вопрос о его содержании или просьба переоформить — reply. Новый предмет, новый банк или новый срез, для которого нужен новый сбор («а по ВТБ?», «добавь Альфа-Банк», «а что для ИП?», «а за прошлый год?»), — report.
 4. После короткого ответа. «Подробнее», «разверни», «собери по этому отчёт» — report. Уточнение мелочи — reply. Тот же простой вопрос про другой банк, продукт или период («а в ВТБ?», «а по ипотеке?», «а год назад?») — снова answer: это такой же один факт, а не исследование.
@@ -125,6 +125,33 @@ def guard(route: str, history: list | None) -> str:
     return route
 
 
+# Прямо сказанное желание — не догадка: его исполняем и тогда, когда модель
+# решила иначе (замер 12.11: на «в двух словах: что изменилось в 115-ФЗ» она
+# один раз из тридцати шести выбрала отчёт). Только явные слова и только между
+# справкой и отчётом: реплики к ответу и презентации это не трогает.
+_WISH_SHORT = re.compile(r"\b(коротко|кратко|вкратце|в двух словах|в паре слов|без отч[её]та)\b", re.I)
+_WISH_REPORT = re.compile(
+    r"\b(нуж(ен|ны)|сделай|собери|подготовь|составь|хочу)\s+(\w+\s+){0,2}?(отч[её]т|исследовани[ея])\b"
+    r"|\b(полн\w+|подробн\w+|детальн\w+)\s+(разбор|отч[её]т|исследовани[ея])\b", re.I)
+
+
+def explicit_wish(question: str) -> str | None:
+    """«Коротко» → answer, «нужен отчёт» → report; оба сразу или ни одного — None."""
+    q = question or ""
+    short = bool(_WISH_SHORT.search(q))
+    report = bool(_WISH_REPORT.search(_WISH_SHORT.sub(" ", q)))
+    if short == report:
+        return None
+    return "answer" if short else "report"
+
+
+def apply_wish(route: str, question: str) -> str:
+    wish = explicit_wish(question)
+    if wish and route in ("answer", "report") and route != wish:
+        return wish
+    return route
+
+
 def by_rules(question: str, history: list | None) -> Route:
     """Прежние правила по словам. Страховка: модель не ответила или отключена."""
     from .analyst import is_deck_request, is_followup_reply
@@ -136,6 +163,9 @@ def by_rules(question: str, history: list | None) -> Route:
         return Route("reply", "rules", reason="короткая реплика к ответу")
     prior_report = any(isinstance(h, dict) and h.get("role") == "assistant"
                        and _kind(h) == "report" for h in (history or [])[-4:])
+    wish = explicit_wish(q)
+    if wish:
+        return Route(wish, "rules", reason="прямо сказано в вопросе")
     if is_deep_question(q) or prior_report:
         return Route("report", "rules", reason="слова исследования или идёт разговор об отчёте")
     return Route("answer", "rules", reason="короткий вопрос")
@@ -186,6 +216,6 @@ async def decide(question: str, history: list | None = None) -> Route:
     if not got:
         r = by_rules(q, history)
         return Route(r.route, "rules", ms, r.reason)
-    route = guard(got[0], history)
+    route = guard(apply_wish(got[0], q), history)
     log.info("[router] %s (%d мс): %s", route, ms, got[1])
     return Route(route, "model", ms, got[1])
