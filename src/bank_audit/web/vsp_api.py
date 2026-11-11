@@ -160,18 +160,21 @@ def _in_units(username: str, name: str | None) -> bool:
     return len(w) == 2 and org_reach.name_key(w[0], w[1]) in b["names"]
 
 
+def _env_users_vsp() -> set[str]:
+    return {u.strip() for u in os.getenv("VSP_USERS", "").split(",") if u.strip()}
+
+
 def can_vsp(username: str | None, name: str | None = None) -> bool:
     if not username:
         return False
     if telemetry.is_admin(username):
         return True
-    allow = {u.strip() for u in os.getenv("VSP_USERS", "").split(",") if u.strip()}
-    return username in allow or username in beta_users() or _in_units(username, name)
+    return username in _env_users_vsp() or username in beta_users() or _in_units(username, name)
 
 
 def access_usernames() -> set[str]:
     """Все, у кого раздел открыт и кто уже заходил в AuditLens: по логину и по подразделению."""
-    out = set(beta_users()) | {u.strip() for u in os.getenv("VSP_USERS", "").split(",") if u.strip()}
+    out = set(beta_users()) | _env_users_vsp()
     if beta_units():
         try:
             from sqlalchemy import text as _t

@@ -725,6 +725,17 @@ def admin_pulse_reach_load(body: RosterIn, user: CurrentUser = Depends(get_curre
         raise HTTPException(400, "не получилось разобрать выгрузку — нужен файл .xlsx")
 
 
+@app.get("/api/admin/pulse/vsp")
+def admin_pulse_vsp(days: int = Query(30, ge=1, le=365), me: Optional[bool] = None,
+                    user: CurrentUser = Depends(get_current_user)):
+    """«Сеть ВСП» в «Пульсе»: кто пользуется разделом «Аудит сети ВСП» и кому он открыт.
+    Только владелец: раздел в закрытом доступе, и кому его открывать — решает он."""
+    if not telemetry.is_admin(user.username):
+        raise HTTPException(403, "owner only")
+    from . import vsp_pulse
+    return vsp_pulse.report(user.username, days, me)
+
+
 @app.get("/api/admin/pulse/costs")
 def admin_pulse_costs(user: CurrentUser = Depends(get_current_user)):
     """Траты на модели: отдел против лимита, AuditLens, по дням, месяцам и моделям."""

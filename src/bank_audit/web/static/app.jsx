@@ -12537,10 +12537,13 @@ const ocDate=(s)=>s?new Date(s).toLocaleDateString("ru",{day:"2-digit",month:"2-
 
 // разделы «Пульса» и прежние ключи вкладок: уведомления сервера (#pulse?tab=inbox,
 // #pulse?tab=ai) и сохранённый выбор в localStorage живут дольше старого интерфейса
+// «Сеть ВСП» — только владельцу (PU2_OWNER): раздел «Аудит сети ВСП» в закрытом доступе
 const PU2_SECTIONS=[["overview","Сводка"],["people","Люди"],["quality","Качество ИИ"],
-  ["inbox","Обращения"],["systems","Системы"],["results","Итоги"]];
+  ["inbox","Обращения"],["systems","Системы"],["results","Итоги"],["vsp","Сеть ВСП"]];
+const PU2_OWNER=new Set(["vsp"]);
 const PU_ALIAS={people:"people",outcomes:"results",reach:"results",reports:"quality",ai:"quality",
-  inbox:"inbox",data:"systems",tech:"systems",overview:"overview",quality:"quality",systems:"systems",results:"results"};
+  inbox:"inbox",data:"systems",tech:"systems",overview:"overview",quality:"quality",systems:"systems",results:"results",
+  vsp:"vsp"};
 const puSection=(k)=>PU_ALIAS[String(k||"")]||"overview";
 // службы ленты состояния — в этом порядке и в «Сводке», и в «Системах»
 const PU_SYS=[["server","Сайт и сервер"],["digest","Ежедневный выпуск"],["reviews","Площадки отзывов"],
@@ -16060,7 +16063,7 @@ function PuPalette({onClose,onPick}){
   const[q,setQ]=useState(""), [sel,setSel]=useState(0);
   const pending=useRef(null), closeRef=useRef(null), listRef=useRef(null);
   const all=useMemo(()=>[
-    ...PU2_SECTIONS.map(([k,l])=>({g:"Разделы «Пульса»",t:l,s:"",ic:"pulse",go:k})),
+    ...PU2_SECTIONS.filter(([k])=>!PU2_OWNER.has(k)||c.isOwner).map(([k,l])=>({g:"Разделы «Пульса»",t:l,s:"",ic:"pulse",go:k})),
     ...(((U.d||{}).users)||[]).map(u=>({g:"Люди",t:u.name||u.username,s:"@"+u.username,ic:"user",person:u.username})),
     ...(((T.d||{}).tickets)||[]).map(x=>({g:"Обращения",t:puLine(x.body)||`Обращение № ${x.ticket_id}`,
       s:`№ ${x.ticket_id}${x.name?" · "+puShort(x.name):""}`,ic:"inbox",ticket:x.ticket_id})),
@@ -16155,6 +16158,176 @@ function PuBrief({m,sig,ts,err,onRetry}){
 // Остаётся смонтированной, когда скрыта (keptPages): опрос, клавиши и запись адреса —
 // только пока видна. Адрес — #pulse?tab=<раздел>[&ticket=N][&person=логин].
 const PU_MAC=typeof navigator!=="undefined"&&/Mac|iPhone|iPad/.test(navigator.platform||"");
+// ══ «Сеть ВСП» (только владелец): кто пользуется разделом «Аудит сети ВСП» и кому он открыт ══
+// Новых событий раздел не пишет: открытия и время — из page_view/page_leave, «что открывал» — из
+// обращений раздела к серверу (досье отделения, карточка способа действия, полный отзыв, выгрузка).
+const PU2_CSS_VSP=`
+.pu2-vs-tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+.pu2-vs-tools .pu2-sp{flex:1 1 auto}
+.pu2-vs-tools .pu2-note{margin:0}
+.pu2-vs-tools a.btn{display:inline-flex;align-items:center;gap:6px;text-decoration:none}
+.pu2-vs-fbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:0 20px 12px}
+.pu2-vs-did{display:inline-flex;gap:6px;flex-wrap:wrap;justify-content:flex-start}
+.pu2-vs-did span{font-size:12px;color:var(--ink-2);background:var(--paper-2);border-radius:999px;padding:1px 8px;white-space:nowrap}
+.pu2-vs-did span b{font-weight:600;color:var(--ink)}
+.pu2-vs-how{font-size:11px;color:var(--ink-3)}
+.pu2-vs-none td{color:var(--ink-3)}
+.pu2-vs-units{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px;margin-top:10px}
+.pu2-vs-unit{display:flex;align-items:center;gap:12px;padding:11px 14px;border:1px solid var(--hair);border-radius:12px;background:var(--surface);
+  font:inherit;color:inherit;text-align:left;cursor:pointer;transition:border-color var(--dur-quick) var(--ease-out),background-color var(--dur-quick) var(--ease-out)}
+.pu2-vs-unit:hover{border-color:var(--ink-4)}
+.pu2-vs-unit:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.pu2-vs-unit.on{border-color:var(--ink);background:var(--paper-2)}
+.pu2-vs-unit:disabled{opacity:.6;cursor:default}
+.pu2-vs-unit>span:first-child{display:flex;flex-direction:column;min-width:0;flex:1 1 auto}
+.pu2-vs-unit b{font-size:14px;font-weight:600}
+.pu2-vs-unit small{font-size:12px;color:var(--ink-3);margin-top:1px}
+.pu2-vs-ask{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px;padding:12px 14px;border-radius:12px;background:var(--paper-2);font-size:13px}
+.pu2-vs-ask .pu2-sp{flex:1 1 auto}
+.pu2-vs-logins{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.pu2-vs-login{display:inline-flex;align-items:center;gap:8px;padding:4px 6px 4px 12px;border:1px solid var(--hair);border-radius:999px;font-size:13px}
+.pu2-vs-login small{color:var(--ink-3);font-size:12px}
+.pu2-vs-login button{border:0;background:none;color:var(--ink-3);cursor:pointer;font:inherit;width:22px;height:22px;border-radius:50%;line-height:1}
+.pu2-vs-login button:hover{background:var(--paper-2);color:var(--ink)}
+.pu2-vs-add{position:relative;margin-top:12px;max-width:420px}
+.pu2-vs-add input{width:100%;height:34px;padding:0 12px;border:1px solid var(--hair-2);border-radius:8px;background:var(--surface);color:var(--ink);font:inherit;font-size:13px}
+.pu2-vs-add input:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+.pu2-vs-sug{margin:6px 0 0;padding:4px;border:1px solid var(--hair);border-radius:10px;background:var(--surface);box-shadow:var(--shadow-2,var(--shadow-1));list-style:none}
+.pu2-vs-sug button{display:flex;justify-content:space-between;gap:12px;width:100%;padding:7px 10px;border:0;border-radius:7px;background:none;font:inherit;font-size:13px;color:var(--ink);text-align:left;cursor:pointer}
+.pu2-vs-sug button:hover,.pu2-vs-sug button:focus-visible{background:var(--paper-2);outline:none}
+.pu2-vs-sug small{color:var(--ink-3);white-space:nowrap}
+.pu2-vs-day{margin:2px 0 14px}
+.pu2-vs-day .pu2-spw{display:block}
+.pu2-vs-day svg{width:100%;height:56px}
+`;
+const PU_VSP_PER=[[7,"7 дн"],[30,"30 дн"],[90,"90 дн"]];
+const PU_VSP_DID=[["dossier","досье"],["wave","способы"],["hot","очаги"],["evidence","отзывы"],["export","выгрузки"],["case","в дело"]];
+const PU_VSP_HOW={owner:"владелец",login:"по логину",unit:"по подразделению"};
+const puMin=(m)=>{ m=+m||0; return m<=0?"—":m<1?"меньше минуты":m<60?`${Math.round(m)} мин`:`${puDec(m/60,1)} ч`; };
+
+// Кому открыт раздел: подразделения штата целиком и отдельные люди по логину
+function PuVspAccess({d}){
+  const[busy,setBusy]=useState(false), [ask,setAsk]=useState(null), [q,setQ]=useState("");
+  const units=d.units||[], logins=d.logins||[], rest=d.rest||[], open=(d.access||{}).units||[];
+  const save=(body,done)=>{ setBusy(true);
+    apiPost("/api/vsp/beta",body).then(()=>{ puInvalidate("/api/admin/pulse/vsp"); fbToast(done); })
+      .catch(()=>fbToast("Не сохранилось — попробуйте ещё раз")).finally(()=>{ setBusy(false); setAsk(null); }); };
+  const flip=(u)=>{ const next=u.open?open.filter(x=>x!==u.code):[...open,u.code];
+    save({units:next},u.open?`Раздел закрыт для ${u.name}`:`Раздел открыт для ${u.name}`); };
+  const drop=(l)=>save({users:logins.map(x=>x.login).filter(x=>x!==l.login)},`Доступ по логину снят: ${l.name}`);
+  const add=(r)=>{ setQ(""); save({users:[...logins.map(x=>x.login),r.login]},`Раздел открыт: ${r.name}`); };
+  const qq=q.trim().toLowerCase();
+  const sug=qq.length>=2?rest.filter(r=>(r.name||"").toLowerCase().includes(qq)||(r.login||"").toLowerCase().includes(qq)).slice(0,7):[];
+  const s=d.summary||{};
+  return <PuCard id="pu2-vsp-access" span={12} title="Кому открыт раздел"
+      meta={d.roster?"меняется сразу, без перезапуска":"штат не загружен — доступ только по логинам"}>
+    <h3 className="pu2-subh" style={{marginTop:4}}>Подразделения целиком</h3>
+    {units.length?<div className="pu2-vs-units" role="group" aria-label="Подразделения">
+      {units.map(u=><button key={u.code} type="button" className={"pu2-vs-unit"+(u.open?" on":"")} disabled={busy}
+          aria-pressed={!!u.open} onClick={()=>setAsk(u)}
+          data-tip={u.open?"Нажмите, чтобы закрыть раздел этому подразделению":"Нажмите, чтобы открыть раздел всему подразделению"}>
+        <span><b>{u.name}</b><small>{puNum(u.head)} в штате · заходили в AuditLens {puNum(u.accounts)}</small></span>
+        <span className={"pu2-tgl"+(u.open?" on":"")} aria-hidden="true"/></button>)}
+    </div>:<PuEmpty>Штат не загружен: загрузите кадровую выгрузку в разделе «Итоги» — тогда раздел можно будет открывать подразделениями.</PuEmpty>}
+    {ask&&<div className="pu2-vs-ask" role="alertdialog" aria-label="Подтверждение">
+      <span>{ask.open?<>Закрыть раздел для <b>{ask.name}</b>? {puNum(ask.head)} {plural(ask.head,"человек потеряет","человека потеряют","человек потеряют")} доступ.</>
+        :<>Открыть раздел для <b>{ask.name}</b>? Его {plural(ask.head,"увидит","увидят","увидят")} {puNum(ask.head)} {plural(ask.head,"человек","человека","человек")}, включая тех, кто ещё не заходил в AuditLens.</>}</span>
+      <span className="pu2-sp"/>
+      <button type="button" className="btn btn-sm btn-ghost" disabled={busy} onClick={()=>setAsk(null)}>Отмена</button>
+      <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={()=>flip(ask)}>{busy?"Сохраняю…":ask.open?"Закрыть":"Открыть"}</button>
+    </div>}
+    <p className="pu2-note">Человек относится к подразделению, если табельный номер в его логине есть в штате; если номера нет — по имени
+      и фамилии. Уволенные доступа не получают.{s.no_account>0&&<> Из открытых подразделений в AuditLens ещё не заходили {puNum(s.no_account)}{" "}
+      {plural(s.no_account,"человек","человека","человек")} — раздел появится у них при первом входе.</>}</p>
+    <h3 className="pu2-subh">Отдельные люди</h3>
+    {logins.length?<div className="pu2-vs-logins">{logins.map(l=><span key={l.login} className="pu2-vs-login">
+      <span>{l.name}{l.unit_name&&<small> · {l.unit_name}</small>}</span>
+      <button type="button" disabled={busy} aria-label={`Снять доступ: ${l.name}`} data-tip="Снять доступ по логину" onClick={()=>drop(l)}>×</button></span>)}
+    </div>:<p className="pu2-note" style={{marginTop:6}}>По логину раздел никому не открыт.</p>}
+    <div className="pu2-vs-add">
+      <label><span className="vh">Открыть раздел человеку</span>
+        <input type="search" placeholder="Открыть человеку: начните вводить имя или логин" value={q} autoComplete="off"
+          disabled={busy} onChange={e=>setQ(e.target.value)}/></label>
+      {qq.length>=2&&<ul className="pu2-vs-sug">{sug.length?sug.map(r=><li key={r.login}>
+          <button type="button" onClick={()=>add(r)}><span>{r.name}</span><small>{r.unit_name||"не из штата"} · @{r.login}</small></button></li>)
+        :<li><span className="pu2-note" style={{display:"block",margin:"6px 10px"}}>Никого не нашлось среди тех, кто уже заходил в AuditLens и у кого раздела ещё нет.</span></li>}</ul>}
+    </div>
+  </PuCard>;
+}
+
+function PuVspSec(){
+  const c=usePu();
+  const[days,setDays]=useState(()=>{try{const v=+localStorage.getItem("al-pu-vsp-days");return [7,30,90].includes(v)?v:30;}catch{return 30;}});
+  const pick=(v)=>{ setDays(v); try{ localStorage.setItem("al-pu-vsp-days",String(v)); }catch{} };
+  const {d,err,reload}=usePuData(`/api/admin/pulse/vsp?days=${days}${puMe(c.withMe)}`,{ttl:60000});
+  const[flt,setFlt]=useState("all");
+  const tools=<div className="pu2-vs-tools">
+    <PuSeg value={days} options={PU_VSP_PER} onChange={pick} label="Период"/>
+    <span className="pu2-sp"/>
+    <span className="pu2-note pu2-hide-s">Этот раздел «Пульса» видите только вы</span>
+    <a className="btn btn-sm" href="#vsp">Открыть «Аудит сети ВСП»<Ic.ext/></a>
+  </div>;
+  if(!d) return <>{tools}<div className="pu2-grid">
+    {err?<div className="pu2-card pu2-c12"><PuLoadErr onRetry={reload}>Не удалось посчитать статистику раздела.</PuLoadErr></div>
+      :[0,1,2,3].map(i=><div key={i} className="pu2-card pu2-c3"><Skel h={84}/></div>)}</div></>;
+  const s=d.summary||{}, ppl=d.people||[], byDay=d.by_day||[], secs=(d.sections||[]);
+  const openUnits=(d.units||[]).filter(u=>u.open).map(u=>u.name);
+  const F={all:()=>true,opened:r=>!!r.last,never:r=>!r.last};
+  const view=ppl.filter(F[flt]||F.all);
+  const maxSec=Math.max(1,...secs.map(x=>+x.users||0));
+  const perL=`за ${days} ${plural(days,"день","дня","дней")}`;
+  const did=(r)=>{ const x=PU_VSP_DID.filter(([k])=>(r.did||{})[k]);
+    return x.length?<span className="pu2-vs-did">{x.map(([k,l])=><span key={k}>{l} <b>{puNum(r.did[k])}</b></span>)}</span>
+      :<span className="pu2-muted">{r.views?"только главная":"—"}</span>; };
+  return <>{tools}
+    <div className="pu2-grid">
+      <PuKpi label="Раздел открыт" icon="user" value={puNum(s.staff||s.with_access)} unit=" чел."
+        sub={openUnits.length?`${openUnits.join(", ")}${(d.logins||[]).length?` · по логину ещё ${puNum(d.logins.length)}`:""}`
+          :(d.logins||[]).length?`по логину — ${puNum(d.logins.length)}`:"пока только вам"}/>
+      <PuKpi label="Заходили в AuditLens" value={<>{puNum(s.with_access)}{s.staff?<small> из {puNum(s.staff)}</small>:null}</>}
+        sub={s.no_account>0?`${puNum(s.no_account)} ещё ни разу не входили`:"у всех есть учётная запись"}
+        tip="Сколько людей с доступом уже входили в AuditLens: раздел появляется при первом входе"/>
+      <PuKpi label="Открывали раздел" value={<>{puNum(s.opened)}<small> из {puNum(s.with_access)}</small></>}
+        sub={`${perL} — ${puNum(s.opened_period)}`}/>
+      <PuKpi label="Вернулись" value={puNum(s.returned)}
+        sub={`заходили в два и более дней · дошли до карточек — ${puNum(s.deep)}`}
+        tip="«Дошли до карточек» — открыли досье отделения, карточку способа действия или очага, полный отзыв, сделали выгрузку или положили материал в дело"/>
+    </div>
+    <div className="pu2-grid">
+      <PuCard id="pu2-vsp-people" span={8} flush title="Кто заходит" meta={`${perL} · время и действия — за период`}>
+        <div className="pu2-vs-fbar" role="group" aria-label="Отбор людей">
+          {[["all","Все",ppl.length],["opened","Открывали",ppl.filter(F.opened).length],["never","Не открывали",ppl.filter(F.never).length]]
+            .map(([k,l,n])=><button key={k} type="button" className={"chip"+(flt===k?" on":"")} aria-pressed={flt===k} onClick={()=>setFlt(k)}>{l} <i>{puNum(n)}</i></button>)}
+        </div>
+        {view.length?<div className="pu2-tw"><table className="pu2-tbl">
+          <thead><tr><th scope="col" className="pu2-l">Человек</th><th scope="col" className="pu2-l">Последний раз</th>
+            <th scope="col" data-tip="Сколько раз открывал раздел за период">Заходов</th>
+            <th scope="col" data-tip="В сколько разных дней за период">Дней</th><th scope="col">Время</th>
+            <th scope="col" className="pu2-l" data-tip="Что открывал за период: досье отделений, карточки способов действия и очагов, полные отзывы, выгрузки, материалы в аудит-дела">Что открывал</th></tr></thead>
+          <tbody>{view.map(r=><tr key={r.login} className={r.last?undefined:"pu2-vs-none"}>
+            <td className="pu2-l"><PuPerson login={r.login} name={r.name}
+              sub={<>{r.unit_name||"не из штата"} · <span className="pu2-vs-how">{PU_VSP_HOW[r.how]||r.how}</span></>}/></td>
+            <td className="pu2-l">{r.last?puAgo(r.last):<span className="pu2-muted">не открывал(а)</span>}</td>
+            <td>{r.views?puNum(r.views):<span className="pu2-muted">—</span>}</td>
+            <td>{r.days?puNum(r.days):<span className="pu2-muted">—</span>}</td>
+            <td className="pu2-nw">{puMin(r.minutes)}</td>
+            <td className="pu2-l">{did(r)}</td></tr>)}</tbody></table></div>
+          :<div className="pu2-pad"><PuEmpty>{ppl.length?"В этом отборе никого нет.":"Раздел пока открыт только вам."}</PuEmpty></div>}
+      </PuCard>
+      <PuCard id="pu2-vsp-use" span={4} title="По дням и разделам" meta={perL}>
+        <div className="pu2-vs-day"><PuBarSpark vals={byDay.map(x=>x.users)} label="Сколько человек открывали раздел по дням"
+          tips={byDay.map(x=>`${puDay(x.d)}: ${x.users} ${plural(x.users,"человек","человека","человек")}, ${x.views} ${plural(x.views,"заход","захода","заходов")}`)}/></div>
+        <p className="pu2-note" style={{marginTop:0}}>Столбик — сколько человек открывали раздел в этот день.</p>
+        <h3 className="pu2-subh">Что открывают</h3>
+        {secs.some(x=>x.users)?secs.filter(x=>x.users).map(x=><PuHBar key={x.key} label={x.label} value={x.users} max={maxSec}
+            right={<><b>{puNum(x.users)}</b> чел.</>} tip={`${puNum(x.n)} ${plural(x.n,"раз","раза","раз")} ${perL}`}/>)
+          :<PuEmpty>За период раздел никто не открывал.</PuEmpty>}
+      </PuCard>
+    </div>
+    <div className="pu2-grid"><PuVspAccess d={d}/></div>
+  </>;
+}
+
 function PulsePage({params}){
   const me=useMe();
   const rootRef=useRef(null);
@@ -16273,7 +16446,7 @@ function PulsePage({params}){
       openPerson,openReport,openSession,openTicket,ticket,setTicket,reload,bump,rev,visible,ts,err}),
     [m,sig,days,setDays,withMe,meOn,hiddenN,isOwner,me,section,go,target,openPerson,openReport,openSession,openTicket,ticket,reload,bump,rev,visible,ts,err]);
 
-  const css=<style>{PU2_CSS+PU2_CSS_OVERVIEW+PU2_CSS_PEOPLE+PU2_CSS_QUALITY+PU2_CSS_INBOX+PU2_CSS_SYSTEMS+PU2_CSS_RESULTS+PU2_CSS_LAYERS}</style>;
+  const css=<style>{PU2_CSS+PU2_CSS_OVERVIEW+PU2_CSS_PEOPLE+PU2_CSS_QUALITY+PU2_CSS_INBOX+PU2_CSS_SYSTEMS+PU2_CSS_RESULTS+PU2_CSS_VSP+PU2_CSS_LAYERS}</style>;
   if(!allowed) return <div className="fade-in pu2" ref={rootRef}>
     <ErrState msg="Раздел открыт владельцу инструмента и тем, кому он дал доступ."/></div>;
   if(!m) return <div className="fade-in pu2" ref={rootRef}>{css}
@@ -16283,9 +16456,10 @@ function PulsePage({params}){
         <div className="pu2-grid"><Skel h={260} style={{gridColumn:"span 7"}}/><Skel h={260} style={{gridColumn:"span 5"}}/></div></div>}
   </div>;
 
-  const tabKey=(e,k)=>{ const i=PU2_SECTIONS.findIndex(x=>x[0]===k);
-    const n={ArrowRight:i+1,ArrowLeft:i-1,Home:0,End:PU2_SECTIONS.length-1}[e.key];
-    if(n==null) return; e.preventDefault(); const nk=PU2_SECTIONS[(n+PU2_SECTIONS.length)%PU2_SECTIONS.length][0];
+  const secs=PU2_SECTIONS.filter(([k])=>!PU2_OWNER.has(k)||own);
+  const tabKey=(e,k)=>{ const i=secs.findIndex(x=>x[0]===k);
+    const n={ArrowRight:i+1,ArrowLeft:i-1,Home:0,End:secs.length-1}[e.key];
+    if(n==null) return; e.preventDefault(); const nk=secs[(n+secs.length)%secs.length][0];
     go(nk); setTimeout(()=>{ const b=document.getElementById("pu2-tab-"+nk); if(b) b.focus(); },0); };
   const unread=+((m.inbox||{}).unread)||0;
   const toggleMe=()=>{ const v=!meOn; setWithMe(v); store("al-pulse-me",v?"1":"0");
@@ -16307,8 +16481,8 @@ function PulsePage({params}){
   const hidTxt=`${hiddenN} ${plural(hiddenN,"служебной учётки","служебных учёток","служебных учёток")}`;
   const countNote=meOn?(hiddenN>0?`Считаются все, включая вас, кроме ${hidTxt}`:"Считаются все, включая вас")
     :(hiddenN>0?`Считаются коллеги: без вас и без ${hidTxt}`:"Считаются коллеги: без вас");
-  const Sec={overview:PuOverview,people:PuPeopleSec,quality:PuQualitySec,inbox:PuInboxSec,
-    systems:PuSystemsSec,results:PuResultsSec}[section]||PuOverview;
+  const Sec=(PU2_OWNER.has(section)&&!own?null:{overview:PuOverview,people:PuPeopleSec,quality:PuQualitySec,inbox:PuInboxSec,
+    systems:PuSystemsSec,results:PuResultsSec,vsp:PuVspSec}[section])||PuOverview;
   const palPick=(it)=>{ if(it.go) go(it.go); else if(it.person) openPerson(it.person);
     else if(it.ticket) openTicket(it.ticket); else if(it.report) openReport(it.report); };
 
@@ -16319,7 +16493,7 @@ function PulsePage({params}){
 
       <div className="rv-tabs pu2-band">
         <div className="rv-tabs-l" role="tablist" aria-label="Разделы «Пульса»">
-          {PU2_SECTIONS.map(([k,l])=><button key={k} type="button" id={"pu2-tab-"+k} role="tab" aria-selected={section===k}
+          {secs.map(([k,l])=><button key={k} type="button" id={"pu2-tab-"+k} role="tab" aria-selected={section===k}
               aria-controls="pu2-panel" tabIndex={section===k?0:-1} className={"rv-tab"+(section===k?" on":"")}
               onClick={()=>go(k)} onKeyDown={e=>tabKey(e,k)}>{l}
             {k==="inbox"&&unread>0&&<><span className="pu2-cnt" aria-hidden="true">{unread}</span>

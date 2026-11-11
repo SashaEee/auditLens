@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 4ae07dce99c129374c4ea24307a6d290f4fecd295069dcc68e0c5f5c33786bdc): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 6b0596c7d81385a3159475f72629ec0f51bd8776806c34e7e740ad0ba1cfcd18): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -26600,7 +26600,9 @@ const ocDate = s => s ? new Date(s).toLocaleDateString("ru", {
 
 // разделы «Пульса» и прежние ключи вкладок: уведомления сервера (#pulse?tab=inbox,
 // #pulse?tab=ai) и сохранённый выбор в localStorage живут дольше старого интерфейса
-const PU2_SECTIONS = [["overview", "Сводка"], ["people", "Люди"], ["quality", "Качество ИИ"], ["inbox", "Обращения"], ["systems", "Системы"], ["results", "Итоги"]];
+// «Сеть ВСП» — только владельцу (PU2_OWNER): раздел «Аудит сети ВСП» в закрытом доступе
+const PU2_SECTIONS = [["overview", "Сводка"], ["people", "Люди"], ["quality", "Качество ИИ"], ["inbox", "Обращения"], ["systems", "Системы"], ["results", "Итоги"], ["vsp", "Сеть ВСП"]];
+const PU2_OWNER = new Set(["vsp"]);
 const PU_ALIAS = {
   people: "people",
   outcomes: "results",
@@ -26613,7 +26615,8 @@ const PU_ALIAS = {
   overview: "overview",
   quality: "quality",
   systems: "systems",
-  results: "results"
+  results: "results",
+  vsp: "vsp"
 };
 const puSection = k => PU_ALIAS[String(k || "")] || "overview";
 // службы ленты состояния — в этом порядке и в «Сводке», и в «Системах»
@@ -33478,7 +33481,7 @@ function PuPalette({
   const pending = useRef(null),
     closeRef = useRef(null),
     listRef = useRef(null);
-  const all = useMemo(() => [...PU2_SECTIONS.map(([k, l]) => ({
+  const all = useMemo(() => [...PU2_SECTIONS.filter(([k]) => !PU2_OWNER.has(k) || c.isOwner).map(([k, l]) => ({
     g: "Разделы «Пульса»",
     t: l,
     s: "",
@@ -33707,6 +33710,378 @@ function PuBrief({
 // Остаётся смонтированной, когда скрыта (keptPages): опрос, клавиши и запись адреса —
 // только пока видна. Адрес — #pulse?tab=<раздел>[&ticket=N][&person=логин].
 const PU_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || "");
+// ══ «Сеть ВСП» (только владелец): кто пользуется разделом «Аудит сети ВСП» и кому он открыт ══
+// Новых событий раздел не пишет: открытия и время — из page_view/page_leave, «что открывал» — из
+// обращений раздела к серверу (досье отделения, карточка способа действия, полный отзыв, выгрузка).
+const PU2_CSS_VSP = `
+.pu2-vs-tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+.pu2-vs-tools .pu2-sp{flex:1 1 auto}
+.pu2-vs-tools .pu2-note{margin:0}
+.pu2-vs-tools a.btn{display:inline-flex;align-items:center;gap:6px;text-decoration:none}
+.pu2-vs-fbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:0 20px 12px}
+.pu2-vs-did{display:inline-flex;gap:6px;flex-wrap:wrap;justify-content:flex-start}
+.pu2-vs-did span{font-size:12px;color:var(--ink-2);background:var(--paper-2);border-radius:999px;padding:1px 8px;white-space:nowrap}
+.pu2-vs-did span b{font-weight:600;color:var(--ink)}
+.pu2-vs-how{font-size:11px;color:var(--ink-3)}
+.pu2-vs-none td{color:var(--ink-3)}
+.pu2-vs-units{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px;margin-top:10px}
+.pu2-vs-unit{display:flex;align-items:center;gap:12px;padding:11px 14px;border:1px solid var(--hair);border-radius:12px;background:var(--surface);
+  font:inherit;color:inherit;text-align:left;cursor:pointer;transition:border-color var(--dur-quick) var(--ease-out),background-color var(--dur-quick) var(--ease-out)}
+.pu2-vs-unit:hover{border-color:var(--ink-4)}
+.pu2-vs-unit:focus-visible{outline:2px solid var(--select);outline-offset:2px}
+.pu2-vs-unit.on{border-color:var(--ink);background:var(--paper-2)}
+.pu2-vs-unit:disabled{opacity:.6;cursor:default}
+.pu2-vs-unit>span:first-child{display:flex;flex-direction:column;min-width:0;flex:1 1 auto}
+.pu2-vs-unit b{font-size:14px;font-weight:600}
+.pu2-vs-unit small{font-size:12px;color:var(--ink-3);margin-top:1px}
+.pu2-vs-ask{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px;padding:12px 14px;border-radius:12px;background:var(--paper-2);font-size:13px}
+.pu2-vs-ask .pu2-sp{flex:1 1 auto}
+.pu2-vs-logins{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.pu2-vs-login{display:inline-flex;align-items:center;gap:8px;padding:4px 6px 4px 12px;border:1px solid var(--hair);border-radius:999px;font-size:13px}
+.pu2-vs-login small{color:var(--ink-3);font-size:12px}
+.pu2-vs-login button{border:0;background:none;color:var(--ink-3);cursor:pointer;font:inherit;width:22px;height:22px;border-radius:50%;line-height:1}
+.pu2-vs-login button:hover{background:var(--paper-2);color:var(--ink)}
+.pu2-vs-add{position:relative;margin-top:12px;max-width:420px}
+.pu2-vs-add input{width:100%;height:34px;padding:0 12px;border:1px solid var(--hair-2);border-radius:8px;background:var(--surface);color:var(--ink);font:inherit;font-size:13px}
+.pu2-vs-add input:focus-visible{outline:2px solid var(--select);outline-offset:1px}
+.pu2-vs-sug{margin:6px 0 0;padding:4px;border:1px solid var(--hair);border-radius:10px;background:var(--surface);box-shadow:var(--shadow-2,var(--shadow-1));list-style:none}
+.pu2-vs-sug button{display:flex;justify-content:space-between;gap:12px;width:100%;padding:7px 10px;border:0;border-radius:7px;background:none;font:inherit;font-size:13px;color:var(--ink);text-align:left;cursor:pointer}
+.pu2-vs-sug button:hover,.pu2-vs-sug button:focus-visible{background:var(--paper-2);outline:none}
+.pu2-vs-sug small{color:var(--ink-3);white-space:nowrap}
+.pu2-vs-day{margin:2px 0 14px}
+.pu2-vs-day .pu2-spw{display:block}
+.pu2-vs-day svg{width:100%;height:56px}
+`;
+const PU_VSP_PER = [[7, "7 дн"], [30, "30 дн"], [90, "90 дн"]];
+const PU_VSP_DID = [["dossier", "досье"], ["wave", "способы"], ["hot", "очаги"], ["evidence", "отзывы"], ["export", "выгрузки"], ["case", "в дело"]];
+const PU_VSP_HOW = {
+  owner: "владелец",
+  login: "по логину",
+  unit: "по подразделению"
+};
+const puMin = m => {
+  m = +m || 0;
+  return m <= 0 ? "—" : m < 1 ? "меньше минуты" : m < 60 ? `${Math.round(m)} мин` : `${puDec(m / 60, 1)} ч`;
+};
+
+// Кому открыт раздел: подразделения штата целиком и отдельные люди по логину
+function PuVspAccess({
+  d
+}) {
+  const [busy, setBusy] = useState(false),
+    [ask, setAsk] = useState(null),
+    [q, setQ] = useState("");
+  const units = d.units || [],
+    logins = d.logins || [],
+    rest = d.rest || [],
+    open = (d.access || {}).units || [];
+  const save = (body, done) => {
+    setBusy(true);
+    apiPost("/api/vsp/beta", body).then(() => {
+      puInvalidate("/api/admin/pulse/vsp");
+      fbToast(done);
+    }).catch(() => fbToast("Не сохранилось — попробуйте ещё раз")).finally(() => {
+      setBusy(false);
+      setAsk(null);
+    });
+  };
+  const flip = u => {
+    const next = u.open ? open.filter(x => x !== u.code) : [...open, u.code];
+    save({
+      units: next
+    }, u.open ? `Раздел закрыт для ${u.name}` : `Раздел открыт для ${u.name}`);
+  };
+  const drop = l => save({
+    users: logins.map(x => x.login).filter(x => x !== l.login)
+  }, `Доступ по логину снят: ${l.name}`);
+  const add = r => {
+    setQ("");
+    save({
+      users: [...logins.map(x => x.login), r.login]
+    }, `Раздел открыт: ${r.name}`);
+  };
+  const qq = q.trim().toLowerCase();
+  const sug = qq.length >= 2 ? rest.filter(r => (r.name || "").toLowerCase().includes(qq) || (r.login || "").toLowerCase().includes(qq)).slice(0, 7) : [];
+  const s = d.summary || {};
+  return /*#__PURE__*/React.createElement(PuCard, {
+    id: "pu2-vsp-access",
+    span: 12,
+    title: "\u041A\u043E\u043C\u0443 \u043E\u0442\u043A\u0440\u044B\u0442 \u0440\u0430\u0437\u0434\u0435\u043B",
+    meta: d.roster ? "меняется сразу, без перезапуска" : "штат не загружен — доступ только по логинам"
+  }, /*#__PURE__*/React.createElement("h3", {
+    className: "pu2-subh",
+    style: {
+      marginTop: 4
+    }
+  }, "\u041F\u043E\u0434\u0440\u0430\u0437\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u0446\u0435\u043B\u0438\u043A\u043E\u043C"), units.length ? /*#__PURE__*/React.createElement("div", {
+    className: "pu2-vs-units",
+    role: "group",
+    "aria-label": "\u041F\u043E\u0434\u0440\u0430\u0437\u0434\u0435\u043B\u0435\u043D\u0438\u044F"
+  }, units.map(u => /*#__PURE__*/React.createElement("button", {
+    key: u.code,
+    type: "button",
+    className: "pu2-vs-unit" + (u.open ? " on" : ""),
+    disabled: busy,
+    "aria-pressed": !!u.open,
+    onClick: () => setAsk(u),
+    "data-tip": u.open ? "Нажмите, чтобы закрыть раздел этому подразделению" : "Нажмите, чтобы открыть раздел всему подразделению"
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, u.name), /*#__PURE__*/React.createElement("small", null, puNum(u.head), " \u0432 \u0448\u0442\u0430\u0442\u0435 \xB7 \u0437\u0430\u0445\u043E\u0434\u0438\u043B\u0438 \u0432 AuditLens ", puNum(u.accounts))), /*#__PURE__*/React.createElement("span", {
+    className: "pu2-tgl" + (u.open ? " on" : ""),
+    "aria-hidden": "true"
+  })))) : /*#__PURE__*/React.createElement(PuEmpty, null, "\u0428\u0442\u0430\u0442 \u043D\u0435 \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D: \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u0435 \u043A\u0430\u0434\u0440\u043E\u0432\u0443\u044E \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u0443 \u0432 \u0440\u0430\u0437\u0434\u0435\u043B\u0435 \xAB\u0418\u0442\u043E\u0433\u0438\xBB \u2014 \u0442\u043E\u0433\u0434\u0430 \u0440\u0430\u0437\u0434\u0435\u043B \u043C\u043E\u0436\u043D\u043E \u0431\u0443\u0434\u0435\u0442 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u0442\u044C \u043F\u043E\u0434\u0440\u0430\u0437\u0434\u0435\u043B\u0435\u043D\u0438\u044F\u043C\u0438."), ask && /*#__PURE__*/React.createElement("div", {
+    className: "pu2-vs-ask",
+    role: "alertdialog",
+    "aria-label": "\u041F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043D\u0438\u0435"
+  }, /*#__PURE__*/React.createElement("span", null, ask.open ? /*#__PURE__*/React.createElement(React.Fragment, null, "\u0417\u0430\u043A\u0440\u044B\u0442\u044C \u0440\u0430\u0437\u0434\u0435\u043B \u0434\u043B\u044F ", /*#__PURE__*/React.createElement("b", null, ask.name), "? ", puNum(ask.head), " ", plural(ask.head, "человек потеряет", "человека потеряют", "человек потеряют"), " \u0434\u043E\u0441\u0442\u0443\u043F.") : /*#__PURE__*/React.createElement(React.Fragment, null, "\u041E\u0442\u043A\u0440\u044B\u0442\u044C \u0440\u0430\u0437\u0434\u0435\u043B \u0434\u043B\u044F ", /*#__PURE__*/React.createElement("b", null, ask.name), "? \u0415\u0433\u043E ", plural(ask.head, "увидит", "увидят", "увидят"), " ", puNum(ask.head), " ", plural(ask.head, "человек", "человека", "человек"), ", \u0432\u043A\u043B\u044E\u0447\u0430\u044F \u0442\u0435\u0445, \u043A\u0442\u043E \u0435\u0449\u0451 \u043D\u0435 \u0437\u0430\u0445\u043E\u0434\u0438\u043B \u0432 AuditLens.")), /*#__PURE__*/React.createElement("span", {
+    className: "pu2-sp"
+  }), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-sm btn-ghost",
+    disabled: busy,
+    onClick: () => setAsk(null)
+  }, "\u041E\u0442\u043C\u0435\u043D\u0430"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-sm btn-primary",
+    disabled: busy,
+    onClick: () => flip(ask)
+  }, busy ? "Сохраняю…" : ask.open ? "Закрыть" : "Открыть")), /*#__PURE__*/React.createElement("p", {
+    className: "pu2-note"
+  }, "\u0427\u0435\u043B\u043E\u0432\u0435\u043A \u043E\u0442\u043D\u043E\u0441\u0438\u0442\u0441\u044F \u043A \u043F\u043E\u0434\u0440\u0430\u0437\u0434\u0435\u043B\u0435\u043D\u0438\u044E, \u0435\u0441\u043B\u0438 \u0442\u0430\u0431\u0435\u043B\u044C\u043D\u044B\u0439 \u043D\u043E\u043C\u0435\u0440 \u0432 \u0435\u0433\u043E \u043B\u043E\u0433\u0438\u043D\u0435 \u0435\u0441\u0442\u044C \u0432 \u0448\u0442\u0430\u0442\u0435; \u0435\u0441\u043B\u0438 \u043D\u043E\u043C\u0435\u0440\u0430 \u043D\u0435\u0442 \u2014 \u043F\u043E \u0438\u043C\u0435\u043D\u0438 \u0438 \u0444\u0430\u043C\u0438\u043B\u0438\u0438. \u0423\u0432\u043E\u043B\u0435\u043D\u043D\u044B\u0435 \u0434\u043E\u0441\u0442\u0443\u043F\u0430 \u043D\u0435 \u043F\u043E\u043B\u0443\u0447\u0430\u044E\u0442.", s.no_account > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, " \u0418\u0437 \u043E\u0442\u043A\u0440\u044B\u0442\u044B\u0445 \u043F\u043E\u0434\u0440\u0430\u0437\u0434\u0435\u043B\u0435\u043D\u0438\u0439 \u0432 AuditLens \u0435\u0449\u0451 \u043D\u0435 \u0437\u0430\u0445\u043E\u0434\u0438\u043B\u0438 ", puNum(s.no_account), " ", plural(s.no_account, "человек", "человека", "человек"), " \u2014 \u0440\u0430\u0437\u0434\u0435\u043B \u043F\u043E\u044F\u0432\u0438\u0442\u0441\u044F \u0443 \u043D\u0438\u0445 \u043F\u0440\u0438 \u043F\u0435\u0440\u0432\u043E\u043C \u0432\u0445\u043E\u0434\u0435.")), /*#__PURE__*/React.createElement("h3", {
+    className: "pu2-subh"
+  }, "\u041E\u0442\u0434\u0435\u043B\u044C\u043D\u044B\u0435 \u043B\u044E\u0434\u0438"), logins.length ? /*#__PURE__*/React.createElement("div", {
+    className: "pu2-vs-logins"
+  }, logins.map(l => /*#__PURE__*/React.createElement("span", {
+    key: l.login,
+    className: "pu2-vs-login"
+  }, /*#__PURE__*/React.createElement("span", null, l.name, l.unit_name && /*#__PURE__*/React.createElement("small", null, " \xB7 ", l.unit_name)), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    disabled: busy,
+    "aria-label": `Снять доступ: ${l.name}`,
+    "data-tip": "\u0421\u043D\u044F\u0442\u044C \u0434\u043E\u0441\u0442\u0443\u043F \u043F\u043E \u043B\u043E\u0433\u0438\u043D\u0443",
+    onClick: () => drop(l)
+  }, "\xD7")))) : /*#__PURE__*/React.createElement("p", {
+    className: "pu2-note",
+    style: {
+      marginTop: 6
+    }
+  }, "\u041F\u043E \u043B\u043E\u0433\u0438\u043D\u0443 \u0440\u0430\u0437\u0434\u0435\u043B \u043D\u0438\u043A\u043E\u043C\u0443 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0442."), /*#__PURE__*/React.createElement("div", {
+    className: "pu2-vs-add"
+  }, /*#__PURE__*/React.createElement("label", null, /*#__PURE__*/React.createElement("span", {
+    className: "vh"
+  }, "\u041E\u0442\u043A\u0440\u044B\u0442\u044C \u0440\u0430\u0437\u0434\u0435\u043B \u0447\u0435\u043B\u043E\u0432\u0435\u043A\u0443"), /*#__PURE__*/React.createElement("input", {
+    type: "search",
+    placeholder: "\u041E\u0442\u043A\u0440\u044B\u0442\u044C \u0447\u0435\u043B\u043E\u0432\u0435\u043A\u0443: \u043D\u0430\u0447\u043D\u0438\u0442\u0435 \u0432\u0432\u043E\u0434\u0438\u0442\u044C \u0438\u043C\u044F \u0438\u043B\u0438 \u043B\u043E\u0433\u0438\u043D",
+    value: q,
+    autoComplete: "off",
+    disabled: busy,
+    onChange: e => setQ(e.target.value)
+  })), qq.length >= 2 && /*#__PURE__*/React.createElement("ul", {
+    className: "pu2-vs-sug"
+  }, sug.length ? sug.map(r => /*#__PURE__*/React.createElement("li", {
+    key: r.login
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => add(r)
+  }, /*#__PURE__*/React.createElement("span", null, r.name), /*#__PURE__*/React.createElement("small", null, r.unit_name || "не из штата", " \xB7 @", r.login)))) : /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", {
+    className: "pu2-note",
+    style: {
+      display: "block",
+      margin: "6px 10px"
+    }
+  }, "\u041D\u0438\u043A\u043E\u0433\u043E \u043D\u0435 \u043D\u0430\u0448\u043B\u043E\u0441\u044C \u0441\u0440\u0435\u0434\u0438 \u0442\u0435\u0445, \u043A\u0442\u043E \u0443\u0436\u0435 \u0437\u0430\u0445\u043E\u0434\u0438\u043B \u0432 AuditLens \u0438 \u0443 \u043A\u043E\u0433\u043E \u0440\u0430\u0437\u0434\u0435\u043B\u0430 \u0435\u0449\u0451 \u043D\u0435\u0442.")))));
+}
+function PuVspSec() {
+  const c = usePu();
+  const [days, setDays] = useState(() => {
+    try {
+      const v = +localStorage.getItem("al-pu-vsp-days");
+      return [7, 30, 90].includes(v) ? v : 30;
+    } catch {
+      return 30;
+    }
+  });
+  const pick = v => {
+    setDays(v);
+    try {
+      localStorage.setItem("al-pu-vsp-days", String(v));
+    } catch {}
+  };
+  const {
+    d,
+    err,
+    reload
+  } = usePuData(`/api/admin/pulse/vsp?days=${days}${puMe(c.withMe)}`, {
+    ttl: 60000
+  });
+  const [flt, setFlt] = useState("all");
+  const tools = /*#__PURE__*/React.createElement("div", {
+    className: "pu2-vs-tools"
+  }, /*#__PURE__*/React.createElement(PuSeg, {
+    value: days,
+    options: PU_VSP_PER,
+    onChange: pick,
+    label: "\u041F\u0435\u0440\u0438\u043E\u0434"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "pu2-sp"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "pu2-note pu2-hide-s"
+  }, "\u042D\u0442\u043E\u0442 \u0440\u0430\u0437\u0434\u0435\u043B \xAB\u041F\u0443\u043B\u044C\u0441\u0430\xBB \u0432\u0438\u0434\u0438\u0442\u0435 \u0442\u043E\u043B\u044C\u043A\u043E \u0432\u044B"), /*#__PURE__*/React.createElement("a", {
+    className: "btn btn-sm",
+    href: "#vsp"
+  }, "\u041E\u0442\u043A\u0440\u044B\u0442\u044C \xAB\u0410\u0443\u0434\u0438\u0442 \u0441\u0435\u0442\u0438 \u0412\u0421\u041F\xBB", /*#__PURE__*/React.createElement(Ic.ext, null)));
+  if (!d) return /*#__PURE__*/React.createElement(React.Fragment, null, tools, /*#__PURE__*/React.createElement("div", {
+    className: "pu2-grid"
+  }, err ? /*#__PURE__*/React.createElement("div", {
+    className: "pu2-card pu2-c12"
+  }, /*#__PURE__*/React.createElement(PuLoadErr, {
+    onRetry: reload
+  }, "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u043E\u0441\u0447\u0438\u0442\u0430\u0442\u044C \u0441\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043A\u0443 \u0440\u0430\u0437\u0434\u0435\u043B\u0430.")) : [0, 1, 2, 3].map(i => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    className: "pu2-card pu2-c3"
+  }, /*#__PURE__*/React.createElement(Skel, {
+    h: 84
+  })))));
+  const s = d.summary || {},
+    ppl = d.people || [],
+    byDay = d.by_day || [],
+    secs = d.sections || [];
+  const openUnits = (d.units || []).filter(u => u.open).map(u => u.name);
+  const F = {
+    all: () => true,
+    opened: r => !!r.last,
+    never: r => !r.last
+  };
+  const view = ppl.filter(F[flt] || F.all);
+  const maxSec = Math.max(1, ...secs.map(x => +x.users || 0));
+  const perL = `за ${days} ${plural(days, "день", "дня", "дней")}`;
+  const did = r => {
+    const x = PU_VSP_DID.filter(([k]) => (r.did || {})[k]);
+    return x.length ? /*#__PURE__*/React.createElement("span", {
+      className: "pu2-vs-did"
+    }, x.map(([k, l]) => /*#__PURE__*/React.createElement("span", {
+      key: k
+    }, l, " ", /*#__PURE__*/React.createElement("b", null, puNum(r.did[k]))))) : /*#__PURE__*/React.createElement("span", {
+      className: "pu2-muted"
+    }, r.views ? "только главная" : "—");
+  };
+  return /*#__PURE__*/React.createElement(React.Fragment, null, tools, /*#__PURE__*/React.createElement("div", {
+    className: "pu2-grid"
+  }, /*#__PURE__*/React.createElement(PuKpi, {
+    label: "\u0420\u0430\u0437\u0434\u0435\u043B \u043E\u0442\u043A\u0440\u044B\u0442",
+    icon: "user",
+    value: puNum(s.staff || s.with_access),
+    unit: " \u0447\u0435\u043B.",
+    sub: openUnits.length ? `${openUnits.join(", ")}${(d.logins || []).length ? ` · по логину ещё ${puNum(d.logins.length)}` : ""}` : (d.logins || []).length ? `по логину — ${puNum(d.logins.length)}` : "пока только вам"
+  }), /*#__PURE__*/React.createElement(PuKpi, {
+    label: "\u0417\u0430\u0445\u043E\u0434\u0438\u043B\u0438 \u0432 AuditLens",
+    value: /*#__PURE__*/React.createElement(React.Fragment, null, puNum(s.with_access), s.staff ? /*#__PURE__*/React.createElement("small", null, " \u0438\u0437 ", puNum(s.staff)) : null),
+    sub: s.no_account > 0 ? `${puNum(s.no_account)} ещё ни разу не входили` : "у всех есть учётная запись",
+    tip: "\u0421\u043A\u043E\u043B\u044C\u043A\u043E \u043B\u044E\u0434\u0435\u0439 \u0441 \u0434\u043E\u0441\u0442\u0443\u043F\u043E\u043C \u0443\u0436\u0435 \u0432\u0445\u043E\u0434\u0438\u043B\u0438 \u0432 AuditLens: \u0440\u0430\u0437\u0434\u0435\u043B \u043F\u043E\u044F\u0432\u043B\u044F\u0435\u0442\u0441\u044F \u043F\u0440\u0438 \u043F\u0435\u0440\u0432\u043E\u043C \u0432\u0445\u043E\u0434\u0435"
+  }), /*#__PURE__*/React.createElement(PuKpi, {
+    label: "\u041E\u0442\u043A\u0440\u044B\u0432\u0430\u043B\u0438 \u0440\u0430\u0437\u0434\u0435\u043B",
+    value: /*#__PURE__*/React.createElement(React.Fragment, null, puNum(s.opened), /*#__PURE__*/React.createElement("small", null, " \u0438\u0437 ", puNum(s.with_access))),
+    sub: `${perL} — ${puNum(s.opened_period)}`
+  }), /*#__PURE__*/React.createElement(PuKpi, {
+    label: "\u0412\u0435\u0440\u043D\u0443\u043B\u0438\u0441\u044C",
+    value: puNum(s.returned),
+    sub: `заходили в два и более дней · дошли до карточек — ${puNum(s.deep)}`,
+    tip: "\xAB\u0414\u043E\u0448\u043B\u0438 \u0434\u043E \u043A\u0430\u0440\u0442\u043E\u0447\u0435\u043A\xBB \u2014 \u043E\u0442\u043A\u0440\u044B\u043B\u0438 \u0434\u043E\u0441\u044C\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F, \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0443 \u0441\u043F\u043E\u0441\u043E\u0431\u0430 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u0438\u043B\u0438 \u043E\u0447\u0430\u0433\u0430, \u043F\u043E\u043B\u043D\u044B\u0439 \u043E\u0442\u0437\u044B\u0432, \u0441\u0434\u0435\u043B\u0430\u043B\u0438 \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u0443 \u0438\u043B\u0438 \u043F\u043E\u043B\u043E\u0436\u0438\u043B\u0438 \u043C\u0430\u0442\u0435\u0440\u0438\u0430\u043B \u0432 \u0434\u0435\u043B\u043E"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "pu2-grid"
+  }, /*#__PURE__*/React.createElement(PuCard, {
+    id: "pu2-vsp-people",
+    span: 8,
+    flush: true,
+    title: "\u041A\u0442\u043E \u0437\u0430\u0445\u043E\u0434\u0438\u0442",
+    meta: `${perL} · время и действия — за период`
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pu2-vs-fbar",
+    role: "group",
+    "aria-label": "\u041E\u0442\u0431\u043E\u0440 \u043B\u044E\u0434\u0435\u0439"
+  }, [["all", "Все", ppl.length], ["opened", "Открывали", ppl.filter(F.opened).length], ["never", "Не открывали", ppl.filter(F.never).length]].map(([k, l, n]) => /*#__PURE__*/React.createElement("button", {
+    key: k,
+    type: "button",
+    className: "chip" + (flt === k ? " on" : ""),
+    "aria-pressed": flt === k,
+    onClick: () => setFlt(k)
+  }, l, " ", /*#__PURE__*/React.createElement("i", null, puNum(n))))), view.length ? /*#__PURE__*/React.createElement("div", {
+    className: "pu2-tw"
+  }, /*#__PURE__*/React.createElement("table", {
+    className: "pu2-tbl"
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
+    scope: "col",
+    className: "pu2-l"
+  }, "\u0427\u0435\u043B\u043E\u0432\u0435\u043A"), /*#__PURE__*/React.createElement("th", {
+    scope: "col",
+    className: "pu2-l"
+  }, "\u041F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0440\u0430\u0437"), /*#__PURE__*/React.createElement("th", {
+    scope: "col",
+    "data-tip": "\u0421\u043A\u043E\u043B\u044C\u043A\u043E \u0440\u0430\u0437 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u043B \u0440\u0430\u0437\u0434\u0435\u043B \u0437\u0430 \u043F\u0435\u0440\u0438\u043E\u0434"
+  }, "\u0417\u0430\u0445\u043E\u0434\u043E\u0432"), /*#__PURE__*/React.createElement("th", {
+    scope: "col",
+    "data-tip": "\u0412 \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u0440\u0430\u0437\u043D\u044B\u0445 \u0434\u043D\u0435\u0439 \u0437\u0430 \u043F\u0435\u0440\u0438\u043E\u0434"
+  }, "\u0414\u043D\u0435\u0439"), /*#__PURE__*/React.createElement("th", {
+    scope: "col"
+  }, "\u0412\u0440\u0435\u043C\u044F"), /*#__PURE__*/React.createElement("th", {
+    scope: "col",
+    className: "pu2-l",
+    "data-tip": "\u0427\u0442\u043E \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u043B \u0437\u0430 \u043F\u0435\u0440\u0438\u043E\u0434: \u0434\u043E\u0441\u044C\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439, \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0438 \u0441\u043F\u043E\u0441\u043E\u0431\u043E\u0432 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u0438 \u043E\u0447\u0430\u0433\u043E\u0432, \u043F\u043E\u043B\u043D\u044B\u0435 \u043E\u0442\u0437\u044B\u0432\u044B, \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u0438, \u043C\u0430\u0442\u0435\u0440\u0438\u0430\u043B\u044B \u0432 \u0430\u0443\u0434\u0438\u0442-\u0434\u0435\u043B\u0430"
+  }, "\u0427\u0442\u043E \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u043B"))), /*#__PURE__*/React.createElement("tbody", null, view.map(r => /*#__PURE__*/React.createElement("tr", {
+    key: r.login,
+    className: r.last ? undefined : "pu2-vs-none"
+  }, /*#__PURE__*/React.createElement("td", {
+    className: "pu2-l"
+  }, /*#__PURE__*/React.createElement(PuPerson, {
+    login: r.login,
+    name: r.name,
+    sub: /*#__PURE__*/React.createElement(React.Fragment, null, r.unit_name || "не из штата", " \xB7 ", /*#__PURE__*/React.createElement("span", {
+      className: "pu2-vs-how"
+    }, PU_VSP_HOW[r.how] || r.how))
+  })), /*#__PURE__*/React.createElement("td", {
+    className: "pu2-l"
+  }, r.last ? puAgo(r.last) : /*#__PURE__*/React.createElement("span", {
+    className: "pu2-muted"
+  }, "\u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u043B(\u0430)")), /*#__PURE__*/React.createElement("td", null, r.views ? puNum(r.views) : /*#__PURE__*/React.createElement("span", {
+    className: "pu2-muted"
+  }, "\u2014")), /*#__PURE__*/React.createElement("td", null, r.days ? puNum(r.days) : /*#__PURE__*/React.createElement("span", {
+    className: "pu2-muted"
+  }, "\u2014")), /*#__PURE__*/React.createElement("td", {
+    className: "pu2-nw"
+  }, puMin(r.minutes)), /*#__PURE__*/React.createElement("td", {
+    className: "pu2-l"
+  }, did(r))))))) : /*#__PURE__*/React.createElement("div", {
+    className: "pu2-pad"
+  }, /*#__PURE__*/React.createElement(PuEmpty, null, ppl.length ? "В этом отборе никого нет." : "Раздел пока открыт только вам."))), /*#__PURE__*/React.createElement(PuCard, {
+    id: "pu2-vsp-use",
+    span: 4,
+    title: "\u041F\u043E \u0434\u043D\u044F\u043C \u0438 \u0440\u0430\u0437\u0434\u0435\u043B\u0430\u043C",
+    meta: perL
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pu2-vs-day"
+  }, /*#__PURE__*/React.createElement(PuBarSpark, {
+    vals: byDay.map(x => x.users),
+    label: "\u0421\u043A\u043E\u043B\u044C\u043A\u043E \u0447\u0435\u043B\u043E\u0432\u0435\u043A \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u043B\u0438 \u0440\u0430\u0437\u0434\u0435\u043B \u043F\u043E \u0434\u043D\u044F\u043C",
+    tips: byDay.map(x => `${puDay(x.d)}: ${x.users} ${plural(x.users, "человек", "человека", "человек")}, ${x.views} ${plural(x.views, "заход", "захода", "заходов")}`)
+  })), /*#__PURE__*/React.createElement("p", {
+    className: "pu2-note",
+    style: {
+      marginTop: 0
+    }
+  }, "\u0421\u0442\u043E\u043B\u0431\u0438\u043A \u2014 \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u0447\u0435\u043B\u043E\u0432\u0435\u043A \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u043B\u0438 \u0440\u0430\u0437\u0434\u0435\u043B \u0432 \u044D\u0442\u043E\u0442 \u0434\u0435\u043D\u044C."), /*#__PURE__*/React.createElement("h3", {
+    className: "pu2-subh"
+  }, "\u0427\u0442\u043E \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u044E\u0442"), secs.some(x => x.users) ? secs.filter(x => x.users).map(x => /*#__PURE__*/React.createElement(PuHBar, {
+    key: x.key,
+    label: x.label,
+    value: x.users,
+    max: maxSec,
+    right: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("b", null, puNum(x.users)), " \u0447\u0435\u043B."),
+    tip: `${puNum(x.n)} ${plural(x.n, "раз", "раза", "раз")} ${perL}`
+  })) : /*#__PURE__*/React.createElement(PuEmpty, null, "\u0417\u0430 \u043F\u0435\u0440\u0438\u043E\u0434 \u0440\u0430\u0437\u0434\u0435\u043B \u043D\u0438\u043A\u0442\u043E \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u043B."))), /*#__PURE__*/React.createElement("div", {
+    className: "pu2-grid"
+  }, /*#__PURE__*/React.createElement(PuVspAccess, {
+    d: d
+  })));
+}
 function PulsePage({
   params
 }) {
@@ -33964,7 +34339,7 @@ function PulsePage({
     ts,
     err
   }), [m, sig, days, setDays, withMe, meOn, hiddenN, isOwner, me, section, go, target, openPerson, openReport, openSession, openTicket, ticket, reload, bump, rev, visible, ts, err]);
-  const css = /*#__PURE__*/React.createElement("style", null, PU2_CSS + PU2_CSS_OVERVIEW + PU2_CSS_PEOPLE + PU2_CSS_QUALITY + PU2_CSS_INBOX + PU2_CSS_SYSTEMS + PU2_CSS_RESULTS + PU2_CSS_LAYERS);
+  const css = /*#__PURE__*/React.createElement("style", null, PU2_CSS + PU2_CSS_OVERVIEW + PU2_CSS_PEOPLE + PU2_CSS_QUALITY + PU2_CSS_INBOX + PU2_CSS_SYSTEMS + PU2_CSS_RESULTS + PU2_CSS_VSP + PU2_CSS_LAYERS);
   if (!allowed) return /*#__PURE__*/React.createElement("div", {
     className: "fade-in pu2",
     ref: rootRef
@@ -34017,17 +34392,18 @@ function PulsePage({
       gridColumn: "span 5"
     }
   }))));
+  const secs = PU2_SECTIONS.filter(([k]) => !PU2_OWNER.has(k) || own);
   const tabKey = (e, k) => {
-    const i = PU2_SECTIONS.findIndex(x => x[0] === k);
+    const i = secs.findIndex(x => x[0] === k);
     const n = {
       ArrowRight: i + 1,
       ArrowLeft: i - 1,
       Home: 0,
-      End: PU2_SECTIONS.length - 1
+      End: secs.length - 1
     }[e.key];
     if (n == null) return;
     e.preventDefault();
-    const nk = PU2_SECTIONS[(n + PU2_SECTIONS.length) % PU2_SECTIONS.length][0];
+    const nk = secs[(n + secs.length) % secs.length][0];
     go(nk);
     setTimeout(() => {
       const b = document.getElementById("pu2-tab-" + nk);
@@ -34090,14 +34466,15 @@ function PulsePage({
   }];
   const hidTxt = `${hiddenN} ${plural(hiddenN, "служебной учётки", "служебных учёток", "служебных учёток")}`;
   const countNote = meOn ? hiddenN > 0 ? `Считаются все, включая вас, кроме ${hidTxt}` : "Считаются все, включая вас" : hiddenN > 0 ? `Считаются коллеги: без вас и без ${hidTxt}` : "Считаются коллеги: без вас";
-  const Sec = {
+  const Sec = (PU2_OWNER.has(section) && !own ? null : {
     overview: PuOverview,
     people: PuPeopleSec,
     quality: PuQualitySec,
     inbox: PuInboxSec,
     systems: PuSystemsSec,
-    results: PuResultsSec
-  }[section] || PuOverview;
+    results: PuResultsSec,
+    vsp: PuVspSec
+  }[section]) || PuOverview;
   const palPick = it => {
     if (it.go) go(it.go);else if (it.person) openPerson(it.person);else if (it.ticket) openTicket(it.ticket);else if (it.report) openReport(it.report);
   };
@@ -34118,7 +34495,7 @@ function PulsePage({
     className: "rv-tabs-l",
     role: "tablist",
     "aria-label": "\u0420\u0430\u0437\u0434\u0435\u043B\u044B \xAB\u041F\u0443\u043B\u044C\u0441\u0430\xBB"
-  }, PU2_SECTIONS.map(([k, l]) => /*#__PURE__*/React.createElement("button", {
+  }, secs.map(([k, l]) => /*#__PURE__*/React.createElement("button", {
     key: k,
     type: "button",
     id: "pu2-tab-" + k,
