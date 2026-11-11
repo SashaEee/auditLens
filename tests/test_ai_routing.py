@@ -53,3 +53,88 @@ def test_funnel_prompt_no_longer_recommends_top4_by_default():
     p = clarify.SYSTEM_PROMPT_CLARIFY
     assert "ТОЛЬКО если аудитор просит сравнение" in p and "Только Сбер, без сравнения" in p
     assert "предложи топ-4" not in p
+
+
+# ── «сделай презентацию» по уже полученному отчёту ───────────────────────────
+def test_deck_request_is_a_short_ask_after_an_answer():
+    from bank_audit.ai import analyst as A
+    hist = [{"role": "user", "content": "Сравни кредиты"}, {"role": "assistant", "content": "отчёт " * 400}]
+    assert A.is_deck_request("сделай презентацию", hist)
+    assert A.is_deck_request("Собери слайды по этому отчёту для руководителя", hist)
+    assert A.is_deck_request("выгрузи в pptx", hist)
+    # новый содержательный вопрос с презентацией — это исследование, а не реплика
+    assert not A.is_deck_request("Сравни вклады Сбера и ВТБ и сделай презентацию", hist)
+    # без ответа в разговоре собирать не из чего
+    assert not A.is_deck_request("сделай презентацию", [])
+    assert not A.is_deck_request("сделай таблицу", hist)
+
+
+def _deck_env(monkeypatch, built):
+    from bank_audit.ai import agent_files
+    from bank_audit.research.gptr import deck as D
+    from bank_audit.research.gptr import deck_html as H
+    from bank_audit.web import runctx, userdata
+
+    report = {"report_id": 5, "title": "Потребкредиты", "question": "Сравни", "body": "## Резюме\n\nТекст " * 200,
+              "payload": {"sources": [{"n": 1, "title": "t", "domain": "d"}]}, "created_at": None}
+    monkeypatch.setattr(runctx, "current_origin", lambda: {"session_id": 7, "username": "u"})
+    monkeypatch.setattr(userdata, "last_deep_report", lambda s, u: report)
+    monkeypatch.setattr(userdata, "get_report", lambda rid, u, as_admin=False: report if rid == 5 else None)
+
+    async def html_build(client, **kw):
+        built.append(("html", kw["title"], kw["sources"][0]["n"]))
+        return b"<!doctype html>", {"slides": 9, "unknown": [], "fixed": 0}
+
+    async def pptx_build(client, **kw):
+        built.append(("pptx", kw["title"], kw["sources"][0]["n"]))
+        return b"PK-deck", {"slides": 6, "dropped": 2, "fallback": False}
+    monkeypatch.setattr(H, "build", html_build)
+    monkeypatch.setattr(D, "build", pptx_build)
+    monkeypatch.setattr(agent_files, "store", lambda name, data: {
+        "id": "a" * 32, "name": name, "size": len(data), "marker": "[[FILE:" + "a" * 32 + "]]"})
+    monkeypatch.setenv("LLM_BASE_URL", "http://x/v1")
+    monkeypatch.setenv("LLM_API_KEY", "k")
+
+
+def _run(question, history, **kw):
+    import asyncio
+    import json as _json
+    from bank_audit.ai import analyst as A
+
+    async def go():
+        return [_json.loads(e) async for e in A.stream_analysis(question, history, **kw)]
+    return asyncio.run(go())
+
+
+def test_deck_reply_builds_an_offline_html_from_the_last_report(monkeypatch):
+    built: list = []
+    _deck_env(monkeypatch, built)
+    evs = _run("сделай презентацию", [{"role": "assistant", "content": "отчёт"}], force_deep=True)
+    assert [e["type"] for e in evs] == ["notice", "mode", "engine", "text", "files", "done"]
+    assert built == [("html", "Потребкредиты", 1)]
+    assert "без нового исследования" in evs[0]["text"] and evs[1]["value"] == "quick"
+    assert "[[FILE:" in evs[3]["chunk"] and "без интернета" in evs[3]["chunk"] and "9 слайдов" in evs[3]["chunk"]
+    assert evs[4]["ids"] == ["a" * 32]
+
+
+def test_powerpoint_is_built_only_when_asked_by_name(monkeypatch):
+    built: list = []
+    _deck_env(monkeypatch, built)
+    evs = _run("сделай pptx", [{"role": "assistant", "content": "отчёт"}])
+    assert built == [("pptx", "Потребкредиты", 1)]
+    assert "PowerPoint" in evs[3]["chunk"] and "слайдов — 7" in evs[3]["chunk"]
+
+
+def test_deck_button_names_the_report_and_needs_no_history(monkeypatch):
+    built: list = []
+    _deck_env(monkeypatch, built)
+    evs = _run("Собери презентацию по этому отчёту", [], deck_report_id=5)
+    assert built == [("html", "Потребкредиты", 1)] and evs[-1]["type"] == "done"
+    # чужой или несуществующий отчёт — презентации нет, вопрос идёт обычным путём
+    built.clear()
+    from bank_audit.ai import analyst as A
+
+    async def nothing():
+        return [e async for e in A._deck_from_report("сделай презентацию", 99)]
+    import asyncio
+    assert asyncio.run(nothing()) == [] and built == []

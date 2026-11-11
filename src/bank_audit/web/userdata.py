@@ -226,6 +226,19 @@ def save_report(username: str, session_id: int | None, question: str,
           "banks": banks or []}))
 
 
+def last_deep_report(session_id: int | None, username: str) -> dict | None:
+    """Последний отчёт (не быстрый ответ) этого разговора — по нему собирается
+    презентация на реплику «сделай презентацию»."""
+    if not session_id or not username:
+        return None
+    return _one("""SELECT report_id, question, title, body, payload, created_at
+                     FROM report
+                    WHERE session_id = :s AND username = :u
+                      AND payload->>'mode' = 'deep' AND length(body) > 1500
+                    ORDER BY created_at DESC
+                    LIMIT 1""", {"s": session_id, "u": username})
+
+
 def set_report_title(report_id: int, title: str) -> None:
     """Название отчёта, составленное после сохранения (быстрая модель в фоне)."""
     if not title:

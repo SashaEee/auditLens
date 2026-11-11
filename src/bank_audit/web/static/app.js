@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 77fb90be1491e90d7597fafb6c63eb22df5abff9843e132ba51812d351f698f3): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 e9393138078f6418ea7c52953c5f9bccfb96113badbbfa81c4325e3d932f025e): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -13419,6 +13419,39 @@ function AgentFiles({
     })), "\u0421\u043A\u0430\u0447\u0430\u0442\u044C"));
   }));
 }
+
+// Презентация по отчёту: просьба уходит в этот же разговор, макет под отчёт
+// рисует модель, файл приходит карточкой в ответе (gptr/deck_html.py).
+function DeckButton({
+  onClick,
+  streaming,
+  busy
+}) {
+  return /*#__PURE__*/React.createElement("button", {
+    className: "btn-export",
+    onClick: onClick,
+    disabled: busy || streaming,
+    title: streaming ? "Дождитесь окончания генерации отчёта" : "Презентация по этому отчёту в стиле AuditLens: один файл, открывается без интернета. Рисуется две-три минуты"
+  }, /*#__PURE__*/React.createElement("svg", {
+    width: "13",
+    height: "13",
+    viewBox: "0 0 16 16",
+    fill: "none"
+  }, /*#__PURE__*/React.createElement("rect", {
+    x: "1.5",
+    y: "2.5",
+    width: "13",
+    height: "8.5",
+    rx: "1",
+    stroke: "currentColor",
+    strokeWidth: "1.4"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M8 11v2.5M5 14h6",
+    stroke: "currentColor",
+    strokeWidth: "1.4",
+    strokeLinecap: "round"
+  })), /*#__PURE__*/React.createElement("span", null, "\u041F\u0440\u0435\u0437\u0435\u043D\u0442\u0430\u0446\u0438\u044F"));
+}
 function PdfExportButton({
   question,
   report,
@@ -13861,7 +13894,8 @@ const drScope = u => {
 function DeepConsole({
   m,
   loading,
-  elapsed
+  elapsed,
+  onFresh
 }) {
   const phase = m.phase;
   const curIdx = phase === "done" ? DEEP_FLOW.length : Math.max(0, DEEP_FLOW.findIndex(d => d.phases.includes(phase)));
@@ -14003,7 +14037,16 @@ function DeepConsole({
       className: "dr-con-u-sep"
     }, "\xB7"), /*#__PURE__*/React.createElement("span", null, m.understood.period)), DR_CHECKS[m.understood.checks] && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
       className: "dr-con-u-sep"
-    }, "\xB7"), /*#__PURE__*/React.createElement("span", null, DR_CHECKS[m.understood.checks]))), d.key === "parse" && status !== "pending" && contract.length > 0 && /*#__PURE__*/React.createElement("div", {
+    }, "\xB7"), /*#__PURE__*/React.createElement("span", null, DR_CHECKS[m.understood.checks])), m.understood.continues && m.understood.prior && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+      className: "dr-con-u-sep"
+    }, "\xB7"), /*#__PURE__*/React.createElement("span", {
+      className: "dr-con-u-cont"
+    }, "\u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0435\u043D\u0438\u0435 \u043F\u0440\u043E\u0448\u043B\u043E\u0433\u043E \u043E\u0442\u0447\u0451\u0442\u0430", m.understood.prior.date ? ` от ${m.understood.prior.date}` : "", ": \u0443\u0436\u0435 \u0441\u043E\u0431\u0440\u0430\u043D\u043E ", m.understood.prior.facts, " ", plural(m.understood.prior.facts, "факт", "факта", "фактов")), onFresh && /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "dr-con-u-redo",
+      onClick: onFresh,
+      title: "\u041D\u0435 \u043E\u043F\u0438\u0440\u0430\u0442\u044C\u0441\u044F \u043D\u0430 \u043F\u0440\u043E\u0448\u043B\u044B\u0439 \u043E\u0442\u0447\u0451\u0442: \u0441\u043E\u0431\u0440\u0430\u0442\u044C \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438 \u0438 \u0444\u0430\u043A\u0442\u044B \u0437\u0430\u043D\u043E\u0432\u043E"
+    }, "\u0441\u043E\u0431\u0440\u0430\u0442\u044C \u0437\u0430\u043D\u043E\u0432\u043E"))), d.key === "parse" && status !== "pending" && contract.length > 0 && /*#__PURE__*/React.createElement("div", {
       className: "dr-con-contract"
     }, /*#__PURE__*/React.createElement("div", {
       className: "dr-con-sub-h"
@@ -14794,9 +14837,12 @@ function SourcesRail({
       title: "\u0434\u0430\u0442\u0430 \u043F\u0443\u0431\u043B\u0438\u043A\u0430\u0446\u0438\u0438 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430"
     }, "\xB7 ", fmtDateMsk(s.published)) : s.fetched_at && /*#__PURE__*/React.createElement("span", {
       title: "\u0434\u0430\u0442\u0430 \u0441\u0431\u043E\u0440\u0430; \u0441\u0430\u043C \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A \u0434\u0430\u0442\u044B \u043D\u0435 \u043E\u0431\u044A\u044F\u0432\u0438\u043B"
-    }, "\xB7 \u0441\u043E\u0431\u0440\u0430\u043D\u043E ", formatRelDate(s.fetched_at)), s.kb_loaded && /*#__PURE__*/React.createElement("span", {
-      title: "\u0422\u0435\u043A\u0441\u0442 \u0432\u0437\u044F\u0442 \u0438\u0437 \u0431\u0430\u0437\u044B \u0437\u043D\u0430\u043D\u0438\u0439 AuditLens: \u044D\u0442\u043E \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u043D\u0430 \u0434\u0430\u0442\u0443 \u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0438, \u0430 \u043D\u0435 \u043D\u0430 \u0441\u0435\u0433\u043E\u0434\u043D\u044F"
-    }, "\xB7 \u0438\u0437 \u0431\u0430\u0437\u044B \u0437\u043D\u0430\u043D\u0438\u0439, \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D\u043E ", fmtDateMsk(s.kb_loaded)), s.dead && /*#__PURE__*/React.createElement("span", {
+    }, "\xB7 \u0441\u043E\u0431\u0440\u0430\u043D\u043E ", formatRelDate(s.fetched_at)), s.kb_loaded && (s.kb_fallback ? /*#__PURE__*/React.createElement("span", {
+      className: "src-stale",
+      title: "\u0421\u0435\u0433\u043E\u0434\u043D\u044F \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u043B\u0430\u0441\u044C, \u043F\u043E\u044D\u0442\u043E\u043C\u0443 \u0432 \u043E\u0442\u0447\u0451\u0442\u0435 \u2014 \u0435\u0451 \u0441\u043E\u0445\u0440\u0430\u043D\u0451\u043D\u043D\u0430\u044F \u043A\u043E\u043F\u0438\u044F \u0438\u0437 \u0431\u0430\u0437\u044B \u0437\u043D\u0430\u043D\u0438\u0439. \u0423\u0441\u043B\u043E\u0432\u0438\u044F \u043C\u043E\u0433\u043B\u0438 \u0438\u0437\u043C\u0435\u043D\u0438\u0442\u044C\u0441\u044F: \u0441\u0432\u0435\u0440\u044C\u0442\u0435 \u043D\u0430 \u0441\u0430\u0439\u0442\u0435"
+    }, "\xB7 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u043B\u0430\u0441\u044C \u2014 \u0441\u043E\u0445\u0440\u0430\u043D\u0451\u043D\u043D\u0430\u044F \u043A\u043E\u043F\u0438\u044F \u043E\u0442 ", fmtDateMsk(s.kb_loaded)) : /*#__PURE__*/React.createElement("span", {
+      title: "\u0414\u0430\u0442\u0438\u0440\u043E\u0432\u0430\u043D\u043D\u044B\u0439 \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442 \u0438\u0437 \u0431\u0430\u0437\u044B \u0437\u043D\u0430\u043D\u0438\u0439 AuditLens: \u0442\u0435\u043A\u0441\u0442 \u043D\u0430 \u0434\u0430\u0442\u0443 \u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0438"
+    }, "\xB7 \u0438\u0437 \u0431\u0430\u0437\u044B \u0437\u043D\u0430\u043D\u0438\u0439, \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D\u043E ", fmtDateMsk(s.kb_loaded))), s.dead && /*#__PURE__*/React.createElement("span", {
       className: "dr-rail-dead",
       title: "\u0421\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430 \u0441\u0435\u0439\u0447\u0430\u0441 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u0435\u0442\u0441\u044F \u2014 \u0446\u0438\u0442\u0430\u0442\u0430 \u0438 \u0434\u0430\u0442\u0430 \u0432\u0437\u044F\u0442\u044B \u043F\u0440\u0438 \u0441\u0431\u043E\u0440\u0435"
     }, "\u0441\u0441\u044B\u043B\u043A\u0430 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u0435\u0442\u0441\u044F"))));
@@ -15723,7 +15769,7 @@ function AIPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [showKbd]);
-  const streamChat = async (question, history, forceDeep) => {
+  const streamChat = async (question, history, forceDeep, extra) => {
     // Прогон длится минуты. Если вопрос задан неудачно, ждать его конца незачем —
     // об этом прямо написали в обратной связи. Держим отменяемый запрос.
     const ac = new AbortController();
@@ -15738,7 +15784,8 @@ function AIPage() {
           question,
           history,
           force_deep: forceDeep,
-          session_id: sessionId
+          session_id: sessionId,
+          ...(extra || {})
         }),
         signal: ac.signal
       });
@@ -15873,6 +15920,8 @@ function AIPage() {
                     checks: data.checks || "",
                     period: data.period || "",
                     deliverable: data.deliverable || "",
+                    continues: !!data.continues,
+                    prior: data.prior || null,
                     names: (data.subjects || []).map(x => (data.subject_labels || {})[x] || x)
                   },
                   contract: data.attributes || [],
@@ -16089,7 +16138,7 @@ function AIPage() {
   };
 
   // Запуск research: ai-bubble + стрим. История БЕЗ clarify-сообщений.
-  const runSend = (t, forceDeep) => {
+  const runSend = (t, forceDeep, extra) => {
     const history = msgsRef.current.filter(m => m.role === "user" || m.role === "ai").map(m => ({
       role: m.role === "user" ? "user" : "assistant",
       content: m.text || ""
@@ -16102,7 +16151,7 @@ function AIPage() {
       text: "",
       tools: []
     }]);
-    streamChat(t, history, forceDeep);
+    streamChat(t, history, forceDeep, extra);
   };
   // Точка входа: модуль «asking» — сначала clarify-воронка (если запрос неполный),
   // потом research. Fail-open: ошибка/полный запрос → сразу research.
@@ -16208,6 +16257,48 @@ function AIPage() {
     runSend(srcQuestion, forceDeep);
   };
   // Апселл из быстрого ответа: запускаем тот же запрос как Deep Research.
+  // «Презентация» под отчётом: просьба в этот же разговор, файл придёт в ответе.
+  const askDeck = reportId => {
+    if (loading || !reportId) return;
+    trkEvent({
+      kind: "ui",
+      page: "ai",
+      payload: {
+        action: "deck_button"
+      }
+    });
+    const t = "Собери презентацию по этому отчёту";
+    setMsgs(m => [...m, {
+      role: "user",
+      text: t
+    }]);
+    runSend(t, false, {
+      deck_report_id: reportId
+    });
+  };
+  // «Собрать заново»: тот же вопрос, но без фактов прошлого отчёта.
+  const redoFresh = q => {
+    if (!q) return;
+    trkEvent({
+      kind: "ui",
+      page: "ai",
+      payload: {
+        action: "redo_fresh"
+      }
+    });
+    try {
+      abortRef.current?.abort();
+    } catch {}
+    setTimeout(() => {
+      setMsgs(m => [...m, {
+        role: "user",
+        text: q
+      }]);
+      runSend(q, true, {
+        fresh: true
+      });
+    }, 400);
+  };
   const runDeepFromQuick = srcQ => {
     if (loading || !srcQ) return;
     trkEvent({
@@ -16474,7 +16565,8 @@ function AIPage() {
       }, /*#__PURE__*/React.createElement(DeepConsole, {
         m: m,
         loading: loading,
-        elapsed: elapsed
+        elapsed: elapsed,
+        onFresh: () => redoFresh(userQ)
       })) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
         className: "dr-doc-toolbar"
       }, /*#__PURE__*/React.createElement("span", {
@@ -16504,6 +16596,10 @@ function AIPage() {
         gaps: m.gaps,
         reportId: m.report_id,
         title: m.title
+      }), showPdfBtn && !streaming && m.report_id && (m.text || "").length > 1500 && /*#__PURE__*/React.createElement(DeckButton, {
+        onClick: () => askDeck(m.report_id),
+        streaming: streaming,
+        busy: loading
       }), m.matrix && /*#__PURE__*/React.createElement(MatrixExportButton, {
         matrix: m.matrix,
         question: userQ,
@@ -16587,6 +16683,10 @@ function AIPage() {
         gaps: m.gaps,
         reportId: m.report_id,
         title: m.title
+      }), m.report_id && (m.text || "").length > 1500 && /*#__PURE__*/React.createElement(DeckButton, {
+        onClick: () => askDeck(m.report_id),
+        streaming: false,
+        busy: loading
       }), m.matrix && /*#__PURE__*/React.createElement(MatrixExportButton, {
         matrix: m.matrix,
         question: userQ,

@@ -6671,6 +6671,20 @@ function AgentFiles({files}){
     </a>;})}</div>;
 }
 
+// Презентация по отчёту: просьба уходит в этот же разговор, макет под отчёт
+// рисует модель, файл приходит карточкой в ответе (gptr/deck_html.py).
+function DeckButton({onClick, streaming, busy}){
+  return <button className="btn-export" onClick={onClick} disabled={busy || streaming}
+                 title={streaming ? "Дождитесь окончания генерации отчёта"
+                   : "Презентация по этому отчёту в стиле AuditLens: один файл, открывается без интернета. Рисуется две-три минуты"}>
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+      <rect x="1.5" y="2.5" width="13" height="8.5" rx="1" stroke="currentColor" strokeWidth="1.4"/>
+      <path d="M8 11v2.5M5 14h6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+    </svg>
+    <span>Презентация</span>
+  </button>;
+}
+
 function PdfExportButton({question, report, sources, verification, claimCheck, streaming, charts, viz, ranking, insights, gaps, reportId, title, kind}){
   const [busy, setBusy] = useState(false);
   const handle = async () => {
@@ -6923,7 +6937,7 @@ const drScope=u=>{const n=(u.names||[]).filter(Boolean);
   if(u.scope==="sber")return "только "+n.join(" и ")+", без конкурентов";
   return n.slice(0,5).join(", ")+(n.length>5?` и ещё ${n.length-5}`:"");};
 
-function DeepConsole({m, loading, elapsed}){
+function DeepConsole({m, loading, elapsed, onFresh}){
   const phase=m.phase;
   const curIdx = phase==="done" ? DEEP_FLOW.length
     : Math.max(0, DEEP_FLOW.findIndex(d=>d.phases.includes(phase)));
@@ -7017,6 +7031,11 @@ function DeepConsole({m, loading, elapsed}){
                   <span>{drScope(m.understood)}</span>
                   {m.understood.period && <><span className="dr-con-u-sep">·</span><span>{m.understood.period}</span></>}
                   {DR_CHECKS[m.understood.checks] && <><span className="dr-con-u-sep">·</span><span>{DR_CHECKS[m.understood.checks]}</span></>}
+                  {m.understood.continues && m.understood.prior && <><span className="dr-con-u-sep">·</span>
+                    <span className="dr-con-u-cont">продолжение прошлого отчёта{m.understood.prior.date?` от ${m.understood.prior.date}`:""}:
+                      уже собрано {m.understood.prior.facts} {plural(m.understood.prior.facts,"факт","факта","фактов")}</span>
+                    {onFresh && <button type="button" className="dr-con-u-redo" onClick={onFresh}
+                      title="Не опираться на прошлый отчёт: собрать источники и факты заново">собрать заново</button>}</>}
                 </div>}
               {d.key==="parse" && status!=="pending" && contract.length>0 &&
                 <div className="dr-con-contract">
@@ -7591,8 +7610,11 @@ function SourcesRail({sources, activeN, onHover, onClick, failed}){
                 ? <span title="дата публикации источника">· {fmtDateMsk(s.published)}</span>
                 : s.fetched_at && <span title="дата сбора; сам источник даты не объявил">
                     · собрано {formatRelDate(s.fetched_at)}</span>}
-              {s.kb_loaded && <span title="Текст взят из базы знаний AuditLens: это страница на дату загрузки, а не на сегодня">
-                · из базы знаний, загружено {fmtDateMsk(s.kb_loaded)}</span>}
+              {s.kb_loaded && (s.kb_fallback
+                ? <span className="src-stale" title="Сегодня страница не открылась, поэтому в отчёте — её сохранённая копия из базы знаний. Условия могли измениться: сверьте на сайте">
+                    · страница не открылась — сохранённая копия от {fmtDateMsk(s.kb_loaded)}</span>
+                : <span title="Датированный документ из базы знаний AuditLens: текст на дату загрузки">
+                    · из базы знаний, загружено {fmtDateMsk(s.kb_loaded)}</span>)}
               {s.dead && <span className="dr-rail-dead"
                 title="Страница источника сейчас не открывается — цитата и дата взяты при сборе">
                 ссылка не открывается</span>}
@@ -8154,7 +8176,7 @@ function AIPage(){
     return ()=>window.removeEventListener("keydown",onKey);
   },[showKbd]);
 
-  const streamChat=async(question,history,forceDeep)=>{
+  const streamChat=async(question,history,forceDeep,extra)=>{
     // Прогон длится минуты. Если вопрос задан неудачно, ждать его конца незачем —
     // об этом прямо написали в обратной связи. Держим отменяемый запрос.
     const ac=new AbortController(); abortRef.current=ac;
@@ -8162,7 +8184,7 @@ function AIPage(){
       const res=await fetch("/api/ai/analyze",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({question,history,force_deep:forceDeep,session_id:sessionId}),
+        body:JSON.stringify({question,history,force_deep:forceDeep,session_id:sessionId,...(extra||{})}),
         signal:ac.signal,
       });
       if(!res.ok){
@@ -8236,6 +8258,7 @@ function AIPage(){
                 updateLast(()=>({plan:data.steps,stepStates:{},
                   understood:{task:data.task||"",scope:data.scope||"",checks:data.checks||"",
                     period:data.period||"",deliverable:data.deliverable||"",
+                    continues:!!data.continues,prior:data.prior||null,
                     names:(data.subjects||[]).map(x=>(data.subject_labels||{})[x]||x)},
                   contract:data.attributes||[],
                   degraded:data.degraded||"",
@@ -8360,14 +8383,14 @@ function AIPage(){
   };
 
   // Запуск research: ai-bubble + стрим. История БЕЗ clarify-сообщений.
-  const runSend=(t,forceDeep)=>{
+  const runSend=(t,forceDeep,extra)=>{
     const history=msgsRef.current
       .filter(m=>m.role==="user"||m.role==="ai")
       .map(m=>({role:m.role==="user"?"user":"assistant",content:m.text||""}));
     setLoading(true);
     runStartRef.current=Date.now(); setElapsed(0);     // старт таймера прогона
     setMsgs(m=>[...m.filter(x=>x.role!=="pending"),{role:"ai",text:"",tools:[]}]);
-    streamChat(t,history,forceDeep);
+    streamChat(t,history,forceDeep,extra);
   };
   // Точка входа: модуль «asking» — сначала clarify-воронка (если запрос неполный),
   // потом research. Fail-open: ошибка/полный запрос → сразу research.
@@ -8431,6 +8454,24 @@ function AIPage(){
     runSend(srcQuestion,forceDeep);
   };
   // Апселл из быстрого ответа: запускаем тот же запрос как Deep Research.
+  // «Презентация» под отчётом: просьба в этот же разговор, файл придёт в ответе.
+  const askDeck=(reportId)=>{
+    if(loading||!reportId)return;
+    trkEvent({kind:"ui",page:"ai",payload:{action:"deck_button"}});
+    const t="Собери презентацию по этому отчёту";
+    setMsgs(m=>[...m,{role:"user",text:t}]);
+    runSend(t,false,{deck_report_id:reportId});
+  };
+  // «Собрать заново»: тот же вопрос, но без фактов прошлого отчёта.
+  const redoFresh=(q)=>{
+    if(!q)return;
+    trkEvent({kind:"ui",page:"ai",payload:{action:"redo_fresh"}});
+    try{ abortRef.current?.abort(); }catch{}
+    setTimeout(()=>{
+      setMsgs(m=>[...m,{role:"user",text:q}]);
+      runSend(q,true,{fresh:true});
+    },400);
+  };
   const runDeepFromQuick=(srcQ)=>{
     if(loading||!srcQ)return;
     trkEvent({kind:"ui",page:"ai",payload:{action:"quick_upsell"}});
@@ -8569,7 +8610,7 @@ function AIPage(){
             return <div key={i} className={`chat-msg ${m.role}`}>
               {consoleMode ? (
                 <div className="chat-bubble chat-bubble-deep">
-                  <DeepConsole m={m} loading={loading} elapsed={elapsed}/>
+                  <DeepConsole m={m} loading={loading} elapsed={elapsed} onFresh={()=>redoFresh(userQ)}/>
                 </div>
               ) : (<>
                 <div className="dr-doc-toolbar">
@@ -8586,6 +8627,8 @@ function AIPage(){
                                      charts={m.charts||[]} viz={m.viz||[]} ranking={m.ranking}
                                      insights={m.insights} gaps={m.gaps}
                                      reportId={m.report_id} title={m.title}/>}
+                  {showPdfBtn && !streaming && m.report_id && (m.text||"").length>1500 &&
+                    <DeckButton onClick={()=>askDeck(m.report_id)} streaming={streaming} busy={loading}/>}
                   {m.matrix && <MatrixExportButton matrix={m.matrix} question={userQ} streaming={streaming}/>}
                 </div>
                 {/* «Пригодился?» — вверху, сразу после прогона: в подвале после
@@ -8632,6 +8675,8 @@ function AIPage(){
                                            charts={m.charts||[]} viz={m.viz||[]} ranking={m.ranking}
                                            insights={m.insights} gaps={m.gaps}
                                            reportId={m.report_id} title={m.title}/>
+                          {m.report_id && (m.text||"").length>1500 &&
+                            <DeckButton onClick={()=>askDeck(m.report_id)} streaming={false} busy={loading}/>}
                           {m.matrix && <MatrixExportButton matrix={m.matrix} question={userQ} streaming={false}/>}
                           <span className="dr-doc-footer-hint">
                             Готовый отчёт для аудита · нумерация страниц, источники, A4

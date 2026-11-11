@@ -80,6 +80,9 @@ class ResearchPlan:
     observed: str = ""           # характеристика взгляда со стороны, если нужна
     regulatory: str = ""         # характеристика нормативной рамки, если нужна
     queries: list[dict] = field(default_factory=list)  # {"q": …, "site": …}
+    # Вопрос продолжает прошлый отчёт этого разговора: начать с его фактов и
+    # добрать недостающее, а не собирать всё заново (research/gptr/memory.py).
+    continues: bool = False
 
     def to_ui_plan(self) -> list[dict]:
         """Для SSE event 'plan' — список шагов для UI."""
@@ -262,9 +265,16 @@ _PLAN_EFFORT = ({"reasoning_effort": os.getenv("CONDUCTOR_REASONING_EFFORT", "lo
 
 async def plan_research(client: AsyncOpenAI, model: str,
                           question: str, history: list[dict] | None = None,
-                          on_reasoning=None,
+                          on_reasoning=None, prior: str | None = None,
+                          prior_subjects: dict[str, str] | None = None,
                           ) -> ResearchPlan:
-    """Главный API Кондуктора: вопрос → ResearchPlan."""
+    """Главный API Кондуктора: вопрос → ResearchPlan.
+
+    prior — что уже собрано прошлым отчётом этого разговора (memory.brief):
+    с ним планировщик решает, продолжение это или новая тема. prior_subjects —
+    организации прошлого отчёта (слуг → название): продолжение, в котором
+    организации не названы, наследует их («подробнее про требования к
+    заёмщику» после сравнения трёх банков — про те же три банка)."""
     q = normalize_question(question)
 
     # Сначала быстрая локальная подсказка: какие банки явно в вопросе
@@ -274,7 +284,14 @@ async def plan_research(client: AsyncOpenAI, model: str,
         f"# Вопрос аудитора\n{q}\n\n"
         f"# Организации, названные в вопросе\n"
         f"{', '.join(hinted_banks) or '(не названы — не добавляй конкурентов, если сравнение не просят)'}\n\n"
-        f"Верни JSON-план исследования."
+        + (f"# Предыдущий отчёт в этом разговоре\n{prior}\n\n"
+           "Добавь в план поле \"continues\": true, если новый вопрос — про тот же предмет и "
+           "его можно в основном закрыть уже собранным: уточнение, другой разрез, углубление "
+           "одной характеристики, просьба добавить или убрать организацию, другая форма "
+           "ответа. Тогда отчёт начнёт с собранного и доберёт только недостающее; в queries "
+           "дай запросы ТОЛЬКО на то, чего в собранном нет. Если тема другая — "
+           "\"continues\": false.\n\n" if prior else "")
+        + "Верни JSON-план исследования."
     )
     messages = [{"role": "system", "content": today_anchor() + "\n\n" + SYSTEM_PROMPT}]
     if history:
@@ -344,10 +361,20 @@ async def plan_research(client: AsyncOpenAI, model: str,
     # Страхующий слой: LLM могла проспать сегмент, маркеры в вопросе — нет.
     if detect_client_segment(q) == "business":
         plan.client_segment = "business"
-    enforce_scope(plan, q, hinted_banks)
-    log.warning("[conductor] intent=%s, task=%s, scope=%s, nature=%s, %s subjects, %s queries",
+    continues = bool(prior) and data.get("continues") is True
+    named = list(hinted_banks)
+    if continues and not hinted_banks and prior_subjects:
+        named = list(prior_subjects)
+        for slug, label in prior_subjects.items():
+            if slug not in plan.subjects:
+                plan.subjects.append(slug)
+            plan.subject_labels.setdefault(slug, label)
+    enforce_scope(plan, q, named)
+    plan.continues = continues
+    log.warning("[conductor] intent=%s, task=%s, scope=%s, nature=%s, %s subjects, %s queries%s",
                 plan.intent, plan.task, plan.scope, plan.question_nature,
-                len(plan.subjects), len(plan.queries))
+                len(plan.subjects), len(plan.queries),
+                ", продолжение прошлого отчёта" if plan.continues else "")
     return plan
 
 

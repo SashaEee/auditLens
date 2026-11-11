@@ -5334,6 +5334,8 @@ class ChatRequest(BaseModel):
     history: list = []
     force_deep: Optional[bool] = None    # None=auto, True=force deep mode, False=force quick
     session_id: Optional[int] = None     # продолжение существующей сессии истории
+    deck_report_id: Optional[int] = None  # кнопка «Презентация» под отчётом: по какому отчёту
+    fresh: bool = False                  # «собрать заново»: не продолжать прошлый отчёт
 
 
 async def _title_later(report_id: int, session_id: int | None, question: str,
@@ -5394,6 +5396,9 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
     # отчёта: по ним «Пульс» видит, на что уходит время и какие задачи ставят.
     plan_info: Optional[dict] = None
     timings: Optional[dict] = None
+    # Снимок фактов отчёта (служебное событие memory): сохраняется рядом с
+    # отчётом, чтобы следующий вопрос разговора начал с собранного.
+    memory: Optional[dict] = None
     t0 = time.monotonic()
 
     def _persist(finished: bool) -> int | None:
@@ -5483,10 +5488,16 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
 
     try:
         async for ev in inner:
+            internal = False
             try:
                 data = json.loads(ev)
                 t = data.get("type")
-                if t == "text":
+                if t == "memory":
+                    # служебное: клиенту не отдаём (сотни килобайт фактов)
+                    internal = True
+                    if isinstance(data.get("data"), dict):
+                        memory = data["data"]
+                elif t == "text":
                     if data.get("chunk"):
                         parts.append(data["chunk"])
                     elif isinstance(data.get("text"), str):
@@ -5514,7 +5525,8 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                     mode = data.get("value")
                 elif t == "plan":
                     plan_info = {k: data.get(k) for k in ("task", "scope", "checks", "deliverable",
-                                                          "period", "subjects", "question_nature")}
+                                                          "period", "subjects", "question_nature",
+                                                          "continues")}
                 elif t == "report_title" and data.get("title"):
                     report_title = str(data["title"])[:200]
                 elif t == "engine":
@@ -5538,11 +5550,17 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                     persisted = True
                     rid = _persist(True)
                     if rid:
+                        if memory and mode == "deep":
+                            from ..research.gptr import memory as _mem
+                            asyncio.create_task(asyncio.to_thread(
+                                _mem.save, rid, session_id, username, memory))
                         yield json.dumps({"type": "report_saved", "report_id": rid,
                                           "title": saved_title},
                                          ensure_ascii=False)
             except Exception:
                 pass
+            if internal:
+                continue
             yield ev
     finally:
         if not persisted:      # обрыв соединения/стрима без done — не теряем ответ
@@ -5613,11 +5631,13 @@ async def ai_analyze(req: ChatRequest, user: CurrentUser = Depends(get_current_u
     run_id = runctx.set_origin(kind="report", username=username,
                                session_id=session_id, question=req.question)
 
+    from ..research.gptr import memory as _report_memory
     inner = stream_analysis(req.question, req.history, force_deep=req.force_deep,
                             session_hint=(f"{user.username}-{session_id}"
-                                          if session_id else user.username))
+                                          if session_id else user.username),
+                            deck_report_id=req.deck_report_id, fresh=bool(req.fresh))
     gen = (_persisting_stream(inner, username, session_id, req.question)
-           if session_id else inner)
+           if session_id else _report_memory.without_event(inner))
 
     # Deep-research pipeline идёт 90-300s. Между phase-событиями могут быть
     # длинные паузы (LLM-запросы по 30-60s). Без keep-alive проксики/браузер

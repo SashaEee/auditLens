@@ -1118,9 +1118,104 @@ def is_followup_reply(question: str, history: list[dict] | None) -> bool:
                 or _REPLY_ALL.match(q) or _REPLY_META.search(q))
 
 
+_DECK_RX = re.compile(r"презентац|слайд|\bpptx\b|powerpoint", re.I)
+
+
+def is_deck_request(question: str, history: list[dict] | None) -> bool:
+    """Короткая просьба собрать презентацию по уже полученному ответу."""
+    q = (question or "").strip()
+    if not q or len(q) > 140 or not _DECK_RX.search(q) or _REPLY_RESEARCH.search(q):
+        return False
+    return any(h.get("role") == "assistant" and (h.get("content") or "").strip()
+               for h in (history or [])[-8:])
+
+
+_PPTX_RX = re.compile(r"\bpptx\b|powerpoint|пауэр ?поинт|повер ?поинт|\bppt\b", re.I)
+
+
+async def _deck_from_report(question: str = "", report_id: int | None = None) -> AsyncIterator[str]:
+    """Презентация по отчёту разговора — без нового исследования.
+
+    Аудит 11.11: презентацию просили 21 раз, файл получили трижды — быстрый агент
+    собирал слайды самодельным скриптом. Теперь макет пишет сильная модель по
+    готовому отчёту (research/gptr/deck_html.py): один HTML-файл в стиле
+    AuditLens, который открывается без интернета. Если просят именно PowerPoint —
+    собирается PPTX (deck.py). Ничего не отдаёт, если отчёта нет: вопрос идёт
+    обычным путём.
+    """
+    try:
+        from ..web import userdata
+        from ..web.runctx import current_origin
+        origin = current_origin()
+        if report_id:
+            rep = await asyncio.to_thread(userdata.get_report, int(report_id),
+                                          origin.get("username") or "")
+        else:
+            rep = await asyncio.to_thread(userdata.last_deep_report, origin.get("session_id"),
+                                          origin.get("username"))
+    except Exception as e:  # noqa: BLE001 — нет базы или контекста: обычный путь
+        log.info("[deck] отчёт разговора не найден: %s", type(e).__name__)
+        rep = None
+    if not rep or len(rep.get("body") or "") < 800:
+        return
+    title = rep.get("title") or "отчёт"
+    pptx = bool(_PPTX_RX.search(question or ""))
+
+    def ev(d: dict) -> str:
+        return json.dumps(d, ensure_ascii=False)
+
+    yield ev({"type": "notice", "kind": "deck",
+              "text": (f"Собираю презентацию по отчёту «{title}» — без нового исследования. "
+                       + ("Файл PowerPoint будет готов примерно через полминуты."
+                          if pptx else "Макет под этот отчёт рисуется заново: обычно две-три минуты."))})
+    yield ev({"type": "mode", "value": "quick"})
+    yield ev({"type": "engine", "value": "deck"})
+    kwargs = dict(question=rep.get("question") or "", title=title, report=rep.get("body") or "",
+                  sources=(rep.get("payload") or {}).get("sources") or [],
+                  when=rep.get("created_at"))
+    try:
+        from ..research.gptr import deck as al_deck
+        from ..research.gptr import deck_html as al_deck_html
+        from . import agent_files
+        client = AsyncOpenAI(base_url=os.environ["LLM_BASE_URL"], api_key=os.environ["LLM_API_KEY"],
+                             max_retries=1, timeout=420.0)
+        if pptx:
+            data, info = await asyncio.wait_for(al_deck.build(client, **kwargs), timeout=150)
+            name = al_deck.file_name(title)
+        else:
+            data, info = await asyncio.wait_for(al_deck_html.build(client, **kwargs), timeout=420)
+            name = al_deck_html.file_name(title)
+        f = await asyncio.to_thread(agent_files.store, name, data)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[deck] презентация не собрана: %s", str(e)[:160])
+        yield ev({"type": "text", "chunk": "Не удалось собрать презентацию — модель не ответила. "
+                                           "Повторите просьбу через минуту."})
+        yield ev({"type": "done"})
+        return
+    if pptx:
+        text_ = (f"Презентация PowerPoint по отчёту «{title}»: слайдов — {info['slides'] + 1}, не считая "
+                 f"списка источников. Каждое число на слайдах сверено с текстом отчёта; текст можно "
+                 f"править.\n\n{f['marker']}\n")
+    else:
+        unknown = info.get("unknown") or []
+        text_ = (f"Презентация по отчёту «{title}» — {info['slides']} слайдов и список источников, "
+                 f"в стиле AuditLens. Это один файл: открывается в браузере без интернета, листается "
+                 f"стрелками, клавиша F — на весь экран, P — печать в PDF."
+                 + (" Числа на слайдах сверены с текстом отчёта."
+                    if not unknown else
+                    f" Сверьте вручную числа, которых нет в отчёте дословно: {', '.join(unknown[:8])}.")
+                 + " Нужен файл PowerPoint — напишите «сделай pptx»."
+                 + f"\n\n{f['marker']}\n")
+    yield ev({"type": "text", "chunk": text_})
+    yield ev({"type": "files", "ids": [f["id"]]})
+    yield ev({"type": "done"})
+
+
 async def stream_analysis(question: str, history: list[dict],
                            force_deep: bool | None = None,
-                           session_hint: str | None = None) -> AsyncIterator[str]:
+                           session_hint: str | None = None,
+                           deck_report_id: int | None = None,
+                           fresh: bool = False) -> AsyncIterator[str]:
     """Главный entry-point AI-чата.
     Автоматически выбирает режим: quick (single-shot tool-use)
     либо deep (planner → multi-step → synthesize → verify → charts).
@@ -1135,6 +1230,15 @@ async def stream_analysis(question: str, history: list[dict],
     _prior_deep = any((h.get("role") == "assistant"
                        and len(h.get("content") or "") > 2500)
                       for h in (history or [])[-4:])
+    # Презентация по готовому отчёту: кнопка под отчётом (deck_report_id) или
+    # короткая просьба в разговоре. Нового исследования не нужно.
+    if deck_report_id or is_deck_request(question, history):
+        handled = False
+        async for ev in _deck_from_report(question, deck_report_id):
+            handled = True
+            yield ev
+        if handled:
+            return
     if force_deep is not False and is_followup_reply(question, history):
         log.info("[stream_analysis] реплика в продолжение разговора — быстрый ответ")
         force_deep = False
@@ -1155,7 +1259,7 @@ async def stream_analysis(question: str, history: list[dict],
                 # _with_heartbeat тикает progress_elapsed во время длинных
                 # await'ов pipeline — таймер в UI идёт, а не «висит на ~30s».
                 async for ev in _with_heartbeat(
-                        stream_deep_research_v2(question, history)):
+                        stream_deep_research_v2(question, history, fresh=fresh)):
                     yield ev
                     yielded = True
                 return

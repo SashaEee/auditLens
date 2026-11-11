@@ -28,6 +28,8 @@ from . import dossier as al_dossier
 from . import viz as al_viz
 from . import gaps as al_gaps, planner as al_planner
 from . import lead as al_lead
+from . import deck_html as al_deck_html
+from . import memory as al_memory
 from . import scraper as al_scraper, verify as al_verify
 from .engine import _role_prompt, install, report_prompt
 
@@ -111,6 +113,8 @@ def _sources_ui(urls: list[str], pages: dict[str, str],
         if url in kb:
             # Из базы знаний: текст на дату загрузки, а не на сегодня.
             out[-1].update({"kb_doc": kb[url].get("link") or "", "kb_loaded": kb[url].get("loaded") or "",
+                            # страница сегодня не открылась — в отчёте её сохранённая копия
+                            "kb_fallback": bool(kb[url].get("fallback")),
                             "title": (kb[url].get("title") or out[-1]["title"])[:120]})
     return out
 
@@ -142,8 +146,11 @@ def _foreign_affiliate(url: str) -> bool:
 
 async def stream_deep_research_gptr(question: str,
                                     history: list[dict] | None = None,
+                                    fresh: bool = False,
                                     ) -> AsyncIterator[str]:
-    """Тот же контракт событий, что у stream_deep_research_v2."""
+    """Тот же контракт событий, что у stream_deep_research_v2.
+
+    fresh — аудитор попросил собрать заново: память прошлого отчёта не берём."""
     import os
 
     from openai import AsyncOpenAI
@@ -164,6 +171,16 @@ async def stream_deep_research_gptr(question: str,
         marks["t"] = now
     question = normalize_question(question)
     yield _evt({"type": "mode", "value": "deep"})
+    # Что уже собрано прошлым отчётом этого разговора (memory.py): если новый
+    # вопрос продолжает тему, начнём с этих фактов и доберём недостающее.
+    prior = None
+    try:
+        if not fresh:
+            prior = await asyncio.to_thread(al_memory.latest, state.origin.get("session_id"),
+                                            state.origin.get("username"))
+    except Exception as e:  # noqa: BLE001 — память необязательна
+        log.info("память исследования: %s", type(e).__name__)
+    runstate.bind(state)
 
     # ── План ─────────────────────────────────────────────────────────────
     yield _evt({"type": "phase", "value": "planning"})
@@ -182,7 +199,11 @@ async def stream_deep_research_gptr(question: str,
             # чтобы её можно было менять отдельно от замысла и письма.
             (os.environ.get("GPTR_PLAN_MODEL") or os.environ.get("LLM_MODEL_REASONING")
              or os.environ["LLM_MODEL_NAME"]),
-            question, history=history)
+            question, history=history,
+            prior=al_memory.brief(prior) if prior else None,
+            prior_subjects=({s_: ((prior.get("plan") or {}).get("subject_labels") or {}).get(s_, s_)
+                             for s_ in (prior.get("plan") or {}).get("subjects") or []}
+                            if prior else None))
     except Exception:
         log.exception("gptr: планирование")
         # текст исключения пользователю не показываем — он в логе (аудит 03.10, ИИ-09)
@@ -191,6 +212,11 @@ async def stream_deep_research_gptr(question: str,
         yield _evt({"type": "done"})
         return
 
+    # Продолжение: планировщик счёл вопрос той же темой, предмет совпадает и
+    # новых организаций нет (по новой организации нужен обычный сбор).
+    cont = bool(prior and getattr(plan, "continues", False)
+                and al_memory.same_topic(plan, prior)
+                and not al_memory.new_subjects(plan, prior))
     fast = os.getenv("LLM_MODEL_SMART") or os.environ["LLM_MODEL_NAME"]
     attributes = await al_facts.plan_attributes(client, fast, question, plan)
     lap("plan")
@@ -219,8 +245,14 @@ async def stream_deep_research_gptr(question: str,
                 "attributes": list(attributes),
                 "observed_attribute": attributes.observed,
                 "regulatory_attribute": attributes.regulatory,
-                "subqueries": subqueries,
+                "subqueries": [] if cont else subqueries,
                 "degraded": attributes.degraded,
+                # Продолжение прошлого отчёта: что уже собрано и когда.
+                "continues": cont,
+                "prior": ({"title": prior.get("title") or prior.get("question") or "",
+                           "date": al_memory.when(prior),
+                           "facts": len(prior.get("facts") or []),
+                           "sources": len(prior.get("sources") or {})} if cont else None),
                 "client_segment": plan.client_segment,
                 # Задача и рамка — чтобы интерфейс показал, как понят вопрос.
                 "task": getattr(plan, "task", ""), "scope": getattr(plan, "scope", ""),
@@ -231,63 +263,89 @@ async def stream_deep_research_gptr(question: str,
 
     # ── Сбор ─────────────────────────────────────────────────────────────
     yield _evt({"type": "phase", "value": "research"})
-    yield _evt({"type": "stage_status", "stage": "research",
-                "label": "Ищу и читаю источники",
-                "detail": "сайты банков, регулятор, обзоры и новости",
-                "estimate_s": 60})
-    runstate.bind(state)
-    researcher = GPTResearcher(query=question, report_type="research_report",
-                               agent="AuditLens",
-                               role=_role_prompt(plan, question))
-    # Три вещи, которые раньше шли по очереди, теперь идут вместе: сбор,
-    # разбор уже прочитанных страниц объектов и собственные данные AuditLens
-    # (аналитика жалоб, жалобы из разметки, лазейки). Им ждать сбора незачем.
     registry = al_facts.FactRegistry()
     collecting = {"on": True}
-    own_task = asyncio.ensure_future(al_own.collect(client, fast, question, plan,
-                                                      state=state))
-
-    async def _followup() -> dict[str, str]:
-        # Дослежка сюжета из жалоб — как только готовы собственные данные,
-        # параллельно основному сбору (см. followup.py).
-        od = await own_task
+    prior_ids: set = set()
+    prior_support = {"exact": 0, "close": 0}
+    followup_task = None
+    eager_pages: dict = {}
+    runstate.bind(state)
+    if cont:
+        # Продолжение прошлого отчёта: его проверенные факты — сразу в реестр,
+        # общий сбор по сети не идёт. Свежие данные AuditLens читаются как
+        # обычно; чего не хватит — доберёт руководитель исследования (lead.py).
+        n_prior, prior_support = al_memory.preload(registry, state, prior)
+        prior_ids = {f.id for f in registry.facts}
+        yield _evt({"type": "stage_status", "stage": "memory",
+                    "label": "Продолжаю прошлое исследование",
+                    "detail": (f"уже собрано: фактов {n_prior}, источников "
+                               f"{len(prior.get('sources') or {})}"
+                               + (f" · отчёт от {al_memory.when(prior)}"
+                                  if al_memory.when(prior) else "")),
+                    "estimate_s": 10})
         runstate.bind(state)
-        if not od.complaints:
-            return {}
-        return await al_followup.collect(client, fast, question, od, state=state)
-    followup_task = asyncio.ensure_future(_followup())
-    eager_task = asyncio.ensure_future(al_facts.extract_while_collecting(
-        registry, client, fast, state=state, attributes=attributes, plan=plan,
-        running=lambda: collecting["on"],
-        cap=max(1, int(os.getenv("GPTR_EXTRACT_PAGES", "35")) // 2)))
+        own_task = asyncio.ensure_future(al_own.collect(client, fast, question, plan,
+                                                          state=state))
+        await asyncio.wait({own_task})
+        runstate.bind(state)
+        pages = dict(state.pages)
+        unreadable = dict(state.unreadable)
+    else:
+        yield _evt({"type": "stage_status", "stage": "research",
+                    "label": "Ищу и читаю источники",
+                    "detail": "сайты банков, регулятор, обзоры и новости",
+                    "estimate_s": 60})
+        own_task = asyncio.ensure_future(al_own.collect(client, fast, question, plan,
+                                                          state=state))
+        runstate.bind(state)
+        researcher = GPTResearcher(query=question, report_type="research_report",
+                                   agent="AuditLens",
+                                   role=_role_prompt(plan, question))
+        # Три вещи, которые раньше шли по очереди, теперь идут вместе: сбор,
+        # разбор уже прочитанных страниц объектов и собственные данные AuditLens
+        # (аналитика жалоб, жалобы из разметки, лазейки). Им ждать сбора незачем.
 
-    async def _collect():
+        async def _followup() -> dict[str, str]:
+            # Дослежка сюжета из жалоб — как только готовы собственные данные,
+            # параллельно основному сбору (см. followup.py).
+            od = await own_task
+            runstate.bind(state)
+            if not od.complaints:
+                return {}
+            return await al_followup.collect(client, fast, question, od, state=state)
+        followup_task = asyncio.ensure_future(_followup())
+        eager_task = asyncio.ensure_future(al_facts.extract_while_collecting(
+            registry, client, fast, state=state, attributes=attributes, plan=plan,
+            running=lambda: collecting["on"],
+            cap=max(1, int(os.getenv("GPTR_EXTRACT_PAGES", "35")) // 2)))
+
+        async def _collect():
+            try:
+                await researcher.conduct_research()
+            finally:
+                collecting["on"] = False
+
         try:
-            await researcher.conduct_research()
-        finally:
+            # Сбор идёт минуту с лишним; без живого счётчика интерфейс показывает
+            # неподвижный индикатор, и аудитор не понимает, работает ли система.
+            async for ev in _tick(_collect(), lambda: {
+                    "type": "progress", "stage": "research",
+                    "pages": len(state.pages),
+                    "facts": len(registry.facts),
+                    "blocked": len(state.unreadable)}):
+                yield ev
+        except Exception:
             collecting["on"] = False
+            log.exception("gptr: сбор")
+            yield _evt({"type": "text",
+                        "chunk": f"\n\n{FAIL_COLLECT} Поиск или чтение источников не ответили — "
+                                 f"повторите запрос через минуту.\n"})
+            yield _evt({"type": "done"})
+            return
 
-    try:
-        # Сбор идёт минуту с лишним; без живого счётчика интерфейс показывает
-        # неподвижный индикатор, и аудитор не понимает, работает ли система.
-        async for ev in _tick(_collect(), lambda: {
-                "type": "progress", "stage": "research",
-                "pages": len(state.pages),
-                "facts": len(registry.facts),
-                "blocked": len(state.unreadable)}):
-            yield ev
-    except Exception:
-        collecting["on"] = False
-        log.exception("gptr: сбор")
-        yield _evt({"type": "text",
-                    "chunk": f"\n\n{FAIL_COLLECT} Поиск или чтение источников не ответили — "
-                             f"повторите запрос через минуту.\n"})
-        yield _evt({"type": "done"})
-        return
-
-    eager_pages = await eager_task
-    pages = dict(state.pages)
-    unreadable = dict(state.unreadable)
+        eager_pages = await eager_task
+        pages = dict(state.pages)
+        unreadable = dict(state.unreadable)
     lap("collect")
 
     # Наблюдаемая сторона — прежде всего собственные данные: аналитика жалоб
@@ -295,9 +353,11 @@ async def stream_deep_research_gptr(question: str,
     runstate.bind(state)
     own = await own_task
     review_pages: dict[str, str] = {}
-    if own.complaints or own.loopholes or own.pages or own.knowledge:
+    if own.complaints or own.loopholes or own.pages or own.knowledge or own.knowledge_live:
         sc = own.scope or {}
-        got = [f"документов базы знаний {own.knowledge}" if own.knowledge else "",
+        got = [f"страниц из базы знаний перечитано сегодня {own.knowledge_live}"
+               if own.knowledge_live else "",
+               f"документов базы знаний {own.knowledge}" if own.knowledge else "",
                f"жалоб {own.complaints}" if sc.get("complaints", True) else "",
                f"лазеек {own.loopholes}" if sc.get("loopholes", True) else "",
                f"предложений рынка {own.market}" if own.market else "",
@@ -311,7 +371,7 @@ async def stream_deep_research_gptr(question: str,
                         ("темы: " + ", ".join(themes)) if themes else "")
                         if x)),
                     "estimate_s": 0})
-    if (not own.complaints and getattr(plan, "subjects", None)
+    if (not cont and not own.complaints and getattr(plan, "subjects", None)
             and (own.scope or {}).get("complaints", True)):
         # Запасной путь — старый корпус banki.ru: объект вне разметки или сбой слоя.
         review_records = await asyncio.to_thread(al_reviews.collect, plan, attributes)
@@ -324,12 +384,15 @@ async def stream_deep_research_gptr(question: str,
                         "detail": "разметки по объектам нет — запасной источник",
                         "estimate_s": 0})
 
-    try:
-        fu_pages = await asyncio.wait_for(asyncio.shield(followup_task), timeout=_FOLLOWUP_WAIT)
-    except Exception as e:  # noqa: BLE001 — дослежка необязательна
-        log.info("дослежка: %s", type(e).__name__)
-        followup_task.cancel()
-        fu_pages = {}
+    fu_pages: dict[str, str] = {}
+    if followup_task is not None:
+        try:
+            fu_pages = await asyncio.wait_for(asyncio.shield(followup_task),
+                                              timeout=_FOLLOWUP_WAIT)
+        except Exception as e:  # noqa: BLE001 — дослежка необязательна
+            log.info("дослежка: %s", type(e).__name__)
+            followup_task.cancel()
+            fu_pages = {}
     runstate.bind(state)
     if fu_pages:
         pages.update(fu_pages)
@@ -346,10 +409,15 @@ async def stream_deep_research_gptr(question: str,
     # ── Факты ────────────────────────────────────────────────────────────
     # Между чтением и письмом появляется типизированный слой: каждый факт
     # опирается на дословную цитату, и она проверяется подстрочным поиском.
+    # В продолжении читаем только новое: документы базы знаний, которых не было
+    # в прошлом отчёте. «Страницы» памяти — это уже выписанные цитаты.
+    to_read = ({u: t for u, t in pages.items()
+                if u in state.preloaded and u not in (prior.get("sources") or {})}
+               if cont else pages)
     yield _evt({"type": "phase", "value": "extraction"})
     yield _evt({"type": "stage_status", "stage": "facts",
                 "label": "Выписываю факты с цитатами",
-                "detail": f"страниц в разборе: {len(pages)}",
+                "detail": f"страниц в разборе: {len(to_read)}",
                 "estimate_s": 40})
     runstate.bind(state)
     async def _extract():
@@ -359,7 +427,7 @@ async def stream_deep_research_gptr(question: str,
         # прочитанные 8 страниц не дали отчёту ни одного факта (26.09).
         await asyncio.gather(
             al_facts.build_registry(
-                client, fast, pages={u: t for u, t in pages.items() if u not in fu_pages},
+                client, fast, pages={u: t for u, t in to_read.items() if u not in fu_pages},
                 attributes=attributes, plan=plan,
                 # документы базы знаний и жалобы корпуса разбираются вне очереди
                 keep_pages=set(review_pages) | {
@@ -374,13 +442,18 @@ async def stream_deep_research_gptr(question: str,
 
     async for ev in _tick(_extract(), lambda: {
             "type": "progress", "stage": "facts",
-            "pages_total": len(pages), "facts": len(registry.facts),
+            "pages_total": len(to_read), "facts": len(registry.facts),
             "ahead": len(eager_pages)}):
         yield ev
     # Собственные данные — после извлечения: их факты собрал код (числа среза,
     # пересказ и сверенная цитата разметки), пересказывать их моделью незачем.
     runstate.bind(state)
+    # В продолжении сводки AuditLens могли остаться с прошлого отчёта — тот же
+    # факт дважды не кладём.
+    have = {(f.url, f.verbatim) for f in registry.facts} if cont else set()
     for kw in own.facts:
+        if (kw.get("url"), kw.get("verbatim")) in have:
+            continue
         registry.add(**kw)
     pages.update(own.pages)
     if review_pages:
@@ -396,7 +469,13 @@ async def stream_deep_research_gptr(question: str,
     need_task = (asyncio.ensure_future(al_lead.assess(
         client, al_lead.model_for(), question=question, plan=plan, registry=registry, state=state))
         if al_lead.enabled() and getattr(plan, "task", None) is not None else None)
-    verdict = await al_critic.review(client, fast, registry, pages)
+    if cont:
+        # Факты памяти прошли критика в своём прогоне — судим только новое.
+        verdict = await al_critic.review_added(
+            client, fast, registry, pages, prior_ids,
+            al_critic.Verdict(exact=prior_support["exact"], close=prior_support["close"]))
+    else:
+        verdict = await al_critic.review(client, fast, registry, pages)
     lap("critic")
     filled = None
     checked_ids = {f.id for f in registry.facts} | set(verdict.cut_ids)
@@ -471,6 +550,7 @@ async def stream_deep_research_gptr(question: str,
     # сохранённый отчёт получил бы резюме в конце.
     body_parts: list[str] = []
     lead_text = ""
+    report_name = ""
     try:
         async for kind, payload in al_dossier.write_dossier(
                 client, writer_model, question=question, plan=plan,
@@ -478,6 +558,7 @@ async def stream_deep_research_gptr(question: str,
             if kind == "titles":
                 _ttl.update(payload)
             elif kind == "report_title":
+                report_name = payload
                 yield _evt({"type": "report_title", "title": payload})
             elif kind == "outline":
                 # Оглавление — после брифа: состав разделов теперь зависит от
@@ -661,5 +742,38 @@ async def stream_deep_research_gptr(question: str,
                             for g in gap_lines]})
 
     lap("verify")
+    # Просили презентацию — собираем её по готовому отчёту и отдаём файлом:
+    # план слайдов пишет модель, числа с отчётом сверяет код (deck.py).
+    if getattr(plan, "deliverable", "") == "deck":
+        yield _evt({"type": "stage_status", "stage": "deck",
+                    "label": "Рисую презентацию по отчёту",
+                    "detail": "макет под этот отчёт — обычно две-три минуты", "estimate_s": 150})
+        try:
+            from ...ai import agent_files
+            data, info = await asyncio.wait_for(al_deck_html.build(
+                client, question=question, title=report_name, report=report,
+                sources=sources), timeout=420)
+            stored = await asyncio.to_thread(
+                agent_files.store, al_deck_html.file_name(report_name or question), data)
+            unknown = info.get("unknown") or []
+            yield _evt({"type": "text", "chunk": (
+                f"\n\n## Презентация\n\n{info['slides']} слайдов и список источников, в стиле "
+                f"AuditLens. Один файл: открывается в браузере без интернета, листается "
+                f"стрелками, F — на весь экран, P — печать в PDF."
+                + (" Числа на слайдах сверены с текстом отчёта." if not unknown else
+                   f" Сверьте вручную числа, которых нет в отчёте дословно: {', '.join(unknown[:8])}.")
+                + f"\n\n{stored['marker']}\n")})
+            yield _evt({"type": "files", "ids": [stored["id"]]})
+        except Exception as e:  # noqa: BLE001 — отчёт готов и без файла
+            log.warning("презентация: не собрана — %s", str(e)[:160])
+        lap("deck")
+    # Снимок для памяти исследования — служебное событие: веб-слой сохранит его
+    # вместе с отчётом и клиенту не отдаст.
+    if al_memory.enabled() and registry.facts:
+        try:
+            yield _evt({"type": al_memory.EVENT,
+                        "data": al_memory.dump(registry, state, plan, question, attributes)})
+        except Exception as e:  # noqa: BLE001 — память необязательна
+            log.info("память исследования: снимок не собран — %s", type(e).__name__)
     yield _evt({"type": "done", "elapsed_s": round(time.time() - started, 1),
                 "timings": dict(state.timings), "task": getattr(plan, "task", "")})
