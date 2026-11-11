@@ -2013,11 +2013,21 @@ _RR_INS = "Given an auditor's search query, judge whether the bank customer comp
 _RR_SUF = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
 
 
+# Реранкер недоступен — не ждём его на каждом поиске: после сбоя пропускаем
+# _RR_PAUSE_S секунд. Замер 11.11: служба отвечала ConnectError, и каждый поиск во
+# вкладке и у ИИ-помощника терял на ней до шести секунд (три запроса на банк — 18).
+_RR_PAUSE_S = float(os.getenv("REVIEWS_RERANK_PAUSE_S", "300"))
+_rr_down_until = 0.0
+
+
 def _rerank(query: str, texts: list[str]) -> list[float] | None:
     """Оценки реранкера 0..1 по порядку texts (шаблон Qwen3-Reranker: без него оценки
     плоские). None — реранкер недоступен."""
+    global _rr_down_until
     from ..ai.analyst import LLM_API_KEY, LLM_BASE_URL
     if not LLM_API_KEY or not LLM_BASE_URL or not texts:
+        return None
+    if time.monotonic() < _rr_down_until:
         return None
     try:
         import httpx
@@ -2032,7 +2042,9 @@ def _rerank(query: str, texts: list[str]) -> list[float] | None:
             return None
         return [sc[k] for k in range(len(texts))]
     except Exception as e:  # noqa: BLE001
-        log.info("reviews_dash: реранкер недоступен (%s)", type(e).__name__)
+        _rr_down_until = time.monotonic() + _RR_PAUSE_S
+        log.warning("reviews_dash: реранкер недоступен (%s: %s) — пропускаем %.0f с",
+                    type(e).__name__, str(e)[:120], _RR_PAUSE_S)
         return None
 
 

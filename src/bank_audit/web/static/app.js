@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 e9393138078f6418ea7c52953c5f9bccfb96113badbbfa81c4325e3d932f025e): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 aef53e25811e840032c56d358ea2f902b2875167ce4a7c3988bb83d452cf46f8): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -10954,7 +10954,8 @@ function ReviewsPage({
   // сигнала, — из клика по всплеску и из уведомления по подписке
   const [fWeek, setFWeek] = useState(() => RV_SIG_RX.test(P.month || "") ? P.month : "");
   const [fOrder, setFOrder] = useState("date"); // date | severity (без поиска)
-  const [fView, setFView] = useState("cards"); // cards | groups | stories
+  // вид ленты — из адреса: ИИ-помощник ссылается на «Сюжеты» того же среза (view=stories)
+  const [fView, setFView] = useState(() => ["groups", "stories"].includes(P.view) ? P.view : "cards"); // cards | groups | stories
   const [cl, setCl] = useState(null),
     [clBusy, setClBusy] = useState(false);
   const [grp, setGrp] = useState(null),

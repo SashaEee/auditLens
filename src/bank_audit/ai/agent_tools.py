@@ -169,6 +169,13 @@ def link_reviews(bank: str | None = SBER, product: str | None = None,
         date_from=d0, date_to=_iso_day(date_to) if d0 else None).to_url()
 
 
+def link_stories(bank: str, product: str | None, period) -> str:
+    """Ссылка на «Сюжеты» того же среза: лента жалоб, вид «сюжеты»."""
+    from ..rag.reviews_dash import ReviewQuery
+    url = ReviewQuery(bank=bank, product=product, period=period).to_url(tab="complaints")
+    return url + ("&" if "?" in url else "?") + "view=stories"
+
+
 def _week_dates(week_end, days: int = 7) -> tuple[str | None, str | None]:
     """Дни выборки недельного сигнала «с — по» включительно: она кончается днём
     week_end (reviews_dash.week_end) и длится days дней."""
@@ -477,6 +484,65 @@ def tool_complaint_search(query: str, bank: str = SBER, product: Product | None 
                 "glossary": _gl.terms("со словами запроса", "по смыслу"),
                 "complaints": [_complaint(it, 500) for it in res.get("items") or []],
                 "link": link_reviews(bank, product, theme, q=query, period=per)})
+
+
+def tool_complaint_stories(bank: str = SBER, product: Product | None = None, days: int = 90,
+                           limit: int = 8, date_from: str | None = None,
+                           date_to: str | None = None) -> str:
+    """«Сюжеты» раздела «Аудит отзывов»: устойчивые группы похожих историй клиентов.
+
+    Поиск жалоб писался, когда разметки ИИ и сюжетов ещё не было, и помощник не
+    видел того, что аудитор видит во вкладке: какая история повторяется, сколько
+    в ней жалоб, новая она или выросла. Числа — те же, что во вкладке."""
+    from ..rag import review_stories as rs
+    rd, rw = _rd(), _rw()
+    days = max(7, min(int(days or 90), 365))
+    try:
+        per = _period(product, days, date_from, date_to)
+    except ValueError as e:
+        return out({"error": str(e)})
+    bc = rd.resolve_bank(bank)
+    if not bc:
+        return out({"error": f"банк «{bank}» не найден в корпусе отзывов"})
+    b = per.binds()
+    meta: dict = {}
+    try:
+        items = rs.list_stories(bc, product=product, limit=max(1, min(int(limit or 8), 20)),
+                                t0=b["t0"], t1=b["t1"], _meta=meta)
+    except Exception as e:  # noqa: BLE001 — сбой — не «сюжетов нет»
+        log.info("complaint_stories: %s", type(e).__name__)
+        return out({"error": "stories_failed: сюжеты не прочитаны (сбой базы), повторить позже"})
+    try:
+        grown = {int(g["story_id"]): g for g in rs.story_signals(bc, product=product) or []}
+    except Exception as e:  # noqa: BLE001 — рост за неделю необязателен
+        log.info("complaint_stories, рост недели: %s", type(e).__name__)
+        grown = {}
+    cards = {c["url"]: c for c in (rw.reviews_by_urls(
+        [u for x in items for u in (x.get("top_urls") or [])[:2]]) if items else [])}
+    stories = []
+    for x in items:
+        g = grown.get(x["story_id"]) or {}
+        stories.append({
+            "title": x["title"], "what": x.get("summary"), "problem": x.get("issue_label"),
+            "complaints_in_period": x["n_window"], "complaints_all_time": x["n"],
+            "first_seen": (x.get("first_seen") or "")[:10], "last_seen": (x.get("last_seen") or "")[:10],
+            "status": "затих" if x.get("status") == "quiet" else "действует",
+            "badges": [bd.get("label") for bd in x.get("badges") or []] or None,
+            # вырос за неделю сверх своей нормы — то же правило, что у всплесков тем
+            "grew_this_week": ({"week": g.get("week"), "norm_per_week": g.get("baseline_week"),
+                                "ratio": g.get("ratio"), "same_at_other_banks": g.get("market")}
+                               if g else None),
+            "examples": [_complaint(cards[u], 500) for u in (x.get("top_urls") or [])[:2]
+                         if u in cards]})
+    info = per.info()
+    return out({"bank": bc, "product": product, "days": per.days,
+                "period": {"from": info.get("from"), "to": info.get("to")},
+                "stories": stories, "total_stories": meta.get("total", len(stories)),
+                "counting": ("сюжет — устойчивая группа похожих историй клиентов, от трёх жалоб; "
+                             "пересчитываются раз в сутки по жалобам за 90 дней; число в сюжете "
+                             "— жалобы периода, которые в него входят, а не все жалобы темы"),
+                "glossary": _gl.terms("тема"),
+                "link": link_stories(bc, product, per)})
 
 
 _CELL_KEYS = ("category", "label", "rank", "n_banks", "percentile", "tied", "metric_label",
@@ -930,8 +996,8 @@ def tool_sql(query: str) -> str:
     if stale:
         return out({"error": f"{', '.join(stale)} — старая разметка жалоб, её числа не совпадают "
                              "с разделом «Аудит отзывов». Жалобы, темы и признаки — инструментами "
-                             "complaints_overview, complaint_theme, complaint_search, "
-                             "complaint_signals.",
+                             "complaints_overview, complaint_stories, complaint_theme, "
+                             "complaint_search, complaint_signals.",
                     "counting": _gl.COMPLAINT_SHORT})
     from sqlalchemy import text
     from .. import db
@@ -975,6 +1041,14 @@ TOOLS: list[ToolSpec] = [
              "days=7 — ровно выборка недельного сигнала; date_from/date_to — период «с — по», "
              "как во вкладке. Число жалоб темы — total, не длина списка. Темы: "
              + THEMES_HELP),
+    ToolSpec("complaint_stories", "Сюжеты жалоб", tool_complaint_stories,
+             "«Сюжеты» раздела «Аудит отзывов»: устойчивые группы похожих историй клиентов "
+             "банка (или продукта, среза) за период — название и суть сюжета, сколько жалоб "
+             "в периоде и за всё время, когда появился, значки «новый сюжет» / «вырос с A до "
+             "B» / «вернулся», вырос ли за неделю сверх своей нормы и есть ли та же история "
+             "у других банков, две жалобы-примера. С этого начинай ответ на «на что "
+             "жалуются», «какие истории повторяются», «что нового в жалобах»; числа по "
+             "темам — complaints_overview."),
     ToolSpec("complaints_overview", "Сводка жалоб", tool_complaints_overview,
              "Жалобы на банк (или продукт) за период — те же числа, что в разделе «Аудит "
              "отзывов»: число и изменение, доля и место среди банков, эскалация против рынка, "

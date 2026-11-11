@@ -5409,7 +5409,8 @@ function ReviewsPage({params}){
   // сигнала, — из клика по всплеску и из уведомления по подписке
   const[fWeek,setFWeek]=useState(()=>RV_SIG_RX.test(P.month||"")?P.month:"");
   const[fOrder,setFOrder]=useState("date");             // date | severity (без поиска)
-  const[fView,setFView]=useState("cards");              // cards | groups | stories
+  // вид ленты — из адреса: ИИ-помощник ссылается на «Сюжеты» того же среза (view=stories)
+  const[fView,setFView]=useState(()=>["groups","stories"].includes(P.view)?P.view:"cards");   // cards | groups | stories
   const[cl,setCl]=useState(null),[clBusy,setClBusy]=useState(false);
   const[grp,setGrp]=useState(null),[grpItems,setGrpItems]=useState(null);
   const[sts,setSts]=useState(null),[stsBusy,setStsBusy]=useState(false),[stEv,setStEv]=useState(null);

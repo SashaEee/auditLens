@@ -84,6 +84,10 @@ _SCOPE_SYSTEM = """Ты выбираешь срез СОБСТВЕННЫХ ДА�
   Вопрос о теме жалоб без продукта («жалобы на чарджбэк») — null: срез задаёт тема;
 - "themes": 0–3 ключа тем жалоб из перечня, только если вопрос про конкретную проблему
   (для «почему растут жалобы на X» — тема X); иначе [];
+- "search": 0–2 короткие поисковые фразы СЛОВАМИ КЛИЕНТА, если вопрос про конкретную
+  ситуацию или услугу, которой нет ни среди продуктов, ни среди тем («курьер не привёз
+  карту», «не пересчитали проценты после досрочного погашения»). Название продукта
+  сюда не пиши — его задаёт "product". Иначе [];
 - "days": 7 — вопрос про эту неделю или всплеск; 90 — по умолчанию; 180 или 365 —
   если спрошен длинный период;
 - "complaints": true почти всегда: жалобы клиентов — реальный опыт с продуктом, и в
@@ -95,8 +99,8 @@ _SCOPE_SYSTEM = """Ты выбираешь срез СОБСТВЕННЫХ ДА�
 - "category": категория витрины «Рынок» из перечня (ключ) или null;
 - "market": true, если ответу нужны условия продуктов банков — ставки, комиссии,
   сравнение с конкурентами, позиция на рынке; иначе false.
-Ответ — строго JSON: {"product": ..., "themes": [...], "days": ..., "complaints": ...,
-"loopholes": ..., "category": ..., "market": ...}"""
+Ответ — строго JSON: {"product": ..., "themes": [...], "search": [...], "days": ...,
+"complaints": ..., "loopholes": ..., "category": ..., "market": ...}"""
 
 # Слова подписей продуктов, которые ничего не различают: «карта» есть и в
 # дебетовой, и в кредитной, «кредит» — в половине перечня.
@@ -138,10 +142,18 @@ async def scope_for(client, model: str, question: str, plan) -> dict:
 
 def normalize_scope(data: dict, question: str, plan) -> dict:
     product = data.get("product") if data.get("product") in T.PRODUCT_LABELS else None
-    if product and not product_named(product, question):
+    # Продукт должен быть назван — в вопросе или в том, как его понял планировщик.
+    # Уточнение «подробнее про досрочное погашение» после сравнения потребкредитов
+    # продукта не называет, и срез терял его: жалобы шли по всем продуктам банка
+    # (живая проверка 11.11). Предмет плана — тоже слова аудитора, только раскрытые.
+    named_in = " ".join([question or "", getattr(plan, "product", "") or "",
+                         " ".join(getattr(plan, "product_synonyms", None) or [])])
+    if product and not product_named(product, named_in):
         log.info("срез данных: продукт «%s» в вопросе не назван — без продукта", product)
         product = None
     themes = [t for t in (data.get("themes") or []) if t in T.THEME_KEYS][:3]
+    search = [re.sub(r"\s+", " ", str(x)).strip()[:80] for x in (data.get("search") or [])
+              if isinstance(x, str) and len(x.strip()) >= 6][:2]
     try:
         days = int(data.get("days") or 90)
     except (TypeError, ValueError):
@@ -170,7 +182,7 @@ def normalize_scope(data: dict, question: str, plan) -> dict:
         audit_task = task in ("compare", "product", "complaints", "check", "news")
         complaints = asked_c or bool(getattr(plan, "needs_complaints", False)) or audit_task
         loopholes = asked_l or (audit_task and nature != "regulatory")
-    return {"product": product, "themes": themes, "days": days,
+    return {"product": product, "themes": themes, "search": search, "days": days,
             "complaints": complaints, "loopholes": loopholes,
             # список банков по числу жалоб — когда вопрос о жалобах или сравнении;
             # в рассказе о продукте Сбера конкурентов аудитор не просил
@@ -427,6 +439,91 @@ def _trend_line(bank: str, product: str | None, days: int) -> tuple[str, str] | 
     return ", ".join(_n(x["n"]) for x in series), txt
 
 
+# Значки сюжета — словами, понятными без вкладки.
+_BADGE_RU = {"слился": "вобрал похожий сюжет", "слились": "вобрал похожий сюжет"}
+
+
+def _plural(n, one: str, few: str, many: str) -> str:
+    try:
+        a = abs(int(n)) % 100
+    except (TypeError, ValueError):
+        return many
+    b = a % 10
+    return many if 10 < a < 20 else few if 1 < b < 5 else one if b == 1 else many
+
+
+def _stories_for_bank(od: OwnData, slug: str, bank: str, scope: dict, limit: int) -> int:
+    """Сюжеты банка по срезу — страницей и фактами; жалобы-примеры — цитатами."""
+    product = scope["product"]
+    days = max(scope["days"], 90)
+    st = _j("complaint_stories", bank=bank, product=product, days=days, limit=limit)
+    # Сюжет с одной жалобой в срезе — это одна жалоба, а не повторяющаяся история.
+    stories = [x for x in st.get("stories") or [] if (x.get("complaints_in_period") or 0) >= 2]
+    if st.get("error") or not stories:
+        return 0
+    who = bank + (f" · {product}" if product else "")
+    url = st.get("link") or (T.link_reviews(bank, product, days=days) + "&view=stories")
+    lines: list[str] = []
+    rows: list[tuple[str, str, str]] = []
+    for x in stories:
+        marks = [_BADGE_RU.get(m, m) for m in (x.get("badges") or []) if m]
+        g = x.get("grew_this_week") or {}
+        if g.get("week") is not None:
+            marks.append(f"за неделю {_n(g['week'])} при норме {_f(g.get('norm_per_week'))} "
+                         f"(×{_f(g.get('ratio'))})")
+        txt = (f"Сюжет «{x['title']}»: {_n(x['complaints_in_period'])} "
+               f"{_plural(x['complaints_in_period'], 'жалоба', 'жалобы', 'жалоб')} за {days} дней"
+               + (f" (всего {_n(x['complaints_all_time'])}, первая {_dm(x.get('first_seen'))}, "
+                  f"последняя {_dm(x.get('last_seen'))})" if x.get("complaints_all_time") else "")
+               + (f"; {', '.join(marks)}" if marks else "")
+               + (f"; проблема — {x['problem']}" if x.get("problem") else "")
+               + (f". Суть: {x['what']}" if x.get("what") else "."))
+        lines.append(txt)
+        rows.append((f"Жалобы: сюжет «{x['title'][:80]}»", _n(x["complaints_in_period"]), txt))
+    total = st.get("total_stories")
+    if total and total > len(stories):
+        lines.append(f"Показаны {len(stories)} сюжетов с наибольшим числом жалоб из {_n(total)}.")
+    od.page(url, f"AuditLens · Отзывы: {who} — сюжеты за {days} дней", lines, "complaints")
+    for attribute, value, text_ in rows:
+        od.fact(subject=slug, attribute=attribute, value=value, verbatim=text_, url=url,
+                date=str((st.get("period") or {}).get("to") or "")[:10])
+    for x in stories:
+        _complaint_quotes(od, slug, bank, (x.get("examples") or [])[:2 if limit > 3 else 1],
+                          f"сюжет «{x['title'][:60]}»")
+    return len(stories)
+
+
+def _theme_quotes(od: OwnData, slug: str, bank: str, scope: dict, per_theme: int = 4) -> int:
+    """Темы вопроса у конкурента: сколько жалоб, группы похожих и несколько цитат —
+    по разметке, без поиска по словам."""
+    product, days = scope["product"], max(scope["days"], 30)
+    who = bank + (f" · {product}" if product else "")
+    got = 0
+    for key in scope["themes"][:2]:
+        th = _j("complaint_theme", theme=key, bank=bank, product=product, days=days)
+        if th.get("error") or not th.get("total"):
+            continue
+        label = th.get("label") or key
+        url = T.link_reviews(bank, product, key, days)
+        lines = [f"Жалоб по теме «{label}» за {days} дней: {_n(th['total'])}."]
+        rows = [(f"Жалобы: тема «{label}» за {days} дней", _n(th["total"]), lines[0])]
+        for g in (th.get("similar_groups") or [])[:3]:
+            if not g.get("n"):
+                continue
+            txt = (f"Группа похожих жалоб по теме «{label}»: {_n(g['n'])} жалоб "
+                   f"({_dm(g.get('first'))}–{_dm(g.get('last'))}): {g.get('summary') or ''}"
+                   + (f" Пример: «{g['quote']}»" if g.get("quote") else ""))
+            lines.append(txt)
+            rows.append((f"Жалобы: группа похожих «{label}»", _n(g["n"]), txt))
+        od.page(url, f"AuditLens · Отзывы: {who} — тема «{label}»", lines, "complaints")
+        for attribute, value, text_ in rows:
+            od.fact(subject=slug, attribute=attribute, value=value, verbatim=text_, url=url)
+        before = od.complaints
+        _complaint_quotes(od, slug, bank, (th.get("complaints") or [])[:per_theme], label)
+        got += od.complaints - before
+    return got
+
+
 def _complaint_quotes(od: OwnData, slug: str, bank: str, items: list[dict],
                       label: str | None) -> None:
     """Жалобы как страницы: текст клиента; факт — пересказ разметки и дословная
@@ -484,15 +581,33 @@ def collect_complaints(od: OwnData, plan, scope: dict, question: str) -> None:
         part = OwnData(scope=od.scope)
         bank = _bank_name(slug, labels)
         done: list[str] = []
+        stories = quotes = 0
         if overview:
             try:
                 done = _complaints_for_bank(part, slug, bank, scope, slug == anchor, signal_themes)
             except Exception as e:  # noqa: BLE001 — банк без корпуса не должен ронять сбор
                 log.info("жалобы %s: %s", bank, type(e).__name__)
                 return part
-        # Жалобы-цитаты по предмету — конкурентам и точке отсчёта, если темы не
-        # разобраны (для темы они уже пришли выборкой сигнала или лентой).
-        if slug != anchor or not done:
+            # Сюжеты — повторяющиеся истории клиентов по размеченным жалобам: то, что
+            # аудитор видит во вкладке и чего у отчёта не было. У точки отсчёта —
+            # подробно, у остальных — три главных («что болит у других»).
+            try:
+                stories = _stories_for_bank(part, slug, bank, scope, 6 if slug == anchor else 3)
+            except Exception as e:  # noqa: BLE001
+                log.info("сюжеты %s: %s", bank, type(e).__name__)
+            # У конкурента темы вопроса разбираем по разметке (тема — главная
+            # проблема жалобы), а не поиском по названию продукта.
+            if slug != anchor and scope["themes"]:
+                try:
+                    quotes = _theme_quotes(part, slug, bank, scope)
+                except Exception as e:  # noqa: BLE001
+                    log.info("темы %s: %s", bank, type(e).__name__)
+        # Поиск по словам и смыслу — когда вопрос про ситуацию, которой нет в
+        # перечнях (её фразы дал срез), или когда разметка ничего не дала. Раньше
+        # он шёл всегда и искал название продукта: до трёх запросов на банк, по
+        # 20–30 секунд каждый, а находил общие жалобы на продукт.
+        need_search = bool(scope.get("search")) or (not done and not stories and not quotes)
+        if need_search:
             try:
                 _on_topic(part, slug, bank, plan, scope, question, stems, overview,
                           _COMPLAINTS_PER_BANK if slug == anchor else 8)
@@ -523,8 +638,12 @@ def _on_topic(od: OwnData, slug: str, bank: str, plan, scope: dict, question: st
     предмет не назван. Без сводки (overview=False) число найденных — отдельный
     факт; ничего не нашлось — строка в «Честные пробелы», а не раздел."""
     days = max(scope["days"], 90)
-    asks = [(getattr(plan, "product", "") or question)[:120]]
-    asks += [str(x)[:80] for x in (getattr(plan, "product_synonyms", None) or [])[:2]]
+    # Ищем ситуацию словами клиента (их дал срез), а не название продукта: продукт
+    # и так задан фильтром. Фраз нет — предмет вопроса и один синоним.
+    asks = list(scope.get("search") or [])
+    if not asks:
+        asks = [(getattr(plan, "product", "") or question)[:120]]
+        asks += [str(x)[:80] for x in (getattr(plan, "product_synonyms", None) or [])[:1]]
     items, seen, total, link = [], set(), 0, ""
     for ask in dict.fromkeys(a for a in asks if a.strip()):
         res = _j("complaint_search", query=ask, bank=bank, product=scope["product"],
