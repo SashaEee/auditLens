@@ -66,9 +66,10 @@ function AiWelcome({onFill,recent,onOpenHistory,onLoadSession,dayIns}){
     <div className="aw-eyebrow">{me?`${greeting(me)} · ИИ-помощник`:"ИИ-помощник · AuditLens"}</div>
     <h1 className="aw-title">Спросите о продуктах, жалобах и&nbsp;регулировании</h1>
     <p className="aw-lede">Помощник отвечает по данным AuditLens — жалобам клиентов, тарифам банков, новостям и документам ЦБ — и ссылается на источники.</p>
-    <div className="aw-modes">
-      <div><b>Быстрый ответ</b><span>обычно меньше минуты · по данным AuditLens и открытым источникам</span></div>
-      <div><b>Отчёт · Deep Research</b><span>обычно 5–10 минут · план, сбор, сверка чисел</span></div>
+    <div className="aw-modes" role="note" aria-label="Как отвечает помощник">
+      <div><b>Короткая справка</b><span>ставка, лимит, норма, примеры жалоб — меньше минуты</span></div>
+      <div><b>Отчёт с источниками</b><span>сравнение, обзор продукта, разбор жалоб — 3–5 минут, числа сверены</span></div>
+      <p className="aw-modes-n">Выбирать не нужно: помощник сам поймёт по вопросу, что нужно, и сразу скажет, чем отвечает. Не угадал — поправите одним нажатием.</p>
     </div>
 
     {dayIns&&dayIns.length>0&&<section className="aw-sec" aria-labelledby="aw-day-h">
@@ -6899,33 +6900,73 @@ function ClarifyCard({msg, onSubmit, onSkip}){
   </div>;
 }
 
-// ─── Deep Research console — единая timeline-консоль прогона (редизайн).
-//     Шесть display-фаз поверх реальных phase-событий; внутри каждой —
-//     живые агенты (research), «размышления модели» (reasoning по стадиям,
-//     переиспользуется ThinkingPanel), план отчёта (outline) и доуточнение
-//     пробелов (gap-loop). Всё на реальном SSE-стриме. ─────────────────────
+// ─── Консоль хода отчёта ─────────────────────────────────────────────────────
+//     Пять этапов, как их видит аудитор. Консоль отвечает на четыре вопроса:
+//       • сколько ещё ждать — по обычной длительности этапов (событие typical);
+//       • что помощник понял из вопроса и что войдёт в отчёт;
+//       • куда он ходит — сайты и число прочитанных страниц, а не «идёт сбор»;
+//       • что уже написано — готовые разделы можно читать, пока пишутся остальные.
+//     Пройденные этапы сворачиваются в строку с итогом, раскрываются по нажатию.
 const DEEP_FLOW = [
-  {key:"parse",   label:"Разбор вопроса",
-   hint:"что именно отчёт обязан закрыть",            phases:["planning"]},
-  {key:"collect", label:"Поиск и чтение источников",
-   hint:"сайты организаций, регуляторы, взгляд со стороны", phases:["research"]},
-  {key:"facts",   label:"Извлечение фактов",
-   hint:"каждое утверждение — с цитатой из источника", phases:["extraction"]},
-  {key:"synth",   label:"Написание отчёта",
-   hint:"только по фактам, с якорями",                phases:["writing"]},
-  {key:"verify",  label:"Сверка и пробелы",
-   hint:"числа против источников, покрытие контракта", phases:["verification"]},
+  {key:"parse",   label:"Разбор вопроса",             phases:["planning"]},
+  {key:"collect", label:"Поиск и чтение источников",   phases:["research"]},
+  {key:"facts",   label:"Выписка фактов с цитатами",   phases:["extraction"]},
+  {key:"synth",   label:"Написание отчёта",            phases:["writing"]},
+  {key:"verify",  label:"Сверка чисел с источниками",  phases:["verification"]},
 ];
-// Какие reasoning-стадии показывать под какой display-фазой. active-флаг по-
-// прежнему вычисляется через STAGE_PHASE (стадия активна ТОЛЬКО на своей фазе).
-const PHASE_REASON = {parse:["conductor"], synth:["analyst"]};
+const DR_PHASES=["planning","research","extraction","writing","verification"];
+// запасные значения — замер живых отчётов; сервер присылает медиану недавних (typical)
+const DR_TYPICAL={planning:15,research:60,extraction:55,writing:125,verification:8};
 
-// Стороны доказательства — три разных источника правды, и аудитор должен
-// видеть их по отдельности, а не общим числом «фактов».
+// Сколько осталось и какая доля пути пройдена — по обычной длительности этапов.
+function drEta(m){
+  const typ={...DR_TYPICAL,...((m.typical&&m.typical.steps)||{})};
+  const idx=DR_PHASES.indexOf(m.phase);
+  if(idx<0) return {left:null,pct:m.phase==="done"?100:2,over:false};
+  const total=DR_PHASES.reduce((a,p)=>a+(typ[p]||0),0)||1;
+  const inPhase=m.phaseAt?Math.max(0,(Date.now()-m.phaseAt)/1000):0;
+  const cur=typ[DR_PHASES[idx]]||1;
+  let before=0; for(let k=0;k<idx;k++) before+=typ[DR_PHASES[k]]||0;
+  let after=0;  for(let k=idx+1;k<DR_PHASES.length;k++) after+=typ[DR_PHASES[k]]||0;
+  // этап идёт дольше обычного — «0 секунд» не обещаем, держим небольшой хвост
+  const curLeft=Math.max(cur-inPhase,Math.min(20,cur*0.2));
+  return {left:Math.round(after+curLeft), over:inPhase>cur*1.8+20,
+          pct:Math.min(97,Math.max(2,Math.round((before+Math.min(inPhase,cur*0.95))/total*100)))};
+}
+const drLeftText=e=>{
+  if(!e||e.left==null) return "";
+  if(e.over) return "дольше обычного — работаю";
+  if(e.left<40) return "осталось меньше минуты";
+  if(e.left<95) return "осталась примерно минута";
+  return `осталось примерно ${Math.round(e.left/60)} мин`;
+};
+
+// Что с разделами отчёта: написан, пишется, ждёт. Тело приходит по порядку, а
+// резюме и «что проверить» пишутся последними — по готовому тексту — и встают наверх.
+function drSections(m){
+  const titles=m.outline||[]; if(!titles.length) return [];
+  const text=m.text||"";
+  const present=titles.map(t=>text.indexOf("## "+t)>=0);
+  const first=present.indexOf(true), last=present.lastIndexOf(true);
+  const lead=i=>first<0?false:i<first;           // разделы до первого пришедшего — «шапка»
+  const bodyAll=first>=0&&present.slice(first).every(Boolean);
+  return titles.map((t,i)=>{
+    if(m.hasLead) return {title:t,state:"done"};
+    if(first<0) return {title:t,state:"wait"};
+    if(lead(i)) return {title:t,state:bodyAll&&!m.writingSection?"writing":"last"};
+    if(!present[i]) return {title:t,state:"wait"};
+    if(m.writingSection?t===m.writingSection:i===last&&!bodyAll) return {title:t,state:"writing"};
+    return {title:t,state:"done"};
+  });
+}
+
+// Стороны доказательства — разные источники правды, и аудитор должен видеть их
+// по отдельности, а не общим числом «фактов».
 const STANCE_UI = {
-  declared:   {label:"заявлено",  hint:"со слов самой организации"},
-  observed:   {label:"со стороны", hint:"жалобы, отзывы, разборы"},
-  regulatory: {label:"нормы",      hint:"требования закона и регулятора"},
+  declared:   {label:"заявлено организацией", hint:"со слов самой организации: сайт, тарифы, документы"},
+  observed:   {label:"взгляд со стороны",      hint:"жалобы, отзывы, разборы и новости"},
+  regulatory: {label:"нормы",                  hint:"требования закона и регулятора"},
+  loophole:   {label:"уязвимости",             hint:"описанные способы обойти правила"},
 };
 
 // Как понят вопрос: задача и рамка. Аудит 11.11 — отчёт сам добавлял конкурентов
@@ -6938,38 +6979,43 @@ const drScope=u=>{const n=(u.names||[]).filter(Boolean);
   if(u.scope==="sber")return "только "+n.join(" и ")+", без конкурентов";
   return n.slice(0,5).join(", ")+(n.length>5?` и ещё ${n.length-5}`:"");};
 
-function DeepConsole({m, loading, elapsed, onFresh}){
+function DeepConsole({m, loading, elapsed, onFresh, onShort, compact, onToggle}){
   const phase=m.phase;
   const curIdx = phase==="done" ? DEEP_FLOW.length
     : Math.max(0, DEEP_FLOW.findIndex(d=>d.phases.includes(phase)));
-  const srcN   = (m.sources||[]).length;
+  const [openRows,setOpenRows]=useState({});     // что человек раскрыл или свернул сам
   const contract = m.contract||[];
   const subq   = m.subqueries||[];
   const prog   = m.progress||{};
   const fs     = m.factStats||{};
   const stance = fs.by_stance||{};
-  const anchors= m.verification?.citations||0;
   const gapsN  = (m.gapsList||[]).length;
   const verified=m.verification?.verified||m.claimCheck?.verified||0;
   const checked =m.verification?.numeric_checked||0;
-  const pct = Math.min(100, Math.round(((curIdx + (phase==="done"?0:0.5))/DEEP_FLOW.length)*100));
+  const pagesRead=fs.pages||prog.pages_total||prog.pages||0;
+  const hosts  = prog.hosts||[];
+  const secs   = drSections(m);
+  const secDone= secs.filter(s=>s.state==="done").length;
+  const eta    = drEta(m);
   const el = elapsed||0;
   const elapsedDisplay = `${String(Math.floor(el/60)).padStart(2,"0")}:${String(el%60).padStart(2,"0")}`;
-  const runLabel = PHASE_LABELS[phase] || (phase ? phase : "запуск");
+  // Живая подпись этапа показывается только под тем этапом, к которому относится:
+  // раньше «Фактов: 863» висело под «Написанием отчёта».
+  const live = loading && m.stageStatus && m.stageStatus.label
+    && (!m.stageStatus.phase || m.stageStatus.phase===phase) ? m.stageStatus : null;
   const right=(key,status)=>{
     if(status==="pending") return "";
     const done=status==="done";
     switch(key){
-      case "parse":   return done?`${contract.length} ${plural(contract.length,"характеристика","характеристики","характеристик")}`
-                                 :"строю план и контракт";
-      case "collect": return done?`${srcN} источников`
-                                 :(prog.pages?`прочитано ${prog.pages}${prog.blocked?` · ${prog.blocked} закрыто`:""}`
-                                             :`${subq.length||"…"} подзапросов`);
-      case "facts":   return done?`${fs.total||0} фактов`
-                                 :(prog.pages_total?`${prog.pages_total} страниц в разборе`:"извлекаю");
-      case "synth":   return done?(anchors?`${anchors} якорей`:"отчёт готов"):"пишу по фактам";
-      case "verify":  return done?`${verified}/${checked} чисел${gapsN?` · ${gapsN} пробелов`:""}`
-                                 :"сверяю числа";
+      case "parse":   return done?(contract.length?`${contract.length} ${plural(contract.length,"пункт","пункта","пунктов")} в отчёте`:"план готов")
+                                 :"составляю план";
+      case "collect": return pagesRead?`${done?"":"прочитано "}${pagesRead} ${plural(pagesRead,"страница","страницы","страниц")}`
+                                        +(prog.blocked?` · ${prog.blocked} не открылось`:"")
+                                      :(subq.length?`${subq.length} ${plural(subq.length,"запрос","запроса","запросов")}`:"");
+      case "facts":   return done?`${fs.total||prog.facts||0} ${plural(fs.total||prog.facts||0,"факт","факта","фактов")}`
+                                 :(prog.facts?`выписано ${prog.facts}`:"");
+      case "synth":   return secs.length?`${secDone} из ${secs.length} ${plural(secs.length,"раздела","разделов","разделов")}`:"";
+      case "verify":  return done&&checked?`сошлось ${verified} из ${checked} чисел${gapsN?` · ${gapsN} ${plural(gapsN,"пробел","пробела","пробелов")}`:""}`:"";
       default:        return "";
     }
   };
@@ -6981,25 +7027,52 @@ function DeepConsole({m, loading, elapsed, onFresh}){
   const titleStyle=(s)=> s==="pending" ? {color:"var(--ink-3)",fontWeight:450}
                        : s==="running" ? {color:"var(--ink)",fontWeight:600}
                        : {color:"var(--ink)",fontWeight:500};
+  const head=<div className="dr-con-head">
+    <span className="dr-con-pulse"/>
+    <span className="dr-con-title">Собираю отчёт</span>
+    {m.title && <span className="dr-con-sub dr-con-name" title={m.title}>{m.title}</span>}
+    <span className="dr-con-eta" aria-live="polite">{drLeftText(eta)}</span>
+    <span className="dr-con-el mono" title="Прошло с начала">{elapsedDisplay}</span>
+  </div>;
+  const bar=<div className="dr-con-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={eta.pct}
+    aria-label="Готовность отчёта"><div className="dr-con-bar-fill" style={{width:eta.pct+"%"}}/></div>;
+  // Свёрнутый вид: отчёт уже читается ниже, консоль не должна его заслонять.
+  if(compact){
+    const cur=DEEP_FLOW[Math.min(curIdx,DEEP_FLOW.length-1)];
+    return <div className="dr-con-wrap dr-con-compact">
+      <div className="dr-con">
+        {head}{bar}
+        <div className="dr-con-mini">
+          <span className="dr-con-mini-t">{(live&&live.label)||cur.label}</span>
+          {secs.length>0 && <span className="dr-con-mini-n mono">{secDone} из {secs.length} {plural(secs.length,"раздела","разделов","разделов")}</span>}
+          {onToggle && <button type="button" className="dr-con-link" onClick={onToggle}>Показать ход работы</button>}
+        </div>
+      </div>
+    </div>;
+  }
   return <div className="dr-con-wrap">
     <div className="dr-con">
-      <div className="dr-con-head">
-        <span className="dr-con-pulse"/>
-        <span className="dr-con-title">Глубокое исследование</span>
-        <span className="dr-con-sub">{runLabel}</span>
-        <span className="dr-con-el mono">{elapsedDisplay}</span>
-      </div>
-      <div className="dr-con-bar"><div className="dr-con-bar-fill" style={{width:pct+"%"}}/></div>
+      {head}{bar}
+      {/* Отчёт выбрал помощник, а не человек: пока идёт сбор, решение можно поменять */}
+      {onShort && loading && curIdx<3 &&
+        <div className="dr-con-route" role="status">
+          <span>Вопрос требует сбора и сверки источников — собираю отчёт.</span>
+          <button type="button" className="ai-route-btn" onClick={onShort}
+            title="Остановить отчёт и ответить короткой справкой — меньше минуты">Хватит короткого ответа</button>
+        </div>}
       {m.degraded && <div className="dr-con-degraded">
-        <b>Рамка разбора не построена</b> — модель недоступна ({m.degraded}).
-        Отчёт выйдет заметно беднее: взгляд со стороны и нормативная рамка
-        собраны не будут.
+        <b>План отчёта не построен</b> — модель недоступна ({m.degraded}).
+        Отчёт выйдет заметно беднее: взгляда со стороны и норм в нём не будет.
       </div>}
       <div className="dr-con-spine">
         {DEEP_FLOW.map((d,idx)=>{
           const status = idx<curIdx?"done":(idx===curIdx?"running":"pending");
           const last = idx===DEEP_FLOW.length-1;
-          return <div key={d.key} className="dr-con-row">
+          // идущий этап раскрыт, пройденный свёрнут; человек может переключить сам
+          const open = openRows[d.key]!==undefined ? openRows[d.key] : status==="running";
+          const canOpen = status!=="pending";
+          const toggle=()=>canOpen&&setOpenRows(o=>({...o,[d.key]:!open}));
+          return <div key={d.key} className={"dr-con-row is-"+status}>
             <div className="dr-con-col">
               <span className="dr-con-dot" style={dotStyle(status)}>
                 {status==="done" && <svg width="7" height="7" viewBox="0 0 24 24" fill="none"
@@ -7008,22 +7081,21 @@ function DeepConsole({m, loading, elapsed, onFresh}){
               {!last && <span className="dr-con-conn" style={{background:status==="done"?"var(--ink)":"var(--hair)"}}/>}
             </div>
             <div className="dr-con-body">
-              <div className="dr-con-line">
-                <span className="dr-con-label" style={titleStyle(status)}>{d.label}
-                  {status==="running" && d.hint &&
-                    <span className="dr-con-hint">{d.hint}</span>}
-                </span>
-                <span className="dr-con-right mono" style={{color:status==="running"?"var(--accent)":"var(--ink-3)"}}>{right(d.key,status)}</span>
-              </div>
-              {/* Что происходит прямо сейчас: сервер присылал эти подписи всегда,
-                  но интерфейс их не показывал — ожидание выглядело немым. */}
-              {status==="running" && loading && m.stageStatus && m.stageStatus.label &&
+              <button type="button" className="dr-con-line" onClick={toggle} disabled={!canOpen}
+                aria-expanded={canOpen?open:undefined}>
+                <span className="dr-con-label" style={titleStyle(status)}>{d.label}</span>
+                <span className="dr-con-right mono">{right(d.key,status)}</span>
+                {canOpen && <svg className={"dr-con-chev"+(open?" open":"")} width="12" height="12" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>}
+              </button>
+              {/* Что происходит прямо сейчас */}
+              {status==="running" && live &&
                 <div className="dr-con-now" aria-live="polite">
-                  <span className="dr-con-now-l">{m.stageStatus.label}</span>
-                  {m.stageStatus.detail && <span className="dr-con-now-d">{m.stageStatus.detail}</span>}
+                  <span className="dr-con-now-l">{live.label}</span>
+                  {live.detail && <span className="dr-con-now-d">{live.detail}</span>}
                 </div>}
-              {/* КОНТРАКТ: что отчёт обязан закрыть. Главная опора доверия —
-                  аудитор сразу видит рамку разбора, а не «идёт анализ». */}
+              {/* Как понят вопрос — главная опора доверия: рамку видно до первых фактов
+                  и на всём протяжении прогона, даже когда этап свёрнут */}
               {d.key==="parse" && status!=="pending" && m.understood && m.understood.task &&
                 <div className="dr-con-understood">
                   <span className="dr-con-u-k">Вопрос понят как</span>
@@ -7038,54 +7110,69 @@ function DeepConsole({m, loading, elapsed, onFresh}){
                     {onFresh && <button type="button" className="dr-con-u-redo" onClick={onFresh}
                       title="Не опираться на прошлый отчёт: собрать источники и факты заново">собрать заново</button>}</>}
                 </div>}
-              {d.key==="parse" && status!=="pending" && contract.length>0 &&
+              {open && <>
+              {d.key==="parse" && contract.length>0 &&
                 <div className="dr-con-contract">
-                  <div className="dr-con-sub-h">Контракт разбора · что обязаны закрыть</div>
+                  <div className="dr-con-sub-h">Что будет в отчёте</div>
                   <div className="dr-con-chips">
                     {contract.map((a,ai)=>{
                       const isObs = a===m.observedAttr, isReg = a===m.regulatoryAttr;
-                      return <span key={ai}
-                        className={"dr-con-chip"+(isObs?" obs":"")+(isReg?" reg":"")}
-                        title={isObs?"взгляд со стороны":(isReg?"нормативная рамка":"")}>{a}</span>;
+                      return <span key={ai} className="dr-con-chip"
+                        title={isObs?"взгляд со стороны: жалобы, отзывы, разборы":(isReg?"нормы: требования закона и регулятора":"")}>
+                        {a}{isObs&&<i>со стороны</i>}{isReg&&<i>нормы</i>}</span>;
                     })}
                   </div>
                 </div>}
-              {/* ПОДЗАПРОСЫ: куда именно пошли смотреть */}
-              {d.key==="collect" && status!=="pending" && subq.length>0 &&
-                <div className="dr-con-queries">
-                  <div className="dr-con-sub-h">Запросы · {subq.length}</div>
-                  {subq.slice(0,10).map((q,qi)=>{
+              {/* Куда ходит: сайты с числом прочитанных страниц — живьём */}
+              {d.key==="collect" && hosts.length>0 &&
+                <div className="dr-con-hosts" aria-label="Прочитанные сайты">
+                  {hosts.map(([h,n])=><span key={h} className="dr-con-host">{h}<b className="mono">{n}</b></span>)}
+                </div>}
+              {d.key==="collect" && subq.length>0 &&
+                <details className="dr-con-queries">
+                  <summary>Поисковые запросы · {subq.length}</summary>
+                  {subq.map((q,qi)=>{
                     const site=(q.match(/site:(\S+)/)||[])[1];
                     return <div key={qi} className="dr-con-query">
                       <span className="dr-con-q-txt">{q.replace(/\s*site:\S+/,"")}</span>
                       {site && <span className="dr-con-q-site mono">{site}</span>}
                     </div>;
                   })}
-                  {subq.length>10 && <div className="dr-con-more">и ещё {subq.length-10}</div>}
-                </div>}
-              {/* ФАКТЫ: три стороны доказательства по отдельности */}
-              {d.key==="facts" && status!=="pending" && (fs.total||0)>0 &&
+                </details>}
+              {/* Факты — по сторонам доказательства */}
+              {d.key==="facts" && (fs.total||0)>0 &&
                 <div className="dr-con-stances">
-                  {Object.entries(STANCE_UI).map(([k,v])=>(
-                    <div key={k} className={"dr-con-stance "+k} title={v.hint}>
-                      <span className="dr-con-stance-n mono">{stance[k]||0}</span>
+                  {Object.entries(STANCE_UI).filter(([k])=>stance[k]).map(([k,v])=>(
+                    <div key={k} className="dr-con-stance" title={v.hint}>
+                      <span className="dr-con-stance-n mono">{stance[k]}</span>
                       <span className="dr-con-stance-l">{v.label}</span>
                     </div>))}
                 </div>}
-              {/* размышления модели — reuse ThinkingPanel (таймер/скролл/стрим) */}
-              {(PHASE_REASON[d.key]||[]).filter(s=>m.reasoningStages?.[s]).map(s=>
-                <ThinkingPanel key={s} stage={s} text={m.reasoningStages[s]}
-                  active={loading && m.phase===STAGE_PHASE[s]}/>)}
-              {/* ПРОБЕЛЫ: то, чего добыть не удалось — считается по контракту */}
-              {d.key==="verify" && status!=="pending" && gapsN>0 &&
+              {d.key==="facts" && fs.critic && fs.critic.checked>0 &&
+                <div className="dr-con-note">Каждая цитата сверена с текстом страницы: дословных {fs.critic.exact} из {fs.critic.checked}
+                  {fs.critic.cut?`, снято без опоры на источник — ${fs.critic.cut}`:""}.</div>}
+              {/* Оглавление: что написано, что пишется, что впереди */}
+              {d.key==="synth" && secs.length>0 &&
+                <ol className="dr-con-secs">
+                  {secs.map((s,si)=><li key={si} className={"is-"+s.state}>
+                    <span className="dr-con-sec-m" aria-hidden="true">
+                      {s.state==="done" && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>}
+                    </span>
+                    <span className="dr-con-sec-t">{s.title}</span>
+                    <span className="dr-con-sec-s">{s.state==="done"?"готов":s.state==="writing"?"пишется":s.state==="last"?"в конце, по готовому тексту":""}</span>
+                  </li>)}
+                </ol>}
+              {d.key==="verify" && gapsN>0 &&
                 <div className="dr-con-gaps">
-                  <div className="dr-con-sub-h">Честные пробелы · {gapsN}</div>
+                  <div className="dr-con-sub-h">Чего найти не удалось · {gapsN}</div>
                   {(m.gapsList||[]).slice(0,4).map((g,gi)=>(
                     <div key={gi} className="dr-con-gap">
                       <span className="dr-con-gap-i mono">—</span>
                       <span className="dr-con-gap-w">{g}</span>
                     </div>))}
                 </div>}
+              </>}
             </div>
           </div>;
         })}
@@ -7096,24 +7183,22 @@ function DeepConsole({m, loading, elapsed, onFresh}){
 
 // ─── Сводка завершённого прогона (collapsed bar над отчётом, редизайн). ────
 function ResearchSummary({m}){
-  // Сводка на понятиях нового конвейера: сколько фактов добыто, сколько из
-  // них взгляд со стороны, сколько утверждений имеет якорь на источник.
+  // Итог прогона одной строкой: за сколько собран, на чём стоит, сошлись ли числа.
   const srcN=(m.sources||[]).length;
-  const fs=m.factStats||{}; const st=fs.by_stance||{};
-  const anchors=m.verification?.citations||0;
-  const gapsN=(m.gapsList||[]).length;
+  const fs=m.factStats||{};
+  const checked=m.verification?.numeric_checked||0, verified=m.verification?.verified||0;
+  const sec=Math.round(m.elapsedS||0);
+  const took=sec>=60?`${Math.floor(sec/60)} мин${sec%60>=5?` ${sec%60} с`:""}`:(sec?`${sec} с`:"");
   return <div className="dr-summary-bar">
     <span className="dr-summary-ok">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
         strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
-      Исследование завершено
+      Отчёт готов{took?` за ${took}`:""}
     </span>
-    {!!fs.total && <><span>·</span><span><b>{fs.total}</b> фактов</span></>}
-    <span>·</span><span><b>{srcN}</b> источников</span>
-    {!!st.observed && <><span>·</span><span><b>{st.observed}</b> со стороны</span></>}
-    {!!st.regulatory && <><span>·</span><span><b>{st.regulatory}</b> норм</span></>}
-    {anchors>0 && <><span>·</span><span><b>{anchors}</b> якорей</span></>}
-    {gapsN>0 && <><span>·</span><span><b>{gapsN}</b> пробелов</span></>}
+    {!!fs.pages && <><span>·</span><span>прочитано <b>{fs.pages}</b> {plural(fs.pages,"страница","страницы","страниц")}</span></>}
+    {!!fs.total && <><span>·</span><span>выписано <b>{fs.total}</b> {plural(fs.total,"факт","факта","фактов")} с цитатами</span></>}
+    {!!srcN && <><span>·</span><span>в отчёте <b>{srcN}</b> {plural(srcN,"источник","источника","источников")}</span></>}
+    {checked>0 && <><span>·</span><span>сошлось <b>{verified}</b> из {checked} {plural(checked,"числа","чисел","чисел")}</span></>}
   </div>;
 }
 
@@ -8026,7 +8111,8 @@ function AIPage(){
   const askStop=()=>{ clearTimeout(stopArmT.current);
     if(stopArm){ setStopArm(false); abortRef.current?.abort(); return; }
     setStopArm(true); stopArmT.current=setTimeout(()=>setStopArm(false),4000); };
-  const[deepMode,setDeepMode]=useState(false);
+  const switchRef=useRef(null);   // {q,to} — человек меняет глубину ответа на ходу
+  const[runOpen,setRunOpen]=useState(false);   // развернул ход работы, когда отчёт уже читается
   const[slotHint,setSlotHint]=useState("");
   const[showKbd,setShowKbd]=useState(false);
   const[hoverCite,setHoverCite]=useState(null);          // {n, anchor} для tooltip
@@ -8034,6 +8120,10 @@ function AIPage(){
   const[hideRail,setHideRail]=useState(false);
   const[hideToc,setHideToc]=useState(false);
   const[sessionId,setSessionId]=useState(null);          // текущая сессия истории
+  // Тот же номер — в ссылке: запрос может уйти из обработчика прежнего кадра
+  // (смена глубины ответа на ходу), и со старым значением разговор раскололся бы надвое.
+  const sessionRef=useRef(null);
+  useEffect(()=>{sessionRef.current=sessionId;},[sessionId]);
   const[aiFb,setAiFb]=useState(null);                    // мои оценки ответов (ai_answer)
   useEffect(()=>{apiFetch("/api/feedback?kind=ai_answer").then(d=>setAiFb(d.items||{})).catch(()=>setAiFb({}));},[]);
   // страница живёт в фоне (Shell держит смонтированной) — сообщаем Shell о ходе
@@ -8099,6 +8189,10 @@ function AIPage(){
   const stickRef=useRef(true);
   useEffect(()=>{
     const el=feedRef.current; if(!el) return;
+    // Отчёт читают сверху вниз: когда он пишется (и когда готов), к хвосту не
+    // утаскиваем — человек остаётся там, где читает.
+    const last=msgs[msgs.length-1];
+    if(last&&last.mode==="deep"&&(last.text||"").length>400) return;
     if(stickRef.current) el.scrollTop=el.scrollHeight;  // мгновенно, без рывка smooth
   },[msgs,loading]);
   useEffect(()=>{
@@ -8185,7 +8279,7 @@ function AIPage(){
       const res=await fetch("/api/ai/analyze",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({question,history,force_deep:forceDeep,session_id:sessionId,...(extra||{})}),
+        body:JSON.stringify({question,history,force_deep:forceDeep,session_id:sessionRef.current,...(extra||{})}),
         signal:ac.signal,
       });
       if(!res.ok){
@@ -8209,14 +8303,14 @@ function AIPage(){
             try{
               const data=JSON.parse(line.slice(6));
               if(data.type==="session"){
-                if(data.session_id) setSessionId(data.session_id);
+                if(data.session_id){ sessionRef.current=data.session_id; setSessionId(data.session_id); }
               }else if(data.type==="text"&&data.chunk){
                 updateLast(last=>({text:(last.text||"")+data.chunk}));
               }else if(data.type==="lead"&&data.chunk){
                 // Резюме и «что проверять» пишутся ПОСЛЕДНИМИ — по готовому
                 // телу, — а читаются первыми. Поэтому вставляем наверх, а не
                 // дописываем в конец.
-                updateLast(last=>({text:data.chunk+(last.text||"")}));
+                updateLast(last=>({text:data.chunk+(last.text||""),hasLead:true,writingSection:null}));
               }else if(data.type==="reasoning"){
                 // Живой ход мысли LLM (delta.reasoning_content). Копим ПО СТАДИЯМ
                 // (reasoningStages[stage]) — иначе таймер «Ход мысли · Nс» суммирует
@@ -8247,12 +8341,18 @@ function AIPage(){
                 updateLast(()=>({sources:data.sources,sourcesFailed:data.failed||0}));
               }else if(data.type==="files"&&Array.isArray(data.files)){
                 updateLast(()=>({files:data.files}));
+              }else if(data.type==="route"){
+                // чем помощник решил отвечать: справкой, отчётом или репликой к прошлому ответу
+                updateLast(()=>({route:data.value,routeBy:data.by,...(data.value==="report"?{mode:"deep"}:{})}));
               }else if(data.type==="mode"){
                 updateLast(()=>({mode:data.value}));
               }else if(data.type==="notice"&&data.text){
                 updateLast(()=>({notice:data.text}));
               }else if(data.type==="phase"){
-                updateLast(()=>({phase:data.value}));
+                // phaseAt — когда начался этап: по нему считается «осталось примерно…»
+                updateLast(()=>({phase:data.value,phaseAt:Date.now()}));
+              }else if(data.type==="typical"&&data.steps){
+                updateLast(()=>({typical:{steps:data.steps,total:data.total}}));
               }else if(data.type==="plan"&&Array.isArray(data.steps)){
                 // Контракт и подзапросы — то, по чему аудитор понимает рамку
                 // разбора ещё до появления первых фактов.
@@ -8307,7 +8407,9 @@ function AIPage(){
                 // Длинная стадия (merging / agent_iter / post_processing) —
                 // показываем её отдельным prominent banner'ом чтобы пользователь
                 // видел что pipeline жив и сколько примерно ждать.
-                updateLast(()=>({stageStatus:data}));
+                // phase — к какому этапу относится подпись: под чужим этапом её не показываем
+                updateLast(last=>({stageStatus:{...data,phase:last.phase},
+                  ...(data.stage==="analyst"?{writingSection:data.section||null}:{})}));
               }else if(data.type==="merge_progress"){
                 // Прогресс финальной сборки — счётчик символов, видимый юзеру
                 updateLast(last=>({stageStatus:{
@@ -8356,6 +8458,7 @@ function AIPage(){
                 // «Поделиться» сразу после прогона; название — из брифа или черновое
                 updateLast(m=>({report_id:data.report_id,title:m.title||data.title||undefined}));
               }else if(data.type==="done"){
+                if(data.elapsed_s) updateLast(()=>({elapsedS:data.elapsed_s}));
                 break outer;
               }
             }catch{}
@@ -8368,7 +8471,11 @@ function AIPage(){
         return u;
       });
     }catch(e){
-      if(e.name==="AbortError"){
+      if(e.name==="AbortError"&&switchRef.current){
+        // Человек поменял глубину ответа («Нужен отчёт» / «Хватит короткого»):
+        // недописанный ответ убираем — под тем же вопросом начнётся новый.
+        setMsgs(m=>(m.length&&m[m.length-1].role==="ai")?m.slice(0,-1):m);
+      }else if(e.name==="AbortError"){
         // Человек остановил сам — это не ошибка. Оставляем то, что успело
         // прийти, и честно помечаем, что продолжения не будет.
         setMsgs(m=>{const u=[...m];const last=u[u.length-1]||{};
@@ -8379,18 +8486,31 @@ function AIPage(){
       }
     }finally{
       abortRef.current=null;
-      setLoading(false);
+      const sw=switchRef.current; switchRef.current=null;
+      if(sw){
+        // лента обновится на следующем кадре — запускаем после него
+        setTimeout(()=>runSend(sw.q,sw.to==="report",{route:sw.to,route_by:"user",resend:true}),60);
+      }else setLoading(false);
     }
   };
 
-  // Запуск research: ai-bubble + стрим. История БЕЗ clarify-сообщений.
+  // История разговора для сервера. kind — чем был ответ: отчётом или справкой
+  // (по нему помощник понимает, продолжение это отчёта или новый вопрос).
+  const talkHistory=(cut)=>msgsRef.current
+    .filter(m=>m.role==="user"||m.role==="ai")
+    .map(m=>({role:m.role==="user"?"user":"assistant",
+      content:cut?(m.text||"").slice(0,cut):(m.text||""),
+      ...(m.role==="ai"?{kind:m.mode==="deep"?"report":"answer"}:{})}));
+  // Запуск ответа: ai-bubble + стрим. История БЕЗ clarify-сообщений.
   const runSend=(t,forceDeep,extra)=>{
-    const history=msgsRef.current
-      .filter(m=>m.role==="user"||m.role==="ai")
-      .map(m=>({role:m.role==="user"?"user":"assistant",content:m.text||""}));
+    const history=talkHistory().filter((h,i,a)=>!(i===a.length-1&&h.role==="user"&&h.content===t));
     setLoading(true);
     runStartRef.current=Date.now(); setElapsed(0);     // старт таймера прогона
-    setMsgs(m=>[...m.filter(x=>x.role!=="pending"),{role:"ai",text:"",tools:[]}]);
+    // Маршрут уже известен — сразу показываем нужный вид: консоль отчёта или
+    // короткий ответ, а не безликое «думаю» до первого события сервера.
+    const r=extra&&extra.route;
+    setMsgs(m=>[...m.filter(x=>x.role!=="pending"),{role:"ai",text:"",tools:[],
+      ...(r?{route:r,routeBy:extra.route_by}:{}),...(r==="report"?{mode:"deep"}:{})}]);
     streamChat(t,history,forceDeep,extra);
   };
   // Точка входа: модуль «asking» — сначала clarify-воронка (если запрос неполный),
@@ -8410,28 +8530,27 @@ function AIPage(){
     }
     setSlotHint("");
     setQ("");
-    // Выключенный тумблер = ЯВНЫЙ выбор быстрого режима, а не «решай сам».
-    // Прежний null уходил в авто-определение, и после первого глубокого отчёта
-    // любой следующий вопрос залипал в глубоком (_prior_deep на бэке) — три
-    // терробанка написали, что «переключение на быстрый не работает».
-    const forceDeep = deepMode ? true : false;
-    // Снимаем незакрытую clarify-карточку; сразу показываем индикатор «анализирую»
-    // (генерация вопросов идёт ~5с — без него экран пустой = «тишина»).
+    // Единое поле ввода: режим человек не выбирает. Шаг подготовки на сервере
+    // решает, чем отвечать (справка, отчёт, реплика к прошлому ответу,
+    // презентация), и — только для отчёта — хватает ли в вопросе деталей.
+    // Раньше это решал переключатель «Быстрый / Deep Research»: его ставили не
+    // туда, и он «залипал» (обратная связь трёх терробанков).
+    const hist=talkHistory(3000);
     setMsgs(m=>[...m.filter(x=>x.role!=="clarify"),{role:"user",text:t},
-                {role:"pending",label:"Анализирую запрос…"}]);
+                {role:"pending",label:"Разбираю вопрос…"}]);
     setLoading(true);
-    // Уточняющая воронка — только для Deep Research: быстрый режим отвечает сразу,
-    // агент сам делает разумные допущения (фидбек владельца 22.07).
-    if(!deepMode && !forceDeep){ runSend(t,forceDeep); return; }
     let data=null;
-    try{ data=await apiPost("/api/ai/clarify",{question:t,deep:!!deepMode}); }catch(e){ data=null; }
-    if(!data || data.complete!==false || !(Array.isArray(data.questions)&&data.questions.length)){
-      runSend(t,forceDeep);                       // воронка не нужна / ошибка → research
+    try{ data=await apiPost("/api/ai/clarify",{question:t,history:hist,auto:true}); }catch(e){ data=null; }
+    const route=data&&["answer","report","reply","deck"].includes(data.route)?data.route:null;
+    if(!route){ runSend(t,null); return; }        // подготовка не ответила — решит сервер
+    const extra={route,route_by:data.route_by==="rules"?"rules":"model"};
+    if(route!=="report" || data.complete!==false || !(Array.isArray(data.questions)&&data.questions.length)){
+      runSend(t,route==="report",extra);
       return;
     }
     setLoading(false);                            // интерактивная карточка вопросов
     setMsgs(m=>[...m.filter(x=>x.role!=="pending"),
-                {role:"clarify",question:t,forceDeep,questions:data.questions}]);
+                {role:"clarify",question:t,forceDeep:true,questions:data.questions}]);
   };
   // Submit воронки: собрать обогащённый промпт (сервер) → пометить запрос → research.
   const clarifySubmit=async(srcQuestion,forceDeep,answers)=>{
@@ -8448,11 +8567,22 @@ function AIPage(){
     if(enriched!==srcQuestion) setMsgs(m=>{const u=[...m];
       for(let i=u.length-1;i>=0;i--){ if(u[i].role==="user"){u[i]={...u[i],refined:enriched};break;} }
       return u;});
-    runSend(enriched,forceDeep);
+    runSend(enriched,true,{route:"report",route_by:"model"});
   };
   const clarifySkip=(srcQuestion,forceDeep)=>{
     setMsgs(m=>m.filter(x=>x.role!=="clarify"));
-    runSend(srcQuestion,forceDeep);
+    runSend(srcQuestion,true,{route:"report",route_by:"model"});
+  };
+  // Человек поправил глубину ответа. Пока ответ идёт — останавливаем его и под
+  // тем же вопросом запускаем другой; готовый короткий ответ остаётся в ленте,
+  // а отчёт приходит следом.
+  const switchRoute=(srcQ,to)=>{
+    if(!srcQ)return;
+    trkEvent({kind:"ui",page:"ai",payload:{action:"route_override",to}});
+    if(loading&&abortRef.current){ switchRef.current={q:srcQ,to}; try{ abortRef.current.abort(); }catch{} return; }
+    if(loading)return;
+    setMsgs(m=>[...m,{role:"user",text:srcQ}]);
+    runSend(srcQ,to==="report",{route:to,route_by:"user"});
   };
   // Апселл из быстрого ответа: запускаем тот же запрос как Deep Research.
   // «Презентация» под отчётом: просьба в этот же разговор, файл придёт в ответе.
@@ -8470,16 +8600,15 @@ function AIPage(){
     try{ abortRef.current?.abort(); }catch{}
     setTimeout(()=>{
       setMsgs(m=>[...m,{role:"user",text:q}]);
-      runSend(q,true,{fresh:true});
+      runSend(q,true,{fresh:true,route:"report",route_by:"user"});
     },400);
   };
   const runDeepFromQuick=(srcQ)=>{
     if(loading||!srcQ)return;
     trkEvent({kind:"ui",page:"ai",payload:{action:"quick_upsell"}});
-    // режим отчёта — только на этот запуск: раньше он оставался включённым, и
-    // следующая реплика «хочу» или «сформируй файл» запускала новый отчёт
+    // отчёт — только на этот запуск: следующая реплика снова решается по смыслу
     setMsgs(m=>[...m,{role:"user",text:srcQ}]);
-    runSend(srcQ,true);
+    runSend(srcQ,true,{route:"report",route_by:"user"});
   };
   // «Новый запрос» — сброс ленты к приветствию (welcome). Заблокировано во
   // время прогона, чтобы не оборвать активный stream-reader.
@@ -8605,15 +8734,26 @@ function AIPage(){
             const userQ = (i>0 && msgs[i-1]?.role==="user") ? msgs[i-1].text : "Аудит-отчёт";
             const showPdfBtn = m.role==="ai" && m.text && m.text.length>200;
             const streaming  = m.role==="ai" && loading && i===msgs.length-1;
-            // Режим живой консоли прогона: показываем DeepConsole. Отчёт (toolbar/
-            // toc/rail/article) появляется когда phase==="done" — как в дизайне.
+            // Пока отчёт собирается, сверху идёт консоль хода работы. Как только
+            // написан первый раздел, под ней появляется сам отчёт — черновик:
+            // письмо занимает половину времени, и раньше всё это время человек
+            // смотрел на «Пишу раздел…», хотя текст уже был. Консоль при этом
+            // сворачивается в полоску, чтобы не заслонять чтение.
             const consoleMode = m.role==="ai" && loading && i===msgs.length-1 && m.phase!=="done";
+            const draftMode = consoleMode && (m.text||"").length>400;
             return <div key={i} className={`chat-msg ${m.role}`}>
-              {consoleMode ? (
+              {consoleMode &&
                 <div className="chat-bubble chat-bubble-deep">
-                  <DeepConsole m={m} loading={loading} elapsed={elapsed} onFresh={()=>redoFresh(userQ)}/>
-                </div>
-              ) : (<>
+                  <DeepConsole m={m} loading={loading} elapsed={elapsed} onFresh={()=>redoFresh(userQ)}
+                    onShort={i>0&&msgs[i-1]?.role==="user"?()=>switchRoute(userQ,"answer"):null}
+                    compact={draftMode&&!runOpen} onToggle={()=>setRunOpen(true)}/>
+                  {draftMode&&runOpen&&<div className="dr-con-fold"><button type="button" className="dr-con-link"
+                    onClick={()=>setRunOpen(false)}>Свернуть ход работы</button></div>}
+                </div>}
+              {draftMode && <div className="dr-draft-note" role="status">
+                <b>Отчёт пишется — можно читать.</b> Разделы появляются по мере готовности; резюме встанет в начало,
+                числа сверяются в конце.</div>}
+              {(!consoleMode||draftMode) && (<>
                 <div className="dr-doc-toolbar">
                   <span className="who" title={m.title?"AuditLens · аналитический отчёт":undefined}>{m.title||"AuditLens · аналитический отчёт"}</span>
                   {m.report_owner&&me&&m.report_owner!==me.username&&
@@ -8705,8 +8845,17 @@ function AIPage(){
           const thinking = !m.text && loading && i===msgs.length-1;
           const qText = stripFileMarks(m.text, m.files);
           return <div key={i} className="chat-msg ai quick-msg">
-            <div className="who">AuditLens AI{m.engine==="hermes"?" · Hermes ✦":""}</div>
+            <div className="who">ИИ-помощник</div>
             {m.notice && <div className="ai-notice" role="status">{m.notice}</div>}
+            {/* Чем помощник решил отвечать — и как это поменять, пока ответ идёт */}
+            {loading && i===msgs.length-1 && prevQ && (m.route==="answer"||m.route==="reply") &&
+              <div className="ai-route" role="status">
+                <span className="ai-route-t">{m.route==="reply"
+                  ?"Отвечаю по уже собранному, без нового сбора"
+                  :"Отвечаю короткой справкой — обычно меньше минуты"}</span>
+                <button type="button" className="ai-route-btn" onClick={()=>switchRoute(prevQ,"report")}
+                  title="Остановить короткий ответ и собрать отчёт с источниками (3–5 минут)">Нужен отчёт</button>
+              </div>}
             {m.tools&&m.tools.length>0 &&
               <div className="quick-tools">
                 {collapseTools(m.tools).map(({lbl,n},ti,arr)=>(
@@ -8730,9 +8879,9 @@ function AIPage(){
               </div>}
             {m.text && !loading && prevQ && !m.notice &&
               <div className="quick-upsell">
-                <span className="quick-upsell-t">Нужен документ для аудит-дела — с таблицей, рисками и проверкой чисел?</span>
+                <span className="quick-upsell-t">Нужен документ для аудит-дела — с источниками, рисками и сверкой чисел?</span>
                 <button className="quick-upsell-btn" onClick={()=>runDeepFromQuick(prevQ)}>
-                  Запустить Deep Research
+                  Собрать отчёт
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
                 </button>
               </div>}
@@ -8757,9 +8906,12 @@ function AIPage(){
       {isRunning &&
         <div className="al-runbar">
           <span className="al-runbar-dot"/>
-          <span className="al-runbar-text">Идёт исследование — обычно 5–10 минут</span>
+          <span className="al-runbar-text">Собираю отчёт{lastDeep&&drLeftText(drEta(lastDeep))?" — "+drLeftText(drEta(lastDeep)):""}</span>
           <span className="al-runbar-el mono">{fmtEl(elapsed)}</span>
-          <button className="al-runbar-btn" onClick={()=>{const el=feedRef.current;if(el){stickRef.current=true;el.scrollTo({top:el.scrollHeight,behavior:"smooth"});}}}>Показать отчёт →</button>
+          {/* кнопка появляется, когда читать уже есть что: первый раздел написан */}
+          {lastDeep&&(lastDeep.text||"").length>400&&
+            <button className="al-runbar-btn" onClick={()=>{const el=feedRef.current, d=el&&el.querySelector(".dr-draft-note");
+              if(d){stickRef.current=false;d.scrollIntoView({behavior:"smooth",block:"start"});}}}>Читать отчёт ↑</button>}
           {/* раньше остановить отчёт было нечем: поле ввода с кнопкой скрыто на время прогона */}
           <button className={"al-runbar-btn al-runbar-stop"+(stopArm?" arm":"")} onClick={askStop}
             aria-label={stopArm?"Подтвердить остановку отчёта":"Остановить отчёт"}>
@@ -8774,17 +8926,17 @@ function AIPage(){
               <button type="button" onClick={()=>openSession(hit.session_id)}>открыть {hit.report_id?"отчёт":"ответ"}</button></div>:null;})()}
           {slotHint && <div className="aw-dup aw-slot" role="alert">{slotHint}</div>}
           <div className="chat-input-wrap">
-            {deepMode && <div className="composer-accent"/>}
             <textarea ref={inputRef} className="chat-textarea" rows={1}
-              placeholder={deepMode?"Опишите задачу для глубокого исследования…":"Спросите о продукте, жалобах, регулировании или новости…"}
+              aria-label="Вопрос ИИ-помощнику"
+              placeholder="Спросите или поставьте задачу: ставка, жалобы, сравнение банков, нормы, новость…"
               value={q} onChange={e=>{setQ(e.target.value); if(slotHint)setSlotHint("");}}
               onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}/>
             <div className="composer-bar">
-              <div className="seg">
-                <button className={"seg-btn"+(!deepMode?" on":"")} onClick={()=>setDeepMode(false)} disabled={loading}>Быстрый</button>
-                <button className={"seg-btn"+(deepMode?" on":"")} onClick={()=>setDeepMode(true)} disabled={loading} title="Deep Research: планировщик → мульти-агент → проверка фактов"><span className="seg-dot"/>Deep Research</button>
-              </div>
-              <span className="composer-hint">{deepMode?"отчёт с источниками · обычно 5–10 мин":"быстрый ответ · обычно меньше минуты"}</span>
+              {/* Режим выбирать не нужно: глубину ответа помощник определяет по вопросу
+                  и показывает решение в ленте, где его можно поменять одним нажатием. */}
+              <span className="composer-hint composer-auto" title="Короткая справка приходит меньше чем за минуту, отчёт с источниками — за 3–5 минут. Что нужно, помощник решает по вопросу; своё решение он показывает сразу, и его можно поменять. Можно и написать прямо: «коротко» или «нужен отчёт».">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>
+                справка или отчёт — решу по вопросу</span>
               <span className="composer-kbd">Enter ↵</span>
               {loading
                 ? <button className="composer-send composer-stop" onClick={()=>abortRef.current?.abort()}
@@ -8792,8 +8944,8 @@ function AIPage(){
                     Остановить
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
                   </button>
-                : <button className={"composer-send"+(deepMode?" deep":"")} disabled={!q.trim()} onClick={()=>send()} aria-label="Отправить">
-                {deepMode?"Запустить research":"Спросить"}
+                : <button className="composer-send" disabled={!q.trim()} onClick={()=>send()} aria-label="Отправить">
+                Спросить
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
                   </button>}
             </div>
@@ -15451,7 +15603,7 @@ function PuSyWeb({m}){
     <p className="pu2-note" style={{marginTop:0}}>
       {gw.enabled?`Основной поиск — ${gw.primary==="fleet"?"запасной fleet":"Яндекс через шлюз"}.`:"Шлюз не настроен."}
       {gw.breaker_open?` Шлюз отключён${gw.breaker_reason?`: ${gw.breaker_reason}`:""}.`:""}
-      {gw.copies_breaker_open?" Чтение копий страниц временно отключено.":""}
+      {gw.copies_breaker_open?` Сохранённые копии Яндекса сейчас недоступны: отчёты их не ждут, хост проверяется каждые ${gw.copies_check_every_min||10} мин и подключится обратно сам${gw.copies_checked_at?` (последняя проверка ${String(gw.copies_checked_at).slice(11,16)} UTC)`:""}.`:""}
       {" "}«Лимит» и «недоступен» — запрос ушёл на запасной поиск; «пусто» — честно ничего не нашлось. Копии — страницы,
       закрытые антиботом, прочитанные из сохранённой копии Яндекса. Повторы из кэша не считаются.</p>
     {rows.length===0?<PuEmpty>Поиск ещё не вызывали.</PuEmpty>:<div>{rows.map(r=>{ const k=r.kind+":"+r.backend, bs=r.by_status||{};

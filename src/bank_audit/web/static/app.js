@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 aef53e25811e840032c56d358ea2f902b2875167ce4a7c3988bb83d452cf46f8): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 16c3faa3b194f7b144b9430d73d7a41ba568a969790cb4004029a73dc604ffad): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -146,8 +146,12 @@ function AiWelcome({
   }, "\u0421\u043F\u0440\u043E\u0441\u0438\u0442\u0435 \u043E \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0430\u0445, \u0436\u0430\u043B\u043E\u0431\u0430\u0445 \u0438\xA0\u0440\u0435\u0433\u0443\u043B\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u0438"), /*#__PURE__*/React.createElement("p", {
     className: "aw-lede"
   }, "\u041F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u043E\u0442\u0432\u0435\u0447\u0430\u0435\u0442 \u043F\u043E \u0434\u0430\u043D\u043D\u044B\u043C AuditLens \u2014 \u0436\u0430\u043B\u043E\u0431\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432, \u0442\u0430\u0440\u0438\u0444\u0430\u043C \u0431\u0430\u043D\u043A\u043E\u0432, \u043D\u043E\u0432\u043E\u0441\u0442\u044F\u043C \u0438 \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442\u0430\u043C \u0426\u0411 \u2014 \u0438 \u0441\u0441\u044B\u043B\u0430\u0435\u0442\u0441\u044F \u043D\u0430 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438."), /*#__PURE__*/React.createElement("div", {
-    className: "aw-modes"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, "\u0411\u044B\u0441\u0442\u0440\u044B\u0439 \u043E\u0442\u0432\u0435\u0442"), /*#__PURE__*/React.createElement("span", null, "\u043E\u0431\u044B\u0447\u043D\u043E \u043C\u0435\u043D\u044C\u0448\u0435 \u043C\u0438\u043D\u0443\u0442\u044B \xB7 \u043F\u043E \u0434\u0430\u043D\u043D\u044B\u043C AuditLens \u0438 \u043E\u0442\u043A\u0440\u044B\u0442\u044B\u043C \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430\u043C")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, "\u041E\u0442\u0447\u0451\u0442 \xB7 Deep Research"), /*#__PURE__*/React.createElement("span", null, "\u043E\u0431\u044B\u0447\u043D\u043E 5\u201310 \u043C\u0438\u043D\u0443\u0442 \xB7 \u043F\u043B\u0430\u043D, \u0441\u0431\u043E\u0440, \u0441\u0432\u0435\u0440\u043A\u0430 \u0447\u0438\u0441\u0435\u043B"))), dayIns && dayIns.length > 0 && /*#__PURE__*/React.createElement("section", {
+    className: "aw-modes",
+    role: "note",
+    "aria-label": "\u041A\u0430\u043A \u043E\u0442\u0432\u0435\u0447\u0430\u0435\u0442 \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, "\u041A\u043E\u0440\u043E\u0442\u043A\u0430\u044F \u0441\u043F\u0440\u0430\u0432\u043A\u0430"), /*#__PURE__*/React.createElement("span", null, "\u0441\u0442\u0430\u0432\u043A\u0430, \u043B\u0438\u043C\u0438\u0442, \u043D\u043E\u0440\u043C\u0430, \u043F\u0440\u0438\u043C\u0435\u0440\u044B \u0436\u0430\u043B\u043E\u0431 \u2014 \u043C\u0435\u043D\u044C\u0448\u0435 \u043C\u0438\u043D\u0443\u0442\u044B")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, "\u041E\u0442\u0447\u0451\u0442 \u0441 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430\u043C\u0438"), /*#__PURE__*/React.createElement("span", null, "\u0441\u0440\u0430\u0432\u043D\u0435\u043D\u0438\u0435, \u043E\u0431\u0437\u043E\u0440 \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0430, \u0440\u0430\u0437\u0431\u043E\u0440 \u0436\u0430\u043B\u043E\u0431 \u2014 3\u20135 \u043C\u0438\u043D\u0443\u0442, \u0447\u0438\u0441\u043B\u0430 \u0441\u0432\u0435\u0440\u0435\u043D\u044B")), /*#__PURE__*/React.createElement("p", {
+    className: "aw-modes-n"
+  }, "\u0412\u044B\u0431\u0438\u0440\u0430\u0442\u044C \u043D\u0435 \u043D\u0443\u0436\u043D\u043E: \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u0441\u0430\u043C \u043F\u043E\u0439\u043C\u0451\u0442 \u043F\u043E \u0432\u043E\u043F\u0440\u043E\u0441\u0443, \u0447\u0442\u043E \u043D\u0443\u0436\u043D\u043E, \u0438 \u0441\u0440\u0430\u0437\u0443 \u0441\u043A\u0430\u0436\u0435\u0442, \u0447\u0435\u043C \u043E\u0442\u0432\u0435\u0447\u0430\u0435\u0442. \u041D\u0435 \u0443\u0433\u0430\u0434\u0430\u043B \u2014 \u043F\u043E\u043F\u0440\u0430\u0432\u0438\u0442\u0435 \u043E\u0434\u043D\u0438\u043C \u043D\u0430\u0436\u0430\u0442\u0438\u0435\u043C.")), dayIns && dayIns.length > 0 && /*#__PURE__*/React.createElement("section", {
     className: "aw-sec",
     "aria-labelledby": "aw-day-h"
   }, /*#__PURE__*/React.createElement("h2", {
@@ -13814,58 +13818,136 @@ function ClarifyCard({
   }, "\u0423\u0442\u043E\u0447\u043D\u0438\u0442\u044C \u0438 \u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u044C \u2192")));
 }
 
-// ─── Deep Research console — единая timeline-консоль прогона (редизайн).
-//     Шесть display-фаз поверх реальных phase-событий; внутри каждой —
-//     живые агенты (research), «размышления модели» (reasoning по стадиям,
-//     переиспользуется ThinkingPanel), план отчёта (outline) и доуточнение
-//     пробелов (gap-loop). Всё на реальном SSE-стриме. ─────────────────────
+// ─── Консоль хода отчёта ─────────────────────────────────────────────────────
+//     Пять этапов, как их видит аудитор. Консоль отвечает на четыре вопроса:
+//       • сколько ещё ждать — по обычной длительности этапов (событие typical);
+//       • что помощник понял из вопроса и что войдёт в отчёт;
+//       • куда он ходит — сайты и число прочитанных страниц, а не «идёт сбор»;
+//       • что уже написано — готовые разделы можно читать, пока пишутся остальные.
+//     Пройденные этапы сворачиваются в строку с итогом, раскрываются по нажатию.
 const DEEP_FLOW = [{
   key: "parse",
   label: "Разбор вопроса",
-  hint: "что именно отчёт обязан закрыть",
   phases: ["planning"]
 }, {
   key: "collect",
   label: "Поиск и чтение источников",
-  hint: "сайты организаций, регуляторы, взгляд со стороны",
   phases: ["research"]
 }, {
   key: "facts",
-  label: "Извлечение фактов",
-  hint: "каждое утверждение — с цитатой из источника",
+  label: "Выписка фактов с цитатами",
   phases: ["extraction"]
 }, {
   key: "synth",
   label: "Написание отчёта",
-  hint: "только по фактам, с якорями",
   phases: ["writing"]
 }, {
   key: "verify",
-  label: "Сверка и пробелы",
-  hint: "числа против источников, покрытие контракта",
+  label: "Сверка чисел с источниками",
   phases: ["verification"]
 }];
-// Какие reasoning-стадии показывать под какой display-фазой. active-флаг по-
-// прежнему вычисляется через STAGE_PHASE (стадия активна ТОЛЬКО на своей фазе).
-const PHASE_REASON = {
-  parse: ["conductor"],
-  synth: ["analyst"]
+const DR_PHASES = ["planning", "research", "extraction", "writing", "verification"];
+// запасные значения — замер живых отчётов; сервер присылает медиану недавних (typical)
+const DR_TYPICAL = {
+  planning: 15,
+  research: 60,
+  extraction: 55,
+  writing: 125,
+  verification: 8
 };
 
-// Стороны доказательства — три разных источника правды, и аудитор должен
-// видеть их по отдельности, а не общим числом «фактов».
+// Сколько осталось и какая доля пути пройдена — по обычной длительности этапов.
+function drEta(m) {
+  const typ = {
+    ...DR_TYPICAL,
+    ...(m.typical && m.typical.steps || {})
+  };
+  const idx = DR_PHASES.indexOf(m.phase);
+  if (idx < 0) return {
+    left: null,
+    pct: m.phase === "done" ? 100 : 2,
+    over: false
+  };
+  const total = DR_PHASES.reduce((a, p) => a + (typ[p] || 0), 0) || 1;
+  const inPhase = m.phaseAt ? Math.max(0, (Date.now() - m.phaseAt) / 1000) : 0;
+  const cur = typ[DR_PHASES[idx]] || 1;
+  let before = 0;
+  for (let k = 0; k < idx; k++) before += typ[DR_PHASES[k]] || 0;
+  let after = 0;
+  for (let k = idx + 1; k < DR_PHASES.length; k++) after += typ[DR_PHASES[k]] || 0;
+  // этап идёт дольше обычного — «0 секунд» не обещаем, держим небольшой хвост
+  const curLeft = Math.max(cur - inPhase, Math.min(20, cur * 0.2));
+  return {
+    left: Math.round(after + curLeft),
+    over: inPhase > cur * 1.8 + 20,
+    pct: Math.min(97, Math.max(2, Math.round((before + Math.min(inPhase, cur * 0.95)) / total * 100)))
+  };
+}
+const drLeftText = e => {
+  if (!e || e.left == null) return "";
+  if (e.over) return "дольше обычного — работаю";
+  if (e.left < 40) return "осталось меньше минуты";
+  if (e.left < 95) return "осталась примерно минута";
+  return `осталось примерно ${Math.round(e.left / 60)} мин`;
+};
+
+// Что с разделами отчёта: написан, пишется, ждёт. Тело приходит по порядку, а
+// резюме и «что проверить» пишутся последними — по готовому тексту — и встают наверх.
+function drSections(m) {
+  const titles = m.outline || [];
+  if (!titles.length) return [];
+  const text = m.text || "";
+  const present = titles.map(t => text.indexOf("## " + t) >= 0);
+  const first = present.indexOf(true),
+    last = present.lastIndexOf(true);
+  const lead = i => first < 0 ? false : i < first; // разделы до первого пришедшего — «шапка»
+  const bodyAll = first >= 0 && present.slice(first).every(Boolean);
+  return titles.map((t, i) => {
+    if (m.hasLead) return {
+      title: t,
+      state: "done"
+    };
+    if (first < 0) return {
+      title: t,
+      state: "wait"
+    };
+    if (lead(i)) return {
+      title: t,
+      state: bodyAll && !m.writingSection ? "writing" : "last"
+    };
+    if (!present[i]) return {
+      title: t,
+      state: "wait"
+    };
+    if (m.writingSection ? t === m.writingSection : i === last && !bodyAll) return {
+      title: t,
+      state: "writing"
+    };
+    return {
+      title: t,
+      state: "done"
+    };
+  });
+}
+
+// Стороны доказательства — разные источники правды, и аудитор должен видеть их
+// по отдельности, а не общим числом «фактов».
 const STANCE_UI = {
   declared: {
-    label: "заявлено",
-    hint: "со слов самой организации"
+    label: "заявлено организацией",
+    hint: "со слов самой организации: сайт, тарифы, документы"
   },
   observed: {
-    label: "со стороны",
-    hint: "жалобы, отзывы, разборы"
+    label: "взгляд со стороны",
+    hint: "жалобы, отзывы, разборы и новости"
   },
   regulatory: {
     label: "нормы",
     hint: "требования закона и регулятора"
+  },
+  loophole: {
+    label: "уязвимости",
+    hint: "описанные способы обойти правила"
   }
 };
 
@@ -13896,38 +13978,46 @@ function DeepConsole({
   m,
   loading,
   elapsed,
-  onFresh
+  onFresh,
+  onShort,
+  compact,
+  onToggle
 }) {
   const phase = m.phase;
   const curIdx = phase === "done" ? DEEP_FLOW.length : Math.max(0, DEEP_FLOW.findIndex(d => d.phases.includes(phase)));
-  const srcN = (m.sources || []).length;
+  const [openRows, setOpenRows] = useState({}); // что человек раскрыл или свернул сам
   const contract = m.contract || [];
   const subq = m.subqueries || [];
   const prog = m.progress || {};
   const fs = m.factStats || {};
   const stance = fs.by_stance || {};
-  const anchors = m.verification?.citations || 0;
   const gapsN = (m.gapsList || []).length;
   const verified = m.verification?.verified || m.claimCheck?.verified || 0;
   const checked = m.verification?.numeric_checked || 0;
-  const pct = Math.min(100, Math.round((curIdx + (phase === "done" ? 0 : 0.5)) / DEEP_FLOW.length * 100));
+  const pagesRead = fs.pages || prog.pages_total || prog.pages || 0;
+  const hosts = prog.hosts || [];
+  const secs = drSections(m);
+  const secDone = secs.filter(s => s.state === "done").length;
+  const eta = drEta(m);
   const el = elapsed || 0;
   const elapsedDisplay = `${String(Math.floor(el / 60)).padStart(2, "0")}:${String(el % 60).padStart(2, "0")}`;
-  const runLabel = PHASE_LABELS[phase] || (phase ? phase : "запуск");
+  // Живая подпись этапа показывается только под тем этапом, к которому относится:
+  // раньше «Фактов: 863» висело под «Написанием отчёта».
+  const live = loading && m.stageStatus && m.stageStatus.label && (!m.stageStatus.phase || m.stageStatus.phase === phase) ? m.stageStatus : null;
   const right = (key, status) => {
     if (status === "pending") return "";
     const done = status === "done";
     switch (key) {
       case "parse":
-        return done ? `${contract.length} ${plural(contract.length, "характеристика", "характеристики", "характеристик")}` : "строю план и контракт";
+        return done ? contract.length ? `${contract.length} ${plural(contract.length, "пункт", "пункта", "пунктов")} в отчёте` : "план готов" : "составляю план";
       case "collect":
-        return done ? `${srcN} источников` : prog.pages ? `прочитано ${prog.pages}${prog.blocked ? ` · ${prog.blocked} закрыто` : ""}` : `${subq.length || "…"} подзапросов`;
+        return pagesRead ? `${done ? "" : "прочитано "}${pagesRead} ${plural(pagesRead, "страница", "страницы", "страниц")}` + (prog.blocked ? ` · ${prog.blocked} не открылось` : "") : subq.length ? `${subq.length} ${plural(subq.length, "запрос", "запроса", "запросов")}` : "";
       case "facts":
-        return done ? `${fs.total || 0} фактов` : prog.pages_total ? `${prog.pages_total} страниц в разборе` : "извлекаю";
+        return done ? `${fs.total || prog.facts || 0} ${plural(fs.total || prog.facts || 0, "факт", "факта", "фактов")}` : prog.facts ? `выписано ${prog.facts}` : "";
       case "synth":
-        return done ? anchors ? `${anchors} якорей` : "отчёт готов" : "пишу по фактам";
+        return secs.length ? `${secDone} из ${secs.length} ${plural(secs.length, "раздела", "разделов", "разделов")}` : "";
       case "verify":
-        return done ? `${verified}/${checked} чисел${gapsN ? ` · ${gapsN} пробелов` : ""}` : "сверяю числа";
+        return done && checked ? `сошлось ${verified} из ${checked} чисел${gapsN ? ` · ${gapsN} ${plural(gapsN, "пробел", "пробела", "пробелов")}` : ""}` : "";
       default:
         return "";
     }
@@ -13953,37 +14043,83 @@ function DeepConsole({
     color: "var(--ink)",
     fontWeight: 500
   };
-  return /*#__PURE__*/React.createElement("div", {
-    className: "dr-con-wrap"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "dr-con"
-  }, /*#__PURE__*/React.createElement("div", {
+  const head = /*#__PURE__*/React.createElement("div", {
     className: "dr-con-head"
   }, /*#__PURE__*/React.createElement("span", {
     className: "dr-con-pulse"
   }), /*#__PURE__*/React.createElement("span", {
     className: "dr-con-title"
-  }, "\u0413\u043B\u0443\u0431\u043E\u043A\u043E\u0435 \u0438\u0441\u0441\u043B\u0435\u0434\u043E\u0432\u0430\u043D\u0438\u0435"), /*#__PURE__*/React.createElement("span", {
-    className: "dr-con-sub"
-  }, runLabel), /*#__PURE__*/React.createElement("span", {
-    className: "dr-con-el mono"
-  }, elapsedDisplay)), /*#__PURE__*/React.createElement("div", {
-    className: "dr-con-bar"
+  }, "\u0421\u043E\u0431\u0438\u0440\u0430\u044E \u043E\u0442\u0447\u0451\u0442"), m.title && /*#__PURE__*/React.createElement("span", {
+    className: "dr-con-sub dr-con-name",
+    title: m.title
+  }, m.title), /*#__PURE__*/React.createElement("span", {
+    className: "dr-con-eta",
+    "aria-live": "polite"
+  }, drLeftText(eta)), /*#__PURE__*/React.createElement("span", {
+    className: "dr-con-el mono",
+    title: "\u041F\u0440\u043E\u0448\u043B\u043E \u0441 \u043D\u0430\u0447\u0430\u043B\u0430"
+  }, elapsedDisplay));
+  const bar = /*#__PURE__*/React.createElement("div", {
+    className: "dr-con-bar",
+    role: "progressbar",
+    "aria-valuemin": 0,
+    "aria-valuemax": 100,
+    "aria-valuenow": eta.pct,
+    "aria-label": "\u0413\u043E\u0442\u043E\u0432\u043D\u043E\u0441\u0442\u044C \u043E\u0442\u0447\u0451\u0442\u0430"
   }, /*#__PURE__*/React.createElement("div", {
     className: "dr-con-bar-fill",
     style: {
-      width: pct + "%"
+      width: eta.pct + "%"
     }
-  })), m.degraded && /*#__PURE__*/React.createElement("div", {
+  }));
+  // Свёрнутый вид: отчёт уже читается ниже, консоль не должна его заслонять.
+  if (compact) {
+    const cur = DEEP_FLOW[Math.min(curIdx, DEEP_FLOW.length - 1)];
+    return /*#__PURE__*/React.createElement("div", {
+      className: "dr-con-wrap dr-con-compact"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "dr-con"
+    }, head, bar, /*#__PURE__*/React.createElement("div", {
+      className: "dr-con-mini"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "dr-con-mini-t"
+    }, live && live.label || cur.label), secs.length > 0 && /*#__PURE__*/React.createElement("span", {
+      className: "dr-con-mini-n mono"
+    }, secDone, " \u0438\u0437 ", secs.length, " ", plural(secs.length, "раздела", "разделов", "разделов")), onToggle && /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "dr-con-link",
+      onClick: onToggle
+    }, "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0445\u043E\u0434 \u0440\u0430\u0431\u043E\u0442\u044B"))));
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    className: "dr-con-wrap"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "dr-con"
+  }, head, bar, onShort && loading && curIdx < 3 && /*#__PURE__*/React.createElement("div", {
+    className: "dr-con-route",
+    role: "status"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0412\u043E\u043F\u0440\u043E\u0441 \u0442\u0440\u0435\u0431\u0443\u0435\u0442 \u0441\u0431\u043E\u0440\u0430 \u0438 \u0441\u0432\u0435\u0440\u043A\u0438 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u043E\u0432 \u2014 \u0441\u043E\u0431\u0438\u0440\u0430\u044E \u043E\u0442\u0447\u0451\u0442."), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "ai-route-btn",
+    onClick: onShort,
+    title: "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u0442\u044C \u043E\u0442\u0447\u0451\u0442 \u0438 \u043E\u0442\u0432\u0435\u0442\u0438\u0442\u044C \u043A\u043E\u0440\u043E\u0442\u043A\u043E\u0439 \u0441\u043F\u0440\u0430\u0432\u043A\u043E\u0439 \u2014 \u043C\u0435\u043D\u044C\u0448\u0435 \u043C\u0438\u043D\u0443\u0442\u044B"
+  }, "\u0425\u0432\u0430\u0442\u0438\u0442 \u043A\u043E\u0440\u043E\u0442\u043A\u043E\u0433\u043E \u043E\u0442\u0432\u0435\u0442\u0430")), m.degraded && /*#__PURE__*/React.createElement("div", {
     className: "dr-con-degraded"
-  }, /*#__PURE__*/React.createElement("b", null, "\u0420\u0430\u043C\u043A\u0430 \u0440\u0430\u0437\u0431\u043E\u0440\u0430 \u043D\u0435 \u043F\u043E\u0441\u0442\u0440\u043E\u0435\u043D\u0430"), " \u2014 \u043C\u043E\u0434\u0435\u043B\u044C \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0430 (", m.degraded, "). \u041E\u0442\u0447\u0451\u0442 \u0432\u044B\u0439\u0434\u0435\u0442 \u0437\u0430\u043C\u0435\u0442\u043D\u043E \u0431\u0435\u0434\u043D\u0435\u0435: \u0432\u0437\u0433\u043B\u044F\u0434 \u0441\u043E \u0441\u0442\u043E\u0440\u043E\u043D\u044B \u0438 \u043D\u043E\u0440\u043C\u0430\u0442\u0438\u0432\u043D\u0430\u044F \u0440\u0430\u043C\u043A\u0430 \u0441\u043E\u0431\u0440\u0430\u043D\u044B \u043D\u0435 \u0431\u0443\u0434\u0443\u0442."), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("b", null, "\u041F\u043B\u0430\u043D \u043E\u0442\u0447\u0451\u0442\u0430 \u043D\u0435 \u043F\u043E\u0441\u0442\u0440\u043E\u0435\u043D"), " \u2014 \u043C\u043E\u0434\u0435\u043B\u044C \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0430 (", m.degraded, "). \u041E\u0442\u0447\u0451\u0442 \u0432\u044B\u0439\u0434\u0435\u0442 \u0437\u0430\u043C\u0435\u0442\u043D\u043E \u0431\u0435\u0434\u043D\u0435\u0435: \u0432\u0437\u0433\u043B\u044F\u0434\u0430 \u0441\u043E \u0441\u0442\u043E\u0440\u043E\u043D\u044B \u0438 \u043D\u043E\u0440\u043C \u0432 \u043D\u0451\u043C \u043D\u0435 \u0431\u0443\u0434\u0435\u0442."), /*#__PURE__*/React.createElement("div", {
     className: "dr-con-spine"
   }, DEEP_FLOW.map((d, idx) => {
     const status = idx < curIdx ? "done" : idx === curIdx ? "running" : "pending";
     const last = idx === DEEP_FLOW.length - 1;
+    // идущий этап раскрыт, пройденный свёрнут; человек может переключить сам
+    const open = openRows[d.key] !== undefined ? openRows[d.key] : status === "running";
+    const canOpen = status !== "pending";
+    const toggle = () => canOpen && setOpenRows(o => ({
+      ...o,
+      [d.key]: !open
+    }));
     return /*#__PURE__*/React.createElement("div", {
       key: d.key,
-      className: "dr-con-row"
+      className: "dr-con-row is-" + status
     }, /*#__PURE__*/React.createElement("div", {
       className: "dr-con-col"
     }, /*#__PURE__*/React.createElement("span", {
@@ -14007,26 +14143,38 @@ function DeepConsole({
       }
     })), /*#__PURE__*/React.createElement("div", {
       className: "dr-con-body"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "dr-con-line"
+    }, /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "dr-con-line",
+      onClick: toggle,
+      disabled: !canOpen,
+      "aria-expanded": canOpen ? open : undefined
     }, /*#__PURE__*/React.createElement("span", {
       className: "dr-con-label",
       style: titleStyle(status)
-    }, d.label, status === "running" && d.hint && /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-hint"
-    }, d.hint)), /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-right mono",
-      style: {
-        color: status === "running" ? "var(--accent)" : "var(--ink-3)"
-      }
-    }, right(d.key, status))), status === "running" && loading && m.stageStatus && m.stageStatus.label && /*#__PURE__*/React.createElement("div", {
+    }, d.label), /*#__PURE__*/React.createElement("span", {
+      className: "dr-con-right mono"
+    }, right(d.key, status)), canOpen && /*#__PURE__*/React.createElement("svg", {
+      className: "dr-con-chev" + (open ? " open" : ""),
+      width: "12",
+      height: "12",
+      viewBox: "0 0 24 24",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: "2",
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      "aria-hidden": "true"
+    }, /*#__PURE__*/React.createElement("path", {
+      d: "M6 9l6 6 6-6"
+    }))), status === "running" && live && /*#__PURE__*/React.createElement("div", {
       className: "dr-con-now",
       "aria-live": "polite"
     }, /*#__PURE__*/React.createElement("span", {
       className: "dr-con-now-l"
-    }, m.stageStatus.label), m.stageStatus.detail && /*#__PURE__*/React.createElement("span", {
+    }, live.label), live.detail && /*#__PURE__*/React.createElement("span", {
       className: "dr-con-now-d"
-    }, m.stageStatus.detail)), d.key === "parse" && status !== "pending" && m.understood && m.understood.task && /*#__PURE__*/React.createElement("div", {
+    }, live.detail)), d.key === "parse" && status !== "pending" && m.understood && m.understood.task && /*#__PURE__*/React.createElement("div", {
       className: "dr-con-understood"
     }, /*#__PURE__*/React.createElement("span", {
       className: "dr-con-u-k"
@@ -14047,25 +14195,31 @@ function DeepConsole({
       className: "dr-con-u-redo",
       onClick: onFresh,
       title: "\u041D\u0435 \u043E\u043F\u0438\u0440\u0430\u0442\u044C\u0441\u044F \u043D\u0430 \u043F\u0440\u043E\u0448\u043B\u044B\u0439 \u043E\u0442\u0447\u0451\u0442: \u0441\u043E\u0431\u0440\u0430\u0442\u044C \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438 \u0438 \u0444\u0430\u043A\u0442\u044B \u0437\u0430\u043D\u043E\u0432\u043E"
-    }, "\u0441\u043E\u0431\u0440\u0430\u0442\u044C \u0437\u0430\u043D\u043E\u0432\u043E"))), d.key === "parse" && status !== "pending" && contract.length > 0 && /*#__PURE__*/React.createElement("div", {
+    }, "\u0441\u043E\u0431\u0440\u0430\u0442\u044C \u0437\u0430\u043D\u043E\u0432\u043E"))), open && /*#__PURE__*/React.createElement(React.Fragment, null, d.key === "parse" && contract.length > 0 && /*#__PURE__*/React.createElement("div", {
       className: "dr-con-contract"
     }, /*#__PURE__*/React.createElement("div", {
       className: "dr-con-sub-h"
-    }, "\u041A\u043E\u043D\u0442\u0440\u0430\u043A\u0442 \u0440\u0430\u0437\u0431\u043E\u0440\u0430 \xB7 \u0447\u0442\u043E \u043E\u0431\u044F\u0437\u0430\u043D\u044B \u0437\u0430\u043A\u0440\u044B\u0442\u044C"), /*#__PURE__*/React.createElement("div", {
+    }, "\u0427\u0442\u043E \u0431\u0443\u0434\u0435\u0442 \u0432 \u043E\u0442\u0447\u0451\u0442\u0435"), /*#__PURE__*/React.createElement("div", {
       className: "dr-con-chips"
     }, contract.map((a, ai) => {
       const isObs = a === m.observedAttr,
         isReg = a === m.regulatoryAttr;
       return /*#__PURE__*/React.createElement("span", {
         key: ai,
-        className: "dr-con-chip" + (isObs ? " obs" : "") + (isReg ? " reg" : ""),
-        title: isObs ? "взгляд со стороны" : isReg ? "нормативная рамка" : ""
-      }, a);
-    }))), d.key === "collect" && status !== "pending" && subq.length > 0 && /*#__PURE__*/React.createElement("div", {
+        className: "dr-con-chip",
+        title: isObs ? "взгляд со стороны: жалобы, отзывы, разборы" : isReg ? "нормы: требования закона и регулятора" : ""
+      }, a, isObs && /*#__PURE__*/React.createElement("i", null, "\u0441\u043E \u0441\u0442\u043E\u0440\u043E\u043D\u044B"), isReg && /*#__PURE__*/React.createElement("i", null, "\u043D\u043E\u0440\u043C\u044B"));
+    }))), d.key === "collect" && hosts.length > 0 && /*#__PURE__*/React.createElement("div", {
+      className: "dr-con-hosts",
+      "aria-label": "\u041F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043D\u044B\u0435 \u0441\u0430\u0439\u0442\u044B"
+    }, hosts.map(([h, n]) => /*#__PURE__*/React.createElement("span", {
+      key: h,
+      className: "dr-con-host"
+    }, h, /*#__PURE__*/React.createElement("b", {
+      className: "mono"
+    }, n)))), d.key === "collect" && subq.length > 0 && /*#__PURE__*/React.createElement("details", {
       className: "dr-con-queries"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "dr-con-sub-h"
-    }, "\u0417\u0430\u043F\u0440\u043E\u0441\u044B \xB7 ", subq.length), subq.slice(0, 10).map((q, qi) => {
+    }, /*#__PURE__*/React.createElement("summary", null, "\u041F\u043E\u0438\u0441\u043A\u043E\u0432\u044B\u0435 \u0437\u0430\u043F\u0440\u043E\u0441\u044B \xB7 ", subq.length), subq.map((q, qi) => {
       const site = (q.match(/site:(\S+)/) || [])[1];
       return /*#__PURE__*/React.createElement("div", {
         key: qi,
@@ -14075,35 +14229,53 @@ function DeepConsole({
       }, q.replace(/\s*site:\S+/, "")), site && /*#__PURE__*/React.createElement("span", {
         className: "dr-con-q-site mono"
       }, site));
-    }), subq.length > 10 && /*#__PURE__*/React.createElement("div", {
-      className: "dr-con-more"
-    }, "\u0438 \u0435\u0449\u0451 ", subq.length - 10)), d.key === "facts" && status !== "pending" && (fs.total || 0) > 0 && /*#__PURE__*/React.createElement("div", {
+    })), d.key === "facts" && (fs.total || 0) > 0 && /*#__PURE__*/React.createElement("div", {
       className: "dr-con-stances"
-    }, Object.entries(STANCE_UI).map(([k, v]) => /*#__PURE__*/React.createElement("div", {
+    }, Object.entries(STANCE_UI).filter(([k]) => stance[k]).map(([k, v]) => /*#__PURE__*/React.createElement("div", {
       key: k,
-      className: "dr-con-stance " + k,
+      className: "dr-con-stance",
       title: v.hint
     }, /*#__PURE__*/React.createElement("span", {
       className: "dr-con-stance-n mono"
-    }, stance[k] || 0), /*#__PURE__*/React.createElement("span", {
+    }, stance[k]), /*#__PURE__*/React.createElement("span", {
       className: "dr-con-stance-l"
-    }, v.label)))), (PHASE_REASON[d.key] || []).filter(s => m.reasoningStages?.[s]).map(s => /*#__PURE__*/React.createElement(ThinkingPanel, {
-      key: s,
-      stage: s,
-      text: m.reasoningStages[s],
-      active: loading && m.phase === STAGE_PHASE[s]
-    })), d.key === "verify" && status !== "pending" && gapsN > 0 && /*#__PURE__*/React.createElement("div", {
+    }, v.label)))), d.key === "facts" && fs.critic && fs.critic.checked > 0 && /*#__PURE__*/React.createElement("div", {
+      className: "dr-con-note"
+    }, "\u041A\u0430\u0436\u0434\u0430\u044F \u0446\u0438\u0442\u0430\u0442\u0430 \u0441\u0432\u0435\u0440\u0435\u043D\u0430 \u0441 \u0442\u0435\u043A\u0441\u0442\u043E\u043C \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B: \u0434\u043E\u0441\u043B\u043E\u0432\u043D\u044B\u0445 ", fs.critic.exact, " \u0438\u0437 ", fs.critic.checked, fs.critic.cut ? `, снято без опоры на источник — ${fs.critic.cut}` : "", "."), d.key === "synth" && secs.length > 0 && /*#__PURE__*/React.createElement("ol", {
+      className: "dr-con-secs"
+    }, secs.map((s, si) => /*#__PURE__*/React.createElement("li", {
+      key: si,
+      className: "is-" + s.state
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "dr-con-sec-m",
+      "aria-hidden": "true"
+    }, s.state === "done" && /*#__PURE__*/React.createElement("svg", {
+      width: "10",
+      height: "10",
+      viewBox: "0 0 24 24",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: "3",
+      strokeLinecap: "round",
+      strokeLinejoin: "round"
+    }, /*#__PURE__*/React.createElement("path", {
+      d: "M20 6L9 17l-5-5"
+    }))), /*#__PURE__*/React.createElement("span", {
+      className: "dr-con-sec-t"
+    }, s.title), /*#__PURE__*/React.createElement("span", {
+      className: "dr-con-sec-s"
+    }, s.state === "done" ? "готов" : s.state === "writing" ? "пишется" : s.state === "last" ? "в конце, по готовому тексту" : "")))), d.key === "verify" && gapsN > 0 && /*#__PURE__*/React.createElement("div", {
       className: "dr-con-gaps"
     }, /*#__PURE__*/React.createElement("div", {
       className: "dr-con-sub-h"
-    }, "\u0427\u0435\u0441\u0442\u043D\u044B\u0435 \u043F\u0440\u043E\u0431\u0435\u043B\u044B \xB7 ", gapsN), (m.gapsList || []).slice(0, 4).map((g, gi) => /*#__PURE__*/React.createElement("div", {
+    }, "\u0427\u0435\u0433\u043E \u043D\u0430\u0439\u0442\u0438 \u043D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \xB7 ", gapsN), (m.gapsList || []).slice(0, 4).map((g, gi) => /*#__PURE__*/React.createElement("div", {
       key: gi,
       className: "dr-con-gap"
     }, /*#__PURE__*/React.createElement("span", {
       className: "dr-con-gap-i mono"
     }, "\u2014"), /*#__PURE__*/React.createElement("span", {
       className: "dr-con-gap-w"
-    }, g))))));
+    }, g)))))));
   }))));
 }
 
@@ -14111,13 +14283,13 @@ function DeepConsole({
 function ResearchSummary({
   m
 }) {
-  // Сводка на понятиях нового конвейера: сколько фактов добыто, сколько из
-  // них взгляд со стороны, сколько утверждений имеет якорь на источник.
+  // Итог прогона одной строкой: за сколько собран, на чём стоит, сошлись ли числа.
   const srcN = (m.sources || []).length;
   const fs = m.factStats || {};
-  const st = fs.by_stance || {};
-  const anchors = m.verification?.citations || 0;
-  const gapsN = (m.gapsList || []).length;
+  const checked = m.verification?.numeric_checked || 0,
+    verified = m.verification?.verified || 0;
+  const sec = Math.round(m.elapsedS || 0);
+  const took = sec >= 60 ? `${Math.floor(sec / 60)} мин${sec % 60 >= 5 ? ` ${sec % 60} с` : ""}` : sec ? `${sec} с` : "";
   return /*#__PURE__*/React.createElement("div", {
     className: "dr-summary-bar"
   }, /*#__PURE__*/React.createElement("span", {
@@ -14133,7 +14305,7 @@ function ResearchSummary({
     strokeLinejoin: "round"
   }, /*#__PURE__*/React.createElement("path", {
     d: "M20 6L9 17l-5-5"
-  })), "\u0418\u0441\u0441\u043B\u0435\u0434\u043E\u0432\u0430\u043D\u0438\u0435 \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043D\u043E"), !!fs.total && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "\xB7"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, fs.total), " \u0444\u0430\u043A\u0442\u043E\u0432")), /*#__PURE__*/React.createElement("span", null, "\xB7"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, srcN), " \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u043E\u0432"), !!st.observed && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "\xB7"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, st.observed), " \u0441\u043E \u0441\u0442\u043E\u0440\u043E\u043D\u044B")), !!st.regulatory && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "\xB7"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, st.regulatory), " \u043D\u043E\u0440\u043C")), anchors > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "\xB7"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, anchors), " \u044F\u043A\u043E\u0440\u0435\u0439")), gapsN > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "\xB7"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, gapsN), " \u043F\u0440\u043E\u0431\u0435\u043B\u043E\u0432")));
+  })), "\u041E\u0442\u0447\u0451\u0442 \u0433\u043E\u0442\u043E\u0432", took ? ` за ${took}` : ""), !!fs.pages && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "\xB7"), /*#__PURE__*/React.createElement("span", null, "\u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043E ", /*#__PURE__*/React.createElement("b", null, fs.pages), " ", plural(fs.pages, "страница", "страницы", "страниц"))), !!fs.total && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "\xB7"), /*#__PURE__*/React.createElement("span", null, "\u0432\u044B\u043F\u0438\u0441\u0430\u043D\u043E ", /*#__PURE__*/React.createElement("b", null, fs.total), " ", plural(fs.total, "факт", "факта", "фактов"), " \u0441 \u0446\u0438\u0442\u0430\u0442\u0430\u043C\u0438")), !!srcN && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "\xB7"), /*#__PURE__*/React.createElement("span", null, "\u0432 \u043E\u0442\u0447\u0451\u0442\u0435 ", /*#__PURE__*/React.createElement("b", null, srcN), " ", plural(srcN, "источник", "источника", "источников"))), checked > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "\xB7"), /*#__PURE__*/React.createElement("span", null, "\u0441\u043E\u0448\u043B\u043E\u0441\u044C ", /*#__PURE__*/React.createElement("b", null, verified), " \u0438\u0437 ", checked, " ", plural(checked, "числа", "чисел", "чисел"))));
 }
 function ClaimCheckRow({
   claimCheck,
@@ -15543,7 +15715,8 @@ function AIPage() {
     setStopArm(true);
     stopArmT.current = setTimeout(() => setStopArm(false), 4000);
   };
-  const [deepMode, setDeepMode] = useState(false);
+  const switchRef = useRef(null); // {q,to} — человек меняет глубину ответа на ходу
+  const [runOpen, setRunOpen] = useState(false); // развернул ход работы, когда отчёт уже читается
   const [slotHint, setSlotHint] = useState("");
   const [showKbd, setShowKbd] = useState(false);
   const [hoverCite, setHoverCite] = useState(null); // {n, anchor} для tooltip
@@ -15551,6 +15724,12 @@ function AIPage() {
   const [hideRail, setHideRail] = useState(false);
   const [hideToc, setHideToc] = useState(false);
   const [sessionId, setSessionId] = useState(null); // текущая сессия истории
+  // Тот же номер — в ссылке: запрос может уйти из обработчика прежнего кадра
+  // (смена глубины ответа на ходу), и со старым значением разговор раскололся бы надвое.
+  const sessionRef = useRef(null);
+  useEffect(() => {
+    sessionRef.current = sessionId;
+  }, [sessionId]);
   const [aiFb, setAiFb] = useState(null); // мои оценки ответов (ai_answer)
   useEffect(() => {
     apiFetch("/api/feedback?kind=ai_answer").then(d => setAiFb(d.items || {})).catch(() => setAiFb({}));
@@ -15657,6 +15836,10 @@ function AIPage() {
   useEffect(() => {
     const el = feedRef.current;
     if (!el) return;
+    // Отчёт читают сверху вниз: когда он пишется (и когда готов), к хвосту не
+    // утаскиваем — человек остаётся там, где читает.
+    const last = msgs[msgs.length - 1];
+    if (last && last.mode === "deep" && (last.text || "").length > 400) return;
     if (stickRef.current) el.scrollTop = el.scrollHeight; // мгновенно, без рывка smooth
   }, [msgs, loading]);
   useEffect(() => {
@@ -15785,7 +15968,7 @@ function AIPage() {
           question,
           history,
           force_deep: forceDeep,
-          session_id: sessionId,
+          session_id: sessionRef.current,
           ...(extra || {})
         }),
         signal: ac.signal
@@ -15833,7 +16016,10 @@ function AIPage() {
             try {
               const data = JSON.parse(line.slice(6));
               if (data.type === "session") {
-                if (data.session_id) setSessionId(data.session_id);
+                if (data.session_id) {
+                  sessionRef.current = data.session_id;
+                  setSessionId(data.session_id);
+                }
               } else if (data.type === "text" && data.chunk) {
                 updateLast(last => ({
                   text: (last.text || "") + data.chunk
@@ -15843,7 +16029,9 @@ function AIPage() {
                 // телу, — а читаются первыми. Поэтому вставляем наверх, а не
                 // дописываем в конец.
                 updateLast(last => ({
-                  text: data.chunk + (last.text || "")
+                  text: data.chunk + (last.text || ""),
+                  hasLead: true,
+                  writingSection: null
                 }));
               } else if (data.type === "reasoning") {
                 // Живой ход мысли LLM (delta.reasoning_content). Копим ПО СТАДИЯМ
@@ -15897,6 +16085,15 @@ function AIPage() {
                 updateLast(() => ({
                   files: data.files
                 }));
+              } else if (data.type === "route") {
+                // чем помощник решил отвечать: справкой, отчётом или репликой к прошлому ответу
+                updateLast(() => ({
+                  route: data.value,
+                  routeBy: data.by,
+                  ...(data.value === "report" ? {
+                    mode: "deep"
+                  } : {})
+                }));
               } else if (data.type === "mode") {
                 updateLast(() => ({
                   mode: data.value
@@ -15906,8 +16103,17 @@ function AIPage() {
                   notice: data.text
                 }));
               } else if (data.type === "phase") {
+                // phaseAt — когда начался этап: по нему считается «осталось примерно…»
                 updateLast(() => ({
-                  phase: data.value
+                  phase: data.value,
+                  phaseAt: Date.now()
+                }));
+              } else if (data.type === "typical" && data.steps) {
+                updateLast(() => ({
+                  typical: {
+                    steps: data.steps,
+                    total: data.total
+                  }
                 }));
               } else if (data.type === "plan" && Array.isArray(data.steps)) {
                 // Контракт и подзапросы — то, по чему аудитор понимает рамку
@@ -16008,8 +16214,15 @@ function AIPage() {
                 // Длинная стадия (merging / agent_iter / post_processing) —
                 // показываем её отдельным prominent banner'ом чтобы пользователь
                 // видел что pipeline жив и сколько примерно ждать.
-                updateLast(() => ({
-                  stageStatus: data
+                // phase — к какому этапу относится подпись: под чужим этапом её не показываем
+                updateLast(last => ({
+                  stageStatus: {
+                    ...data,
+                    phase: last.phase
+                  },
+                  ...(data.stage === "analyst" ? {
+                    writingSection: data.section || null
+                  } : {})
                 }));
               } else if (data.type === "merge_progress") {
                 // Прогресс финальной сборки — счётчик символов, видимый юзеру
@@ -16093,6 +16306,9 @@ function AIPage() {
                   title: m.title || data.title || undefined
                 }));
               } else if (data.type === "done") {
+                if (data.elapsed_s) updateLast(() => ({
+                  elapsedS: data.elapsed_s
+                }));
                 break outer;
               }
             } catch {}
@@ -16109,7 +16325,11 @@ function AIPage() {
         return u;
       });
     } catch (e) {
-      if (e.name === "AbortError") {
+      if (e.name === "AbortError" && switchRef.current) {
+        // Человек поменял глубину ответа («Нужен отчёт» / «Хватит короткого»):
+        // недописанный ответ убираем — под тем же вопросом начнётся новый.
+        setMsgs(m => m.length && m[m.length - 1].role === "ai" ? m.slice(0, -1) : m);
+      } else if (e.name === "AbortError") {
         // Человек остановил сам — это не ошибка. Оставляем то, что успело
         // прийти, и честно помечаем, что продолжения не будет.
         setMsgs(m => {
@@ -16134,23 +16354,48 @@ function AIPage() {
       }
     } finally {
       abortRef.current = null;
-      setLoading(false);
+      const sw = switchRef.current;
+      switchRef.current = null;
+      if (sw) {
+        // лента обновится на следующем кадре — запускаем после него
+        setTimeout(() => runSend(sw.q, sw.to === "report", {
+          route: sw.to,
+          route_by: "user",
+          resend: true
+        }), 60);
+      } else setLoading(false);
     }
   };
 
-  // Запуск research: ai-bubble + стрим. История БЕЗ clarify-сообщений.
+  // История разговора для сервера. kind — чем был ответ: отчётом или справкой
+  // (по нему помощник понимает, продолжение это отчёта или новый вопрос).
+  const talkHistory = cut => msgsRef.current.filter(m => m.role === "user" || m.role === "ai").map(m => ({
+    role: m.role === "user" ? "user" : "assistant",
+    content: cut ? (m.text || "").slice(0, cut) : m.text || "",
+    ...(m.role === "ai" ? {
+      kind: m.mode === "deep" ? "report" : "answer"
+    } : {})
+  }));
+  // Запуск ответа: ai-bubble + стрим. История БЕЗ clarify-сообщений.
   const runSend = (t, forceDeep, extra) => {
-    const history = msgsRef.current.filter(m => m.role === "user" || m.role === "ai").map(m => ({
-      role: m.role === "user" ? "user" : "assistant",
-      content: m.text || ""
-    }));
+    const history = talkHistory().filter((h, i, a) => !(i === a.length - 1 && h.role === "user" && h.content === t));
     setLoading(true);
     runStartRef.current = Date.now();
     setElapsed(0); // старт таймера прогона
+    // Маршрут уже известен — сразу показываем нужный вид: консоль отчёта или
+    // короткий ответ, а не безликое «думаю» до первого события сервера.
+    const r = extra && extra.route;
     setMsgs(m => [...m.filter(x => x.role !== "pending"), {
       role: "ai",
       text: "",
-      tools: []
+      tools: [],
+      ...(r ? {
+        route: r,
+        routeBy: extra.route_by
+      } : {}),
+      ...(r === "report" ? {
+        mode: "deep"
+      } : {})
     }]);
     streamChat(t, history, forceDeep, extra);
   };
@@ -16176,45 +16421,48 @@ function AIPage() {
     }
     setSlotHint("");
     setQ("");
-    // Выключенный тумблер = ЯВНЫЙ выбор быстрого режима, а не «решай сам».
-    // Прежний null уходил в авто-определение, и после первого глубокого отчёта
-    // любой следующий вопрос залипал в глубоком (_prior_deep на бэке) — три
-    // терробанка написали, что «переключение на быстрый не работает».
-    const forceDeep = deepMode ? true : false;
-    // Снимаем незакрытую clarify-карточку; сразу показываем индикатор «анализирую»
-    // (генерация вопросов идёт ~5с — без него экран пустой = «тишина»).
+    // Единое поле ввода: режим человек не выбирает. Шаг подготовки на сервере
+    // решает, чем отвечать (справка, отчёт, реплика к прошлому ответу,
+    // презентация), и — только для отчёта — хватает ли в вопросе деталей.
+    // Раньше это решал переключатель «Быстрый / Deep Research»: его ставили не
+    // туда, и он «залипал» (обратная связь трёх терробанков).
+    const hist = talkHistory(3000);
     setMsgs(m => [...m.filter(x => x.role !== "clarify"), {
       role: "user",
       text: t
     }, {
       role: "pending",
-      label: "Анализирую запрос…"
+      label: "Разбираю вопрос…"
     }]);
     setLoading(true);
-    // Уточняющая воронка — только для Deep Research: быстрый режим отвечает сразу,
-    // агент сам делает разумные допущения (фидбек владельца 22.07).
-    if (!deepMode && !forceDeep) {
-      runSend(t, forceDeep);
-      return;
-    }
     let data = null;
     try {
       data = await apiPost("/api/ai/clarify", {
         question: t,
-        deep: !!deepMode
+        history: hist,
+        auto: true
       });
     } catch (e) {
       data = null;
     }
-    if (!data || data.complete !== false || !(Array.isArray(data.questions) && data.questions.length)) {
-      runSend(t, forceDeep); // воронка не нужна / ошибка → research
+    const route = data && ["answer", "report", "reply", "deck"].includes(data.route) ? data.route : null;
+    if (!route) {
+      runSend(t, null);
+      return;
+    } // подготовка не ответила — решит сервер
+    const extra = {
+      route,
+      route_by: data.route_by === "rules" ? "rules" : "model"
+    };
+    if (route !== "report" || data.complete !== false || !(Array.isArray(data.questions) && data.questions.length)) {
+      runSend(t, route === "report", extra);
       return;
     }
     setLoading(false); // интерактивная карточка вопросов
     setMsgs(m => [...m.filter(x => x.role !== "pending"), {
       role: "clarify",
       question: t,
-      forceDeep,
+      forceDeep: true,
       questions: data.questions
     }]);
   };
@@ -16251,11 +16499,50 @@ function AIPage() {
       }
       return u;
     });
-    runSend(enriched, forceDeep);
+    runSend(enriched, true, {
+      route: "report",
+      route_by: "model"
+    });
   };
   const clarifySkip = (srcQuestion, forceDeep) => {
     setMsgs(m => m.filter(x => x.role !== "clarify"));
-    runSend(srcQuestion, forceDeep);
+    runSend(srcQuestion, true, {
+      route: "report",
+      route_by: "model"
+    });
+  };
+  // Человек поправил глубину ответа. Пока ответ идёт — останавливаем его и под
+  // тем же вопросом запускаем другой; готовый короткий ответ остаётся в ленте,
+  // а отчёт приходит следом.
+  const switchRoute = (srcQ, to) => {
+    if (!srcQ) return;
+    trkEvent({
+      kind: "ui",
+      page: "ai",
+      payload: {
+        action: "route_override",
+        to
+      }
+    });
+    if (loading && abortRef.current) {
+      switchRef.current = {
+        q: srcQ,
+        to
+      };
+      try {
+        abortRef.current.abort();
+      } catch {}
+      return;
+    }
+    if (loading) return;
+    setMsgs(m => [...m, {
+      role: "user",
+      text: srcQ
+    }]);
+    runSend(srcQ, to === "report", {
+      route: to,
+      route_by: "user"
+    });
   };
   // Апселл из быстрого ответа: запускаем тот же запрос как Deep Research.
   // «Презентация» под отчётом: просьба в этот же разговор, файл придёт в ответе.
@@ -16296,7 +16583,9 @@ function AIPage() {
         text: q
       }]);
       runSend(q, true, {
-        fresh: true
+        fresh: true,
+        route: "report",
+        route_by: "user"
       });
     }, 400);
   };
@@ -16309,13 +16598,15 @@ function AIPage() {
         action: "quick_upsell"
       }
     });
-    // режим отчёта — только на этот запуск: раньше он оставался включённым, и
-    // следующая реплика «хочу» или «сформируй файл» запускала новый отчёт
+    // отчёт — только на этот запуск: следующая реплика снова решается по смыслу
     setMsgs(m => [...m, {
       role: "user",
       text: srcQ
     }]);
-    runSend(srcQ, true);
+    runSend(srcQ, true, {
+      route: "report",
+      route_by: "user"
+    });
   };
   // «Новый запрос» — сброс ленты к приветствию (welcome). Заблокировано во
   // время прогона, чтобы не оборвать активный stream-reader.
@@ -16555,20 +16846,36 @@ function AIPage() {
       const userQ = i > 0 && msgs[i - 1]?.role === "user" ? msgs[i - 1].text : "Аудит-отчёт";
       const showPdfBtn = m.role === "ai" && m.text && m.text.length > 200;
       const streaming = m.role === "ai" && loading && i === msgs.length - 1;
-      // Режим живой консоли прогона: показываем DeepConsole. Отчёт (toolbar/
-      // toc/rail/article) появляется когда phase==="done" — как в дизайне.
+      // Пока отчёт собирается, сверху идёт консоль хода работы. Как только
+      // написан первый раздел, под ней появляется сам отчёт — черновик:
+      // письмо занимает половину времени, и раньше всё это время человек
+      // смотрел на «Пишу раздел…», хотя текст уже был. Консоль при этом
+      // сворачивается в полоску, чтобы не заслонять чтение.
       const consoleMode = m.role === "ai" && loading && i === msgs.length - 1 && m.phase !== "done";
+      const draftMode = consoleMode && (m.text || "").length > 400;
       return /*#__PURE__*/React.createElement("div", {
         key: i,
         className: `chat-msg ${m.role}`
-      }, consoleMode ? /*#__PURE__*/React.createElement("div", {
+      }, consoleMode && /*#__PURE__*/React.createElement("div", {
         className: "chat-bubble chat-bubble-deep"
       }, /*#__PURE__*/React.createElement(DeepConsole, {
         m: m,
         loading: loading,
         elapsed: elapsed,
-        onFresh: () => redoFresh(userQ)
-      })) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+        onFresh: () => redoFresh(userQ),
+        onShort: i > 0 && msgs[i - 1]?.role === "user" ? () => switchRoute(userQ, "answer") : null,
+        compact: draftMode && !runOpen,
+        onToggle: () => setRunOpen(true)
+      }), draftMode && runOpen && /*#__PURE__*/React.createElement("div", {
+        className: "dr-con-fold"
+      }, /*#__PURE__*/React.createElement("button", {
+        type: "button",
+        className: "dr-con-link",
+        onClick: () => setRunOpen(false)
+      }, "\u0421\u0432\u0435\u0440\u043D\u0443\u0442\u044C \u0445\u043E\u0434 \u0440\u0430\u0431\u043E\u0442\u044B"))), draftMode && /*#__PURE__*/React.createElement("div", {
+        className: "dr-draft-note",
+        role: "status"
+      }, /*#__PURE__*/React.createElement("b", null, "\u041E\u0442\u0447\u0451\u0442 \u043F\u0438\u0448\u0435\u0442\u0441\u044F \u2014 \u043C\u043E\u0436\u043D\u043E \u0447\u0438\u0442\u0430\u0442\u044C."), " \u0420\u0430\u0437\u0434\u0435\u043B\u044B \u043F\u043E\u044F\u0432\u043B\u044F\u044E\u0442\u0441\u044F \u043F\u043E \u043C\u0435\u0440\u0435 \u0433\u043E\u0442\u043E\u0432\u043D\u043E\u0441\u0442\u0438; \u0440\u0435\u0437\u044E\u043C\u0435 \u0432\u0441\u0442\u0430\u043D\u0435\u0442 \u0432 \u043D\u0430\u0447\u0430\u043B\u043E, \u0447\u0438\u0441\u043B\u0430 \u0441\u0432\u0435\u0440\u044F\u044E\u0442\u0441\u044F \u0432 \u043A\u043E\u043D\u0446\u0435."), (!consoleMode || draftMode) && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
         className: "dr-doc-toolbar"
       }, /*#__PURE__*/React.createElement("span", {
         className: "who",
@@ -16721,10 +17028,20 @@ function AIPage() {
       className: "chat-msg ai quick-msg"
     }, /*#__PURE__*/React.createElement("div", {
       className: "who"
-    }, "AuditLens AI", m.engine === "hermes" ? " · Hermes ✦" : ""), m.notice && /*#__PURE__*/React.createElement("div", {
+    }, "\u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A"), m.notice && /*#__PURE__*/React.createElement("div", {
       className: "ai-notice",
       role: "status"
-    }, m.notice), m.tools && m.tools.length > 0 && /*#__PURE__*/React.createElement("div", {
+    }, m.notice), loading && i === msgs.length - 1 && prevQ && (m.route === "answer" || m.route === "reply") && /*#__PURE__*/React.createElement("div", {
+      className: "ai-route",
+      role: "status"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "ai-route-t"
+    }, m.route === "reply" ? "Отвечаю по уже собранному, без нового сбора" : "Отвечаю короткой справкой — обычно меньше минуты"), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "ai-route-btn",
+      onClick: () => switchRoute(prevQ, "report"),
+      title: "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u0442\u044C \u043A\u043E\u0440\u043E\u0442\u043A\u0438\u0439 \u043E\u0442\u0432\u0435\u0442 \u0438 \u0441\u043E\u0431\u0440\u0430\u0442\u044C \u043E\u0442\u0447\u0451\u0442 \u0441 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430\u043C\u0438 (3\u20135 \u043C\u0438\u043D\u0443\u0442)"
+    }, "\u041D\u0443\u0436\u0435\u043D \u043E\u0442\u0447\u0451\u0442")), m.tools && m.tools.length > 0 && /*#__PURE__*/React.createElement("div", {
       className: "quick-tools"
     }, collapseTools(m.tools).map(({
       lbl,
@@ -16764,10 +17081,10 @@ function AIPage() {
       className: "quick-upsell"
     }, /*#__PURE__*/React.createElement("span", {
       className: "quick-upsell-t"
-    }, "\u041D\u0443\u0436\u0435\u043D \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442 \u0434\u043B\u044F \u0430\u0443\u0434\u0438\u0442-\u0434\u0435\u043B\u0430 \u2014 \u0441 \u0442\u0430\u0431\u043B\u0438\u0446\u0435\u0439, \u0440\u0438\u0441\u043A\u0430\u043C\u0438 \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u043E\u0439 \u0447\u0438\u0441\u0435\u043B?"), /*#__PURE__*/React.createElement("button", {
+    }, "\u041D\u0443\u0436\u0435\u043D \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442 \u0434\u043B\u044F \u0430\u0443\u0434\u0438\u0442-\u0434\u0435\u043B\u0430 \u2014 \u0441 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430\u043C\u0438, \u0440\u0438\u0441\u043A\u0430\u043C\u0438 \u0438 \u0441\u0432\u0435\u0440\u043A\u043E\u0439 \u0447\u0438\u0441\u0435\u043B?"), /*#__PURE__*/React.createElement("button", {
       className: "quick-upsell-btn",
       onClick: () => runDeepFromQuick(prevQ)
-    }, "\u0417\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u044C Deep Research", /*#__PURE__*/React.createElement("svg", {
+    }, "\u0421\u043E\u0431\u0440\u0430\u0442\u044C \u043E\u0442\u0447\u0451\u0442", /*#__PURE__*/React.createElement("svg", {
       viewBox: "0 0 24 24",
       fill: "none",
       stroke: "currentColor",
@@ -16826,21 +17143,22 @@ function AIPage() {
     className: "al-runbar-dot"
   }), /*#__PURE__*/React.createElement("span", {
     className: "al-runbar-text"
-  }, "\u0418\u0434\u0451\u0442 \u0438\u0441\u0441\u043B\u0435\u0434\u043E\u0432\u0430\u043D\u0438\u0435 \u2014 \u043E\u0431\u044B\u0447\u043D\u043E 5\u201310 \u043C\u0438\u043D\u0443\u0442"), /*#__PURE__*/React.createElement("span", {
+  }, "\u0421\u043E\u0431\u0438\u0440\u0430\u044E \u043E\u0442\u0447\u0451\u0442", lastDeep && drLeftText(drEta(lastDeep)) ? " — " + drLeftText(drEta(lastDeep)) : ""), /*#__PURE__*/React.createElement("span", {
     className: "al-runbar-el mono"
-  }, fmtEl(elapsed)), /*#__PURE__*/React.createElement("button", {
+  }, fmtEl(elapsed)), lastDeep && (lastDeep.text || "").length > 400 && /*#__PURE__*/React.createElement("button", {
     className: "al-runbar-btn",
     onClick: () => {
-      const el = feedRef.current;
-      if (el) {
-        stickRef.current = true;
-        el.scrollTo({
-          top: el.scrollHeight,
-          behavior: "smooth"
+      const el = feedRef.current,
+        d = el && el.querySelector(".dr-draft-note");
+      if (d) {
+        stickRef.current = false;
+        d.scrollIntoView({
+          behavior: "smooth",
+          block: "start"
         });
       }
     }
-  }, "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u043E\u0442\u0447\u0451\u0442 \u2192"), /*#__PURE__*/React.createElement("button", {
+  }, "\u0427\u0438\u0442\u0430\u0442\u044C \u043E\u0442\u0447\u0451\u0442 \u2191"), /*#__PURE__*/React.createElement("button", {
     className: "al-runbar-btn al-runbar-stop" + (stopArm ? " arm" : ""),
     onClick: askStop,
     "aria-label": stopArm ? "Подтвердить остановку отчёта" : "Остановить отчёт"
@@ -16867,13 +17185,12 @@ function AIPage() {
     role: "alert"
   }, slotHint), /*#__PURE__*/React.createElement("div", {
     className: "chat-input-wrap"
-  }, deepMode && /*#__PURE__*/React.createElement("div", {
-    className: "composer-accent"
-  }), /*#__PURE__*/React.createElement("textarea", {
+  }, /*#__PURE__*/React.createElement("textarea", {
     ref: inputRef,
     className: "chat-textarea",
     rows: 1,
-    placeholder: deepMode ? "Опишите задачу для глубокого исследования…" : "Спросите о продукте, жалобах, регулировании или новости…",
+    "aria-label": "\u0412\u043E\u043F\u0440\u043E\u0441 \u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A\u0443",
+    placeholder: "\u0421\u043F\u0440\u043E\u0441\u0438\u0442\u0435 \u0438\u043B\u0438 \u043F\u043E\u0441\u0442\u0430\u0432\u044C\u0442\u0435 \u0437\u0430\u0434\u0430\u0447\u0443: \u0441\u0442\u0430\u0432\u043A\u0430, \u0436\u0430\u043B\u043E\u0431\u044B, \u0441\u0440\u0430\u0432\u043D\u0435\u043D\u0438\u0435 \u0431\u0430\u043D\u043A\u043E\u0432, \u043D\u043E\u0440\u043C\u044B, \u043D\u043E\u0432\u043E\u0441\u0442\u044C\u2026",
     value: q,
     onChange: e => {
       setQ(e.target.value);
@@ -16887,22 +17204,22 @@ function AIPage() {
     }
   }), /*#__PURE__*/React.createElement("div", {
     className: "composer-bar"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "seg"
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "seg-btn" + (!deepMode ? " on" : ""),
-    onClick: () => setDeepMode(false),
-    disabled: loading
-  }, "\u0411\u044B\u0441\u0442\u0440\u044B\u0439"), /*#__PURE__*/React.createElement("button", {
-    className: "seg-btn" + (deepMode ? " on" : ""),
-    onClick: () => setDeepMode(true),
-    disabled: loading,
-    title: "Deep Research: \u043F\u043B\u0430\u043D\u0438\u0440\u043E\u0432\u0449\u0438\u043A \u2192 \u043C\u0443\u043B\u044C\u0442\u0438-\u0430\u0433\u0435\u043D\u0442 \u2192 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0430 \u0444\u0430\u043A\u0442\u043E\u0432"
   }, /*#__PURE__*/React.createElement("span", {
-    className: "seg-dot"
-  }), "Deep Research")), /*#__PURE__*/React.createElement("span", {
-    className: "composer-hint"
-  }, deepMode ? "отчёт с источниками · обычно 5–10 мин" : "быстрый ответ · обычно меньше минуты"), /*#__PURE__*/React.createElement("span", {
+    className: "composer-hint composer-auto",
+    title: "\u041A\u043E\u0440\u043E\u0442\u043A\u0430\u044F \u0441\u043F\u0440\u0430\u0432\u043A\u0430 \u043F\u0440\u0438\u0445\u043E\u0434\u0438\u0442 \u043C\u0435\u043D\u044C\u0448\u0435 \u0447\u0435\u043C \u0437\u0430 \u043C\u0438\u043D\u0443\u0442\u0443, \u043E\u0442\u0447\u0451\u0442 \u0441 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430\u043C\u0438 \u2014 \u0437\u0430 3\u20135 \u043C\u0438\u043D\u0443\u0442. \u0427\u0442\u043E \u043D\u0443\u0436\u043D\u043E, \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u0440\u0435\u0448\u0430\u0435\u0442 \u043F\u043E \u0432\u043E\u043F\u0440\u043E\u0441\u0443; \u0441\u0432\u043E\u0451 \u0440\u0435\u0448\u0435\u043D\u0438\u0435 \u043E\u043D \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0435\u0442 \u0441\u0440\u0430\u0437\u0443, \u0438 \u0435\u0433\u043E \u043C\u043E\u0436\u043D\u043E \u043F\u043E\u043C\u0435\u043D\u044F\u0442\u044C. \u041C\u043E\u0436\u043D\u043E \u0438 \u043D\u0430\u043F\u0438\u0441\u0430\u0442\u044C \u043F\u0440\u044F\u043C\u043E: \xAB\u043A\u043E\u0440\u043E\u0442\u043A\u043E\xBB \u0438\u043B\u0438 \xAB\u043D\u0443\u0436\u0435\u043D \u043E\u0442\u0447\u0451\u0442\xBB."
+  }, /*#__PURE__*/React.createElement("svg", {
+    width: "13",
+    height: "13",
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"
+  })), "\u0441\u043F\u0440\u0430\u0432\u043A\u0430 \u0438\u043B\u0438 \u043E\u0442\u0447\u0451\u0442 \u2014 \u0440\u0435\u0448\u0443 \u043F\u043E \u0432\u043E\u043F\u0440\u043E\u0441\u0443"), /*#__PURE__*/React.createElement("span", {
     className: "composer-kbd"
   }, "Enter \u21B5"), loading ? /*#__PURE__*/React.createElement("button", {
     className: "composer-send composer-stop",
@@ -16921,11 +17238,11 @@ function AIPage() {
     height: "10",
     rx: "2"
   }))) : /*#__PURE__*/React.createElement("button", {
-    className: "composer-send" + (deepMode ? " deep" : ""),
+    className: "composer-send",
     disabled: !q.trim(),
     onClick: () => send(),
     "aria-label": "\u041E\u0442\u043F\u0440\u0430\u0432\u0438\u0442\u044C"
-  }, deepMode ? "Запустить research" : "Спросить", /*#__PURE__*/React.createElement("svg", {
+  }, "\u0421\u043F\u0440\u043E\u0441\u0438\u0442\u044C", /*#__PURE__*/React.createElement("svg", {
     viewBox: "0 0 24 24",
     fill: "none",
     stroke: "currentColor",
@@ -32217,7 +32534,7 @@ function PuSyWeb({
     style: {
       marginTop: 0
     }
-  }, gw.enabled ? `Основной поиск — ${gw.primary === "fleet" ? "запасной fleet" : "Яндекс через шлюз"}.` : "Шлюз не настроен.", gw.breaker_open ? ` Шлюз отключён${gw.breaker_reason ? `: ${gw.breaker_reason}` : ""}.` : "", gw.copies_breaker_open ? " Чтение копий страниц временно отключено." : "", " ", "\xAB\u041B\u0438\u043C\u0438\u0442\xBB \u0438 \xAB\u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D\xBB \u2014 \u0437\u0430\u043F\u0440\u043E\u0441 \u0443\u0448\u0451\u043B \u043D\u0430 \u0437\u0430\u043F\u0430\u0441\u043D\u043E\u0439 \u043F\u043E\u0438\u0441\u043A; \xAB\u043F\u0443\u0441\u0442\u043E\xBB \u2014 \u0447\u0435\u0441\u0442\u043D\u043E \u043D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u043D\u0430\u0448\u043B\u043E\u0441\u044C. \u041A\u043E\u043F\u0438\u0438 \u2014 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B, \u0437\u0430\u043A\u0440\u044B\u0442\u044B\u0435 \u0430\u043D\u0442\u0438\u0431\u043E\u0442\u043E\u043C, \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043D\u044B\u0435 \u0438\u0437 \u0441\u043E\u0445\u0440\u0430\u043D\u0451\u043D\u043D\u043E\u0439 \u043A\u043E\u043F\u0438\u0438 \u042F\u043D\u0434\u0435\u043A\u0441\u0430. \u041F\u043E\u0432\u0442\u043E\u0440\u044B \u0438\u0437 \u043A\u044D\u0448\u0430 \u043D\u0435 \u0441\u0447\u0438\u0442\u0430\u044E\u0442\u0441\u044F."), rows.length === 0 ? /*#__PURE__*/React.createElement(PuEmpty, null, "\u041F\u043E\u0438\u0441\u043A \u0435\u0449\u0451 \u043D\u0435 \u0432\u044B\u0437\u044B\u0432\u0430\u043B\u0438.") : /*#__PURE__*/React.createElement("div", null, rows.map(r => {
+  }, gw.enabled ? `Основной поиск — ${gw.primary === "fleet" ? "запасной fleet" : "Яндекс через шлюз"}.` : "Шлюз не настроен.", gw.breaker_open ? ` Шлюз отключён${gw.breaker_reason ? `: ${gw.breaker_reason}` : ""}.` : "", gw.copies_breaker_open ? ` Сохранённые копии Яндекса сейчас недоступны: отчёты их не ждут, хост проверяется каждые ${gw.copies_check_every_min || 10} мин и подключится обратно сам${gw.copies_checked_at ? ` (последняя проверка ${String(gw.copies_checked_at).slice(11, 16)} UTC)` : ""}.` : "", " ", "\xAB\u041B\u0438\u043C\u0438\u0442\xBB \u0438 \xAB\u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D\xBB \u2014 \u0437\u0430\u043F\u0440\u043E\u0441 \u0443\u0448\u0451\u043B \u043D\u0430 \u0437\u0430\u043F\u0430\u0441\u043D\u043E\u0439 \u043F\u043E\u0438\u0441\u043A; \xAB\u043F\u0443\u0441\u0442\u043E\xBB \u2014 \u0447\u0435\u0441\u0442\u043D\u043E \u043D\u0438\u0447\u0435\u0433\u043E \u043D\u0435 \u043D\u0430\u0448\u043B\u043E\u0441\u044C. \u041A\u043E\u043F\u0438\u0438 \u2014 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B, \u0437\u0430\u043A\u0440\u044B\u0442\u044B\u0435 \u0430\u043D\u0442\u0438\u0431\u043E\u0442\u043E\u043C, \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043D\u044B\u0435 \u0438\u0437 \u0441\u043E\u0445\u0440\u0430\u043D\u0451\u043D\u043D\u043E\u0439 \u043A\u043E\u043F\u0438\u0438 \u042F\u043D\u0434\u0435\u043A\u0441\u0430. \u041F\u043E\u0432\u0442\u043E\u0440\u044B \u0438\u0437 \u043A\u044D\u0448\u0430 \u043D\u0435 \u0441\u0447\u0438\u0442\u0430\u044E\u0442\u0441\u044F."), rows.length === 0 ? /*#__PURE__*/React.createElement(PuEmpty, null, "\u041F\u043E\u0438\u0441\u043A \u0435\u0449\u0451 \u043D\u0435 \u0432\u044B\u0437\u044B\u0432\u0430\u043B\u0438.") : /*#__PURE__*/React.createElement("div", null, rows.map(r => {
     const k = r.kind + ":" + r.backend,
       bs = r.by_status || {};
     return /*#__PURE__*/React.createElement("div", {

@@ -1188,43 +1188,65 @@ async def _deck_from_report(question: str = "", report_id: int | None = None) ->
     yield ev({"type": "done"})
 
 
+async def resolve_route(question: str, history: list[dict] | None,
+                        force_deep: bool | None = None, route: str | None = None,
+                        deck_report_id: int | None = None) -> tuple[str, str]:
+    """Чем отвечать: (маршрут, кто решил). Маршруты — ai/router.py.
+
+    Порядок: кнопка под отчётом → маршрут, с которым пришёл запрос (его выбрал
+    человек или шаг подготовки) → прежний признак force_deep → модель-диспетчер.
+    """
+    from . import router as al_router
+    if deck_report_id:
+        return "deck", "user"
+    if route in al_router.ROUTES:
+        return al_router.guard(route, history), "user"
+    if force_deep is not None:
+        # Клиент до единого поля ввода (и набор проверочных вопросов): режим
+        # выбран явно, а просьбу о презентации и реплику к ответу узнаём по
+        # словам, как раньше.
+        if is_deck_request(question, history):
+            return "deck", "rules"
+        if force_deep:
+            return "report", "user"
+        return ("reply" if is_followup_reply(question, history) else "answer"), "user"
+    r = await al_router.decide(question, history)
+    return r.route, r.by
+
+
 async def stream_analysis(question: str, history: list[dict],
                            force_deep: bool | None = None,
                            session_hint: str | None = None,
                            deck_report_id: int | None = None,
-                           fresh: bool = False) -> AsyncIterator[str]:
-    """Главный entry-point AI-чата.
-    Автоматически выбирает режим: quick (single-shot tool-use)
-    либо deep (planner → multi-step → synthesize → verify → charts).
-    force_deep — явный override (через UI toggle)."""
-    # Routing: deep mode для исследовательских вопросов.
+                           fresh: bool = False,
+                           route: str | None = None,
+                           route_by: str | None = None) -> AsyncIterator[str]:
+    """Главный вход ИИ-помощника: один вопрос — один ответ нужной глубины.
+
+    Глубину выбирает не переключатель, а маршрут (ai/router.py): короткая
+    справка, отчёт с источниками, реплика к уже данному ответу или презентация
+    по готовому отчёту. Маршрут приходит с запросом (человек нажал «Нужен
+    отчёт» или его определил шаг подготовки) либо решается здесь."""
     # По умолчанию DEEP_V2=1 — агентская архитектура v2 (conductor → автономные
     # агенты → analyst → critic). При DEEP_V2=0 откат на старый EAV-pipeline.
-    from .llm_utils import is_deep_question
-    # Follow-up-роутинг (волна 11): «а по ВТБ?» после глубокого отчёта — это
-    # продолжение исследования, а не быстрый вопрос. Раньше текстовая эвристика
-    # не видела историю, и follow-up падал в quick — без вчерашнего контекста.
-    _prior_deep = any((h.get("role") == "assistant"
-                       and len(h.get("content") or "") > 2500)
-                      for h in (history or [])[-4:])
-    # Презентация по готовому отчёту: кнопка под отчётом (deck_report_id) или
-    # короткая просьба в разговоре. Нового исследования не нужно.
-    if deck_report_id or is_deck_request(question, history):
+    route, by = await resolve_route(question, history, force_deep, route, deck_report_id)
+    if route_by in ("user", "model", "rules") and by == "user":
+        by = route_by            # клиент знает точнее: решил человек или шаг подготовки
+    # Презентация по готовому отчёту: кнопка под отчётом или просьба в
+    # разговоре. Нового исследования не нужно.
+    if route == "deck":
         handled = False
         async for ev in _deck_from_report(question, deck_report_id):
+            if not handled:
+                yield json.dumps({"type": "route", "value": "deck", "by": by})
             handled = True
             yield ev
         if handled:
             return
-    if force_deep is not False and is_followup_reply(question, history):
-        log.info("[stream_analysis] реплика в продолжение разговора — быстрый ответ")
-        force_deep = False
-        yield json.dumps({"type": "notice", "kind": "reply",
-                          "text": "Это уточнение к прошлому ответу — отвечаю коротко, без нового "
-                                  "исследования. Нужен новый отчёт — задайте вопрос целиком."},
-                         ensure_ascii=False)
-    if force_deep is True or (force_deep is None
-                              and (is_deep_question(question) or _prior_deep)):
+        route = "answer"         # отчёта в разговоре не нашлось — отвечаем как на вопрос
+    log.info("[stream_analysis] маршрут: %s (%s)", route, by)
+    yield json.dumps({"type": "route", "value": route, "by": by})
+    if route == "report":
         if os.getenv("DEEP_V2", "1").lower() in ("1", "true", "yes"):
             yielded = False          # §4d: анти «двойной стрим» — откат только если
             # НИЧЕГО ещё не стримили. Если v2 упала ПОСЛЕ части SSE-событий, откат на

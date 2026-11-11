@@ -5336,6 +5336,12 @@ class ChatRequest(BaseModel):
     session_id: Optional[int] = None     # продолжение существующей сессии истории
     deck_report_id: Optional[int] = None  # кнопка «Презентация» под отчётом: по какому отчёту
     fresh: bool = False                  # «собрать заново»: не продолжать прошлый отчёт
+    # Единое поле ввода: чем отвечать (answer | report | reply | deck) и кто
+    # решил (user — человек нажал «Нужен отчёт»/«Хватит короткого», model —
+    # шаг подготовки). Пусто — решит сервер (ai/router.py).
+    route: Optional[str] = None
+    route_by: Optional[str] = None
+    resend: bool = False                 # тот же вопрос с другой глубиной: в историю дважды не писать
 
 
 async def _title_later(report_id: int, session_id: int | None, question: str,
@@ -5399,6 +5405,9 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
     # Снимок фактов отчёта (служебное событие memory): сохраняется рядом с
     # отчётом, чтобы следующий вопрос разговора начал с собранного.
     memory: Optional[dict] = None
+    # Чем помощник решил отвечать и кто это решил (модель, правила, человек):
+    # по этому «Пульс» видит, как часто выбор глубины приходится поправлять.
+    route_info: dict = {}
     t0 = time.monotonic()
 
     def _persist(finished: bool) -> int | None:
@@ -5420,7 +5429,8 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                   else "ok" if finished else "stopped")
         userdata.log_event(username, "ai_run_end",
                            {"status": status, "mode": mode, "elapsed_s": elapsed,
-                            "session_id": session_id, "body_len": len((body or "").strip())})
+                            "session_id": session_id, "body_len": len((body or "").strip()),
+                            **route_info})
         if not (body and body.strip()):
             return None
         try:
@@ -5469,6 +5479,7 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                 meta["files"] = files
             if run_meta:
                 meta["run"] = run_meta
+            meta.update(route_info)
             userdata.add_message(session_id, "assistant", body, meta)
             # Достраиваем связь «документ → отчёт»: страницы уже легли в базу
             # знаний с run_id, а номер отчёта появился только сейчас.
@@ -5497,6 +5508,8 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                     internal = True
                     if isinstance(data.get("data"), dict):
                         memory = data["data"]
+                elif t == "route":
+                    route_info = {"route": data.get("value"), "route_by": data.get("by")}
                 elif t == "text":
                     if data.get("chunk"):
                         parts.append(data["chunk"])
@@ -5613,15 +5626,19 @@ async def ai_analyze(req: ChatRequest, user: CurrentUser = Depends(get_current_u
     try:
         userdata.touch_user(username, user.name)
         session_id = userdata.get_or_create_session(username, req.session_id, req.question)
-        userdata.add_message(session_id, "user", req.question,
-                             {"force_deep": req.force_deep})
-        signals = userdata.update_interests_from_query(username, req.question)
+        if not (req.resend and req.session_id):
+            userdata.add_message(session_id, "user", req.question,
+                                 {"force_deep": req.force_deep})
+        # тот же вопрос с другой глубиной — в интересы второй раз не считаем
+        signals = (userdata.parse_query_signals(req.question) if req.resend else
+                   userdata.update_interests_from_query(username, req.question))
         # Режим здесь ещё НЕ известен: «глубоко или быстро» решает маршрутизатор
         # уже в процессе, а флаг запроса — только пожелание. Фактический режим
         # ложится в chat_message.meta, оттуда его и читает карточка человека.
         userdata.log_event(username, "ai_query",
                            {"question": req.question, "session_id": session_id,
-                            "deep_requested": bool(req.force_deep), **signals})
+                            "deep_requested": bool(req.force_deep),
+                            "route_requested": req.route, "route_by": req.route_by, **signals})
     except Exception:
         log.warning("[ai_analyze] pre-persist failed", exc_info=True)
 
@@ -5635,7 +5652,8 @@ async def ai_analyze(req: ChatRequest, user: CurrentUser = Depends(get_current_u
     inner = stream_analysis(req.question, req.history, force_deep=req.force_deep,
                             session_hint=(f"{user.username}-{session_id}"
                                           if session_id else user.username),
-                            deck_report_id=req.deck_report_id, fresh=bool(req.fresh))
+                            deck_report_id=req.deck_report_id, fresh=bool(req.fresh),
+                            route=req.route, route_by=req.route_by)
     gen = (_persisting_stream(inner, username, session_id, req.question)
            if session_id else _report_memory.without_event(inner))
 
@@ -5663,6 +5681,7 @@ class ClarifyRequest(BaseModel):
     history: list = []
     answers: Optional[list] = None    # None → генерим вопросы; задан → собираем enriched
     deep: bool = False
+    auto: bool = False                # единое поле ввода: заодно решить, чем отвечать
 
 CLARIFY_TIMEOUT = float(os.getenv("CLARIFY_TIMEOUT", "40"))
 
@@ -5675,6 +5694,12 @@ async def ai_clarify(req: ClarifyRequest):
     # Demo-режим: воронку пропускаем — переписанный промпт сломал бы trigger_keywords.
     if is_demo_mode_active() and find_demo_response(req.question) is not None:
         return {"complete": True, "questions": [], "reason": "demo"}
+    if req.auto and req.answers is None:
+        from . import pd_guard as _pd
+        if _pd.check(req.question):      # о частном лице в модель не отправляем и здесь
+            return {"complete": True, "questions": [], "reason": "personal_data"}
+        from ..ai.clarify import prepare as _prepare
+        return await _prepare(req.question, req.history, timeout=CLARIFY_TIMEOUT)
     # Запрос о частном лице в модель не отправляем и здесь: ответит отказом /analyze
     from . import pd_guard
     if pd_guard.check(req.question):

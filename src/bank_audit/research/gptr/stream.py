@@ -71,6 +71,21 @@ def _evt(d: dict) -> str:
     return json.dumps(d, ensure_ascii=False, default=str)
 
 
+def _hosts(urls, top: int = 8) -> list[list]:
+    """Какие сайты уже прочитаны: [[сайт, страниц], …] — для живого хода сбора."""
+    seen: dict[str, int] = {}
+    for u in urls:
+        if not str(u).startswith("http"):
+            continue             # собственные данные AuditLens — не сайты
+        try:
+            h = (urlparse(u).hostname or "").removeprefix("www.")
+        except ValueError:
+            continue
+        if h:
+            seen[h] = seen.get(h, 0) + 1
+    return [[h, k] for h, k in sorted(seen.items(), key=lambda x: (-x[1], x[0]))[:top]]
+
+
 def _sources_ui(urls: list[str], pages: dict[str, str],
                 cited: dict[str, dict] | None = None,
                 dates: dict[str, str] | None = None,
@@ -171,6 +186,14 @@ async def stream_deep_research_gptr(question: str,
         marks["t"] = now
     question = normalize_question(question)
     yield _evt({"type": "mode", "value": "deep"})
+    # Сколько обычно длится каждый этап — по недавним отчётам: консоль хода
+    # показывает по этому «осталось примерно N минут», а не немой таймер.
+    try:
+        from ...ai import report_stats
+        typ = await asyncio.wait_for(asyncio.to_thread(report_stats.typical), timeout=2.5)
+        yield _evt({"type": "typical", "steps": typ["steps"], "total": typ["total"]})
+    except Exception as e:  # noqa: BLE001 — оценка необязательна
+        log.info("обычная длительность этапов: %s", type(e).__name__)
     # Что уже собрано прошлым отчётом этого разговора (memory.py): если новый
     # вопрос продолжает тему, начнём с этих фактов и доберём недостающее.
     prior = None
@@ -332,7 +355,8 @@ async def stream_deep_research_gptr(question: str,
                     "type": "progress", "stage": "research",
                     "pages": len(state.pages),
                     "facts": len(registry.facts),
-                    "blocked": len(state.unreadable)}):
+                    "blocked": len(state.unreadable),
+                    "hosts": _hosts(list(state.pages))}):
                 yield ev
         except Exception:
             collecting["on"] = False
@@ -565,9 +589,11 @@ async def stream_deep_research_gptr(question: str,
                 # вопроса, а не от шаблона.
                 yield _evt({"type": "outline", "sections": payload})
             elif kind == "section":
+                # section — название раздела отдельным полем: по нему консоль
+                # отмечает в оглавлении, что уже написано и что пишется сейчас.
                 yield _evt({"type": "stage_status", "stage": "analyst",
                             "label": f"Пишу раздел: {_ttl.get(payload, payload)}",
-                            "detail": ""})
+                            "section": _ttl.get(payload, payload), "detail": ""})
             elif kind == "chunk":
                 ready = keys.feed(guard.feed(renum.feed(payload)))
                 if ready:
@@ -644,6 +670,13 @@ async def stream_deep_research_gptr(question: str,
         yield _evt({"type": "done"})
         return
 
+    # Пятый этап консоли: раньше событие о нём не отправлялось, и строка «Сверка»
+    # не загоралась никогда, а готовый отчёт оставался «в письме».
+    yield _evt({"type": "phase", "value": "verification"})
+    yield _evt({"type": "stage_status", "stage": "verify",
+                "label": "Сверяю числа отчёта с прочитанными страницами",
+                "detail": "каждое число ищу в источнике, на который стоит ссылка",
+                "estimate_s": 8})
     # Источники и метрики берём у потокового перенумеровщика: в приложение
     # идут ТОЛЬКО те, на кого реально сослались.
     cited_src, cit_stats = renum.sources(), renum.stats()
@@ -771,5 +804,6 @@ async def stream_deep_research_gptr(question: str,
                         "data": al_memory.dump(registry, state, plan, question, attributes)})
         except Exception as e:  # noqa: BLE001 — память необязательна
             log.info("память исследования: снимок не собран — %s", type(e).__name__)
+    yield _evt({"type": "phase", "value": "done"})
     yield _evt({"type": "done", "elapsed_s": round(time.time() - started, 1),
                 "timings": dict(state.timings), "task": getattr(plan, "task", "")})

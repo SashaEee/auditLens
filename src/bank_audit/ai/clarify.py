@@ -62,6 +62,7 @@ SYSTEM_PROMPT_CLARIFY = """Ты — ФИЛЬТР ПОЛНОТЫ запроса �
 3. ПРО БАНКИ спрашивай ТОЛЬКО если аудитор просит сравнение, а с кем — не сказал (смотри строку «Сравнение» ниже). Тогда один вопрос «С кем сравнить?» с вариантами: "Топ-4: Альфа-Банк, Т-Банк, ВТБ, Газпромбанк", пара конкретных банков, подходящих к продукту, и «Только Сбер, без сравнения». Если сравнения не просят — вопрос о банках ЗАПРЕЩЁН: отчёт будет про Сбер.
 4. Максимум 3 вопроса. Один точный лучше трёх общих.
 5. Каждый вопрос: 2-5 кликабельных вариантов (options) + allow_other:true. type: "single" (один), "multi" (несколько), "text" (свободный ответ, options=[]).
+6. Если в запросе есть «Ход разговора», новая реплика — его продолжение. Предмет, банк и период, которых нет в реплике, но которые ясны из разговора, считаются заданными: «а по ВТБ?» после отчёта о вкладах Сбера — понятный запрос, переспрашивать продукт нельзя.
 
 Верни СТРОГО JSON (без преамбулы, без markdown-fence):
 {"complete": bool, "reason": "<кратко>", "questions": [
@@ -148,7 +149,12 @@ async def generate_clarifications(question: str, history: list | None = None) ->
     # аудит 11.11 — воронка сама подставляла «Топ-4 банков» в 16 % вопросов.
     from ..research.v2.conductor import _COMPARE_RX
     asks_compare = bool(_COMPARE_RX.search(q))
-    user_msg = (f"Запрос аудитора:\n{q}\n\n"
+    # Разговор уже идёт — реплика читается вместе с ним: иначе «а по ВТБ?» после
+    # отчёта выглядит запросом без предмета и получает лишние вопросы.
+    from . import router as al_router
+    talk = (f"Ход разговора (реплика — его продолжение):\n{al_router.digest(history)}\n\n"
+            if al_router.has_answer(history) else "")
+    user_msg = (f"{talk}Запрос аудитора:\n{q}\n\n"
                 f"Банки, названные в запросе: {', '.join(hinted) if hinted else 'не названы'}\n"
                 f"Сравнение: {'аудитор просит сравнение' if asks_compare else 'сравнения не просят — о банках не спрашивай'}\n\n"
                 f"Верни JSON по контракту.")
@@ -179,6 +185,38 @@ async def generate_clarifications(question: str, history: list | None = None) ->
         log.warning("[clarify] no JSON parse, raw200=%r — fail-open", raw[:200])
         return {"complete": True, "questions": [], "reason": "parse_fail"}
     return drop_bank_questions(_validate(data), asks_compare)
+
+
+async def prepare(question: str, history: list | None = None, *, timeout: float = 40.0) -> dict:
+    """Шаг подготовки единого поля ввода: чем отвечать и хватает ли деталей.
+
+    Маршрут (ai/router.py) и проверка полноты идут одновременно. Уточняющие
+    вопросы нужны только отчёту: короткая справка и реплика к ответу стартуют
+    сразу, не дожидаясь проверки, — человек не должен ждать лишнего.
+    """
+    import asyncio
+
+    from . import router as al_router
+    route_task = asyncio.create_task(al_router.decide(question, history))
+    clar_task = asyncio.create_task(generate_clarifications(question, history))
+    try:
+        r = await route_task
+    except BaseException:      # отмена запроса: не оставляем висящую проверку
+        clar_task.cancel()
+        raise
+    base = {"route": r.route, "route_by": r.by, "route_ms": r.ms}
+    if r.route != "report":
+        clar_task.cancel()
+        return {"complete": True, "questions": [], "reason": "no_report", **base}
+    try:
+        res = await asyncio.wait_for(clar_task, timeout=timeout)
+    except asyncio.TimeoutError:
+        log.warning("[clarify] не уложился в %sс — отчёт без уточнения", timeout)
+        res = {"complete": True, "questions": [], "reason": "timeout"}
+    except Exception as e:  # noqa: BLE001 — уточнение необязательно
+        log.warning("[clarify] сбой проверки полноты: %s", type(e).__name__)
+        res = {"complete": True, "questions": [], "reason": "error"}
+    return {**res, **base}
 
 
 _BANK_Q = re.compile(r"банк|конкурент|с кем сравн|сравнить с", re.I)

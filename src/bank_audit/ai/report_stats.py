@@ -62,3 +62,44 @@ def steps(days: int = 30) -> dict:
         r["elapsed_s"] = float(r["elapsed_s"]) if r["elapsed_s"] is not None else None
         r["timings"] = r["timings"] if isinstance(r["timings"], dict) else None
     return summarize(rows, days)
+
+
+# ── Сколько обычно длится отчёт — для оценки «осталось» в ходе прогона ───────
+# Этапы — те, что видит человек в консоли хода отчёта (фазы потока). Запасные
+# значения — замер живых отчётов 11.11.2026; как только накопятся свои отчёты
+# с разбивкой по шагам, берётся их медиана.
+PHASES = ("planning", "research", "extraction", "writing", "verification")
+_TYPICAL_DEFAULT = {"planning": 15, "research": 60, "extraction": 55, "writing": 125,
+                    "verification": 8}
+_PHASE_STEPS = {"planning": ("plan",), "research": ("collect",),
+                "extraction": ("facts", "critic", "lead"), "writing": ("write",),
+                "verification": ("verify",)}
+_TYPICAL_TTL = 1800.0
+_typical_cache: dict = {"at": 0.0, "val": None}
+
+
+def typical_from(summary: dict | None, *, min_reports: int = 5) -> dict:
+    """Медианы шагов → секунды по этапам консоли. Мало отчётов — запасные значения."""
+    out = dict(_TYPICAL_DEFAULT)
+    if not summary or (summary.get("timed") or 0) < min_reports:
+        return {"steps": out, "total": sum(out.values()), "reports": 0}
+    med = {s["key"]: float(s.get("median_s") or 0) for s in summary.get("steps") or []}
+    for phase, keys in _PHASE_STEPS.items():
+        sec = sum(med.get(k, 0.0) for k in keys)
+        if sec > 0:
+            out[phase] = int(min(max(sec, 3), 900))
+    return {"steps": out, "total": sum(out.values()), "reports": int(summary.get("timed") or 0)}
+
+
+def typical(days: int = 30) -> dict:
+    """Обычная длительность этапов отчёта (кэш на полчаса). Никогда не бросает."""
+    import time
+    now = time.monotonic()
+    if _typical_cache["val"] is not None and now - _typical_cache["at"] < _TYPICAL_TTL:
+        return _typical_cache["val"]
+    try:
+        val = typical_from(steps(days))
+    except Exception:  # noqa: BLE001 — нет базы: оценка по запасным значениям
+        val = typical_from(None)
+    _typical_cache.update(at=now, val=val)
+    return val
