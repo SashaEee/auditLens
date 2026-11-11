@@ -7742,6 +7742,10 @@ function TableOfContents({contentEl, activeId, onClick}){
 // Дата источника. У публикаций и документов базы знаний известен только день:
 // «12.10 03:00 МСК» — выдуманная точность (полночь по Гринвичу), поэтому время
 // показываем, только когда оно действительно есть.
+// Сегодня по часам пользователя: toISOString даёт день по Гринвичу, и отчёт,
+// собранный в 02:30 по Москве, получал вчерашнюю дату.
+const localDay=()=>{ const d=new Date(), p=x=>String(x).padStart(2,"0");
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; };
 const srcDay=v=>{
   if(!v) return "";
   const t=String(v);
@@ -8922,7 +8926,7 @@ function AIPage(){
                 <header className="rp-head">
                   <div className="rp-eyebrow">
                     <span>{streaming?"Отчёт пишется":(m.stopped||m.status==="stopped")?"Отчёт остановлен":"Отчёт"}</span>
-                    {!streaming&&(m.created_at||m.phase==="done")&&<span>{srcDay(m.created_at||new Date().toISOString().slice(0,10))}</span>}
+                    {!streaming&&(m.created_at||m.phase==="done")&&<span>{srcDay(m.created_at||localDay())}</span>}
                     {!streaming&&rpTook(m)&&<span>собран за {rpTook(m)}</span>}
                     {m.report_owner&&me&&m.report_owner!==me.username&&
                       <span className="shr-owner">поделился: {m.owner_name||m.report_owner}</span>}

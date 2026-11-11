@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 643505ca99790c48815965cfaa447cccb8d516e5884554371b65a85eb44e383e): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 1ca146c8e480a0a2eefdaf1707e0f1c67af80689052c231ead6f3ea5f62468ba): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -15234,6 +15234,13 @@ function TableOfContents({
 // Дата источника. У публикаций и документов базы знаний известен только день:
 // «12.10 03:00 МСК» — выдуманная точность (полночь по Гринвичу), поэтому время
 // показываем, только когда оно действительно есть.
+// Сегодня по часам пользователя: toISOString даёт день по Гринвичу, и отчёт,
+// собранный в 02:30 по Москве, получал вчерашнюю дату.
+const localDay = () => {
+  const d = new Date(),
+    p = x => String(x).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
 const srcDay = v => {
   if (!v) return "";
   const t = String(v);
@@ -17316,7 +17323,7 @@ function AIPage() {
         className: "rp-head"
       }, /*#__PURE__*/React.createElement("div", {
         className: "rp-eyebrow"
-      }, /*#__PURE__*/React.createElement("span", null, streaming ? "Отчёт пишется" : m.stopped || m.status === "stopped" ? "Отчёт остановлен" : "Отчёт"), !streaming && (m.created_at || m.phase === "done") && /*#__PURE__*/React.createElement("span", null, srcDay(m.created_at || new Date().toISOString().slice(0, 10))), !streaming && rpTook(m) && /*#__PURE__*/React.createElement("span", null, "\u0441\u043E\u0431\u0440\u0430\u043D \u0437\u0430 ", rpTook(m)), m.report_owner && me && m.report_owner !== me.username && /*#__PURE__*/React.createElement("span", {
+      }, /*#__PURE__*/React.createElement("span", null, streaming ? "Отчёт пишется" : m.stopped || m.status === "stopped" ? "Отчёт остановлен" : "Отчёт"), !streaming && (m.created_at || m.phase === "done") && /*#__PURE__*/React.createElement("span", null, srcDay(m.created_at || localDay())), !streaming && rpTook(m) && /*#__PURE__*/React.createElement("span", null, "\u0441\u043E\u0431\u0440\u0430\u043D \u0437\u0430 ", rpTook(m)), m.report_owner && me && m.report_owner !== me.username && /*#__PURE__*/React.createElement("span", {
         className: "shr-owner"
       }, "\u043F\u043E\u0434\u0435\u043B\u0438\u043B\u0441\u044F: ", m.owner_name || m.report_owner)), /*#__PURE__*/React.createElement("h1", {
         className: "rp-title"

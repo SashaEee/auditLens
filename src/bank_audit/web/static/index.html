@@ -4456,6 +4456,12 @@ html.dark .wn-wrap{background:color-mix(in oklab,var(--paper),transparent 30%)}
 .chat-shell .quick-answer ol,.chat-shell .quick-answer ul{margin:8px 0;padding-left:22px}
 .chat-shell .quick-answer li{margin:4px 0}
 .chat-shell .quick-answer p{margin:0 0 10px}
+/* ссылки в короткой справке: раньше стиль был только у отчёта, и здесь ссылка на
+   источник или на срез раздела выглядела обычным текстом */
+.chat-shell .quick-answer .md-link{color:var(--select);text-decoration:underline;text-decoration-color:color-mix(in oklab,var(--select),transparent 55%);text-underline-offset:3px}
+.chat-shell .quick-answer .md-link:hover{text-decoration-color:currentColor}
+.chat-shell .quick-answer blockquote{margin:12px 0 0;padding:8px 12px;border-left:2px solid var(--hair-2);font-size:13px;line-height:1.55;color:var(--ink-3)}
+.chat-shell .quick-answer blockquote strong{color:var(--ink-2)}
 .chat-shell .quick-sources{margin-top:16px;gap:6px}
 .chat-shell .quick-src{gap:8px;padding:5px 10px;border-radius:999px;border-color:var(--hair)}
 .chat-shell .quick-src-n{font-family:inherit;font-size:11px;font-weight:600;color:var(--ink-3);font-variant-numeric:tabular-nums}

@@ -1215,6 +1215,12 @@ def _short(text_: str, limit: int = 170) -> str:
     return t if len(t) <= limit else t[:limit].rsplit(" ", 1)[0] + "…"
 
 
+def _story_title(attribute: str) -> str:
+    """Название сюжета из признака факта; обрезанное на 80 знаках — с многоточием."""
+    t = attribute[len(_STORY):].rstrip("»").strip()
+    return t + "…" if len(t) >= 80 else t
+
+
 def _count_ru(value) -> str:
     """«14» → «14 жалоб», «1» → «1 жалоба»: число из факта с верным падежом."""
     digits = "".join(ch for ch in str(value) if ch.isdigit())
@@ -1238,7 +1244,7 @@ def preview(od: OwnData, *, rows: int = 4) -> dict | None:
     for url, fs in list(stories.items())[:2]:
         title = (od.meta.get(url) or {}).get("title", "").removeprefix("AuditLens · Отзывы: ")
         blocks.append({"kind": "complaints", "title": f"Жалобы клиентов · {title}", "link": url,
-                       "rows": [{"label": f["attribute"][len(_STORY):].rstrip("»"),
+                       "rows": [{"label": _story_title(f["attribute"]),
                                  "value": _count_ru(f["value"])} for f in fs[:rows]]})
     if not stories:
         for url, meta in od.meta.items():

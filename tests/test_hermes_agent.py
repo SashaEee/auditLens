@@ -67,6 +67,11 @@ def test_legal_note_trigger():
     assert H.needs_legal_note("по ст. 7 закона 161-ФЗ")
     assert not H.needs_legal_note("по [закону 161-ФЗ](https://pravo.gov.ru/x)")
     assert not H.needs_legal_note("ставка 19% годовых")
+    # название темы жалоб с номером закона — подпись из справочника, а не ссылка на акт
+    assert not H.needs_legal_note("| Блокировки по 161-ФЗ (антифрод) | 10 |\n| Кэшбэк | 12 |")
+    assert not H.needs_legal_note("главная тема — блокировки по 115-ФЗ, 14 жалоб")
+    assert H.needs_legal_note("блокировки по 115-ФЗ; по ст. 7 закона 353-ФЗ банк обязан раскрыть ПСК")
+    assert "⚠" not in H.LEGAL_NOTE and "режим" not in H.LEGAL_NOTE
 
 
 def test_tool_labels():
