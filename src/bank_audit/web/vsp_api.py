@@ -2081,6 +2081,9 @@ def _brief(run, subject, gosb) -> dict:
 _NOTIFIED: dict = {"run": None}
 
 
+WAVE_MEMORY_D = 45        # столько дней не повторяем уведомление о способе, который уже был «новым» или «растёт»
+
+
 def _notify_waves(run) -> None:
     """Раз на расчёт: если способ действия стал «новым» или «растёт», а раньше таким не был, — строка в
     колокольчик тем, кому открыт раздел. Письмом не дублируется. Что уже сообщали — в app_setting."""
@@ -2101,7 +2104,13 @@ def _notify_waves(run) -> None:
             seen = raw or {}
             if seen.get("run") == run["id"]:
                 return
-            known = set(seen.get("keys") or [])
+            # что уже сообщали: способ помним WAVE_MEMORY_D дней после того, как он последний раз был «новым» или
+            # «растёт». Иначе ряд на границе значимости (сегодня «растёт», завтра нет, послезавтра снова) слал бы
+            # одну и ту же строку каждые несколько дней
+            today = datetime.now(UTC).date()
+            last = {k: v for k, v in (seen.get("last") or {}).items()
+                    if (today - datetime.fromisoformat(v).date()).days <= WAVE_MEMORY_D}
+            known = set(seen.get("keys") or []) | set(last)
             fresh = [w for w in ups if w["key"] not in known]
             # почерк важнее своего типа
             motif_kinds = {w["kind"] for w in fresh if w["level"] == "motif"}
@@ -2120,7 +2129,9 @@ def _notify_waves(run) -> None:
                 s_.execute(_t("""INSERT INTO app_setting (key, value, updated_at, updated_by)
                                  VALUES ('vsp_waves_seen', CAST(:v AS jsonb), now(), 'vsp')
                                  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()"""),
-                           {"v": json.dumps({"run": run["id"], "keys": sorted(w["key"] for w in ups)}, ensure_ascii=False)})
+                           {"v": json.dumps({"run": run["id"], "keys": sorted(w["key"] for w in ups),
+                                             "last": {**last, **{k: today.isoformat() for k in known & set(seen.get("keys") or [])},
+                                                      **{w["key"]: today.isoformat() for w in ups}}}, ensure_ascii=False)})
                 s_.commit()
         except Exception:  # noqa: BLE001 — уведомление не должно ронять вкладку
             log.warning("vsp: уведомление о волнах не отправлено", exc_info=True)

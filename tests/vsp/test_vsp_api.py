@@ -395,7 +395,7 @@ def test_wave_notice_first_run_goes_to_owner_only(monkeypatch):
             time.sleep(0.02)
 
     fire(1, [])                                              # расчёт старого формата: волн нет — никому ничего
-    assert sent == [] and store["v"] == {"run": 1, "keys": []}
+    assert sent == [] and store["v"] == {"run": 1, "keys": [], "last": {}}
     ws = [wave("k:5", "rising"), wave("m:m0501", "new", "motif"), wave("k:8", "new", kind=8), wave("k:9", "rising", kind=9),
           wave("k:7", "steady", kind=7)]
     fire(2, ws)
@@ -408,3 +408,14 @@ def test_wave_notice_first_run_goes_to_owner_only(monkeypatch):
     sent.clear()
     fire(3, ws)                                              # тот же расчёт повторно — тишина
     assert sent == []
+    # ряд на границе значимости: перестал расти и через расчёт растёт снова — одну и ту же строку не повторяем
+    fire(4, ws)
+    fire(5, ws + [wave("k:16", "rising", kind=16)])
+    assert sent == [] and "k:16" in store["v"]["last"]
+    # а если о нём не было слышно дольше WAVE_MEMORY_D дней — это снова новость
+    from datetime import datetime, timedelta, timezone
+    old = (datetime.now(timezone.utc).date() - timedelta(days=vsp_api.WAVE_MEMORY_D + 5)).isoformat()
+    store["v"] = {"run": 5, "keys": [w["key"] for w in ws if w["status"] != "steady"],
+                  "last": {**store["v"]["last"], "k:16": old}}
+    fire(6, ws + [wave("k:16", "rising", kind=16)])
+    assert [x[2] for x in sent] == ["k:16"]
