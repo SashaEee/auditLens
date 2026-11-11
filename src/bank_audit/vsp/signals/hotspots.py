@@ -18,7 +18,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
 from .kinds import TYPED_SINCE, kind_name
-from .stats import Exposure, bh, city_key, city_name, excess, story_cell, ym
+from .stats import Exposure, bh, bh_levels, city_key, city_name, excess, level_of, story_cell, ym
 from .waves import series_keys, typed
 
 MIN_CLIENTS = 3
@@ -28,6 +28,7 @@ MIN_TERR_READ = 300       # территория с меньшим числом 
 WINDOWS_D = (270, 540)
 STRONG_Q = 0.05
 MAYBE_Q = 0.20
+MAIN_MOTIF_SHARE = 0.5    # почерк — «главный» в очаге типа, если его описывает не меньше половины клиентов очага
 SINCE = TYPED_SINCE[:7]
 
 
@@ -71,7 +72,7 @@ def build(stories: list[dict], exposure: Exposure, points: dict[str, dict], *, n
     span_d = max(1, (now - start).days)
     read_all: dict[tuple, int] = {}
     net_cache: dict[tuple, Counter] = {}
-    cells, tested = [], 0
+    cells, tested = [], Counter()
     for key, cl in by_key.items():
         ev_all = list(cl.values())
         if len(ev_all) < MIN_KEY_CLIENTS:
@@ -88,7 +89,7 @@ def build(stories: list[dict], exposure: Exposure, points: dict[str, dict], *, n
                     read_all[(level, t)] = exposure.terr_read(level, t, SINCE)
                 if read_all[(level, t)] < MIN_TERR_READ:
                     continue
-                tested += 1
+                tested[level_of(key)] += 1
                 if len(ev) < MIN_CLIENTS:
                     continue
                 t_msc = _msc(ev)
@@ -121,8 +122,8 @@ def build(stories: list[dict], exposure: Exposure, points: dict[str, dict], *, n
                     cells.append({"key": key, "level": level, "terr": t, "subject": ev[0].get("subject"),
                                   "gosb": ev[0].get("gosb") if level == "gosb" else None, **best})
     pvals = {(c["key"], c["level"], c["terr"]): c["p"] for c in cells}
-    strong = bh(pvals, STRONG_Q, m=tested)
-    maybe = bh(pvals, MAYBE_Q, m=tested)
+    strong = bh_levels(pvals, STRONG_Q, tested, key_of=lambda k: k[0])
+    maybe = bh_levels(pvals, MAYBE_Q, tested, key_of=lambda k: k[0])
     out = []
     for c in cells:
         ck = (c["key"], c["level"], c["terr"])
@@ -160,11 +161,32 @@ def build(stories: list[dict], exposure: Exposure, points: dict[str, dict], *, n
             if h["level"] == "gosb" and any(len(set(h["rids"]) & set(c["rids"])) >= 0.8 * len(h["rids"]) for c in cities):
                 continue
             keep.append(h)
-    # почерк и его тип на одной территории — тоже один очаг: оставляем почерк
-    keep = [h for h in keep if not (h["level_key"] == "kind" and any(
-        o["level_key"] == "motif" and o["kind"] == h["kind"] and o["level"] == h["level"]
-        and o["terr_key"] == h["terr_key"]
-        and len(set(h["rids"]) & set(o["rids"])) >= 0.6 * len(h["rids"]) for o in keep))]
+    # почерк и его тип на одной территории — тоже один очаг: оставляем почерк, если он выделяется не слабее типа;
+    # иначе остаётся тип (значимо именно «таких историй здесь больше», а не «больше именно этого приёма»)
+    drop: set[str] = set()
+    for h in keep:
+        if h["level_key"] != "kind":
+            continue
+        for o in keep:
+            if o["level_key"] == "motif" and o["kind"] == h["kind"] and o["level"] == h["level"] \
+                    and o["terr_key"] == h["terr_key"] and len(set(h["rids"]) & set(o["rids"])) >= 0.6 * len(h["rids"]):
+                drop.add(o["id"] if o["strength"] == "maybe" and h["strength"] == "strong" else h["id"])
+    keep = [h for h in keep if h["id"] not in drop]
+    # приёмы внутри очага типа: какие почерки описывают его клиенты (до трёх, от двух клиентов) и главный из них,
+    # если он у половины и больше. Это пояснение, а не отдельная проверка: значимо «таких историй здесь больше
+    # ожидаемого», почерки говорят, о чём они. На данных 11.11 очаги оказались смесью приёмов одного типа
+    for h in keep:
+        if h["level_key"] != "kind":
+            continue
+        rs = set(h["rids"])
+        cnt = Counter(s["motif"] for s in by_key[h["key"]].values()
+                      if s["rid"] in rs and s.get("motif") and not str(s["motif"]).endswith("00"))
+        top = [{"id": mid, "name": motif_meta[mid]["name"], "n": n}
+               for mid, n in cnt.most_common(3) if n >= 2 and mid in motif_meta]
+        if top:
+            h["motifs"] = top
+            if top[0]["n"] >= MIN_CLIENTS and top[0]["n"] >= MAIN_MOTIF_SHARE * h["clients"]:
+                h["main_motif"] = top[0]
     keep.sort(key=lambda h: (h["strength"] != "strong", h["p"], -h["clients"]))
     return keep
 

@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 2d3b95448697bd1d050d1866ed0780adf905bf2b44db94fc38a9aa7155d464d7): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 9da1210d90da942a9776d872ccfd02270a3386f53a36bb5c7af140127fff78ee): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -21818,7 +21818,9 @@ function VHotRow({
     title: "\u0412\u043E \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u0440\u0430\u0437 \u0431\u043E\u043B\u044C\u0448\u0435, \u0447\u0435\u043C \u043E\u0436\u0438\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u043E \u0447\u0430\u0441\u0442\u043E\u0442\u0435 \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u043E\u0439 \u0441\u0435\u0442\u0438"
   }, "\xD7", vX(h.ratio))), /*#__PURE__*/React.createElement("div", {
     className: "vr-hot-t"
-  }, h.name, ": ", vN(h.clients), " ", vPl(h.clients, "клиент", "клиента", "клиентов"), " \u0432 ", h.points_n, " ", vPl(h.points_n, "отделении", "отделениях", "отделениях"), " ", h.period), /*#__PURE__*/React.createElement("div", {
+  }, h.name, ": ", vN(h.clients), " ", vPl(h.clients, "клиент", "клиента", "клиентов"), " \u0432 ", h.points_n, " ", vPl(h.points_n, "отделении", "отделениях", "отделениях"), " ", h.period), h.main_motif && /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, "\u0427\u0430\u0449\u0435 \u0432\u0441\u0435\u0433\u043E \u2014 \xAB", h.main_motif.name, "\xBB: ", vN(h.main_motif.n), " \u0438\u0437 ", vN(h.clients)), /*#__PURE__*/React.createElement("div", {
     className: "note"
   }, h.note, strong ? "" : " · слабее: может оказаться случайностью", h.recent === false ? " · давно: последняя история старше полутора лет" : "", h.listed ? ` · ${h.listed} из них — в списке отделений` : ""));
 }
@@ -22760,7 +22762,7 @@ function VSchemes({
     className: "vempty"
   }, "\u0421\u043F\u043E\u0441\u043E\u0431\u043E\u0432 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u0441 \u0442\u0430\u043A\u0438\u043C\u0438 \u0443\u0441\u043B\u043E\u0432\u0438\u044F\u043C\u0438 \u043D\u0435\u0442."), /*#__PURE__*/React.createElement("p", {
     className: "vr-fine"
-  }, "\xAB\u0420\u0430\u0441\u0442\u0451\u0442\xBB \u2014 \u0437\u0430 \u0442\u0440\u0438 \u043C\u0435\u0441\u044F\u0446\u0430 \u0438\u043B\u0438 \u0437\u0430 \u0433\u043E\u0434 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432 \u0437\u043D\u0430\u0447\u0438\u043C\u043E \u0431\u043E\u043B\u044C\u0448\u0435, \u0447\u0435\u043C \u0431\u044B\u043B\u043E \u0431\u044B \u043F\u0440\u0438 \u043F\u0440\u0435\u0436\u043D\u0435\u0439 \u0447\u0430\u0441\u0442\u043E\u0442\u0435 (\u0441 \u043F\u043E\u043F\u0440\u0430\u0432\u043A\u043E\u0439 \u043D\u0430 \u0447\u0438\u0441\u043B\u043E \u0441\u0440\u0430\u0432\u043D\u0435\u043D\u0438\u0439). \xAB\u041D\u043E\u0432\u043E\u0435\xBB \u2014 \u043F\u043E\u0447\u0442\u0438 \u0432\u0441\u0451 \u043F\u043E\u044F\u0432\u0438\u043B\u043E\u0441\u044C \u0437\u0430 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0433\u043E\u0434. \u0421\u0447\u0438\u0442\u0430\u0435\u043C \u0440\u0430\u0437\u043D\u044B\u0445 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432: \u043A\u043E\u043F\u0438\u0438 \u043E\u0434\u043D\u043E\u0433\u043E \u043E\u0442\u0437\u044B\u0432\u0430 \u043D\u0430 \u0434\u0432\u0443\u0445 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0430\u0445 \u2014 \u043E\u0434\u0438\u043D \u043A\u043B\u0438\u0435\u043D\u0442."), /*#__PURE__*/React.createElement("section", {
+  }, "\xAB\u0420\u0430\u0441\u0442\u0451\u0442\xBB \u2014 \u0437\u0430 \u0442\u0440\u0438 \u043C\u0435\u0441\u044F\u0446\u0430 \u0438\u043B\u0438 \u0437\u0430 \u0433\u043E\u0434 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432 \u0437\u043D\u0430\u0447\u0438\u043C\u043E \u0431\u043E\u043B\u044C\u0448\u0435, \u0447\u0435\u043C \u0431\u044B\u043B\u043E \u0431\u044B \u043F\u0440\u0438 \u043F\u0440\u0435\u0436\u043D\u0435\u0439 \u0447\u0430\u0441\u0442\u043E\u0442\u0435 (\u0441 \u043F\u043E\u043F\u0440\u0430\u0432\u043A\u043E\u0439 \u043D\u0430 \u0447\u0438\u0441\u043B\u043E \u0441\u0440\u0430\u0432\u043D\u0435\u043D\u0438\u0439 \u2014 \u043E\u0442\u0434\u0435\u043B\u044C\u043D\u043E \u0434\u043B\u044F \u0442\u0438\u043F\u043E\u0432 \u0438 \u0434\u043B\u044F \u043F\u043E\u0447\u0435\u0440\u043A\u043E\u0432, \u043F\u043E\u0447\u0435\u0440\u043A\u0443 \u043D\u0443\u0436\u043D\u043E \u0431\u043E\u043B\u0435\u0435 \u0441\u0438\u043B\u044C\u043D\u043E\u0435 \u043F\u0440\u0435\u0432\u044B\u0448\u0435\u043D\u0438\u0435). \xAB\u041D\u043E\u0432\u043E\u0435\xBB \u2014 \u043F\u043E\u0447\u0442\u0438 \u0432\u0441\u0451 \u043F\u043E\u044F\u0432\u0438\u043B\u043E\u0441\u044C \u0437\u0430 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0433\u043E\u0434. \u0421\u0447\u0438\u0442\u0430\u0435\u043C \u0440\u0430\u0437\u043D\u044B\u0445 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432: \u043A\u043E\u043F\u0438\u0438 \u043E\u0434\u043D\u043E\u0433\u043E \u043E\u0442\u0437\u044B\u0432\u0430 \u043D\u0430 \u0434\u0432\u0443\u0445 \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0430\u0445 \u2014 \u043E\u0434\u0438\u043D \u043A\u043B\u0438\u0435\u043D\u0442."), /*#__PURE__*/React.createElement("section", {
     id: "vr-hots",
     className: "vr-sec",
     "data-tour": "hotlist"
@@ -23023,7 +23025,17 @@ function VHotLayer({
     style: {
       marginTop: 10
     }
-  }, "\u041F\u043E \u0432\u0441\u0435\u0439 \u0441\u0435\u0442\u0438 \u0441\u043F\u043E\u0441\u043E\u0431 \xAB", d.wave.name, "\xBB \u2014 ", d.wave.status_label, ": \u0437\u0430 \u0433\u043E\u0434 ", vN(d.wave.year), " ", vPl(d.wave.year, "клиент", "клиента", "клиентов"), " \u0432 ", vN(d.wave.points), " ", vPl(d.wave.points, "отделении", "отделениях", "отделениях"), "."), /*#__PURE__*/React.createElement("section", {
+  }, "\u041F\u043E \u0432\u0441\u0435\u0439 \u0441\u0435\u0442\u0438 \u0441\u043F\u043E\u0441\u043E\u0431 \xAB", d.wave.name, "\xBB \u2014 ", d.wave.status_label, ": \u0437\u0430 \u0433\u043E\u0434 ", vN(d.wave.year), " ", vPl(d.wave.year, "клиент", "клиента", "клиентов"), " \u0432 ", vN(d.wave.points), " ", vPl(d.wave.points, "отделении", "отделениях", "отделениях"), "."), (d.motifs || []).length > 0 && /*#__PURE__*/React.createElement("p", {
+    className: "note",
+    style: {
+      marginTop: 6
+    }
+  }, "\u041F\u0440\u0438\u0451\u043C\u044B, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u0437\u0434\u0435\u0441\u044C \u043E\u043F\u0438\u0441\u044B\u0432\u0430\u044E\u0442 \u0447\u0430\u0449\u0435 \u0432\u0441\u0435\u0433\u043E: ", d.motifs.map((m, i) => /*#__PURE__*/React.createElement(React.Fragment, {
+    key: m.id
+  }, i > 0 ? "; " : "", m.wave_id ? /*#__PURE__*/React.createElement("button", {
+    className: "vlink",
+    onClick: () => openWave(m.wave_id)
+  }, "\xAB", m.name, "\xBB") : /*#__PURE__*/React.createElement(React.Fragment, null, "\xAB", m.name, "\xBB"), " \u2014 ", vN(m.n), " \u0438\u0437 ", vN(d.clients))), "."), /*#__PURE__*/React.createElement("section", {
     className: "sec"
   }, /*#__PURE__*/React.createElement("h3", null, "\u041E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \xB7 ", (d.places || []).length), /*#__PURE__*/React.createElement("div", {
     className: "vr-urg"

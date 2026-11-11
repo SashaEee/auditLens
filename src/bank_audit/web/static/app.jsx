@@ -11057,6 +11057,7 @@ function VHotRow({h,open}){
       {h.subject_name&&h.level==="gosb"&&<span className="note">{vRegionShort(h.subject_name)}</span>}<span className="sp"/>
       {h.ratio!=null&&<span className={strong?"vr-acc":"note"} title="Во сколько раз больше, чем ожидалось по частоте остальной сети">×{vX(h.ratio)}</span>}</div>
     <div className="vr-hot-t">{h.name}: {vN(h.clients)} {vPl(h.clients,"клиент","клиента","клиентов")} в {h.points_n} {vPl(h.points_n,"отделении","отделениях","отделениях")} {h.period}</div>
+    {h.main_motif&&<div className="note">Чаще всего — «{h.main_motif.name}»: {vN(h.main_motif.n)} из {vN(h.clients)}</div>}
     <div className="note">{h.note}{strong?"":" · слабее: может оказаться случайностью"}{h.recent===false?" · давно: последняя история старше полутора лет":""}{h.listed?` · ${h.listed} из них — в списке отделений`:""}</div>
   </div>;
 }
@@ -11348,7 +11349,7 @@ function VSchemes({openWave,openHot,f,regions}){
         <td className="num"><b>{vN(w.year)}</b></td><td className="num">{vN(w.prev_year)}</td><td className="num">{vN(w.clients)}</td>
         <td className="num">{vN(w.points)}</td><td className="num">{w.hot||"—"}</td></tr>)}</tbody></table></div>
       :<div className="vempty">Способов действия с такими условиями нет.</div>}
-    <p className="vr-fine">«Растёт» — за три месяца или за год клиентов значимо больше, чем было бы при прежней частоте (с поправкой на число сравнений). «Новое» — почти всё появилось за последний год. Считаем разных клиентов: копии одного отзыва на двух площадках — один клиент.</p>
+    <p className="vr-fine">«Растёт» — за три месяца или за год клиентов значимо больше, чем было бы при прежней частоте (с поправкой на число сравнений — отдельно для типов и для почерков, почерку нужно более сильное превышение). «Новое» — почти всё появилось за последний год. Считаем разных клиентов: копии одного отзыва на двух площадках — один клиент.</p>
     <section id="vr-hots" className="vr-sec" data-tour="hotlist">
       <div className="vr-sech"><h3>Очаги{rname?` · ${rname}`:""}</h3><span className="note">один способ действия в нескольких отделениях одного города или ГОСБ</span></div>
       {!hs?<Skel h={200}/>:hs.err?<ErrState msg="Очаги не загрузились"/>:!hot.length?<div className="vempty">{rname?"В этом регионе очагов не найдено.":"Очагов не найдено."}</div>:<>
@@ -11428,6 +11429,7 @@ function VHotLayer({id,depth,onClose,openPoint,openWave,plan}){
         <a className="btn btn-ghost" href={"/api/vsp/export/visit.docx?points="+encodeURIComponent((d.places||[]).map(p=>p.point).join(","))} download>Листы проверки отделений (Word)</a>
         {d.wave&&<button className="btn btn-ghost" onClick={()=>openWave(d.wave.id)}>Этот способ по всей сети →</button>}</div>
       {d.wave&&<p className="note" style={{marginTop:10}}>По всей сети способ «{d.wave.name}» — {d.wave.status_label}: за год {vN(d.wave.year)} {vPl(d.wave.year,"клиент","клиента","клиентов")} в {vN(d.wave.points)} {vPl(d.wave.points,"отделении","отделениях","отделениях")}.</p>}
+      {(d.motifs||[]).length>0&&<p className="note" style={{marginTop:6}}>Приёмы, которые здесь описывают чаще всего: {d.motifs.map((m,i)=><React.Fragment key={m.id}>{i>0?"; ":""}{m.wave_id?<button className="vlink" onClick={()=>openWave(m.wave_id)}>«{m.name}»</button>:<>«{m.name}»</>} — {vN(m.n)} из {vN(d.clients)}</React.Fragment>)}.</p>}
       <section className="sec"><h3>Отделения · {(d.places||[]).length}</h3>
         <div className="vr-urg">{(d.places||[]).map(p=><div key={p.point} className="vr-urg-r two" role="button" tabIndex={0} onClick={()=>openPoint(p.point)} onKeyDown={vEnter(()=>openPoint(p.point))}>
           <span><b>{vPlace(p)}</b><span className="note">{vCode(p)}{p.gosb?` · ГОСБ ${p.gosb}`:""} · {p.n} {vPl(p.n,"клиент","клиента","клиентов")}</span></span>

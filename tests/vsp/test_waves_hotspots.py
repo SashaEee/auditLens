@@ -131,3 +131,21 @@ def test_statistics_helpers():
     ev = Counter({("2gis", "neg"): 10})
     assert share_std(ev, Counter({("2gis", "neg"): 100}), Counter({("2gis", "neg"): 300})) == 0.25
     assert share_std(ev, Counter({("2gis", "neg"): 100, ("2gis", "pos"): 9000}), Counter({("2gis", "neg"): 300})) == 0.25
+
+
+def test_types_and_motifs_are_corrected_as_separate_families():
+    """Сотня рядов почерков не должна делать поправку для типов строже: после появления каталога у двух типов
+    пропало «растёт». Бюджет ложных находок при этом общий: типам 0,8, почеркам 0,2."""
+    from bank_audit.vsp.signals.stats import LEVEL_SHARE, bh, bh_levels, level_of
+    kinds = {(f"k:{i}", "y"): p for i, p in enumerate([0.00005, 0.0027, 0.0028] + [0.5] * 18)}
+    motifs = {(f"m:{i:04d}", "y"): 0.3 for i in range(125)}
+    allp = {**kinds, **motifs}
+    assert bh(allp, 0.05, m=2 * len(allp)) == {("k:0", "y")}                     # одной семьёй — остаётся одна находка
+    tested = {"kind": 2 * len(kinds), "motif": 2 * len(motifs)}
+    assert bh_levels(allp, 0.05, tested, key_of=lambda k: k[0]) == {("k:0", "y"), ("k:1", "y"), ("k:2", "y")}
+    assert bh_levels(kinds, 0.05, tested, key_of=lambda k: k[0]) == bh_levels(allp, 0.05, tested, key_of=lambda k: k[0])
+    assert abs(sum(LEVEL_SHARE.values()) - 1) < 1e-9 and level_of("m:0803") == "motif" and level_of("k:8") == "kind"
+    strong_motif = {**allp, ("m:0001", "y"): 0.00003}                             # почерку нужно более сильное свидетельство
+    assert ("m:0001", "y") in bh_levels(strong_motif, 0.05, tested, key_of=lambda k: k[0])
+    weak_motif = {**allp, ("m:0001", "y"): 0.0005}
+    assert ("m:0001", "y") not in bh_levels(weak_motif, 0.05, tested, key_of=lambda k: k[0])

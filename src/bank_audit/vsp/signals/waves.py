@@ -21,7 +21,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
 from .kinds import BACKGROUND, KINDS, TYPED_SINCE, kind_name
-from .stats import Exposure, bh, binom_low, binom_tail, cells_of, expected_std, share_std, ym
+from .stats import Exposure, bh_levels, binom_low, binom_tail, cells_of, expected_std, share_std, ym
 
 RECENT_M = 3              # «последние три месяца» — текущий неполный месяц и два до него
 RISE_RATIO = 1.5
@@ -133,7 +133,8 @@ def build(stories: list[dict], exposure: Exposure, *, now: datetime, motif_meta:
         for tag, c in (("3", r3), ("y", yy)):
             if c["n"] >= RISE_MIN and (c["ratio"] is None or c["ratio"] >= RISE_RATIO):
                 pv[(key, tag)] = c["p"]
-    rising = bh(pv, RISE_Q, m=2 * len(rows))
+    n_level = Counter(r["level"] for r in rows)
+    rising = bh_levels(pv, RISE_Q, {lv: 2 * n for lv, n in n_level.items()}, key_of=lambda k: k[0])
     for r in rows:
         up3, upy = (r["key"], "3") in rising, (r["key"], "y") in rising
         if r["year"] >= MIN_CLIENTS and r["year"] / r["clients"] >= NEW_SHARE and datetime.fromisoformat(r["first"]) \

@@ -254,10 +254,15 @@ def test_waves_hotspots_shelves_queue_on_model_cards(scene):
     # очаги: список и карточка с историями, отделениями и запросом
     hs = c.get("/api/vsp/hotspots").json()
     h = hs["hotspots"][0]
-    assert hs["counts"]["strong"] >= 1 and h["wave_id"] == bio["id"] and h["recent"] and h["points_n"] == 3
+    # очаг найден по типу; почерк — его главный приём: по нему строится запрос и ссылка «этот приём по сети»
+    assert hs["counts"]["strong"] >= 1 and h["wave_id"] == "k15" and h["recent"] and h["points_n"] == 3
+    assert h["main_motif"] == {"id": bio["motif"], "name": bio["name"], "n": 7}
+    assert [x["id"] for x in c.get("/api/vsp/hotspots", params={"key": bio["id"]}).json()["hotspots"]] == [h["id"]]
     assert "Калининград" in h["text"] or "8626" in h["text"]
     hc = c.get(f"/api/vsp/hotspots/{h['id']}").json()
-    assert len(hc["stories"]) == 7 and len(hc["places"]) == 3 and hc["wave"]["id"] == bio["id"] and hc["limits"]
+    assert len(hc["stories"]) == 7 and len(hc["places"]) == 3 and hc["wave"]["id"] == "k15" and hc["limits"]
+    assert hc["main_wave"]["id"] == bio["id"] and hc["request"]["what"] == "Платежи за биометрию"
+    assert hc["motifs"] == [{"id": bio["motif"], "name": bio["name"], "n": 7, "wave_id": bio["id"]}]
     assert "8626/" in hc["request"]["where"] and hc["request"]["period"].startswith("с ")
     assert c.get("/api/vsp/hotspots", params={"subject": "MOW"}).json()["hotspots"] == []
     # карта по способу действия

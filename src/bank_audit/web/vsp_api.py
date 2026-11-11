@@ -1083,7 +1083,9 @@ def _period(a, b) -> str:
 
 def _waves(run) -> list[dict]:
     if "_waves" not in run:
-        hot = Counter(h["key"] for h in run["network"].get("hotspots") or [])
+        hot: Counter = Counter()
+        for h in run["network"].get("hotspots") or []:
+            hot.update(_hot_keys(h))
         out = []
         for w in run["network"].get("waves") or []:
             out.append({**w, "id": _wave_id(w["key"]), "status_label": STATUS_LABEL.get(w.get("status"), ""),
@@ -1120,6 +1122,16 @@ def _wave_text(w: dict) -> dict:
     else:
         head, acc = f"Идёт давно: {what}", f"за год {cl(y)}, годом раньше — {p}"
     return {"text": head, "accent": acc}
+
+
+def _hot_keys(h: dict) -> set[str]:
+    """Способы действия, к которым относится очаг: его ряд и главный почерк (если очаг найден по типу)."""
+    mm = (h.get("main_motif") or {}).get("id")
+    return {h["key"], f"m:{mm}"} if mm else {h["key"]}
+
+
+def _hot_motif(h: dict) -> str | None:
+    return h.get("motif") or (h.get("main_motif") or {}).get("id")
 
 
 def _hots(run) -> list[dict]:
@@ -1547,7 +1559,7 @@ def wave_card(wid: str, user: CurrentUser = Depends(get_current_user)):
     branches = sorted(({**_place(pts.get(p)), "point": p, "n": len(ss), "last": ss[0]["date"],
                         "shelf": ((pts.get(p) or {}).get("risk") or {}).get("shelf")}
                        for p, ss in by_pt.items() if len(ss) >= 2 and p in pts), key=lambda r: (-r["n"], r["last"]))[:15]
-    hot = [_hot_brief(h) for h in _hots(run) if h["key"] == key]
+    hot = [_hot_brief(h) for h in _hots(run) if key in _hot_keys(h)]
     kinfo = _kinds(run).get(w.get("kind")) or {}
     motif = (run["network"].get("motifs") or {}).get(w.get("motif")) or {}
     siblings = [{"id": o["id"], "name": o["name"], "status": o["status"], "status_label": o["status_label"],
@@ -1577,7 +1589,7 @@ def hotspots(subject: Optional[str] = None, key: Optional[str] = None, strength:
     _need(user)
     run = _run()
     wkey = _wave_key(key)
-    hs = [h for h in _hots(run) if (not subject or h.get("subject") == subject) and (not wkey or h["key"] == wkey)
+    hs = [h for h in _hots(run) if (not subject or h.get("subject") == subject) and (not wkey or wkey in _hot_keys(h))
           and (not strength or h["strength"] == strength)]
     allh = _hots(run)
     return {"hotspots": [_hot_brief(h) | {"places": h["places"][:8]} for h in hs],
@@ -1596,6 +1608,7 @@ def hotspot_card(hid: str, user: CurrentUser = Depends(get_current_user)):
     xs = [x for x in (_story(run, r) for r in h["_rids"]) if x]
     xs.sort(key=lambda x: x["_at"], reverse=True)
     w = _wave(run, h["key"]) or {}
+    mw = _wave(run, f"m:{h['main_motif']['id']}") if h.get("main_motif") else None
     kinfo = _kinds(run).get(h.get("kind")) or {}
     codes = [rk_code(pl_.get("name")) or pl_.get("name") or "" for pl_ in h["places"]]
     where = "отделения " + ", ".join(c for c in codes if c) if any(codes) else h["where"]
@@ -1604,8 +1617,10 @@ def hotspot_card(hid: str, user: CurrentUser = Depends(get_current_user)):
             "stories": _attach_src([_story_out(x, pts) for x in xs]), "profile": _profile(xs),
             "wave": ({"id": w["id"], "name": w["name"], "status": w["status"], "status_label": w["status_label"],
                       "year": w["year"], "clients": w["clients"], "points": w["points"]} if w else None),
-            "benign": ((run["network"].get("motifs") or {}).get(h.get("motif")) or {}).get("benign") or kinfo.get("benign") or "",
-            "request": _request_text(run, h.get("kind"), where=where, motif=h.get("motif"),
+            "main_wave": {"id": mw["id"], "name": mw["name"]} if mw else None,
+            "motifs": [{**m, "wave_id": (_wave(run, f"m:{m['id']}") or {}).get("id")} for m in h.get("motifs") or []],
+            "benign": ((run["network"].get("motifs") or {}).get(_hot_motif(h)) or {}).get("benign") or kinfo.get("benign") or "",
+            "request": _request_text(run, h.get("kind"), where=where, motif=_hot_motif(h),
                                      period=f"с {a.strftime('%d.%m.%Y')} по {b.strftime('%d.%m.%Y')}"),
             "limits": ["Отзывы — слова клиентов, а не установленные факты",
                        "Очаг — повод запросить данные банка по этим отделениям, а не вывод о нарушении",
@@ -2024,7 +2039,7 @@ def _brief(run, subject, gosb) -> dict:
                 "name": lead_h["name"]}
         ex = _examples(run, [x for x in (_story(run, r) for r in lead_h["_rids"]) if x], 4)
         same_total = lead_h["clients"]
-        request = _request_text(run, lead_h.get("kind"), where=lead_h["where"], motif=lead_h.get("motif"),
+        request = _request_text(run, lead_h.get("kind"), where=lead_h["where"], motif=_hot_motif(lead_h),
                                 period=f"с {_aware(lead_h['from']).strftime('%d.%m.%Y')} по {_aware(lead_h['to']).strftime('%d.%m.%Y')}")
     else:
         n, p_ = len(year), len({x["point"] for x in year})
@@ -2319,6 +2334,9 @@ def export_request(hotspot: Optional[str] = None, wave: Optional[str] = None, po
         d = hotspot_card(hotspot, user)
         name = f"{h['where']} · {h['name']}"
         basis = [h["text"] + ".", h["note"][0].upper() + h["note"][1:] + "."]
+        if h.get("main_motif"):
+            mm = h["main_motif"]
+            basis.append(f"Чаще всего клиенты описывают один приём — «{mm['name']}»: {mm['n']} из {h['clients']}.")
         places = [pl_ for pl_ in h["places"]]
         stories = d["stories"][:6]
         reqs = [d["request"]] if d.get("request") else []

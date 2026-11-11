@@ -62,7 +62,9 @@ def test_motifs_catalog_assign_and_use_in_signals(db_url, monkeypatch):
     assert waves[f"m:{bio}"]["name"] == "Берут деньги за сдачу биометрии" and waves[f"m:{bio}"]["level"] == "motif"
     assert waves[f"m:{bio}"]["clients"] == waves["k:15"]["clients"] == 12
     hot = [h for h in net["hotspots"] if h["kind"] == 15]
-    assert len(hot) == 1 and hot[0]["level_key"] == "motif" and hot[0]["motif"] == bio    # почерк вместо своего типа
+    # очаг найден по типу (типы и почерки проверяются отдельными семьями), почерк — его главный приём
+    assert len(hot) == 1 and hot[0]["level_key"] == "kind" and hot[0]["main_motif"]["id"] == bio
+    assert hot[0]["main_motif"]["n"] == hot[0]["clients"] and hot[0]["strength"] == "strong"
     a6 = det[f"b{sc.ids['6']}"]["risk"]
     assert a6["patterns"][0]["source"] == "почерк" and a6["patterns"][0]["name"] == "Подписку подключают без согласия"
     assert len([p for p in a6["patterns"] if p["kind"] == 7]) == 1                         # тип не дублирует почерк
@@ -231,3 +233,59 @@ def test_motifs_new_ones_come_only_from_leftover_and_catalog_is_capped(db_url, m
     n = len(ed.kinds_of_call)
     asyncio.run(mo.build(st, reader=ed))                                          # всё разложено — вызовов нет
     assert len(ed.kinds_of_call) == n
+
+
+def _descr(st, labels, kind=5, prefix="x"):
+    from bank_audit.vsp.storage import meta
+    from test_risk import _card, _detail
+    meta.create_all(st.engine, tables=[lr.review_llm])
+    rows = []
+    for i, lb in enumerate(labels):
+        rows += [_card(f"2gis:{prefix}-{i}"), _detail(f"2gis:{prefix}-{i}", kind=kind, label=lb)]
+    with st.engine.begin() as c:
+        c.execute(lr.review_llm.insert(), rows)
+
+
+def test_motifs_other_bucket_grows_into_a_new_motif(db_url, monkeypatch):
+    """Новый приём приходит по паре историй за ночь: сначала лежит в «прочем», а когда «прочее» подросло —
+    редактор смотрит его целиком, заводит почерк и переносит туда и старые описания."""
+    monkeypatch.setattr(mo, "PROPOSE_MIN", 5)
+    monkeypatch.setattr(mo, "MAX_MORE", 1)
+    st = Store(db_url)
+    _descr(st, [f"обычное описание {i}" for i in range(30)] + [f"сим-карта к карте {i}" for i in range(3)])
+    ed = Editor2()
+    r1 = asyncio.run(mo.build(st, reader=ed))
+    _, lab = mo.load(st)
+    assert "more" not in ed.kinds_of_call and r1["other"] == 3                 # трёх описаний мало для нового почерка
+    assert sum(1 for v in lab.values() if v == "m0500") == 3
+    assert st.kv_get("motifs:more_seen") == {"5": 3}                           # столько было в «прочем», когда смотрели
+    _descr(st, [f"сим-карта к карте {i}" for i in range(3, 5)], prefix="y")
+    asyncio.run(mo.build(st, reader=ed))                                        # +2 описания — ещё рано
+    assert "more" not in ed.kinds_of_call
+    _descr(st, [f"сим-карта к карте {i}" for i in range(5, 8)], prefix="z")
+    r2 = asyncio.run(mo.build(st, reader=ed))
+    ms, lab = mo.load(st)
+    sim = next(k for k, m in ms.items() if m["name"].startswith("Сим-карту"))
+    assert ed.kinds_of_call.count("more") == 1 and r2["new"] == 1 and r2["moved"] == 5
+    assert sum(1 for v in lab.values() if v == sim) == 8 and "m0500" not in lab.values()
+    n = len(ed.kinds_of_call)
+    asyncio.run(mo.build(st, reader=ed))                                        # «прочее» не выросло — не смотрим
+    assert len(ed.kinds_of_call) == n
+
+
+def test_motifs_cap_leaves_other_bucket_for_next_run(db_url, monkeypatch):
+    """Потолок трат кончился до шага «новые почерки»: остаток уходит в «прочее», но следующий запуск к нему вернётся."""
+    monkeypatch.setattr(mo, "PROPOSE_MIN", 5)
+    monkeypatch.setattr(mo, "MAX_MORE", 1)
+    st = Store(db_url)
+    _descr(st, [f"обычное описание {i}" for i in range(30)] + [f"сим-карта к карте {i}" for i in range(8)])
+    ed = Editor2()
+    r1 = asyncio.run(mo.build(st, reader=ed, cap_rub=0.06))                     # хватает на каталог и одну раскладку
+    _, lab = mo.load(st)
+    assert "more" not in ed.kinds_of_call and r1["other"] == 8 and len(lab) == 38
+    assert not (st.kv_get("motifs:more_seen") or {})
+    r2 = asyncio.run(mo.build(st, reader=ed))
+    ms, lab = mo.load(st)
+    sim = next(k for k, m in ms.items() if m["name"].startswith("Сим-карту"))
+    assert r2["new"] == 1 and r2["moved"] == 8 and sum(1 for v in lab.values() if v == sim) == 8
+    assert st.kv_get("motifs:more_seen") == {"5": 0}

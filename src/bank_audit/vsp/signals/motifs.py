@@ -5,8 +5,15 @@
 
   1) для типа без каталога — предлагает почерки по самым частым описаниям (не больше MAX_FIRST);
   2) каждое описание относит к почерку каталога или к «прочему» — пачками, параллельно;
-  3) один раз смотрит на остаток: если среди не подошедших описаний повторяется новый приём,
-     добавляет почерк (не больше MAX_MORE за запуск) и относит остаток ещё раз.
+  3) смотрит на «прочее» типа целиком — и на свежий остаток, и на то, что легло туда раньше: если там
+     повторяется приём, которого нет в каталоге, добавляет почерк (не больше MAX_MORE за запуск) и
+     относит «прочее» ещё раз. Так новый приём, который копится по одной истории за ночь, со временем
+     становится почерком. Повторно «прочее» смотрится, только когда оно выросло на PROPOSE_MIN описаний
+     с прошлого раза (счётчик в kv «motifs:more_seen»), — иначе платили бы за один и тот же ответ.
+
+Кончился потолок трат — остаток уходит в «прочее», но счётчик не трогается: следующий запуск
+вернётся к шагу 3 (первый полный прогон 11.11 упёрся в потолок, и восемь крупных типов остались
+без этого шага).
 
 Новые почерки появляются только на шаге 3, одним вызовом: когда их предлагали параллельные
 пачки, каждая придумывала свой вариант одного и того же приёма (проба 10.11: 21 почерк на тип
@@ -134,8 +141,8 @@ def mapper(labels: dict[tuple, str]):
     return motif_of
 
 
-def _pending(store: Store, labels: dict[tuple, str]) -> dict[int, dict[str, dict]]:
-    """Описания тяжёлых историй, ещё не отнесённые к почеркам: тип → описание → {n, episode}."""
+def _descriptions(store: Store) -> dict[int, dict[str, dict]]:
+    """Описания способа действия у тяжёлых историй: тип → описание → {n, episode}."""
     out: dict[int, dict[str, dict]] = defaultdict(dict)
     with store.engine.connect() as c:
         ep = {rid: s or "" for rid, s in c.execute(select(review_llm.c.review_id, review_llm.c.summary).where(
@@ -148,8 +155,6 @@ def _pending(store: Store, labels: dict[tuple, str]) -> dict[int, dict[str, dict
                 continue
             kind, label = d.get("kind"), norm_label(d.get("label"))
             if not kind or kind in BACKGROUND or not label or rid not in ep:
-                continue
-            if (kind, label) in labels:
                 continue
             x = out[kind].setdefault(label, {"n": 0, "episode": ep[rid]})
             x["n"] += 1
@@ -180,7 +185,9 @@ async def build(store: Store, *, cap_rub: float | None = None, reader: Reader | 
     """kinds — только эти типы историй (проба на одном-двух типах перед полным прогоном)."""
     cap = CAP_RUB if cap_rub is None else cap_rub
     ms, labels = load(store)
-    pend = _pending(store, labels)
+    descr = _descriptions(store)
+    pend = {k: {lb: x for lb, x in d.items() if (k, lb) not in labels} for k, d in descr.items()}
+    seen = dict(store.kv_get("motifs:more_seen") or {})       # тип → сколько было в «прочем», когда его смотрели
     stats = Counter()
     spent = {"rub": 0.0, "calls": 0}
     now = utcnow()
@@ -202,11 +209,23 @@ async def build(store: Store, *, cap_rub: float | None = None, reader: Reader | 
                 ms[r["motif_id"]] = r
 
     def save_labels(rows: list[dict]) -> None:
-        if rows:
+        """Новое описание — строкой; описание из «прочего», которому нашёлся почерк, — переносом."""
+        new = [r for r in rows if (r["kind"], r["label"]) not in labels]
+        moved = [r for r in rows if (r["kind"], r["label"]) in labels and labels[(r["kind"], r["label"])] != r["motif_id"]]
+        if new or moved:
             with store.engine.begin() as c:
-                c.execute(motif_label.insert(), rows)
-            for r in rows:
+                if new:
+                    c.execute(motif_label.insert(), new)
+                for r in moved:
+                    c.execute(motif_label.update().where(motif_label.c.kind == r["kind"], motif_label.c.label == r["label"])
+                              .values(motif_id=r["motif_id"], at=r["at"]))
+            for r in new + moved:
                 labels[(r["kind"], r["label"])] = r["motif_id"]
+            stats["moved"] += len(moved)
+
+    def in_other(kind: int) -> list[tuple[str, dict]]:
+        oid = other_id(kind)
+        return [(lb, x) for lb, x in descr.get(kind, {}).items() if labels.get((kind, lb)) == oid]
 
     def catalog(kind: int) -> list[dict]:
         return sorted((m for m in ms.values() if m["kind"] == kind and m["motif_id"] != other_id(kind)),
@@ -260,41 +279,57 @@ async def build(store: Store, *, cap_rub: float | None = None, reader: Reader | 
         return left
 
     async def do_kind(kind: int) -> None:
-        todo = pend[kind]
+        todo = list(pend.get(kind, {}).items())
         if other_id(kind) not in ms:
             save_motifs([{"motif_id": other_id(kind), "kind": kind, "name": f"Прочее: {kind_name(kind).lower()}",
                           "description": "", "benign": "", "ops": "", "metric": "", "created_at": now, "updated_at": now}])
         name = kind_name(kind)
-        # 1) каталог для типа, у которого его ещё нет
-        if not catalog(kind) and len(todo) >= PROPOSE_MIN and spent["rub"] < cap:
-            sample = sorted(todo.items(), key=lambda kv: -kv[1]["n"])[:PROPOSE_SAMPLE]
-            d = await ask(SYSTEM_PROPOSE.replace("{kind}", name).replace("{max}", str(MAX_FIRST)),
-                          "Тип: " + name + "\nОписания (в скобках — сколько раз встретилось):\n" +
-                          "\n".join(f"- {lb} ({x['n']})" for lb, x in sample))
-            stats["proposed"] += add_motifs(kind, d.get("motifs"), MAX_FIRST)
-        if not catalog(kind):                            # описаний мало — пока всё в «прочее»
-            save_labels([{"kind": kind, "label": lb, "motif_id": other_id(kind), "at": now} for lb in todo])
-            stats["other"] += len(todo)
-            return
-        # 2) каждое описание — к почерку каталога или в остаток
-        left = await assign(kind, list(todo.items()), SYSTEM_ASSIGN.replace("{kind}", name))
-        # 3) остаток: повторяется ли в нём новый приём
+        was = int(seen.get(str(kind), 0))
+        tried = False
+        left = todo
+        if not catalog(kind):
+            # 1) каталог для типа, у которого его ещё нет: по новым описаниям и по тому, что уже лежит в «прочем»
+            pool = in_other(kind) + todo
+            if len(pool) >= PROPOSE_MIN and len(pool) - was >= PROPOSE_MIN and spent["rub"] < cap:
+                sample = sorted(pool, key=lambda kv: -kv[1]["n"])[:PROPOSE_SAMPLE]
+                d = await ask(SYSTEM_PROPOSE.replace("{kind}", name).replace("{max}", str(MAX_FIRST)),
+                              "Тип: " + name + "\nОписания (в скобках — сколько раз встретилось):\n" +
+                              "\n".join(f"- {lb} ({x['n']})" for lb, x in sample))
+                stats["proposed"] += add_motifs(kind, d.get("motifs"), MAX_FIRST)
+                tried = True
+            if catalog(kind):
+                left = await assign(kind, pool, SYSTEM_ASSIGN.replace("{kind}", name))
+        elif todo:
+            # 2) каждое новое описание — к почерку каталога или в остаток
+            left = await assign(kind, todo, SYSTEM_ASSIGN.replace("{kind}", name))
+        # 3) «прочее» типа вместе со свежим остатком: повторяется ли там приём, которого нет в каталоге
+        pool = list(dict(in_other(kind) + left).items())
         room = min(MAX_MORE, MAX_MOTIFS - len(catalog(kind)))
-        if len(left) >= PROPOSE_MIN and room > 0 and spent["rub"] < cap:
-            sample = sorted(left, key=lambda kv: -kv[1]["n"])[:PROPOSE_SAMPLE]
+        if catalog(kind) and room > 0 and len(pool) >= PROPOSE_MIN and len(pool) - was >= PROPOSE_MIN and spent["rub"] < cap:
+            sample = sorted(pool, key=lambda kv: -kv[1]["n"])[:PROPOSE_SAMPLE]
             d = await ask(SYSTEM_MORE.replace("{kind}", name).replace("{max}", str(room)),
                           "Перечень почерков:\n" + "\n".join(f"- {m['name']} — {m['description']}" for m in catalog(kind)) +
                           "\n\nОписания, которые не подошли (в скобках — сколько раз встретилось):\n" +
                           "\n".join(f"- {lb} ({x['n']})" for lb, x in sample))
             added = add_motifs(kind, d.get("motifs"), room)
             stats["new"] += added
+            tried = True
             if added:
-                left = await assign(kind, left, SYSTEM_ASSIGN.replace("{kind}", name))
-        save_labels([{"kind": kind, "label": lb, "motif_id": other_id(kind), "at": utcnow()} for lb, _ in left])
-        stats["other"] += len(left)
+                left = await assign(kind, pool, SYSTEM_ASSIGN.replace("{kind}", name))
+        fresh = [lb for lb, _ in left if (kind, lb) not in labels]
+        save_labels([{"kind": kind, "label": lb, "motif_id": other_id(kind), "at": utcnow()} for lb in fresh])
+        stats["other"] += len(fresh)
+        if tried and spent["rub"] < cap:                 # на потолке трат раскладка могла оборваться — вернёмся
+            seen[str(kind)] = len(in_other(kind))
 
-    await asyncio.gather(*(do_kind(k) for k in sorted(pend)
-                           if pend[k] and k in KINDS and not (kinds and k not in kinds)))
+    def due(kind: int) -> bool:
+        """Есть новые описания или «прочее» типа выросло настолько, что его пора пересмотреть."""
+        return bool(pend.get(kind)) or len(in_other(kind)) - int(seen.get(str(kind), 0)) >= PROPOSE_MIN
+
+    await asyncio.gather(*(do_kind(k) for k in sorted(KINDS)
+                           if k not in BACKGROUND and due(k) and not (kinds and k not in kinds)))
+    if seen != (store.kv_get("motifs:more_seen") or {}):
+        store.kv_set("motifs:more_seen", seen)
     res = {"motifs": len([m for m in ms.values() if not m["motif_id"].endswith("00")]), "labels": len(labels),
            "rub": round(spent["rub"], 2), "calls": spent["calls"], **dict(stats)}
     log.info("почерки: %s", res)
