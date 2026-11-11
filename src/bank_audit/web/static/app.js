@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 b270921773e857e10f4a8e8667b77e88490a0b13758dfa5b4da06696eaa6b768): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 f022635cc3fceb4e05292440b6e13392387b9413b52ac0659335e83b7ef2954d): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -21692,12 +21692,15 @@ const V_ST = {
   fading: "затихает",
   gone: "ушло"
 };
+// hint="up" — рост не подтверждён статистикой: подпись нейтральная, без цвета
 function VStatus({
-  s
+  s,
+  hint
 }) {
   return s ? /*#__PURE__*/React.createElement("span", {
-    className: "vr-st " + s
-  }, V_ST[s] || s) : null;
+    className: "vr-st " + s,
+    title: hint === "up" ? "За год больше прежнего, но при таком числе историй это может быть случайностью" : undefined
+  }, hint === "up" ? "возможно, растёт" : V_ST[s] || s) : null;
 }
 // ряд по месяцам → кварталы: клиенты на 10 тыс. прочитанных жалоб (по месяцам ряд слишком редкий)
 function vQuarters(series) {
@@ -21782,7 +21785,8 @@ function VWaveCard({
   }, /*#__PURE__*/React.createElement("span", {
     className: "vr-wave-top"
   }, /*#__PURE__*/React.createElement(VStatus, {
-    s: w.status
+    s: w.status,
+    hint: w.hint
   }), w.inside_kind && /*#__PURE__*/React.createElement("span", {
     className: "vr-tag in"
   }, "\u0438\u0437\u043D\u0443\u0442\u0440\u0438")), /*#__PURE__*/React.createElement("b", null, w.name), /*#__PURE__*/React.createElement(VSpark, {
@@ -22655,6 +22659,8 @@ function VSchemes({
   const cnt = (d.counts || {})[level] || {};
   const rows = all.filter(w => (!stf || w.status === stf) && (!ins || w.inside_kind));
   const up = (cnt.new || 0) + (cnt.rising || 0);
+  const cntO = (d.counts || {})[level === "motif" ? "kind" : "motif"] || {};
+  const upOther = (cntO.new || 0) + (cntO.rising || 0);
   const first = all.find(w => w.status === "new" || w.status === "rising");
   const hot = hs && !hs.err ? hs.hotspots : [];
   const strong = hot.filter(h => h.strength === "strong"),
@@ -22670,7 +22676,15 @@ function VSchemes({
     className: "vr-h2"
   }, first ? /*#__PURE__*/React.createElement(React.Fragment, null, first.text, first.accent ? /*#__PURE__*/React.createElement(React.Fragment, null, " \u2014 ", first.accent) : null) : "Сейчас ни один способ действия не растёт"), /*#__PURE__*/React.createElement("p", {
     className: "vr-p"
-  }, "\u0421\u043F\u043E\u0441\u043E\u0431 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u2014 \u0447\u0442\u043E \u0438\u043C\u0435\u043D\u043D\u043E \u0441\u0434\u0435\u043B\u0430\u043B\u0438 \u0441 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u043C. ", d.has_motifs ? "Тип истории ставит модель, а узкие «почерки» внутри типа она находит сама по описаниям — закрытого списка нет. " : "Тип истории ставит модель по каждому тяжёлому отзыву. ", "\u0421\u0440\u0430\u0432\u043D\u0438\u0432\u0430\u0435\u043C \u043F\u0435\u0440\u0438\u043E\u0434\u044B \u0442\u0430\u043A, \u0447\u0442\u043E\u0431\u044B \u0440\u043E\u0441\u0442 \u043D\u0435 \u043E\u0431\u044A\u044F\u0441\u043D\u044F\u043B\u0441\u044F \u0442\u0435\u043C, \u0447\u0442\u043E \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u0441\u0442\u0430\u043B\u043E \u0431\u043E\u043B\u044C\u0448\u0435 \u0438\u043B\u0438 \u0441\u0442\u0430\u043B\u043E \u0431\u043E\u043B\u044C\u0448\u0435 \u0436\u0430\u043B\u043E\u0431: ", up ? `сейчас ${up} ${vPl(up, "растёт или появился", "растут или появились", "растут или появились")}` : "сейчас ничего не растёт", cnt.fading ? `, ${cnt.fading} ${vPl(cnt.fading, "затихает", "затихают", "затихают")}` : "", cnt.gone ? `, ${cnt.gone} ${vPl(cnt.gone, "ушёл", "ушли", "ушли")}` : "", ".")), /*#__PURE__*/React.createElement("div", {
+  }, "\u0421\u043F\u043E\u0441\u043E\u0431 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u2014 \u0447\u0442\u043E \u0438\u043C\u0435\u043D\u043D\u043E \u0441\u0434\u0435\u043B\u0430\u043B\u0438 \u0441 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u043C. ", d.has_motifs ? "Тип истории ставит модель, а узкие «почерки» внутри типа она находит сама по описаниям — закрытого списка нет. " : "Тип истории ставит модель по каждому тяжёлому отзыву. ", "\u0421\u0440\u0430\u0432\u043D\u0438\u0432\u0430\u0435\u043C \u043F\u0435\u0440\u0438\u043E\u0434\u044B \u0442\u0430\u043A, \u0447\u0442\u043E\u0431\u044B \u0440\u043E\u0441\u0442 \u043D\u0435 \u043E\u0431\u044A\u044F\u0441\u043D\u044F\u043B\u0441\u044F \u0442\u0435\u043C, \u0447\u0442\u043E \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u0441\u0442\u0430\u043B\u043E \u0431\u043E\u043B\u044C\u0448\u0435 \u0438\u043B\u0438 \u0441\u0442\u0430\u043B\u043E \u0431\u043E\u043B\u044C\u0448\u0435 \u0436\u0430\u043B\u043E\u0431: ", up ? `сейчас ${up} ${vPl(up, "растёт или появился", "растут или появились", "растут или появились")}` : "сейчас ничего не растёт", cnt.fading ? `, ${cnt.fading} ${vPl(cnt.fading, "затихает", "затихают", "затихают")}` : "", cnt.gone ? `, ${cnt.gone} ${vPl(cnt.gone, "ушёл", "ушли", "ушли")}` : "", ".", d.has_motifs && upOther > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, " ", level === "motif" ? "Среди типов" : "Среди почерков", " \u2014 ", upOther, " ", vPl(upOther, "растёт или появился", "растут или появились", "растут или появились"), ": ", /*#__PURE__*/React.createElement("button", {
+    className: "vlink",
+    onClick: () => {
+      const l = level === "motif" ? "kind" : "motif";
+      setLvl(l);
+      vLSset("vsp_wlvl", l);
+      setStf("");
+    }
+  }, "\u043F\u043E\u043A\u0430\u0437\u0430\u0442\u044C ", level === "motif" ? "типы" : "почерки"), "."))), /*#__PURE__*/React.createElement("div", {
     className: "vr-tools",
     "data-tour": "wtools",
     style: {
@@ -22744,7 +22758,8 @@ function VSchemes({
       marginLeft: 8
     }
   }, "\u0438\u0437\u043D\u0443\u0442\u0440\u0438")), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement(VStatus, {
-    s: w.status
+    s: w.status,
+    hint: w.hint
   })), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement(VSpark, {
     series: w.series,
     label: `${w.name}: частота по кварталам`
@@ -22829,7 +22844,8 @@ function VWaveLayer({
     label: "\u0421\u043F\u043E\u0441\u043E\u0431 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F",
     title: ok ? d.name : "Способ действия",
     sub: ok ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(VStatus, {
-      s: d.status
+      s: d.status,
+      hint: d.hint
     }), " ", d.level === "motif" && d.kind_name ? `${d.kind_name} · ` : "", vN(d.clients), " ", vPl(d.clients, "клиент", "клиента", "клиентов"), " \u0432 ", vN(d.points), " ", vPl(d.points, "отделении", "отделениях", "отделениях"), " \u0441 ", d.since, " \u0433\u043E\u0434\u0430") : ""
   }, !d ? /*#__PURE__*/React.createElement(Skel, {
     h: 420

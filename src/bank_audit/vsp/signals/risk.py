@@ -627,7 +627,12 @@ def assess(points: dict[str, dict], stories: list[dict], exposure: Exposure, *, 
             x["kind"] in motif_kinds or len(set(x["rids"]) & llm_rids) >= 0.6 * len(x["rids"])))]
         pats.sort(key=lambda x: (x["p"], -x["window_clients"]))
         if con:
-            con = {**con, "wave_only": bool(con.get("pattern")) and not any(x["source"] == "вывод модели" for x in pats)}
+            # вывод модели подтверждён, если прошёл проверку сам или те же клиенты уже стоят на полке по почерку
+            # или типу (иначе под причиной «один почерк» стояло бы «отделение этим не выделяется»)
+            con_rids = set(con.get("rids") or [])
+            confirmed = any(x["source"] == "вывод модели" or len(set(x["rids"]) & con_rids) >= 0.5 * len(x["rids"])
+                            for x in pats)
+            con = {**con, "wave_only": bool(con.get("pattern")) and not confirmed}
         st = stat.get(p)
         shelf = "sure" if p in sure else "pattern" if pats else None
         # главный случай: из историй самой причины (почерка), иначе — из всех тяжёлых;

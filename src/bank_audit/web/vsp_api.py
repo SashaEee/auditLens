@@ -1088,7 +1088,8 @@ def _waves(run) -> list[dict]:
             hot.update(_hot_keys(h))
         out = []
         for w in run["network"].get("waves") or []:
-            out.append({**w, "id": _wave_id(w["key"]), "status_label": STATUS_LABEL.get(w.get("status"), ""),
+            out.append({**w, "id": _wave_id(w["key"]),
+                        "status_label": "возможно, растёт" if w.get("hint") == "up" else STATUS_LABEL.get(w.get("status"), ""),
                         "hot": hot.get(w["key"], 0),
                         "inside_kind": bool((_kinds(run).get(w.get("kind")) or {}).get("inside"))})
         run["_waves"] = out
@@ -1119,6 +1120,9 @@ def _wave_text(w: dict) -> dict:
         head, acc = f"Затихает: {what}", f"за год {cl(y)}, в {w.get('peak_year')} году было чаще"
     elif w["status"] == "gone":
         head, acc = f"Ушло: {what}", "за последний год — ни одной истории"
+    elif w.get("hint") == "up":
+        head = f"Возможно, растёт: {what}"
+        acc = f"за год {cl(y)}, годом раньше — {p}; при таком числе историй это может быть случайностью"
     else:
         head, acc = f"Идёт давно: {what}", f"за год {cl(y)}, годом раньше — {p}"
     return {"text": head, "accent": acc}

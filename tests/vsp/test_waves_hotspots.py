@@ -149,3 +149,17 @@ def test_types_and_motifs_are_corrected_as_separate_families():
     assert ("m:0001", "y") in bh_levels(strong_motif, 0.05, tested, key_of=lambda k: k[0])
     weak_motif = {**allp, ("m:0001", "y"): 0.0005}
     assert ("m:0001", "y") not in bh_levels(weak_motif, 0.05, tested, key_of=lambda k: k[0])
+
+
+def test_unproven_rise_gets_a_neutral_hint():
+    """Шесть клиентов за год против одного годом раньше: поправку на число сравнений такой ряд не проходит,
+    но и подпись «идёт давно» про него — неправда. Состояние остаётся прежним, появляется пометка."""
+    bg = [{**s, "motif": f"m07{i % 30 + 1:02d}"} for i, s in enumerate(_steady(7, 12))]
+    m = "m0799"
+    odd = [_story(950 + i, MSK[i % 3], NOW - timedelta(days=20 + 50 * i), 7, PTS[MSK[i % 3]], motif=m) for i in range(6)]
+    odd += [_story(960, KZN[0], NOW - timedelta(days=500), 7, PTS[KZN[0]], motif=m),
+            _story(961, KZN[1], NOW - timedelta(days=1100), 7, PTS[KZN[1]], motif=m)]
+    ws = {w["key"]: w for w in waves.build(bg + odd, _expo(PTS), now=NOW)}
+    w = ws[f"m:{m}"]
+    assert w["status"] == "steady" and w["hint"] == "up" and w["year"] == 6 and w["prev_year"] == 1
+    assert ws["k:7"]["hint"] is None and all(x["hint"] is None for x in ws.values() if x["status"] != "steady")

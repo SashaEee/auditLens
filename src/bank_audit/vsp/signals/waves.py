@@ -27,6 +27,8 @@ RECENT_M = 3              # «последние три месяца» — те�
 RISE_RATIO = 1.5
 RISE_MIN = 4
 RISE_Q = 0.05
+HINT_RATIO = 2.0          # «возможно, растёт»: за год вдвое больше ожидаемого и сам по себе рост неслучаен (p < HINT_P),
+HINT_P = 0.05             # но поправку на число сравнений ряд не проходит
 NEW_SHARE = 0.7
 FADE_RATIO = 0.5
 MIN_CLIENTS = 5           # ряды короче не показываем: по ним ничего не сказать
@@ -150,6 +152,10 @@ def build(stories: list[dict], exposure: Exposure, *, now: datetime, motif_meta:
             st = "steady"
         r["status"] = st
         r["horizon"] = "quarter" if up3 else "year" if upy else None       # на каком отрезке виден рост
+        # рост не доказан, но назвать такой ряд «идёт давно» — ввести в заблуждение (12 клиентов за год против
+        # одного): помечаем нейтрально, без цвета и без уведомлений
+        r["hint"] = "up" if (st == "steady" and r["year"] >= RISE_MIN and (r["year_ratio"] or 0) >= HINT_RATIO
+                             and r["_py"] < HINT_P) else None
         r["p"] = round(min(r.pop("_p3"), r.pop("_py")), 6)
         r.pop("_pf")
     order = {"new": 0, "rising": 1, "steady": 2, "fading": 3, "gone": 4}

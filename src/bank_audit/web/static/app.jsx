@@ -11022,7 +11022,8 @@ function VCaseCard({c,size,openPoint,plan,hidePlace,hideWhat}){
 
 // ── волны и очаги: состояние, график по кварталам, строки, запрос данных ─────
 const V_ST={new:"новое",rising:"растёт",steady:"идёт давно",fading:"затихает",gone:"ушло"};
-function VStatus({s}){return s?<span className={"vr-st "+s}>{V_ST[s]||s}</span>:null;}
+// hint="up" — рост не подтверждён статистикой: подпись нейтральная, без цвета
+function VStatus({s,hint}){return s?<span className={"vr-st "+s} title={hint==="up"?"За год больше прежнего, но при таком числе историй это может быть случайностью":undefined}>{hint==="up"?"возможно, растёт":V_ST[s]||s}</span>:null;}
 // ряд по месяцам → кварталы: клиенты на 10 тыс. прочитанных жалоб (по месяцам ряд слишком редкий)
 function vQuarters(series){
   const out=[];(series||[]).forEach(x=>{const[y,m]=x.m.split("-");const k=y+"-"+Math.ceil(+m/3);
@@ -11045,7 +11046,7 @@ const vWaveNums=w=>[`за год ${vN(w.year)}`,`годом раньше ${vN(w.
   w.hot?`${w.hot} ${vPl(w.hot,"очаг","очага","очагов")}`:null].filter(Boolean).join(" · ");
 function VWaveCard({w,open}){
   return <button className="vr-wave" data-wave={w.id} onClick={()=>open(w.id)}>
-    <span className="vr-wave-top"><VStatus s={w.status}/>{w.inside_kind&&<span className="vr-tag in">изнутри</span>}</span>
+    <span className="vr-wave-top"><VStatus s={w.status} hint={w.hint}/>{w.inside_kind&&<span className="vr-tag in">изнутри</span>}</span>
     <b>{w.name}</b>
     <VSpark series={w.series} label={`${w.name}: частота по кварталам`}/>
     <span className="note">{vWaveNums(w)}</span></button>;
@@ -11324,6 +11325,7 @@ function VSchemes({openWave,openHot,f,regions}){
   const cnt=(d.counts||{})[level]||{};
   const rows=all.filter(w=>(!stf||w.status===stf)&&(!ins||w.inside_kind));
   const up=(cnt.new||0)+(cnt.rising||0);
+  const cntO=(d.counts||{})[level==="motif"?"kind":"motif"]||{};const upOther=(cntO.new||0)+(cntO.rising||0);
   const first=all.find(w=>w.status==="new"||w.status==="rising");
   const hot=hs&&!hs.err?hs.hotspots:[];
   const strong=hot.filter(h=>h.strength==="strong"),maybe=hot.filter(h=>h.strength!=="strong");
@@ -11333,7 +11335,7 @@ function VSchemes({openWave,openHot,f,regions}){
       <div className="eyebrow">Способы действия · с {d.since} года</div>
       <h2 className="vr-h2">{first?<>{first.text}{first.accent?<> — {first.accent}</>:null}</>:"Сейчас ни один способ действия не растёт"}</h2>
       <p className="vr-p">Способ действия — что именно сделали с клиентом. {d.has_motifs?"Тип истории ставит модель, а узкие «почерки» внутри типа она находит сама по описаниям — закрытого списка нет. ":"Тип истории ставит модель по каждому тяжёлому отзыву. "}
-        Сравниваем периоды так, чтобы рост не объяснялся тем, что отзывов стало больше или стало больше жалоб: {up?`сейчас ${up} ${vPl(up,"растёт или появился","растут или появились","растут или появились")}`:"сейчас ничего не растёт"}{cnt.fading?`, ${cnt.fading} ${vPl(cnt.fading,"затихает","затихают","затихают")}`:""}{cnt.gone?`, ${cnt.gone} ${vPl(cnt.gone,"ушёл","ушли","ушли")}`:""}.</p></div>
+        Сравниваем периоды так, чтобы рост не объяснялся тем, что отзывов стало больше или стало больше жалоб: {up?`сейчас ${up} ${vPl(up,"растёт или появился","растут или появились","растут или появились")}`:"сейчас ничего не растёт"}{cnt.fading?`, ${cnt.fading} ${vPl(cnt.fading,"затихает","затихают","затихают")}`:""}{cnt.gone?`, ${cnt.gone} ${vPl(cnt.gone,"ушёл","ушли","ушли")}`:""}.{d.has_motifs&&upOther>0&&<> {level==="motif"?"Среди типов":"Среди почерков"} — {upOther} {vPl(upOther,"растёт или появился","растут или появились","растут или появились")}: <button className="vlink" onClick={()=>{const l=level==="motif"?"kind":"motif";setLvl(l);vLSset("vsp_wlvl",l);setStf("");}}>показать {level==="motif"?"типы":"почерки"}</button>.</>}</p></div>
     <div className="vr-tools" data-tour="wtools" style={{marginTop:18}}>
       {d.has_motifs&&<div className="vr-seg2" role="group" aria-label="Уровень"><button className={level==="motif"?"on":""} aria-pressed={level==="motif"} onClick={()=>{setLvl("motif");vLSset("vsp_wlvl","motif");}}>Почерки</button>
         <button className={level==="kind"?"on":""} aria-pressed={level==="kind"} onClick={()=>{setLvl("kind");vLSset("vsp_wlvl","kind");}}>Типы</button></div>}
@@ -11345,7 +11347,7 @@ function VSchemes({openWave,openHot,f,regions}){
       <th className="num" title={`Разных клиентов с ${d.since} года`}>Всего</th><th className="num">Отделений</th><th className="num" title="Города и ГОСБ, где способ сгущается">Очагов</th></tr></thead>
       <tbody>{rows.map(w=><tr key={w.key} data-wave={w.id} className="click" tabIndex={0} onClick={()=>openWave(w.id)} onKeyDown={vEnter(()=>openWave(w.id))}>
         <td><b>{w.name}</b>{w.inside_kind&&<span className="vr-tag in" style={{marginLeft:8}}>изнутри</span>}</td>
-        <td><VStatus s={w.status}/></td><td><VSpark series={w.series} label={`${w.name}: частота по кварталам`}/></td>
+        <td><VStatus s={w.status} hint={w.hint}/></td><td><VSpark series={w.series} label={`${w.name}: частота по кварталам`}/></td>
         <td className="num"><b>{vN(w.year)}</b></td><td className="num">{vN(w.prev_year)}</td><td className="num">{vN(w.clients)}</td>
         <td className="num">{vN(w.points)}</td><td className="num">{w.hot||"—"}</td></tr>)}</tbody></table></div>
       :<div className="vempty">Способов действия с такими условиями нет.</div>}
@@ -11371,7 +11373,7 @@ function VWaveLayer({id,depth,onClose,openPoint,openHot,openWave,goStories}){
   const sigR=m&&!m.err?m.regions.filter(r=>r.sig).sort((a,b)=>b.ratio-a.ratio):[];
   const share=(a,b)=>b?Math.round(a/b*100):0;
   return <VLayer depth={depth} onClose={onClose} width={900} label="Способ действия" title={ok?d.name:"Способ действия"}
-    sub={ok?<><VStatus s={d.status}/> {d.level==="motif"&&d.kind_name?`${d.kind_name} · `:""}{vN(d.clients)} {vPl(d.clients,"клиент","клиента","клиентов")} в {vN(d.points)} {vPl(d.points,"отделении","отделениях","отделениях")} с {d.since} года</>:""}>
+    sub={ok?<><VStatus s={d.status} hint={d.hint}/> {d.level==="motif"&&d.kind_name?`${d.kind_name} · `:""}{vN(d.clients)} {vPl(d.clients,"клиент","клиента","клиентов")} в {vN(d.points)} {vPl(d.points,"отделении","отделениях","отделениях")} с {d.since} года</>:""}>
     {!d?<Skel h={420}/>:d.err?<ErrState msg="Способ действия не найден"/>:<article className="vdos vr-dos" data-tour="wave">
       <p className="vr-lede" style={{marginTop:0}}>{d.text} — {d.accent}.{d.description?` ${d.description}`:""}</p>
       <div className="vr-acts"><button className="btn btn-primary" onClick={()=>goStories(id)}>Все истории →</button>
