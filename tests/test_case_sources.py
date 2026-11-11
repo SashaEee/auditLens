@@ -40,6 +40,29 @@ def test_news_item_is_sanitized_and_needs_a_link():
     assert m["summary"].startswith("почему важно") and len(m["summary"]) <= 500 and "evil" not in m
 
 
+def test_vsp_item_keeps_a_snapshot_and_an_inner_link():
+    """Материал «Аудита сети ВСП»: адрес — ссылка внутри раздела, в деле остаётся снимок (что, где, слова клиента)."""
+    base = {"kind": "vsp", "url": "#vsp?point=b1956", "title": "Кемерово, д.95, пом.34"}
+    assert U._prepare_item({**base, "url": "https://ex.org/x", "meta": {"type": "point"}}, "u") is None   # чужой адрес
+    assert U._prepare_item({**base, "meta": {"type": "weird"}}, "u") is None                              # неизвестный вид
+    assert U._prepare_item({**base, "title": "", "meta": {"type": "point"}}, "u") is None
+    r = U._prepare_item({**base, "meta": {"type": "point", "code": "ВСП 8615/0135", "gosb": "8615", "evil": "<script>",
+                                          "summary": "4 клиента за 7 месяцев: " + "я" * 900, "quote": ""}}, "u")
+    m = json.loads(r["m"])
+    assert r["k"] == "vsp" and r["u"] == "#vsp?point=b1956" and r["r"] is None and r["t"].startswith("Кемерово")
+    assert m["type"] == "point" and m["code"] == "ВСП 8615/0135" and len(m["summary"]) <= 700
+    assert "evil" not in m and "quote" not in m                                                           # пустое не храним
+    from bank_audit.web import case_export as ce
+    it = {"kind": "vsp", "url": "#vsp?story=2gis%3A1", "title": "Оформили карту без согласия", "added_at": "2026-11-11T10:00:00",
+          "meta": {"type": "story", "place": "Омск, Корпус 1", "code": "ВСП 8634/0238", "gosb": "8634", "source": "2ГИС",
+                   "summary": "пенсионер · перенос номера", "quote": "Вы без согласия перенесли номер"}}
+    row = ce._row(1, it, "https://al.example")
+    assert row["Тип"] == "сеть ВСП" and row["Город"] == "Омск, Корпус 1" and row["Площадка"] == "2ГИС"
+    assert row["Ссылка"] == "https://al.example/#vsp?story=2gis%3A1" and ce._link(it, None) == ""
+    assert "история клиента" in row["_gist"] and "«Вы без согласия перенесли номер»" in row["_gist"]
+    assert row["Суть"].startswith("Оформили карту без согласия — ") and row["Цитата"].startswith("Вы без согласия")
+
+
 def test_answer_gets_fingerprint_address_and_keeps_text():
     a = {"kind": "answer", "meta": {"question": "Что с комиссиями?", "text": "Ответ\n\nс абзацами",
                                     "sources": [{"n": 1, "url": "https://ex.org/a", "title": "Ex"},

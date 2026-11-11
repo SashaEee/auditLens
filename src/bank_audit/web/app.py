@@ -5166,7 +5166,7 @@ def cases_export(case_id: int, user: CurrentUser = Depends(get_current_user)):
                 "Доверие", "Дата обхода", "Комментарий аудитора"])
     for i, it in enumerate(case.get("items") or [], 1):
         w.writerow([i,
-                    {"document": "документ", "review": "отзыв",
+                    {"document": "документ", "review": "отзыв", "vsp": "сеть ВСП",
                      "offer": "продукт", "report": "отчёт"}.get(it["kind"], it["kind"]),
                     (it.get("review") or {}).get("bank") or it.get("bank_name") or "",
                     (it.get("review") or {}).get("summary") or it.get("title") or "",

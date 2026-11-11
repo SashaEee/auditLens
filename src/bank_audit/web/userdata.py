@@ -1346,7 +1346,9 @@ def add_case_item(case_id: int, username: str, *, kind: str,
 # Что можно приобщить к делу (этап 4: отчёты и ответы ИИ-помощника, новости
 # выпуска, продукты «Рынка»). Данные карточки — в meta (миграция 085); отчёт
 # в дело не копируется — только название, вопрос и короткий вывод.
-CASE_KINDS = ("review", "document", "report", "answer", "news", "offer")
+CASE_KINDS = ("review", "document", "report", "answer", "news", "offer", "vsp")
+# Материалы «Аудита сети ВСП»: отделение, история клиента, очаг, способ действия
+VSP_ITEM_TYPES = ("point", "story", "hot", "wave")
 
 
 def _clip(v, n: int, lines: bool = False) -> str:
@@ -1503,6 +1505,17 @@ def _prepare_item(it: dict, username: str) -> dict | None:
         meta = {"source": _clip(m.get("source"), 80), "domain": _clip(m.get("domain"), 80),
                 "ts": _clip(m.get("ts"), 40) or None, "summary": _clip(m.get("summary"), 500),
                 "tg": bool(m.get("tg")), "group": _clip(m.get("group"), 60) or None}
+        ref = None
+    elif kind == "vsp":
+        # Адрес — ссылка на слой внутри раздела (#vsp?point=…): по нему материал открывается и по нему же
+        # не приобщается дважды. В дело кладётся снимок на дату приобщения — слова клиентов, а не факты
+        if not str(url or "").startswith("#vsp?") or m.get("type") not in VSP_ITEM_TYPES or not _clip(title, 10):
+            return None
+        meta = {"type": m["type"], "place": _clip(m.get("place"), 200), "code": _clip(m.get("code"), 40),
+                "gosb": _clip(m.get("gosb"), 12), "date": _clip(m.get("date"), 40),
+                "period": _clip(m.get("period"), 80), "source": _clip(m.get("source"), 40),
+                "summary": _clip(m.get("summary"), 700), "quote": _clip(m.get("quote"), 500)}
+        meta = {k_: v for k_, v in meta.items() if v}
         ref = None
     elif kind == "answer":
         q_, body = _clip(m.get("question"), 500), _clip(m.get("text"), 6000, lines=True)
