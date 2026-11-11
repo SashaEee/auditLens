@@ -233,10 +233,10 @@ def whoami(user: CurrentUser = Depends(get_current_user)):
             "authenticated": user.authenticated, "email": user.email}
 
 
-def _can_vsp(username: str | None) -> bool:
+def _can_vsp(username: str | None, name: str | None = None) -> bool:
     try:
         from .vsp_api import can_vsp
-        return can_vsp(username)
+        return can_vsp(username, name)
     except Exception:  # noqa: BLE001 — модуль ВСП не должен ронять профиль
         return False
 
@@ -265,7 +265,7 @@ def get_me(tz: Optional[str] = None, user: CurrentUser = Depends(get_current_use
         "profile_note_at": row.get("profile_note_at"),
         "personalization": userdata.personalization_score(user.username),
         "is_admin": telemetry.is_admin(user.username),
-        "can_vsp": _can_vsp(user.username),
+        "can_vsp": _can_vsp(user.username, user.name),
         "can_pulse": telemetry.can_pulse(user.username),
         "can_ingest": _can_run_ingest(user),
         "authenticated": user.authenticated,
@@ -994,7 +994,7 @@ def bell_list(user: CurrentUser = Depends(get_current_user)):
     u = userdata.get_user(user.username) or {}
     return {"items": notices.items(user.username),
             "groups": notices.settings(u.get("prefs"), team=user.username in _inbox_team(),
-                                       vsp=_can_vsp(user.username))}
+                                       vsp=_can_vsp(user.username, user.name))}
 
 
 @app.get("/api/bell/unread")

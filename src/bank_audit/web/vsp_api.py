@@ -76,55 +76,116 @@ UTC = timezone.utc
 # ── доступ и подключение ───────────────────────────────────────────────────────
 
 # Бета-доступ: владелец (ADMIN_USERS) — всегда; остальные — из VSP_USERS или из базы (app_setting,
-# ключ vsp_users: {"users": [логины]}). База — чтобы открыть раздел коллеге без пересоздания контейнера.
-_BETA: dict = {"at": -1e9, "v": []}
+# ключ vsp_users: {"users": [логины], "units": [номера подразделений]}). База — чтобы открыть раздел
+# без пересоздания контейнера. Подразделение — чтобы открыть его целиком, включая тех, кто в AuditLens
+# ещё ни разу не заходил: логина такого человека нет, а в штате (org_member, грузится в «Пульсе») он есть.
+# Человек сопоставляется со штатом так же, как в охвате (org_reach): по табельному номеру в конце
+# логина, а если такого номера в штате нет — по имени и фамилии, когда они в штате единственные.
+_BETA: dict = {"at": -1e9, "v": {"users": [], "units": [], "tabs": set(), "all_tabs": set(), "names": set()}}
 
 
-def beta_users() -> list[str]:
+def _beta() -> dict:
     now = time.monotonic()
     if now - _BETA["at"] < 60:
         return _BETA["v"]
-    v: list[str] = []
+    v = {"users": [], "units": [], "tabs": set(), "all_tabs": set(), "names": set()}
     try:
         from sqlalchemy import text as _t
         from .. import db
         with db.session() as s_:
             raw = s_.execute(_t("SELECT value FROM app_setting WHERE key = 'vsp_users'")).scalar()
-        if isinstance(raw, str):
-            raw = json.loads(raw)
-        v = [str(u).strip() for u in ((raw or {}).get("users") or []) if str(u).strip()]
+            if isinstance(raw, str):
+                raw = json.loads(raw)
+            v["users"] = [str(u).strip() for u in ((raw or {}).get("users") or []) if str(u).strip()]
+            v["units"] = [str(u).strip() for u in ((raw or {}).get("units") or []) if str(u).strip()]
+            if v["units"]:
+                from . import org_reach
+                fired, names = org_reach._fired(), {}
+                for tab, status, unit, key in s_.execute(_t(
+                        "SELECT tab_no, status, unit_code, name_key FROM org_member")).all():
+                    v["all_tabs"].add(tab)
+                    if status in fired:
+                        continue
+                    if unit in v["units"]:
+                        v["tabs"].add(tab)
+                    if key:
+                        names.setdefault(key, []).append(unit)
+                v["names"] = {k for k, us in names.items() if len(us) == 1 and us[0] in v["units"]}
     except Exception:  # noqa: BLE001 — нет таблицы или базы: только владелец и VSP_USERS
-        v = []
+        pass
     _BETA.update(at=now, v=v)
     return v
 
 
-def set_beta_users(users: list[str], by: str | None) -> list[str]:
+def beta_users() -> list[str]:
+    return _beta()["users"]
+
+
+def beta_units() -> list[str]:
+    return _beta()["units"]
+
+
+def set_beta(users: list[str] | None, units: list[str] | None, by: str | None) -> dict:
+    """Кому открыт раздел. None — оставить как есть (логины и подразделения меняются независимо)."""
     from sqlalchemy import text as _t
     from .. import db
-    clean = sorted({str(u).strip() for u in users if str(u).strip()})
+    _BETA.update(at=-1e9)
+    cur = _beta()
+    val = {"users": sorted({str(u).strip() for u in (cur["users"] if users is None else users) if str(u).strip()}),
+           "units": sorted({str(u).strip() for u in (cur["units"] if units is None else units) if str(u).strip()})}
     with db.session() as s_:
         s_.execute(_t("""INSERT INTO app_setting (key, value, updated_at, updated_by)
                          VALUES ('vsp_users', CAST(:v AS jsonb), now(), :by)
                          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(),
                                                          updated_by = EXCLUDED.updated_by"""),
-                   {"v": json.dumps({"users": clean}, ensure_ascii=False), "by": by})
+                   {"v": json.dumps(val, ensure_ascii=False), "by": by})
         s_.commit()
     _BETA.update(at=-1e9)
-    return clean
+    return val
 
 
-def can_vsp(username: str | None) -> bool:
+def set_beta_users(users: list[str], by: str | None) -> list[str]:
+    return set_beta(users, None, by)["users"]
+
+
+def _in_units(username: str, name: str | None) -> bool:
+    b = _beta()
+    if not b["units"]:
+        return False
+    from . import org_reach
+    t = org_reach._TAB_RX.search(username)
+    if t and t.group(1) in b["all_tabs"]:
+        return t.group(1) in b["tabs"]
+    w = org_reach._words(name)
+    return len(w) == 2 and org_reach.name_key(w[0], w[1]) in b["names"]
+
+
+def can_vsp(username: str | None, name: str | None = None) -> bool:
     if not username:
         return False
     if telemetry.is_admin(username):
         return True
     allow = {u.strip() for u in os.getenv("VSP_USERS", "").split(",") if u.strip()}
-    return username in allow or username in beta_users()
+    return username in allow or username in beta_users() or _in_units(username, name)
+
+
+def access_usernames() -> set[str]:
+    """Все, у кого раздел открыт и кто уже заходил в AuditLens: по логину и по подразделению."""
+    out = set(beta_users()) | {u.strip() for u in os.getenv("VSP_USERS", "").split(",") if u.strip()}
+    if beta_units():
+        try:
+            from sqlalchemy import text as _t
+            from .. import db
+            with db.session() as s_:
+                people = s_.execute(_t("SELECT username, display_name FROM app_user")).all()
+            out |= {u for u, n in people if _in_units(u, n)}
+        except Exception:  # noqa: BLE001 — без базы остаются названные по логину
+            pass
+    return out
 
 
 def _need(user: CurrentUser) -> None:
-    if not can_vsp(user.username):
+    if not can_vsp(user.username, user.name):
         raise HTTPException(403, "раздел закрыт")
 
 
@@ -401,25 +462,27 @@ FIVES_EXPLAINER = {
 
 @router.get("/access")
 def access(user: CurrentUser = Depends(get_current_user)):
-    return {"allowed": can_vsp(user.username)}
+    return {"allowed": can_vsp(user.username, user.name)}
 
 
 class BetaIn(BaseModel):
-    users: list[str]
+    users: Optional[list[str]] = None      # логины; не передано — не менять
+    units: Optional[list[str]] = None      # номера подразделений из штата; не передано — не менять
 
 
 @router.get("/beta")
 def beta_get(user: CurrentUser = Depends(get_current_user)):
     if not telemetry.is_admin(user.username):
         raise HTTPException(403, "только владельцу")
-    return {"users": beta_users()}
+    return {"users": beta_users(), "units": beta_units(), "people": len(access_usernames())}
 
 
 @router.post("/beta")
 def beta_set(body: BetaIn, user: CurrentUser = Depends(get_current_user)):
     if not telemetry.is_admin(user.username):
         raise HTTPException(403, "только владельцу")
-    return {"users": set_beta_users(body.users, user.username)}
+    val = set_beta(body.users, body.units, user.username)
+    return {**val, "people": len(access_usernames())}
 
 
 @router.get("/overview")
@@ -1505,7 +1568,7 @@ def meta_(user: CurrentUser = Depends(get_current_user)):
             "kinds": [{"kind": k, "name": v.get("name"), "inside": bool(v.get("inside"))}
                       for k, v in sorted(_kinds(run).items())],
             "typed_since": TYPED_SINCE[:4],
-            "access": {"owner": owner, "beta": len(beta_users()) if owner else None}}
+            "access": {"owner": owner, "beta": len(access_usernames()) if owner else None}}
 
 
 MAP_FEW = 300            # меньше прочитанных отзывов за период — цвет не показываем (штриховка)
@@ -2253,7 +2316,7 @@ def _notify_waves(run) -> None:
             motif_kinds = {w["kind"] for w in fresh if w["level"] == "motif"}
             fresh = [w for w in fresh if not (w["level"] == "kind" and w["kind"] in motif_kinds)]
             admins = {u.strip() for u in os.getenv("ADMIN_USERS", "").split(",") if u.strip()}
-            users = set(beta_users()) | {u.strip() for u in os.getenv("VSP_USERS", "").split(",") if u.strip()} | admins
+            users = access_usernames() | admins
             if not known:
                 # первый расчёт с волнами: всё «новое» разом. Не засыпаем коллег — три строки и только владельцу;
                 # остальным уведомления пойдут со следующих изменений

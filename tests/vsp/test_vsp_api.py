@@ -342,6 +342,91 @@ def test_beta_access_from_settings(client, monkeypatch):
     assert client.get("/api/vsp/meta").json()["access"] == {"owner": True, "beta": 1}
 
 
+def _roster_beta(monkeypatch, units=("55",)):
+    """Штат: 100 и 101 работают в подразделении 55, 300 там уволен, 200 — в подразделении 42."""
+    from bank_audit.web import org_reach, vsp_api
+    key = org_reach.name_key
+    monkeypatch.setattr(vsp_api, "_beta", lambda: {
+        "users": ["named"], "units": list(units), "tabs": {"100", "101"} if units else set(),
+        "all_tabs": {"100", "101", "200", "300"} if units else set(),
+        "names": {key("анна", "петрова")} if units else set()})
+    return vsp_api
+
+
+def test_department_access_follows_the_staff_roster(monkeypatch):
+    """Раздел открыт подразделению целиком: и тем, кто ещё ни разу не заходил (логина нет, в штате есть)."""
+    v = _roster_beta(monkeypatch)
+    monkeypatch.setenv("ADMIN_USERS", "owner")
+    monkeypatch.delenv("VSP_USERS", raising=False)
+    assert v.can_vsp("ivanov-100") and v.can_vsp("ipetrov-101", "Кто Угодно")       # по табельному номеру
+    assert v.can_vsp("named") and v.can_vsp("owner")                                # по логину и владелец
+    assert not v.can_vsp("sidorov-200", "Анна Петрова")     # номер есть в штате, но подразделение другое
+    assert not v.can_vsp("kuznetsov-300")                   # уволен
+    assert v.can_vsp("apetrova-999999", "Анна Петрова")     # логин под другим номером — по имени и фамилии
+    assert v.can_vsp("apetrova-999999", "Петрова Анна")
+    assert not v.can_vsp("apetrova-999999", "Анна Сергеевна Петрова")    # три слова — не сопоставляем
+    assert not v.can_vsp("apetrova-999999") and not v.can_vsp("stranger-1", "Пётр Иванов")
+    v2 = _roster_beta(monkeypatch, units=())
+    assert not v2.can_vsp("ivanov-100") and v2.can_vsp("named")
+
+
+def test_department_list_is_built_from_roster_without_fired_and_namesakes(monkeypatch):
+    import contextlib
+    from bank_audit import db
+    from bank_audit.web import org_reach, vsp_api
+    key = org_reach.name_key
+    roster = [("100", "W", "55", key("иван", "иванов")), ("101", "A", "55", key("анна", "петрова")),
+              ("300", "F", "55", key("олег", "кузнецов")), ("200", "W", "42", key("анна", "петрова")),
+              ("201", "W", "42", key("пётр", "сидоров")), ("102", "W", "55", key("мария", "белова"))]
+
+    class Sess:
+        def execute(self, sql, params=None):
+            q = str(sql)
+            if "app_setting" in q:
+                return type("R", (), {"scalar": lambda _s: {"users": ["named"], "units": ["55"]}})()
+            return type("R", (), {"all": lambda _s: roster})()
+
+    @contextlib.contextmanager
+    def session():
+        yield Sess()
+    monkeypatch.setattr(db, "session", session)
+    monkeypatch.setattr(vsp_api, "_BETA", {"at": -1e9, "v": {}})
+    b = vsp_api._beta()
+    assert b["users"] == ["named"] and b["units"] == ["55"]
+    assert b["tabs"] == {"100", "101", "102"} and b["all_tabs"] == {"100", "101", "102", "200", "201", "300"}
+    # тёзка в другом подразделении — по имени не сопоставляем; уволенный в счёт не идёт
+    assert b["names"] == {key("иван", "иванов"), key("мария", "белова")}
+
+
+def test_logins_and_departments_change_independently(monkeypatch):
+    import contextlib
+    from bank_audit import db
+    from bank_audit.web import vsp_api
+    store = {"v": {"users": ["named"]}}
+
+    class Sess:
+        def execute(self, sql, params=None):
+            q = str(sql)
+            if q.strip().startswith("SELECT value"):
+                return type("R", (), {"scalar": lambda _s: store["v"]})()
+            if "org_member" in q:
+                return type("R", (), {"all": lambda _s: []})()
+            store["v"] = json.loads(params["v"])
+
+        def commit(self):
+            pass
+
+    @contextlib.contextmanager
+    def session():
+        yield Sess()
+    monkeypatch.setattr(db, "session", session)
+    monkeypatch.setattr(vsp_api, "_BETA", {"at": -1e9, "v": {}})
+    assert vsp_api.set_beta(None, ["55"], "owner") == {"users": ["named"], "units": ["55"]}
+    assert vsp_api.set_beta(["named", " second "], None, "owner") == {"users": ["named", "second"], "units": ["55"]}
+    assert vsp_api.set_beta_users(["only"], "owner") == ["only"] and store["v"]["units"] == ["55"]
+    assert vsp_api.set_beta(None, [], "owner") == {"users": ["only"], "units": []}
+
+
 def test_beta_invite_letter():
     from bank_audit.web import vsp_invite
     m = vsp_invite.render("Светлана Фукс", {"read": 468466, "stories": 33687, "reviews": 774618, "up": 3})
