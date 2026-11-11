@@ -23,14 +23,15 @@ from ..v2.tools.web_tools import REGULATOR_DOMAINS
 log = logging.getLogger(__name__)
 
 
-# Куда целиться за нормами. Первые три покрывают подавляющее большинство:
-# указания и положения ЦБ, официальные тексты ФЗ, толкования правовых баз.
-_REG_SITES = ("cbr.ru", "pravo.gov.ru", "consultant.ru")
+# Куда целиться за нормами: указания и положения ЦБ и тексты законов в правовой
+# базе. pravo.gov.ru убран 11.11: его страницы — просмотрщик документа без
+# текста, они не читались в 43 % отчётов и только занимали место в запросах.
+_REG_SITES = ("cbr.ru", "consultant.ru")
 
 
 def plan_to_subqueries(plan, question: str, *, attributes=None,
                        per_subject: int = 1,
-                       max_queries: int = 16) -> tuple[list[str], list[str]]:
+                       max_queries: int = 18) -> tuple[list[str], list[str]]:
     """План Кондуктора → (подзапросы, доверенные домены).
 
     Возвращаем и домены: гейтвей умеет фильтровать их на своей стороне, а
@@ -74,6 +75,15 @@ def plan_to_subqueries(plan, question: str, *, attributes=None,
         if per_subject > 1:
             queries.append(f"{name} {topic} условия документы сроки")
 
+    # Запросы, которые назвал сам кондуктор под ЭТОТ вопрос. Без них вопрос без
+    # организаций («доля рынка по ОМС», «история кредитной карты») оставался
+    # почти без поиска: всё остальное здесь размножается по субъектам.
+    for it in (getattr(plan, "queries", None) or []):
+        qtext = str((it or {}).get("q") or "").strip()
+        site = str((it or {}).get("site") or "").strip()
+        if qtext:
+            queries.append(f"{qtext} site:{site}"[:300] if site else qtext[:300])
+
     queries.extend(mission_queries)
 
     # Общие запросы: сравнение и то, чего нет на сайтах банков (обзоры, жалобы).
@@ -104,6 +114,8 @@ def plan_to_subqueries(plan, question: str, *, attributes=None,
     for attr in picks:
         for slug in subjects[:3]:
             queries.append(f"{labels.get(slug, slug)} {attr}".strip()[:300])
+        if not subjects and attr.lower() not in topic.lower():
+            queries.append(f"{topic} {attr}".strip()[:300])
 
     if not queries:
         queries.append(question)

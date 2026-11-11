@@ -60,9 +60,15 @@ def collect(plan, *, registry, attributes: list[str],
             gaps.append(f"**{name}** — в прочитанных источниках не нашлось: "
                         f"{', '.join(missing)}.")
 
-    # 2. Наблюдаемая сторона: есть ли вообще взгляд со стороны.
+    # 2. Наблюдаемая сторона: есть ли вообще взгляд со стороны. Только если
+    # вопрос его заказывал: справке и цифрам рынка он не нужен, и строка
+    # «расхождение заявленного с практикой не проверено» там была бы упрёком
+    # не по адресу.
+    wants_observed = bool(getattr(attributes, "observed", "нужен"))
     observed = [f for f in registry.facts if f.stance == "observed"]
-    if not observed:
+    if not wants_observed:
+        pass
+    elif not observed:
         gaps.append(
             "Взгляд со стороны отсутствует: все факты — со слов самих "
             "организаций. Расхождение заявленного с практикой не проверено.")
@@ -92,9 +98,23 @@ def collect(plan, *, registry, attributes: list[str],
             by_reason.setdefault(reason, []).append(url)
         for reason, urls in by_reason.items():
             gaps.append(f"Страниц не прочитано ({reason}): {len(urls)} "
-                        f"— например, {urls[0]}.")
+                        f"— например, {short_url(urls[0])}.")
 
     return gaps
+
+
+def short_url(url: str, limit: int = 70) -> str:
+    """Адрес для строки пробела: сайт и путь, без параметров и кодировки.
+
+    Полный адрес с закодированной кириллицей занимал три строки отчёта и
+    ничего не говорил читателю; сайта и пути хватает, чтобы найти страницу.
+    """
+    from urllib.parse import unquote, urlparse
+    p = urlparse(url)
+    if not p.netloc:
+        return url[:limit]
+    text = p.netloc.removeprefix("www.") + unquote(p.path).rstrip("/")
+    return text if len(text) <= limit else text[:limit - 1].rstrip("/") + "…"
 
 
 def render(gaps: list[str]) -> str:

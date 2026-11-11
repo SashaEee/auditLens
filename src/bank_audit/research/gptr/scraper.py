@@ -224,6 +224,11 @@ class AuditLensScraper:
             log.info("архив %s: %s", self.link[:70], type(e).__name__)
 
     def scrape(self) -> tuple[str, list, str]:
+        # Документ уже отдан из базы знаний AuditLens — заново не скачиваем:
+        # это секунды, а для сайтов за защитой от ботов — ещё и надёжность.
+        pre = self.state.preloaded.get(self.link) if self.state is not None else None
+        if pre:
+            return pre, [], (self.state.kb_meta.get(self.link) or {}).get("title", "")
         self._last_raw = None
         text, title = self._read(browser=False)
         self._raw = self._last_raw

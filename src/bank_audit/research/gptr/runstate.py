@@ -35,6 +35,12 @@ class RunState:
     # Срез собственных данных (какие нужны: жалобы, лазейки, рынок) — по нему
     # отчёт выбирает порядок разделов под тип вопроса.
     own_scope: dict = field(default_factory=dict)
+    # Документы из «Базы знаний» AuditLens, отданные отчёту готовым текстом:
+    # url → текст (скрапер их не скачивает заново) и url → {doc, title, loaded}.
+    preloaded: dict[str, str] = field(default_factory=dict)
+    kb_meta: dict[str, dict] = field(default_factory=dict)
+    # Сколько секунд занял каждый шаг прогона (план, сбор, факты, письмо…).
+    timings: dict[str, float] = field(default_factory=dict)
     # Кто и ради какого вопроса читает — для журнала происхождения архива; и
     # что из прочитанного уже отдано в архив базы знаний (ДАН-02). Метку
     # снимаем при старте прогона: scrape() уходит в пул потоков без contextvars.

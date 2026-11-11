@@ -75,6 +75,42 @@ def _decode_ddg_url(href: str) -> str:
     return href
 
 
+# Служебные страницы самих поисковиков: выдача картинок, видео, карт, повторный
+# поиск. В отчёте 11.11 такая «страница» попала в источники и затем в «Честные
+# пробелы» как непрочитанная — с адресом на три строки.
+_SERVICE_PAGE = re.compile(
+    r"^https?://(?:www\.)?(?:"
+    r"(?:yandex\.(?:ru|com|by|kz)|ya\.ru)/(?:images|video|search|maps|pogoda)\b"
+    r"|google\.[a-z.]+/(?:search|imgres|maps)\b"
+    r"|bing\.com/(?:search|images|videos)\b"
+    r"|duckduckgo\.com/(?:\?|html))", re.I)
+# Обёртки-переводчики: источник — исходная страница, а не её перевод.
+_TRANSLATORS = ("tr-page.yandex.", "translate.yandex.", "translate.google.",
+                "translated.turbopages.org")
+
+
+def _real_pages(results: list[dict]) -> list[dict]:
+    """Убирает служебные страницы поисковиков и разворачивает переводчики."""
+    out: list[dict] = []
+    seen: set[str] = set()
+    for r in results or []:
+        url = r.get("url") or ""
+        host = urlparse(url).netloc.lower()
+        if host.startswith(_TRANSLATORS):
+            qs = parse_qs(urlparse(url).query)
+            inner = (qs.get("url") or qs.get("u") or [""])[0]
+            if not inner.startswith(("http://", "https://")):
+                continue
+            url = inner
+            r = {**r, "url": url,
+                 "domain": urlparse(url).netloc.lower().removeprefix("www.")}
+        if _SERVICE_PAGE.match(url) or url in seen:
+            continue
+        seen.add(url)
+        out.append(r)
+    return out
+
+
 def _post_filter_by_sites(results: list[dict],
                             site_filter: list[str] | None) -> list[dict]:
     """Фильтрует results по whitelist доменов (с поддоменными совпадениями)."""
@@ -156,6 +192,7 @@ def search(
         except Exception as e:
             log.info("%s search failed: %s", name, type(e).__name__)
             r = []
+        r = _real_pages(r)
         # Post-filter если backend не обработал site_filter сам
         if site_filter:
             r = _post_filter_by_sites(r, site_filter)

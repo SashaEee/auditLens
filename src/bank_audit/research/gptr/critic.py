@@ -231,8 +231,16 @@ async def judge(client, model: str, doubtful: list, pages: dict[str, str],
             if 0 <= n < len(facts) and item.get("ok") is False:
                 cut.add(facts[n].id)
 
-    await asyncio.gather(*(one(u, fs) for u, fs in batches),
-                         return_exceptions=True)
+    # Предел по времени: суждение — доводка, а не шаг, ради которого отчёт ждёт.
+    # Прогон 11.11: при загруженном шлюзе 25 сомнительных фактов из 910 судились
+    # 94 секунды. Кого не успели рассудить — не снимаем.
+    limit = float(os.getenv("GPTR_CRITIC_JUDGE_S", "45"))
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*(one(u, fs) for u, fs in batches), return_exceptions=True),
+            limit)
+    except asyncio.TimeoutError:
+        log.info("критик-судья: не уложился в %.0f с — нерассуженное оставлено", limit)
     return cut
 
 
@@ -316,16 +324,48 @@ def _finish(registry, v: Verdict, cut_ids: set) -> Verdict:
         registry.facts = [f for f in registry.facts if f.id not in cut_ids]
         v.cut = len(cut_ids)
         v.cut_ids = sorted(cut_ids)
+    v.notes = _notes(v)
+    log.info("критик: %s", v.to_ui())
+    return v
+
+
+def _notes(v: Verdict) -> list[str]:
+    notes: list[str] = []
     if v.cut:
-        v.notes.append(
+        notes.append(
             f"Снято утверждений без опоры на источник: {v.cut} из {v.checked}.")
     if v.mislabeled:
-        v.notes.append(
+        notes.append(
             f"Утверждений, названных нормой, но пришедших не от регулятора: "
             f"{v.mislabeled} — переведены во взгляд со стороны.")
     if v.invented_numbers:
-        v.notes.append(
+        notes.append(
             f"Чисел, которых нет в источнике рядом с цитатой: "
             f"{v.invented_numbers} — помечены как непроверенные.")
-    log.info("критик: %s", v.to_ui())
-    return v
+    return notes
+
+
+async def review_added(client, model: str, registry, pages: dict[str, str],
+                       known_ids: set, first: Verdict) -> Verdict:
+    """Проверка фактов, добавленных после первого прохода (добор).
+
+    Уже проверенные факты второй раз не судим: пересказы из первого прохода
+    снова ушли бы к модели. Возвращает общий вердикт двух проходов.
+    """
+    class _Part:
+        facts = [f for f in registry.facts if f.id not in known_ids]
+
+    part = _Part()
+    if not part.facts:
+        return first
+    second = await review(client, model, part, pages)
+    if second.cut_ids:
+        gone = set(second.cut_ids)
+        registry.facts = [f for f in registry.facts if f.id not in gone]
+    total = Verdict(exact=first.exact + second.exact, close=first.close + second.close,
+                    cut=first.cut + second.cut,
+                    mislabeled=first.mislabeled + second.mislabeled,
+                    invented_numbers=first.invented_numbers + second.invented_numbers,
+                    cut_ids=sorted(set(first.cut_ids) | set(second.cut_ids)))
+    total.notes = _notes(total)
+    return total

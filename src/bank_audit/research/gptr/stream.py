@@ -27,6 +27,7 @@ from . import own_data as al_own, reviews as al_reviews, runstate
 from . import dossier as al_dossier
 from . import viz as al_viz
 from . import gaps as al_gaps, planner as al_planner
+from . import lead as al_lead
 from . import scraper as al_scraper, verify as al_verify
 from .engine import _role_prompt, install, report_prompt
 
@@ -71,12 +72,15 @@ def _evt(d: dict) -> str:
 def _sources_ui(urls: list[str], pages: dict[str, str],
                 cited: dict[str, dict] | None = None,
                 dates: dict[str, str] | None = None,
-                own: dict[str, dict] | None = None) -> list[dict]:
+                own: dict[str, dict] | None = None,
+                kb: dict[str, dict] | None = None) -> list[dict]:
     """Карточки источников. Если передан cited — только процитированные.
-    own — страницы собственных данных AuditLens: адрес ведёт на срез вкладки."""
+    own — страницы собственных данных AuditLens: адрес ведёт на срез вкладки.
+    kb — документы, взятые из базы знаний: дата загрузки и ссылка на карточку."""
     cited = cited or {}
     dates = dates or {}
     own = own or {}
+    kb = kb or {}
     out: list[dict] = []
     for i, url in enumerate(urls, 1):
         text = pages.get(url, "")
@@ -104,6 +108,10 @@ def _sources_ui(urls: list[str], pages: dict[str, str],
             "published": dates.get(url, ""),
             "dead": bool(cited.get(url, {}).get("dead")),
         })
+        if url in kb:
+            # Из базы знаний: текст на дату загрузки, а не на сегодня.
+            out[-1].update({"kb_doc": kb[url].get("link") or "", "kb_loaded": kb[url].get("loaded") or "",
+                            "title": (kb[url].get("title") or out[-1]["title"])[:120]})
     return out
 
 
@@ -146,14 +154,22 @@ async def stream_deep_research_gptr(question: str,
     started = time.time()
     # Своё состояние на прогон: параллельные вопросы не должны видеть друг друга.
     state = runstate.new_run()
+    marks = {"t": started}
+
+    def lap(name: str) -> None:
+        """Сколько занял шаг: аудит 11.11 — учёта времени по шагам не было, и
+        никто не видел, что план занимает минуту из пяти."""
+        now = time.time()
+        state.timings[name] = round(state.timings.get(name, 0.0) + now - marks["t"], 1)
+        marks["t"] = now
     question = normalize_question(question)
     yield _evt({"type": "mode", "value": "deep"})
 
     # ── План ─────────────────────────────────────────────────────────────
     yield _evt({"type": "phase", "value": "planning"})
     yield _evt({"type": "stage_status", "stage": "conductor",
-                "label": "Анализ вопроса и построение плана",
-                "detail": "Кондуктор определяет интент, субъектов и агентов",
+                "label": "Разбираю вопрос",
+                "detail": "какая задача, о ком речь и что нужно найти",
                 "estimate_s": 8})
     try:
         install()
@@ -162,7 +178,10 @@ async def stream_deep_research_gptr(question: str,
                              max_retries=4, timeout=180.0)
         plan = await plan_research(
             client,
-            os.environ.get("LLM_MODEL_REASONING") or os.environ["LLM_MODEL_NAME"],
+            # План — первый шаг, его ждёт каждый отчёт: своя модель (GPTR_PLAN_MODEL),
+            # чтобы её можно было менять отдельно от замысла и письма.
+            (os.environ.get("GPTR_PLAN_MODEL") or os.environ.get("LLM_MODEL_REASONING")
+             or os.environ["LLM_MODEL_NAME"]),
             question, history=history)
     except Exception:
         log.exception("gptr: планирование")
@@ -174,6 +193,7 @@ async def stream_deep_research_gptr(question: str,
 
     fast = os.getenv("LLM_MODEL_SMART") or os.environ["LLM_MODEL_NAME"]
     attributes = await al_facts.plan_attributes(client, fast, question, plan)
+    lap("plan")
     runstate.bind(state)          # см. runstate.bind: yield сбрасывает контекст
     subqueries, _doms = al_planner.plan_to_subqueries(plan, question,
                                                      attributes=attributes)
@@ -189,8 +209,8 @@ async def stream_deep_research_gptr(question: str,
                                f"и нормативная рамка собраны не будут"),
                     "estimate_s": 0})
     yield _evt({"type": "stage_status", "stage": "plan_ready",
-                "label": f"План: {plan.intent}",
-                "detail": plan.intent_summary[:120], "estimate_s": 0})
+                "label": "План готов",
+                "detail": plan.intent_summary[:160], "estimate_s": 0})
     yield _evt({"type": "plan", "steps": plan.to_ui_plan(),
                 "question_nature": plan.question_nature,
                 "subjects": plan.subjects,
@@ -201,13 +221,19 @@ async def stream_deep_research_gptr(question: str,
                 "regulatory_attribute": attributes.regulatory,
                 "subqueries": subqueries,
                 "degraded": attributes.degraded,
-                "client_segment": plan.client_segment})
+                "client_segment": plan.client_segment,
+                # Задача и рамка — чтобы интерфейс показал, как понят вопрос.
+                "task": getattr(plan, "task", ""), "scope": getattr(plan, "scope", ""),
+                "checks": getattr(plan, "checks", ""),
+                "deliverable": getattr(plan, "deliverable", "report"),
+                "period": getattr(plan, "period", ""),
+                "subject_labels": dict(getattr(plan, "subject_labels", None) or {})})
 
     # ── Сбор ─────────────────────────────────────────────────────────────
     yield _evt({"type": "phase", "value": "research"})
     yield _evt({"type": "stage_status", "stage": "research",
-                "label": "Сбор данных",
-                "detail": "Поиск и чтение источников по подзапросам плана",
+                "label": "Ищу и читаю источники",
+                "detail": "сайты банков, регулятор, обзоры и новости",
                 "estimate_s": 60})
     runstate.bind(state)
     researcher = GPTResearcher(query=question, report_type="research_report",
@@ -262,17 +288,20 @@ async def stream_deep_research_gptr(question: str,
     eager_pages = await eager_task
     pages = dict(state.pages)
     unreadable = dict(state.unreadable)
+    lap("collect")
 
     # Наблюдаемая сторона — прежде всего собственные данные: аналитика жалоб
     # и жалобы из разметки тем же слоем, что вкладка «Отзывы»; веб даёт обзоры.
     runstate.bind(state)
     own = await own_task
     review_pages: dict[str, str] = {}
-    if own.complaints or own.loopholes or own.pages:
+    if own.complaints or own.loopholes or own.pages or own.knowledge:
         sc = own.scope or {}
-        got = [f"жалоб {own.complaints}" if sc.get("complaints", True) else "",
+        got = [f"документов базы знаний {own.knowledge}" if own.knowledge else "",
+               f"жалоб {own.complaints}" if sc.get("complaints", True) else "",
                f"лазеек {own.loopholes}" if sc.get("loopholes", True) else "",
-               f"предложений рынка {own.market}" if own.market else ""]
+               f"предложений рынка {own.market}" if own.market else "",
+               f"новостей {own.news}" if own.news else ""]
         themes = [al_own.T.theme_label(k) for k in sc.get("themes") or []]
         yield _evt({"type": "stage_status", "stage": "reviews",
                     "label": "Данные AuditLens: " + ", ".join(x for x in got if x),
@@ -305,8 +334,8 @@ async def stream_deep_research_gptr(question: str,
     if fu_pages:
         pages.update(fu_pages)
         yield _evt({"type": "stage_status", "stage": "reviews",
-                    "label": f"Дослежка сюжета из жалоб: прочитано {len(fu_pages)}",
-                    "detail": "событие, продавец, правила — по тому, что называют клиенты",
+                    "label": f"Проверяю, о чём пишут клиенты: прочитано {len(fu_pages)}",
+                    "detail": "событие, продавец, правила — по тому, что названо в жалобах",
                     "estimate_s": 0})
     for u in [u for u in pages if _foreign_affiliate(u)]:
         # Сбер Банк Беларусь — другое юрлицо: его адреса и сроки попадали в
@@ -319,8 +348,8 @@ async def stream_deep_research_gptr(question: str,
     # опирается на дословную цитату, и она проверяется подстрочным поиском.
     yield _evt({"type": "phase", "value": "extraction"})
     yield _evt({"type": "stage_status", "stage": "facts",
-                "label": "Извлечение фактов",
-                "detail": f"{len(pages)} страниц → проверяемые утверждения",
+                "label": "Выписываю факты с цитатами",
+                "detail": f"страниц в разборе: {len(pages)}",
                 "estimate_s": 40})
     runstate.bind(state)
     async def _extract():
@@ -332,7 +361,11 @@ async def stream_deep_research_gptr(question: str,
             al_facts.build_registry(
                 client, fast, pages={u: t for u, t in pages.items() if u not in fu_pages},
                 attributes=attributes, plan=plan,
-                keep_pages=set(review_pages),
+                # документы базы знаний и жалобы корпуса разбираются вне очереди
+                keep_pages=set(review_pages) | {
+                    u for u in state.preloaded
+                    # документ базы знаний без привязки к банку проходит общий отбор
+                    if u not in state.kb_meta or state.kb_meta[u].get("subject")},
                 subject_hints=al_reviews.subject_hints(),
                 reg=registry, already=eager_pages),
             al_facts.extract_into(
@@ -352,15 +385,45 @@ async def stream_deep_research_gptr(question: str,
     pages.update(own.pages)
     if review_pages:
         al_reviews.stamp_dates(registry)
+    lap("facts")
     # ── Критик ───────────────────────────────────────────────────────────
     # Слой извлечения намеренно ничего не отбраковывал — судит отдельный
     # модуль. Дешёвая проверка подтверждает очевидное бесплатно (500 фактов за
     # 3 мс), модель зовётся ТОЛЬКО на остаток: пересказ другими словами
     # счётчиком слов не опознать, а снимать подлинное нельзя.
+    # Параллельно критику руководитель исследования решает, хватает ли собранного
+    # для ответа по существу; если главного не нашли — один прицельный добор.
+    need_task = (asyncio.ensure_future(al_lead.assess(
+        client, al_lead.model_for(), question=question, plan=plan, registry=registry, state=state))
+        if al_lead.enabled() and getattr(plan, "task", None) is not None else None)
     verdict = await al_critic.review(client, fast, registry, pages)
+    lap("critic")
+    filled = None
+    checked_ids = {f.id for f in registry.facts} | set(verdict.cut_ids)
+    if need_task is not None:
+        runstate.bind(state)
+        need = await need_task
+        if not need.enough:
+            yield _evt({"type": "stage_status", "stage": "lead",
+                        "label": "Главного не хватает — ищу ещё",
+                        "detail": (need.missing or "уточняю поиск")[:160], "estimate_s": 40})
+            runstate.bind(state)
+            filled = await al_lead.fill(client, fast, need, plan=plan, registry=registry,
+                                        attributes=attributes, state=state)
+            runstate.bind(state)
+            pages.update({u: state.pages[u] for u in filled.urls if u in state.pages})
+            unreadable = dict(state.unreadable)
+            if filled.facts:
+                verdict = await al_critic.review_added(client, fast, registry, pages,
+                                                       checked_ids, verdict)
+            yield _evt({"type": "stage_status", "stage": "lead",
+                        "label": (f"Добор: прочитано {filled.pages}, фактов +{filled.facts}"
+                                  if filled.pages else "Добор: новых страниц не нашлось"),
+                        "detail": (need.missing or "")[:160], "estimate_s": 0})
+        lap("lead")
     if verdict.cut or verdict.mislabeled:
         yield _evt({"type": "stage_status", "stage": "critic",
-                    "label": f"Снято без опоры: {verdict.cut}",
+                    "label": f"Снято утверждений без опоры на источник: {verdict.cut}",
                     "detail": (f"проверено {verdict.checked}, дословных "
                                f"{verdict.exact}, пересказов {verdict.close}"),
                     "estimate_s": 0})
@@ -382,8 +445,8 @@ async def stream_deep_research_gptr(question: str,
     # ── Отчёт ────────────────────────────────────────────────────────────
     yield _evt({"type": "phase", "value": "writing"})
     yield _evt({"type": "stage_status", "stage": "analyst",
-                "label": "Написание отчёта",
-                "detail": "Аналитик собирает разделы, заказанные планом",
+                "label": "Пишу отчёт",
+                "detail": "сначала главный ответ, затем разделы вокруг него",
                 "estimate_s": 90})
     writer_model = (os.getenv("SMART_LLM") or "").split(":", 1)[-1] or (
         os.getenv("LLM_MODEL_ANALYST") or os.environ["LLM_MODEL_NAME"])
@@ -423,7 +486,7 @@ async def stream_deep_research_gptr(question: str,
             elif kind == "section":
                 yield _evt({"type": "stage_status", "stage": "analyst",
                             "label": f"Пишу раздел: {_ttl.get(payload, payload)}",
-                            "detail": "разделы пишутся вокруг главного ответа"})
+                            "detail": ""})
             elif kind == "chunk":
                 ready = keys.feed(guard.feed(renum.feed(payload)))
                 if ready:
@@ -491,6 +554,7 @@ async def stream_deep_research_gptr(question: str,
     if rest:
         body_parts.append(rest)
         yield _evt({"type": "text", "chunk": rest})
+    lap("write")
     report = lead_text + "".join(body_parts)
     if not report.strip():
         yield _evt({"type": "text", "chunk":
@@ -525,7 +589,7 @@ async def stream_deep_research_gptr(question: str,
         if meta.get("date"):
             pub_dates.setdefault(u, str(meta["date"])[:10])
     sources = _sources_ui([c["url"] for c in cited_src], pages, cited_map,
-                          pub_dates, dict(state.own_meta))
+                          pub_dates, dict(state.own_meta), dict(state.kb_meta))
     dropped = len(pages) - len(sources)
     if sources:
         high = sum(1 for s in sources if s["trust_score"] >= 0.85)
@@ -558,6 +622,8 @@ async def stream_deep_research_gptr(question: str,
     # Снятое критиком — не «ничего не нашлось», а «нашлось, но не подтвердилось».
     # Аудитор обязан видеть разницу.
     gap_lines.extend(verdict.notes)
+    # Искали в собственных данных и не нашли — тоже пробел, а не молчание.
+    gap_lines.extend(own.notes)
     if dead:
         gap_lines.append(
             f"Ссылок на отзывы, недоступных на момент отчёта: {len(dead)} — "
@@ -594,4 +660,6 @@ async def stream_deep_research_gptr(question: str,
                 "missing": [{"attribute": g, "missing_banks": [], "all": False}
                             for g in gap_lines]})
 
-    yield _evt({"type": "done", "elapsed_s": round(time.time() - started, 1)})
+    lap("verify")
+    yield _evt({"type": "done", "elapsed_s": round(time.time() - started, 1),
+                "timings": dict(state.timings), "task": getattr(plan, "task", "")})

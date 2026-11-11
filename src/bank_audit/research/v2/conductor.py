@@ -66,18 +66,63 @@ class ResearchPlan:
     needs_ranking: bool = False
     needs_complaints: bool = False
     needs_regulatory: bool = False
+    # ── Задача (11.11) ───────────────────────────────────────────────────────
+    # Аудит 11.11: сравнение просят в 19 % вопросов, а план строился так, будто
+    # сравнение — это любой вопрос: к «истории кредитной карты» приписывались
+    # пять банков. Тип задачи и рамку теперь называет кондуктор, а код следит,
+    # чтобы непрошеные конкуренты в план не попадали (enforce_scope).
+    task: str = "compare"        # см. TASKS
+    scope: str = "named"         # sber | named | market | none
+    period: str = ""             # период вопроса словами аудитора
+    deliverable: str = "report"  # report | table | chart | deck | file
+    checks: str = "short"        # full | short | none — сколько «Что проверять»
+    topics: list[str] = field(default_factory=list)   # что собрать (характеристики)
+    observed: str = ""           # характеристика взгляда со стороны, если нужна
+    regulatory: str = ""         # характеристика нормативной рамки, если нужна
+    queries: list[dict] = field(default_factory=list)  # {"q": …, "site": …}
 
     def to_ui_plan(self) -> list[dict]:
-        """Для SSE event 'plan' — список шагов для UI (как старый plan)."""
+        """Для SSE event 'plan' — список шагов для UI."""
         steps = []
-        for i, m in enumerate(self.missions, 1):
+        for m in self.missions:
             steps.append({
-                "n": i,
                 "title": f"{_AGENT_LABELS.get(m.agent_id, m.agent_id)}: {m.goal}",
                 "tool": m.agent_id,
                 "entity": m.subjects[0] if m.subjects else None,
             })
+        if not steps:
+            names = [self.subject_labels.get(s, s) for s in self.subjects]
+            steps.append({"title": "Данные AuditLens: база знаний, жалобы, рынок, новости",
+                          "tool": "own", "entity": None})
+            if names:
+                steps.append({"title": "Сайты и документы: " + ", ".join(names[:6]),
+                              "tool": "researcher", "entity": self.subjects[0]})
+            for q in self.queries[:6]:
+                steps.append({"title": "Поиск: " + str(q.get("q") or "")[:110]
+                              + (f" · {q['site']}" if q.get("site") else ""),
+                              "tool": "search", "entity": None})
+        for i, st in enumerate(steps, 1):
+            st["n"] = i
         return steps
+
+
+# Типы задач. Подписи — для интерфейса и промптов.
+TASKS = {
+    "compare": "сравнение с конкурентами",
+    "product": "всё о продукте или сервисе",
+    "complaints": "жалобы и клиентский опыт",
+    "regulation": "нормы и требования",
+    "market_data": "рынок и цифры",
+    "explain": "справка",
+    "news": "разбор новости или события",
+    "check": "план проверки",
+}
+# Сколько места занимает «Что проверять», если аудитор не просил прямо:
+# полный план — там, где он и есть ответ; короткий — где отчёт справочный, но
+# про продукт или норму банка; в чистой справке и цифрах рынка его нет.
+_CHECKS_BY_TASK = {"check": "full", "complaints": "full", "news": "full",
+                   "compare": "short", "product": "short", "regulation": "short",
+                   "market_data": "none", "explain": "none"}
 
 
 _AGENT_LABELS = {
@@ -89,129 +134,99 @@ _AGENT_LABELS = {
 }
 
 
-SYSTEM_PROMPT = """Ты — conductor (режиссёр) аудиторского исследования для службы
-внутреннего аудита Сбербанка (розничный бизнес, физлица). Получив вопрос аудитора
-Сбера, ты раскладываешь его на:
-  1. ИСТИННЫЙ ИНТЕНТ — что аудитор реально хочет узнать (за словами).
-  2. СУБЪЕКТОВ — банки/услуги/объекты, которые сравниваются.
-  3. ПРИРОДУ ВОПРОСА — это тарифный продукт, функция, качество обслуживания,
-     процесс, регуляторика, факты о компании, или смешанный тип?
-  4. ПЛАН — какие автономные агенты нужны и с какими заданиями.
+SYSTEM_PROMPT = """Ты — планировщик исследований для аудиторов службы внутреннего аудита Сбербанка.
+Аудитор задаёт вопрос; ты решаешь, ЧТО это за задача и что нужно собрать. Отчёт потом
+пишется по твоему плану, поэтому план должен отвечать на вопрос аудитора — не шире и не уже.
 
-ПРИРОДА ВОПРОСА — критична. Примеры:
-  • «Сравни условия автоперевода Сбера и Тинькоффа» → FEATURE (функция приложения,
-    не тарифный продукт). Параметры: триггеры, комиссии, лимиты, гибкость.
-  • «Сравни тарифы дебетовых карт 5 банков» → TARIFF_PRODUCT. Параметры:
-    выпуск/обслуживание/кешбэк/лимиты/требования.
-  • «На что жалуются клиенты по ипотеке Сбера» → QUALITY. Фокус: отзывы/жалобы.
-  • «Какие требования ЦБ к раскрытию комиссий» → REGULATORY.
-  • «Сравни качество обслуживания в Сбере vs ВТБ» → QUALITY/PROCESS.
+1. ЗАДАЧА (поле "task") — одна из:
+  • compare — аудитор просит сравнить, сопоставить, найти позицию на рынке, «у кого лучше»,
+    «как у конкурентов». Только когда сравнение ПРОСЯТ.
+  • product — рассказать о продукте, сервисе или процессе: условия, тарифы, как устроен,
+    как подключить, что изменилось («расскажи всё про…», «условия…», «сервис X в Сбере»).
+  • complaints — жалобы, отзывы, проблемы клиентов, клиентский опыт.
+  • regulation — нормы: что требует закон и Банк России, что изменилось в регулировании,
+    найти документ регулятора, санкции за нарушение.
+  • market_data — цифры о рынке: доли, объёмы, динамика, статистика, рейтинги, топ-N.
+  • explain — справка: что это такое, история, как устроено, кто участники, обзор темы.
+  • news — разбор новости, события, пресс-релиза (часто со ссылкой).
+  • check — аудитор прямо просит план проверки, риски, «что проверить», карту рисков.
+  Если подходят две — бери ту, что в основе вопроса.
 
-АГЕНТЫ (выбирай строго по необходимости, не плоди лишних):
-  • researcher — собирает конкретные факты/условия/параметры по теме.
-    Ему скажи какие ПАРАМЕТРЫ искать (список 5-10), адаптированный к ПРИРОДЕ
-    вопроса. НЕ используй универсальные слоты — подстрой под тему.
-  • reviews — собирает отзывы/жалобы/похвалы с цитатами + sentiment.
-    Зови ВСЕГДА когда вопрос упоминает «жалобы/отзывы/проблемы/недовольство»
-    или когда auditor хочет понять клиентский опыт.
-  • regulatory — ищет нормативную базу (законы, ЦБ, ФАС).
-    Зови когда есть регуляторный контекст (переводы/реклама/вклады/страховки).
-  • ranking — строит рейтинг субъектов. Зови когда аудитор прямо просит
-    «рейтинг/лучший/худший/ранжируй» или сравнивает ≥3 субъекта с целью выбора.
-  • market — рыночный контекст (доли, тренды, реформы). Опционально.
+2. РАМКА (поле "scope") и СУБЪЕКТЫ ("subjects"):
+  • "sber" — вопрос про Сбер или его дочернюю компанию, сравнения не просят. В subjects —
+    только Сбер и дочерние компании, через которые оказывается услуга. Конкурентов НЕ добавляй.
+  • "named" — аудитор сам назвал организации. В subjects — ровно они (и Сбер, если он назван
+    или сравнение идёт с ним).
+  • "market" — аудитор просит сравнить с рынком или конкурентами, не называя их. Выбери 3–4
+    самых значимых для ЭТОГО продукта конкурента и добавь Сбер.
+  • "none" — вопрос не про конкретные организации (справка, история, документ регулятора,
+    цифры рынка в целом). subjects — пустой список.
+  Спрашивают аудиторы Сбера. Вопрос о жалобах, продукте, сервисе, процессе или проверке, где
+  банк не назван («жалобы самозанятых», «уязвимости при выплате наследства», «карта рисков
+  доставки карт»), — это вопрос о Сбере: scope "sber", subjects ["sberbank"], anchor "sberbank".
+  Правило: конкурент попадает в subjects, только если аудитор его назвал или прямо попросил
+  сравнение. «Жалобы самозанятых», «Сервис Своё Дело в Сбере», «история кредитной карты» —
+  это НЕ сравнения: банки-конкуренты там не нужны.
+  Слуги: sberbank, vtb, alfabank, tinkoff (Т-Банк), gazprombank, rosselkhozbank, sovcombank,
+  psb, domclick, cian, avito, ozon_bank и т.п. — латиницей, без пробелов.
 
-СЕГМЕНТ КЛИЕНТА (обязательное поле client_segment: retail | business).
-Вопрос про кредитование юрлиц/ИП/подрядчиков/застройщиков, РКО, эквайринг,
-гарантии, факторинг — это business: у банков такие продукты живут в разделах
-«для бизнеса» (/sme/, /s_m_business/, «малому бизнесу») и называются ИНАЧЕ, чем
-розничные; розничные витрины и ипотечные каталоги для них НЕ источник.
+3. ТОЧКА ЗРЕНИЯ ("anchor"): слуг организации, глазами которой смотрит отчёт. "sberbank",
+  когда вопрос про продукты, процессы или позицию Сбера; слуг дочки, когда вопрос про неё
+  («Домклик против Циана» → "domclick"); "" — когда вопрос вообще не про Сбер.
+  ДОЧЕРНИЕ КОМПАНИИ ("subsidiaries"): если услугу Сбер оказывает через дочку или партнёра
+  экосистемы (эквайринг и кассы — Эвотор, страхование — СберСтрахование, ипотечные сделки —
+  Домклик, пенсионные продукты — СберНПФ, связь — СберМобайл), назови их слуги и добавь в
+  subjects и subject_labels.
 
-ПРАВИЛА:
-  • ТОЧКА ЗРЕНИЯ — СБЕР. Отчёт всегда пишется глазами аудитора Сбера. Если тема
-    про рынок/продукт, а Сбер явно не назван в вопросе — добавляй sberbank
-    в subjects как якорный субъект (рынок сравнивается С позицией Сбера). Конкуренты
-    здесь — бенчмарк, а не объект выбора.
-  • ТОЧКА ЗРЕНИЯ — ПОЛЕ "anchor". Назови слуг субъекта, относительно которого
-    строится сравнение: обычно "sberbank". Но если вопрос про дочернюю компанию
-    против её конкурентов («Домклик, Циан, Авито», «СберСтрахование и другие
-    страховщики»), точка зрения — эта дочка, и в "anchor" ставь её слуг. Вопрос
-    без Сбера и его дочек вовсе (сравнить коллекторов, найти документ ЦБ) — "".
-  • ДОЧЕРНИЕ КОМПАНИИ. Если услугу из вопроса Сбер оказывает через дочернюю
-    компанию или партнёра экосистемы (эквайринг и кассы — Эвотор, страхование
-    при кредите — СберСтрахование, ипотечные сделки — Домклик, лизинг —
-    СберЛизинг и т.п.), назови их в поле "subsidiaries" СЛУГАМИ и добавь в
-    subjects и subject_labels: периметр проверки — Сбер вместе с ними, и их
-    условия аудитор обязан знать так же, как условия банка.
-  • НО ЕСТЬ ВОПРОСЫ НЕ ПРО БАНКИ. Если аудитор просит ДОКУМЕНТ ИЛИ ДАННЫЕ
-    РЕГУЛЯТОРА («предельные значения ПСК ЦБ за II квартал», «указание Банка
-    России №…», «предписание ФАС», «форма отчётности»), предмет вопроса — сам
-    документ, а не сравнение банков. Тогда:
-      – subjects ОСТАВЬ ПУСТЫМ ([]) и поставь question_nature="regulatory";
-      – главная миссия — regulatory: найти ПЕРВОИСТОЧНИК и выписать из него
-        нужные значения ЦЕЛИКОМ, а не пересказать соседние страницы;
-      – researcher добавляй ТОЛЬКО если аудитор отдельно просит сопоставить
-        документ с практикой банков.
-    Список банков, подставленный к такому вопросу, уводит агентов на витрины
-    banki.ru, и вместо таблицы регулятора аудитор получает сравнение ставок —
-    это считается ошибкой в данных и портит отчёт целиком.
-  • Минимум 2 агента (researcher + хотя бы один из reviews/regulatory/ranking).
-  • Максимум 5 (иначе перегруз).
-  • ranking зависит от researcher (+reviews если есть). Укажи depends_on.
-  • Если в вопросе «сравни и покажи жалобы» — researcher + reviews ОБЯЗАТЕЛЬНО.
-  • В задании researcher-у укажи КОНКРЕТНЫЕ параметры для этой темы.
-  • Миссия может иметь СВОЙ "subjects" (подмножество глобальных): «сравни
-    банки и покажи жалобы по Сберу» → у reviews "subjects":["sberbank"],
-    остальные агенты работают по всем. Не задан — берутся глобальные.
-  • Если продуктов/услуг несколько («ипотека + автокредит») — это mixed,
-    researcher может собрать по обоим, но раздели в задании.
+4. СЕГМЕНТ ("client_segment": retail | business): кредиты и счета юрлиц и ИП, РКО, эквайринг,
+  зарплатные проекты, самозанятые, гарантии, факторинг — business; остальное — retail.
 
-ОБРАЗЕЦ ДЛЯ ВОПРОСА О ДОКУМЕНТЕ РЕГУЛЯТОРА (subjects пуст!):
-{
-  "intent": "regulatory_lookup",
-  "intent_summary": "Аудитор Сбера просит официальные предельные значения ПСК Банка России на II квартал 2026 года — нужен сам документ регулятора и все его категории, а не сравнение ставок банков.",
-  "question_nature": "regulatory",
-  "subjects": [],
-  "subject_labels": {},
-  "product": "полная стоимость кредита (ПСК)",
-  "product_synonyms": ["среднерыночное значение ПСК", "предельное значение ПСК"],
-  "missions": [
-    {"agent_id":"regulatory",
-     "goal":"Найди на cbr.ru публикацию среднерыночных значений ПСК, применяемую во II квартале 2026 года, и выпиши ВСЕ категории таблицы целиком: номер строки, название категории, среднерыночное значение, предельное значение. Различай файлы для кредитных организаций и для МФО/КПК/СКПК — нужен файл кредитных организаций.",
-     "focus":"первоисточник ЦБ, полная таблица, обе колонки значений",
-     "constraints":["не подменять среднерыночное значение предельным — это разные колонки",
-                    "если нужный квартал не найден, честно сказать, а не брать соседний"]}
-  ]
-}
+5. ЧТО СОБРАТЬ ("topics"): 5–9 коротких характеристик-существительных, по которым нужно найти
+  сведения, чтобы ответить (условие, срок, тариф, шаг процесса, показатель, дата, участник).
+  Под задачу: для product — «условия подключения», «тарифы и комиссии», «ограничения»,
+  «изменения условий»…; для market_data — «доля рынка», «объём», «динамика»…; для explain —
+  «история появления», «участники», «как устроено»…
+  "observed" — ОДНА характеристика взгляда со стороны (на что жалуются, с чем сталкиваются
+  на практике). Обязательна для compare, product, complaints, check; иначе "".
+  "regulatory" — ОДНА характеристика нормативной рамки (что требуют закон и ЦБ), если предмет
+  регулируется и это нужно для ответа; иначе "".
 
-ВЫХОД: строгий JSON без преамбулы и markdown-fences:
-{
-  "intent": "compare_feature_with_sentiment_and_ranking",
-  "intent_summary": "Аудитор Сбера хочет оценить позицию Сбера по автопереводу против рынка и клиентские риски (через жалобы), чтобы проверить конкурентоспособность и надёжность продукта внутри Сбера.",
-  "question_nature": "feature",
-  "client_segment": "retail",
-  "subsidiaries": [],
-  "anchor": "sberbank",
-  "subjects": ["sberbank", "tinkoff", "alfabank", "vtb", "gazprombank"],
-  "subject_labels": {"sberbank":"Сбербанк", "tinkoff":"Т-Банк", ...},
-  "product": "автоперевод",
-  "product_synonyms": ["автоплатёж", "регулярный перевод", "планируемый перевод"],
-  "missions": [
-    {"agent_id":"researcher",
-     "goal":"Собери условия автоперевода: триггеры запуска, направление (C2B/C2C/me2me), комиссия внутри банка и на внешнюю карту, лимиты операции/сутки/мес, поддержка шаблонов, отмена/пауза, каналы управления. Различай автоплатёж (C2B) и автоперевод (C2C/me2me) — это разные тарифы!",
-     "focus":"только механика функции автоперевода, не тарифы карт/вкладов",
-     "constraints":["учи терминологическую разницу автоплатёж vs автоперевод"]},
-    {"agent_id":"reviews",
-     "goal":"Собери топ-5 жалоб клиентов по автопереводу/автоплатежу для каждого банка с цитатами. Фокус: сбои/несрабатывания, скрытые комиссии, сложность отмены, спам-СМС. Отметь свежие (2024-2026) vs устаревшие.",
-     "focus":"только жалобы на автоперевод/автоплатёж"},
-    {"agent_id":"ranking",
-     "goal":"Построй рейтинг 5 банков по совокупности: цена + гибкость + надёжность (по жалобам).",
-     "focus":"с учётом уравниловки цен регулятором — ранжируй по гибкости"}
-  ],
-  "dependencies": {"ranking": ["researcher", "reviews"]},
-  "output_sections": ["summary", "key_insights", "conditions_table",
-                       "ranking", "complaints", "risks", "methodology", "sources"],
-  "needs_ranking": true, "needs_complaints": true, "needs_regulatory": false
-}"""
+6. ГДЕ ИСКАТЬ ("queries"): 5–9 поисковых запросов, какими ты сам искал бы ответ: коротко,
+  по-русски, с названием продукта и годом, если важна свежесть. "site" — домен, если знаешь,
+  где это лежит: cbr.ru (статистика и акты ЦБ), consultant.ru (тексты законов), nalog.gov.ru,
+  frankrg.com, raexpert.ru, сайт банка. Для цифр рынка первым ставь запрос к первоисточнику
+  статистики. Запросы к сайтам субъектов из subjects НЕ пиши — их добавит система.
+
+7. "period" — период из вопроса словами аудитора («за 2026 год», «последние 90 дней») или "".
+  "deliverable" — что просят на выходе: "report" (по умолчанию), "table" (таблица, выгрузка),
+  "chart" (диаграмма, график), "deck" (презентация, слайды), "file" (файл Word/Excel).
+  "wants_checks" — true, если аудитор прямо просит риски, план проверки, «что проверить».
+
+ОСОБЫЙ СЛУЧАЙ — ДОКУМЕНТ ИЛИ ДАННЫЕ РЕГУЛЯТОРА («предельные значения ПСК за II квартал»,
+«указание Банка России №…»): task="regulation", scope="none", subjects=[], в queries — запрос
+к cbr.ru за первоисточником; нужен сам документ и все его значения, а не сравнение банков.
+
+ВЫХОД — строго JSON без преамбулы и markdown:
+{"intent": "короткая_метка_латиницей",
+ "intent_summary": "что аудитор хочет узнать, 1–2 фразы",
+ "task": "...", "scope": "...", "anchor": "...", "subsidiaries": [],
+ "subjects": [...], "subject_labels": {"слуг": "Название"},
+ "client_segment": "retail|business",
+ "product": "нормализованный предмет вопроса", "product_synonyms": [...],
+ "period": "", "deliverable": "report", "wants_checks": false,
+ "topics": [...], "observed": "", "regulatory": "",
+ "queries": [{"q": "...", "site": ""}],
+ "question_nature": "tariff_product|feature|quality|process|regulatory|company_facts|mixed",
+ "needs_ranking": false, "needs_complaints": false, "needs_regulatory": false}
+
+ПРИМЕР 1. «Сервис Своё Дело для самозанятых в Сбере»
+{"intent":"service_profile","intent_summary":"Аудитору нужен полный профиль сервиса «Своё дело»: что входит, как подключается, сколько стоит, какие ограничения и что говорят клиенты.","task":"product","scope":"sber","anchor":"sberbank","subsidiaries":[],"subjects":["sberbank"],"subject_labels":{"sberbank":"Сбербанк"},"client_segment":"business","product":"сервис «Своё дело» для самозанятых","product_synonyms":["Своё дело","самозанятость в СберБанк Онлайн","НПД"],"period":"","deliverable":"report","wants_checks":false,"topics":["состав сервиса","подключение и регистрация","тарифы и комиссии","приём оплаты и чеки","лимиты и ограничения","изменения условий"],"observed":"проблемы клиентов при работе с сервисом","regulatory":"требования к режиму НПД","queries":[{"q":"Своё дело Сбер самозанятые условия комиссия 2026","site":""},{"q":"налог на профессиональный доход условия лимит дохода","site":"nalog.gov.ru"},{"q":"Своё дело Сбербанк отзывы самозанятых проблемы","site":""}],"question_nature":"feature","needs_ranking":false,"needs_complaints":true,"needs_regulatory":true}
+
+ПРИМЕР 2. «Доля рынка по ОМС по данным ЦБ»
+{"intent":"market_share_oms","intent_summary":"Аудитору нужны цифры: доли банков на рынке обезличенных металлических счетов по данным Банка России и место Сбера.","task":"market_data","scope":"none","anchor":"sberbank","subsidiaries":[],"subjects":[],"subject_labels":{},"client_segment":"retail","product":"обезличенные металлические счета (ОМС)","product_synonyms":["металлические счета","счета в драгоценных металлах"],"period":"","deliverable":"report","wants_checks":false,"topics":["объём средств на металлических счетах","доля банка на рынке","динамика объёма","число счетов","дата среза"],"observed":"","regulatory":"","queries":[{"q":"статистика металлические счета драгоценные металлы банки объём","site":"cbr.ru"},{"q":"рынок ОМС доли банков 2026 Сбербанк ВТБ объём средств","site":""},{"q":"обезличенные металлические счета рейтинг банков объём 2026","site":""}],"question_nature":"company_facts","needs_ranking":true,"needs_complaints":false,"needs_regulatory":false}
+
+ПРИМЕР 3. «Сравни условия кредитных карт Сбера и Т-Банка, покажи жалобы»
+{"intent":"compare_credit_cards","intent_summary":"Аудитор сравнивает условия кредитных карт Сбера и Т-Банка и хочет увидеть, на что жалуются клиенты каждого.","task":"compare","scope":"named","anchor":"sberbank","subsidiaries":[],"subjects":["sberbank","tinkoff"],"subject_labels":{"sberbank":"Сбербанк","tinkoff":"Т-Банк"},"client_segment":"retail","product":"кредитная карта","product_synonyms":["кредитка","карта с льготным периодом"],"period":"","deliverable":"report","wants_checks":false,"topics":["льготный период","ставка","стоимость обслуживания","кредитный лимит","комиссия за снятие наличных","требования к заёмщику"],"observed":"жалобы клиентов на кредитные карты","regulatory":"","queries":[{"q":"кредитные карты сравнение условий Сбер Т-Банк 2026","site":""},{"q":"кредитная карта жалобы льготный период комиссия отзывы","site":""}],"question_nature":"tariff_product","needs_ranking":false,"needs_complaints":true,"needs_regulatory":false}"""
 
 
 _BUSINESS_MARKERS = (
@@ -237,9 +252,11 @@ def detect_client_segment(text: str) -> str:
 
 # Рассуждение кондуктора. Замер 26.09 на пяти вопросах набора: high — медиана
 # 57 с, medium — 27 с при тех же объектах, продукте, признаке жалоб и агентах
-# сбора. План — первый шаг отчёта, ждёт каждый прогон.
-_PLAN_EFFORT = ({"reasoning_effort": os.getenv("CONDUCTOR_REASONING_EFFORT", "medium")}
-                if os.getenv("CONDUCTOR_REASONING_EFFORT", "medium") not in ("", "default")
+# сбора. Замер 11.11 на 16 вопросах с новой подсказкой: low — 7,7 с у gpt-5.4 и
+# 7,5 с у Claude Opus 5.5, задача определена верно в 15 из 16; рамку после
+# модели всё равно правит код (enforce_scope). План ждёт каждый прогон — low.
+_PLAN_EFFORT = ({"reasoning_effort": os.getenv("CONDUCTOR_REASONING_EFFORT", "low")}
+                if os.getenv("CONDUCTOR_REASONING_EFFORT", "low") not in ("", "default")
                 else None)
 
 
@@ -255,64 +272,82 @@ async def plan_research(client: AsyncOpenAI, model: str,
 
     user_msg = (
         f"# Вопрос аудитора\n{q}\n\n"
-        f"# Подсказка: банки в вопросе (можешь дополнить/убрать)\n"
-        f"{', '.join(hinted_banks) or '(явных банков нет — определи топ-5 релевантных)'}\n\n"
+        f"# Организации, названные в вопросе\n"
+        f"{', '.join(hinted_banks) or '(не названы — не добавляй конкурентов, если сравнение не просят)'}\n\n"
         f"Верни JSON-план исследования."
     )
     messages = [{"role": "system", "content": today_anchor() + "\n\n" + SYSTEM_PROMPT}]
     if history:
-        # Берём последние 2 реплики истории для контекста
-        messages.extend(history[-2:])
+        # Последние реплики — для контекста продолжения («а по ВТБ?»). Прошлый
+        # отчёт на 30 тыс. знаков целиком не нужен: хватит начала, где резюме.
+        for h in history[-4:]:
+            if h.get("role") in ("user", "assistant") and h.get("content"):
+                messages.append({"role": h["role"], "content": str(h["content"])[:2500]})
     messages.append({"role": "user", "content": user_msg})
 
-    try:
+    async def ask(use: str) -> str:
         if on_reasoning is not None:
             from ._streaming import stream_completion
             raw, _r, _t = await stream_completion(
                 client, on_reasoning=on_reasoning,
-                model=model, messages=messages, temperature=0.0,
+                model=use, messages=messages, temperature=0.0,
                 max_tokens=8000, extra_body=deep_reasoning_extra(_PLAN_EFFORT))
-            raw = (raw or "").strip()
-        else:
-            from ...ai.llm_utils import drop_known_rejected, remember_rejected
-            kwargs = {
-                "model": model, "messages": messages,
-                "temperature": 0.0,
-                "max_tokens": 8000,   # 3000 рвало план на 5 банках → fallback
-                "extra_body": deep_reasoning_extra(_PLAN_EFFORT),
-            }
-            drop_known_rejected(model, kwargs)
-            try:
-                resp = await client.chat.completions.create(**kwargs)
-            except Exception as e:
-                # Провайдер отвергает параметр — снимаем, запоминаем за моделью
-                # и повторяем. Иначе план молча подменяется заглушкой:
-                # claude-opus отвергает temperature, и вместо разбора вопроса
-                # конвейер получал рамку по умолчанию за 0,9 с, чего в логе
-                # никто не читал.
-                param = remember_rejected(model, e, kwargs)
-                if not param:
-                    raise
-                log.warning("[conductor] %s не принимает %s — запомнили, "
-                            "повторяем без него", model, param)
-                resp = await client.chat.completions.create(**kwargs)
-            raw = (resp.choices[0].message.content or "").strip()
-    except Exception as e:
-        log.warning("[conductor] LLM failed: %s — fallback plan", e)
-        return _fallback_plan(q, hinted_banks)
+            return (raw or "").strip()
+        from ...ai.llm_utils import drop_known_rejected, remember_rejected
+        kwargs = {
+            "model": use, "messages": messages,
+            "temperature": 0.0,
+            "max_tokens": 8000,   # 3000 рвало план на 5 банках → fallback
+            "extra_body": deep_reasoning_extra(_PLAN_EFFORT),
+        }
+        drop_known_rejected(use, kwargs)
+        try:
+            resp = await client.chat.completions.create(**kwargs)
+        except Exception as e:
+            # Провайдер отвергает параметр — снимаем, запоминаем за моделью
+            # и повторяем. Иначе план молча подменяется заглушкой:
+            # claude-opus отвергает temperature, и вместо разбора вопроса
+            # конвейер получал рамку по умолчанию за 0,9 с, чего в логе
+            # никто не читал.
+            param = remember_rejected(use, e, kwargs)
+            if not param:
+                raise
+            log.warning("[conductor] %s не принимает %s — запомнили, "
+                        "повторяем без него", use, param)
+            resp = await client.chat.completions.create(**kwargs)
+        return (resp.choices[0].message.content or "").strip()
 
-    data = _parse_plan_json(raw)
+    # Основная модель не ответила или вернула не план — пробуем запасную, и
+    # только потом строим план по словам вопроса: он заметно беднее.
+    models = [model]
+    for key in ("GPTR_PLAN_FALLBACK", "LLM_MODEL_REASONING", "LLM_MODEL_SMART"):
+        m = (os.getenv(key) or "").strip()
+        if m and m not in models:
+            models.append(m)
+            break
+    data = None
+    for use in models:
+        try:
+            raw = await ask(use)
+        except Exception as e:
+            log.warning("[conductor] %s не ответила: %s", use, str(e)[:160])
+            continue
+        data = _parse_plan_json(raw)
+        if data:
+            break
+        log.warning("[conductor] %s: ответ не разобран, начало=%r", use, raw[:200])
     if not data:
-        log.warning("[conductor] no JSON parse, raw 200=%r", raw[:200])
+        log.warning("[conductor] план по словам вопроса — модели не ответили")
         return _fallback_plan(q, hinted_banks)
 
     plan = _build_plan_from_dict(data, q)
     # Страхующий слой: LLM могла проспать сегмент, маркеры в вопросе — нет.
     if detect_client_segment(q) == "business":
         plan.client_segment = "business"
-    log.warning("[conductor] intent=%s, nature=%s, %s subjects, %s missions",
-                 plan.intent, plan.question_nature,
-                 len(plan.subjects), len(plan.missions))
+    enforce_scope(plan, q, hinted_banks)
+    log.warning("[conductor] intent=%s, task=%s, scope=%s, nature=%s, %s subjects, %s queries",
+                plan.intent, plan.task, plan.scope, plan.question_nature,
+                len(plan.subjects), len(plan.queries))
     return plan
 
 
@@ -443,13 +478,28 @@ def _build_plan_from_dict(data: dict, question: str) -> ResearchPlan:
             context="",
         ))
 
-    if not missions:
-        # аварийно: хотя бы researcher
-        missions.append(AgentMission(
-            agent_id="researcher",
-            goal=f"Собери факты по вопросу: {question}",
-            subjects=list(subjects),
-        ))
+    # Миссий новый план не заказывает: что искать, говорят topics и queries.
+    # Старый формат (с миссиями) по-прежнему разбирается.
+    queries: list[dict] = []
+    for it in (data.get("queries") or [])[:12]:
+        if isinstance(it, str):
+            it = {"q": it}
+        if not isinstance(it, dict):
+            continue
+        qtext = re.sub(r"\s+", " ", str(it.get("q") or "")).strip()[:200]
+        # модель порой пишет оператор site: прямо в запросе — переносим в поле
+        inline = re.search(r"\bsite:(\S+)", qtext)
+        if inline:
+            qtext = re.sub(r"\s*\bsite:\S+", "", qtext).strip()
+        site = re.sub(r"^https?://", "", str(it.get("site") or (inline.group(1) if inline else "")
+                                              ).strip().lower())
+        site = re.sub(r"/.*$", "", re.sub(r"^www\.", "", site))
+        if not re.fullmatch(r"[a-z0-9а-яё.-]+\.[a-zа-яё]{2,}", site or ""):
+            site = ""
+        if len(qtext) >= 6:
+            queries.append({"q": qtext, "site": site})
+    topics = [re.sub(r"\s+", " ", str(t)).strip()[:120]
+              for t in (data.get("topics") or []) if str(t).strip()][:9]
 
     deps_raw = data.get("dependencies") or {}
     dependencies = {str(k): [str(x) for x in v]
@@ -473,7 +523,142 @@ def _build_plan_from_dict(data: dict, question: str) -> ResearchPlan:
         needs_ranking=bool(data.get("needs_ranking")),
         needs_complaints=bool(data.get("needs_complaints")),
         needs_regulatory=bool(data.get("needs_regulatory")),
+        task=str(data.get("task") or "").strip().lower(),
+        scope=str(data.get("scope") or "").strip().lower(),
+        period=re.sub(r"\s+", " ", str(data.get("period") or "")).strip()[:80],
+        deliverable=str(data.get("deliverable") or "report").strip().lower(),
+        checks="full" if data.get("wants_checks") is True else "",
+        topics=topics,
+        observed=re.sub(r"\s+", " ", str(data.get("observed") or "")).strip()[:120],
+        regulatory=re.sub(r"\s+", " ", str(data.get("regulatory") or "")).strip()[:120],
+        queries=queries,
     )
+
+
+# ── Рамка: тип задачи и состав субъектов проверяет код ───────────────────────
+_COMPARE_RX = re.compile(
+    r"сравн|сопостав|конкурент|\bпротив\b|\bvs\b|на фоне|у других банк|в других банк|"
+    r"с другими банк|относительно рынк|позици\w* .{0,25}рынк|место .{0,25}рынк|бенчмарк|"
+    r"benchmark|лучше.{0,20}чем|выгодн\w* услови|топ[- ]?\d|рейтинг банк|в разрезе банк|"
+    r"по банкам|среди банк", re.I)
+_CHECK_RX = re.compile(
+    r"что проверит|что проверять|план проверк|программ\w+ проверк|карт\w+ риск|"
+    r"какие риски|риски для|для аудита|как аудитор|точки контрол|что запросить", re.I)
+_TASK_RX = (
+    ("news", re.compile(r"https?://|проанализируй (новость|для аудита)|пресс-?релиз", re.I)),
+    ("check", _CHECK_RX),
+    ("complaints", re.compile(r"жалоб|отзыв|претензи|обращени[яй] клиент|недовольств|"
+                              r"клиентск\w+ (опыт|бол)|на что жалу", re.I)),
+    ("compare", _COMPARE_RX),
+    ("regulation", re.compile(r"закон|регулир|указани\w* (цб|банка)|положени\w* (цб|банка)|"
+                              r"-фз\b|\bфз[- ]|норматив|требовани\w* (цб|банка россии|регулятор)|"
+                              r"санкци|штраф|предельн\w+ значени", re.I)),
+    ("market_data", re.compile(r"дол[яюи] рынк|объ[её]м рынк|статистик|динамик|сколько |"
+                               r"численност|количеств|эмисси|рейтинг", re.I)),
+    ("explain", re.compile(r"что такое|кто так|истори[яию]|как устроен|как работает|"
+                           r"объясни|расскажи об? ", re.I)),
+)
+_DELIVERABLE_RX = (
+    ("deck", re.compile(r"презентац|слайд|pptx", re.I)),
+    ("chart", re.compile(r"диаграмм|график|инфографик", re.I)),
+    ("table", re.compile(r"таблиц|выгруз|excel|эксель|xlsx", re.I)),
+    ("file", re.compile(r"\bфайл|word|docx|\bpdf\b", re.I)),
+)
+
+
+def guess_task(question: str, default: str = "product") -> str:
+    """Тип задачи по словам вопроса — запасной путь, когда кондуктор не ответил
+    или назвал тип, которого нет."""
+    for task, rx in _TASK_RX:
+        if rx.search(question or ""):
+            return task
+    return default
+
+
+def _named_in(question: str, slug: str, label: str) -> bool:
+    """Организация названа в вопросе: по слугу или по значимому слову названия."""
+    low = (question or "").lower().replace("ё", "е")
+    words = [w for w in re.findall(r"[a-zа-я0-9]{3,}", (label or "").lower().replace("ё", "е"))
+             if w not in ("банк", "bank", "страхование", "россии")]
+    stems = {w[:5] for w in words} | {slug.lower().replace("_", "")[:5]}
+    return any(st and st in low for st in stems)
+
+
+def enforce_scope(plan: ResearchPlan, question: str, named: list[str] | None = None) -> ResearchPlan:
+    """Доводит план до вопроса: тип задачи из перечня, конкуренты — только
+    названные или запрошенные, объём «Что проверять» — по задаче.
+
+    Замер 11.11 на шести вопросах без сравнения: текущая модель добавила
+    конкурентов в трёх, более сильная — в пяти. Инструкция это запрещает, но
+    полагаться на неё одну нельзя: непрошеное сравнение стоило каждому третьему
+    такому отчёту раздела «Сбер против рынка».
+    """
+    q = question or ""
+    asked_compare = bool(_COMPARE_RX.search(q))
+    labels = plan.subject_labels or {}
+    family = {x for x in [plan.anchor, *plan.subsidiaries] if x}
+    named_set = set(named or [])
+    outsiders = [s for s in plan.subjects
+                 if s not in family and (s in named_set or _named_in(q, s, labels.get(s, "")))]
+
+    task = plan.task if plan.task in TASKS else guess_task(q)
+    if task == "compare" and not asked_compare and not outsiders:
+        task = guess_task(q)
+        if task == "compare":
+            task = "product"
+    plan.task = task
+    # Свой банк подразумевается в вопросах о продукте, жалобах и проверке
+    # («жалобы самозанятых» аудитор Сбера задаёт про Сбер). В справке, цифрах
+    # рынка и нормах он остаётся, только если назван.
+    if task not in ("product", "complaints", "check", "compare"):
+        family = {s for s in family
+                  if s in named_set or _named_in(q, s, labels.get(s, "") or
+                                                 ("Сбербанк" if s == "sberbank" else s))}
+
+    if task != "compare" and not asked_compare:
+        keep = family | set(outsiders) | {s for s in plan.subjects if s in named_set}
+        dropped = [s for s in plan.subjects if s not in keep]
+        if dropped:
+            log.warning("[conductor] непрошеные субъекты убраны: %s", dropped)
+            plan.subjects = [s for s in plan.subjects if s in keep]
+            plan.subject_labels = {s: name for s, name in labels.items() if s in keep}
+            for m in plan.missions:
+                m.subjects = [s for s in m.subjects if s in keep]
+    # Спрашивают аудиторы Сбера: вопрос о жалобах, продукте или проверке без
+    # названного банка — про свой банк. Без субъекта отчёт не взял бы ни жалоб,
+    # ни документов базы знаний.
+    if task in ("product", "complaints", "check") and not plan.subjects and not plan.anchor:
+        plan.anchor = "sberbank"
+    if plan.anchor and plan.anchor not in plan.subjects and task in ("product", "complaints", "check"):
+        plan.subjects.insert(0, plan.anchor)
+        plan.subject_labels.setdefault(plan.anchor, "Сбербанк" if plan.anchor == "sberbank"
+                                       else plan.anchor)
+
+    family = {x for x in [plan.anchor, *plan.subsidiaries] if x}
+    if not plan.subjects:
+        plan.scope = "none"
+    elif set(plan.subjects) <= family:
+        plan.scope = "sber"
+    elif plan.scope not in ("named", "market"):
+        plan.scope = "named"
+
+    if plan.checks != "full":
+        plan.checks = "full" if _CHECK_RX.search(q) else _CHECKS_BY_TASK.get(task, "short")
+    if plan.deliverable not in ("report", "table", "chart", "deck", "file"):
+        plan.deliverable = "report"
+    if plan.deliverable == "report":
+        plan.deliverable = next((d for d, rx in _DELIVERABLE_RX if rx.search(q)), "report")
+    if task in ("complaints",) or re.search(r"жалоб|отзыв", q, re.I):
+        plan.needs_complaints = True
+    return plan
+
+
+def open_subjects(plan) -> bool:
+    """Список объектов открыт: факты могут относиться к организациям, которых
+    в плане нет (доли рынка, рейтинг, история). Тогда название организации у
+    факта сохраняется как есть, а не обнуляется."""
+    return (getattr(plan, "task", "") in ("market_data", "explain", "news", "regulation")
+            or getattr(plan, "scope", "") in ("market", "none"))
 
 
 def fan_out_researcher(plan: ResearchPlan) -> ResearchPlan:
@@ -601,37 +786,27 @@ def attach_banki_sources(plan: ResearchPlan) -> ResearchPlan:
 
 
 def _fallback_plan(question: str, hinted_banks: list[str]) -> ResearchPlan:
-    """Минимальный план если Кондуктор упал. Всегда researcher + reviews."""
-    subjects = hinted_banks or ["sberbank", "tinkoff", "alfabank", "vtb"]
-    labels = {s: s.title() for s in subjects}
-    return ResearchPlan(
-        intent="general_comparison",
-        intent_summary="Сравнительный анализ по вопросу аудитора",
+    """Минимальный план, если кондуктор не ответил. Субъекты — только названные
+    в вопросе (раньше подставлялись четыре банка, и любой вопрос превращался в
+    сравнение); тип задачи — по словам вопроса."""
+    subjects = list(hinted_banks)
+    if not subjects and re.search(r"сбер|sber", question or "", re.I):
+        subjects = ["sberbank"]
+    labels = {s: ("Сбербанк" if s == "sberbank" else s.title()) for s in subjects}
+    plan = ResearchPlan(
+        intent="general",
+        intent_summary="",
         question_nature="mixed",
         client_segment=detect_client_segment(question),
         subjects=subjects,
         subject_labels=labels,
         product="",
         product_synonyms=[],
-        missions=[
-            AgentMission(
-                agent_id="researcher",
-                goal=f"Собери конкретные факты и условия по вопросу: {question}. "
-                     f"Используй semantic_search + web_search + read_url. "
-                     f"Верни факты со ссылками [N].",
-                subjects=list(subjects),
-            ),
-            AgentMission(
-                agent_id="reviews",
-                goal=f"Собери отзывы и жалобы клиентов по теме вопроса: {question}. "
-                     f"С фокусом на проблемы и на что жалуются.",
-                subjects=list(subjects),
-            ),
-        ],
+        missions=[],
         dependencies={},
-        output_sections=["summary", "key_findings", "conditions_table",
-                          "complaints", "risks", "methodology", "sources"],
-        needs_ranking=False,
-        needs_complaints=True,
-        needs_regulatory=False,
+        output_sections=[],
+        anchor="sberbank" if "sberbank" in subjects else "",
+        task=guess_task(question),
+        queries=[{"q": normalize_question(question)[:200], "site": ""}],
     )
+    return enforce_scope(plan, question, hinted_banks)

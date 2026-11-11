@@ -44,7 +44,7 @@ ANCHOR = "sberbank"
 # Порядок ЧТЕНИЯ. Резюме и «что проверять» стоят впереди, потому что
 # руководитель проверки читает сверху вниз и решение принимает по ним.
 READING_ORDER = ("summary", "checks", "conditions", "market", "voice",
-                 "loopholes", "regulatory", "conflicts")
+                 "loopholes", "regulatory", "reference", "conflicts")
 # Порядок НАПИСАНИЯ: сначала материал, потом суждение по нему.
 WRITING_ORDER = ("conditions", "market", "voice", "loopholes", "regulatory",
                  "conflicts", "checks", "summary")
@@ -58,14 +58,36 @@ TITLES = {
     "voice": "Голос клиента",
     "loopholes": "Лазейки и уязвимости",
     "regulatory": "Нормативная рамка",
+    "reference": "Рынок и публикации",
     "conflicts": "Расхождения в источниках",
 }
+TOPIC = al_brief.TOPIC
+
+
+def checks_mode(plan) -> str:
+    """Сколько места занимает «Что проверять»: full — полный план проверки,
+    short — три-пять действий, none — раздела нет. Решает кондуктор по задаче;
+    у плана старого формата — как раньше, полный."""
+    mode = getattr(plan, "checks", None)
+    return mode if mode in ("full", "short", "none") else "full"
+
+
+def lead_keys(plan) -> tuple[str, ...]:
+    """Разделы, которые пишутся последними и встают наверх."""
+    return ("summary",) if checks_mode(plan) == "none" else LEAD
 
 
 def titles(plan) -> dict[str, str]:
     """Заголовки под точку отсчёта. «Сбер против рынка» над рейтингом
     коллекторских агентств — такие вопросы есть, и заголовок там врал бы."""
     out = dict(TITLES)
+    # Справка и цифры рынка — не акт проверки: «Резюме для руководителя
+    # проверки» над историей кредитной карты читалось как чужой шаблон.
+    mode = checks_mode(plan)
+    if mode == "none":
+        out["summary"] = "Главное"
+    elif mode == "short":
+        out["checks"] = "Что проверить"
     labels = dict(getattr(plan, "subject_labels", None) or {})
     a = anchor_of(plan)
     if not a:
@@ -161,11 +183,34 @@ def substantive(f) -> bool:
     return not _PLACEHOLDER.match(str(f.value or ""))
 
 
-def facts_for(section: str, registry, plan, own: dict | None = None) -> list:
+def _is_reference(f, own: dict) -> bool:
+    """Стороннее сведение не от клиента: статья, обзор, статистика, новость."""
+    from .facts import is_review_page
+    kind = own.get(f.url, {}).get("kind")
+    if kind == "news":
+        return True
+    return f.stance == "observed" and f.url not in own and not is_review_page(f.url)
+
+
+def facts_for_attrs(registry, attrs: list[str]) -> list:
+    """Факты своего раздела: всё по названным характеристикам, кто бы ни сказал."""
+    want = set(attrs)
+    picked = [f for f in registry.facts if substantive(f) and f.attribute in want]
+    return _cap_per(picked, lambda f: (f.subject, f.attribute, f.stance), _CONDITIONS_PER_CELL)
+
+
+def facts_for(section: str, registry, plan, own: dict | None = None,
+              web_in_voice: bool = True) -> list:
     """Факты раздела. Полные, а не «по три на ячейку». own — страницы
-    собственных данных AuditLens (url → вид); по умолчанию из состояния прогона."""
+    собственных данных AuditLens (url → вид); по умолчанию из состояния прогона.
+    web_in_voice=False — сторонние публикации идут своим разделом (reference),
+    и в разделе жалоб остаются только жалобы."""
     all_facts = [f for f in registry.facts if substantive(f)]
     fam = anchor_family(plan)
+    if section == "reference":
+        own = runstate.current().own_meta if own is None else own
+        picked = [f for f in all_facts if _is_reference(f, own)]
+        return _cap_per(picked, lambda f: (f.subject, f.attribute), _CONDITIONS_PER_CELL)
     if section == "conditions":
         # Всё, что заявлено самим Сбером и его дочками, плюс общие факты о
         # предмете (без субъекта) и нормы — они и есть «условия на входе».
@@ -194,6 +239,9 @@ def facts_for(section: str, registry, plan, own: dict | None = None) -> list:
         stats = [f for f in picked if own.get(f.url, {}).get("kind") == "complaints"]
         quotes = [f for f in picked if own.get(f.url, {}).get("kind") == "review"]
         web = [f for f in picked if f.url not in own]
+        if not web_in_voice:
+            from .facts import is_review_page
+            web = [f for f in web if is_review_page(f.url) or f.attribute == _event_attr()]
         # Сбер и дочки — первыми: по ним самый большой корпус.
         order = lambda f: (f.subject not in fam, f.subject, f.date or "")  # noqa: E731
         # Внешнее событие за жалобами (дослежка) объясняет сюжет — его факты
@@ -225,6 +273,11 @@ def facts_for(section: str, registry, plan, own: dict | None = None) -> list:
     return []
 
 
+def _event_attr() -> str:
+    from .followup import EVENT_ATTRIBUTE
+    return EVENT_ATTRIBUTE
+
+
 def render_facts(facts, labels: dict[str, str], own: dict | None = None) -> str:
     """Тот же формат строки, что у прежнего писателя, — без ограничения числа."""
     lines = []
@@ -238,6 +291,8 @@ def render_facts(facts, labels: dict[str, str], own: dict | None = None) -> str:
             side += ", жалоба клиента"
         elif own.get(f.url, {}).get("kind") == "market":
             side += ", витрина «Рынок» AuditLens"
+        elif own.get(f.url, {}).get("kind") == "news":
+            side = "новость из ленты AuditLens"
         subj = labels.get(f.subject, f.subject) or "общее"
         unit = f" {f.unit}" if f.unit else ""
         when = f" | дата: {f.date}" if f.date else ""
@@ -266,27 +321,60 @@ def _common(plan, question: str, labels: dict[str, str]) -> str:
     anchor_name = labels.get(a, a) if a else ""
     subs = [labels.get(s, s) for s in subsidiaries_of(plan)]
     subs_line = (f" и его дочерние компании ({', '.join(subs)})" if subs else "")
-    if anchor_name:
+    task = getattr(plan, "task", None)
+    n_subjects = len([x for x in (getattr(plan, "subjects", None) or []) if x])
+    comparing = task in (None, "compare") or n_subjects >= 2
+    if anchor_name and comparing:
         stance = (f"СВОЙ БАНК — {anchor_name}{subs_line}. Каждое сравнение "
                   f"строится относительно {anchor_name}: не «пять банков в ряд», "
                   f"а «где мы лучше, где хуже и в чём именно». Конкуренты — "
                   f"бенчмарк, не объект выбора.")
-    else:
+    elif anchor_name:
+        # Аудит 11.11: к вопросу об одном сервисе Сбера отчёт сам добавлял
+        # «Сбер против рынка». Сравнения не просили — его и нет.
+        stance = (f"ПРЕДМЕТ — {anchor_name}{subs_line}. Сравнения с конкурентами аудитор "
+                  f"не просил: других банков в отчёте нет. Не упоминай их и не пиши, что "
+                  f"данных о них нет.")
+    elif task is None:
         # Рейтинг коллекторов, тарифы управляющих компаний, документ ЦБ —
         # своей стороны здесь нет, и притягивать её нельзя.
         stance = ("СВОЕГО БАНКА НЕТ: в вопросе нет своей организации. "
                   "Сравнивай объекты между собой ровно, без выделенного.")
+    else:
+        stance = ("ВОПРОС НЕ ПРО ОДНУ ОРГАНИЗАЦИЮ. Пиши о предмете вопроса; организации "
+                  "называй так, как они названы в фактах, никого не выделяя.")
+    if task in ("market_data", "explain"):
+        reader = ("Читатель — аудитор Сбера. Ему нужен точный и полный ответ на вопрос: "
+                  "цифры с датами, источник каждого числа, связное объяснение. Это "
+                  "справочный материал для подготовки к проверке, а не акт проверки.")
+    elif task in ("product", "regulation"):
+        reader = ("Читатель — аудитор Сбера, который готовится к проверке этого продукта "
+                  "или процесса. Ему нужна полная и точная картина: что это, как "
+                  "устроено, на каких условиях, что требуется и что менялось.")
+    else:
+        reader = ("Читатель — руководитель проверки в Сбере. Он открывает отчёт на входе "
+                  "в проверку и принимает по нему решения.")
+    if task in ("market_data", "explain"):
+        judgement = ("ВЫВОД. Раздел заканчивается абзацем «Вывод:» в одну-две фразы — что "
+                     "из сказанного следует; если следует только уже сказанное, вывод не "
+                     "пиши. Причин и оценок, которых нет в фактах, не добавляй.")
+    else:
+        judgement = ("СУЖДЕНИЕ. Ты обязан не только изложить, но и оценить: что это значит "
+                     "для проверки, где риск, что из этого следует. Вывод без факта "
+                     "недопустим, но и факт без вывода бесполезен. Раздел заканчивается "
+                     "абзацем «Вывод:» — одна-три фразы по существу; у подразделов своих "
+                     "«Вывод:» и «Итогов» нет.")
+    period = (getattr(plan, "period", "") or "").strip()
     from ...clock import today_msk
     today = today_msk().strftime("%d.%m.%Y")
     return "\n".join([
-        f"Ты — аналитик службы внутреннего аудита. Отчёт по вопросу: «{question}».",
+        f"Ты — аналитик службы внутреннего аудита Сбербанка. Отчёт по вопросу: «{question}».",
         f"СЕГОДНЯ {today}. ДЕЙСТВУЕТ ИЛИ БУДЕТ: условие, норма или ставка с датой "
         f"вступления в силу позже сегодняшней — будущее правило; называй его с датой "
         f"(«с 1 октября — 12%») и не выдавай за действующее. Материал о грядущих "
         f"изменениях («новые ставки», «изменили условия с …») описывает будущее, "
         f"пока дата не наступила.",
-        "Читатель — руководитель проверки в Сбере. Он открывает отчёт на входе "
-        "в проверку и принимает по нему решения.",
+        reader,
         "",
         stance,
         "",
@@ -300,11 +388,7 @@ def _common(plan, question: str, labels: dict[str, str]) -> str:
         "требование закона или ЦБ. Расхождение между сторонами — предмет "
         "аудита, называй его прямо.",
         "",
-        "СУЖДЕНИЕ. Ты обязан не только изложить, но и оценить: что это значит "
-        "для проверки, где риск, что из этого следует. Вывод без факта "
-        "недопустим, но и факт без вывода бесполезен. Раздел заканчивается "
-        "абзацем «Вывод:» — одна-три фразы по существу; у подразделов своих "
-        "«Вывод:» и «Итогов» нет.",
+        judgement,
         "",
         "СОПОСТАВИМОСТЬ. Расхождение, выигрыш или проигрыш — только между "
         "сопоставимым: тот же продукт, срок, сумма, сегмент клиента, режим "
@@ -344,15 +428,27 @@ def _common(plan, question: str, labels: dict[str, str]) -> str:
         "ЦЕЛЬНОСТЬ. Отчёт — один документ, а не стопка отдельных справок. "
         "Пиши о банке и продукте, а не о своих материалах: никаких «в переданных "
         "фактах», «в материале раздела», «в теле отчёта», «точка отсчёта», «факт "
-        "№». Не пиши в разделе «Итог отчёта», «Ограничения отчёта», «Что "
-        "проверить» — это делают резюме и план проверки. Банк называй по имени.",
+        "№», «факты, помеченные как…», «под пометкой», «характеристика содержит», "
+        "«в фактах», «факты называют», «факты показывают», «в представленных "
+        "фактах» — говори «в источниках», «по данным Банка России», «на сайте "
+        "банка». Столбец со ссылками в таблице называй «Источник», не «Якорь». "
+        "Названия характеристик и сторон из списка фактов — служебные: читателю "
+        "они не видны. Факт, чья цитата говорит о другом предмете, чем вопрос, "
+        "просто не используй — не рассказывай, что он «отнесён» не туда. Не пиши "
+        "в разделе «Итог отчёта», «Ограничения отчёта», «Что проверить» — это "
+        "делают резюме и план проверки. Банк называй по имени. Числа — с "
+        "единицами и датой. Число, по цитате которого не ясно, ЧТО оно измеряет и "
+        "В ЧЁМ, не приводи вовсе: ряд чисел «без единиц» читателю ничего не даёт. "
+        "Не пересказывай устройство источника — названия полей формы отчётности, "
+        "коды счетов, служебные реквизиты: это не ответ на вопрос.",
         "",
         "ЗАКАЗ АУДИТОРА. Если в вопросе задана форма ответа — «топ-5 тем», "
         "«в виде таблицы», «полный список», «динамика за год», — раздел обязан "
         "её выполнить буквально, а не пересказать своими словами. Если вопрос "
         "ограничен периодом или датой, факты вне периода помечай как "
         "устаревшие и не смешивай с актуальными: у каждого факта есть дата.",
-    ] + ([f"", f"ЧТО ХОЧЕТ УЗНАТЬ АУДИТОР: {intent}"] if intent else []))
+    ] + (["", f"ПЕРИОД ВОПРОСА: {period}."] if period else [])
+      + (["", f"ЧТО ХОЧЕТ УЗНАТЬ АУДИТОР: {intent}"] if intent else []))
 
 
 _SECTION_RULES = {
@@ -422,7 +518,10 @@ _SECTION_RULES = {
         "4. «Болит у других — проверить у нас» — только если в фактах есть "
         "проблемы конкурентов, возможные у нас по устройству продукта.\n"
         "Где жалобы расходятся с заявленным банком — назови расхождение. Если "
-        "аудитор просил «топ-N тем» — ранжированный список тем с числом жалоб."
+        "аудитор просил «топ-N тем» — ранжированный список тем с числом жалоб.\n"
+        "МАЛЫЕ ЧИСЛА. Изменение на единицах жалоб (меньше десяти за период) не "
+        "называй ростом, всплеском или «выросло вдвое», если в факте нет пометки "
+        "«значимо»: две жалобы против одной — это две жалобы, а не тенденция."
     ),
     "loopholes": (
         "РАЗДЕЛ «ЛАЗЕЙКИ И УЯЗВИМОСТИ». Факты — записи раздела «Аудит уязвимостей» "
@@ -450,6 +549,46 @@ _SECTION_RULES = {
         "текста самой нормы в фактах нет, а есть только упоминание, — скажи "
         "это прямо: ссылка на закон без его текста доказательством не является."
     ),
+    "reference": (
+        "РАЗДЕЛ ПО СТОРОННИМ ИСТОЧНИКАМ: статистика, обзоры рынка, аналитика, "
+        "публикации, новости. Изложи то, что отвечает на вопрос. Цифры — таблицей: "
+        "строки — организации или периоды, столбцы — показатели, у каждого числа "
+        "дата и якорь. Ряд по периодам — в порядке времени; события — по датам. У "
+        "каждого числа назови, чьи это данные (регулятор, сам банк, аналитическое "
+        "агентство, издание) и на какую дату. Источники расходятся — покажи оба "
+        "значения и скажи, чем они отличаются (дата, методика, охват). Числа разных "
+        "дат и разных методик в один ряд не ставь и не складывай. Оценки и прогнозы "
+        "отделяй от установленного словами «по оценке …». Если аудитор просил «топ-N» "
+        "или долю — дай ранжированный список с названным показателем и датой; если "
+        "для порядка не хватает сопоставимых чисел, скажи, каких именно."
+    ),
+    "topic": (
+        "РАЗДЕЛ ПО ТЕМЕ — какой именно, сказано в брифе («← ТВОЙ РАЗДЕЛ»). Изложи "
+        "полно и по порядку всё, что есть в фактах по этой теме: условия и числа — с "
+        "датами и оговорками мелким шрифтом; порядок действий — шагами; где значений "
+        "несколько или они сравниваются — таблицей. Акционные и постоянные условия — "
+        "отдельно. Условие менялось или источники расходятся — оба значения с "
+        "датами. Чужих тем не касайся: у них свои разделы."
+    ),
+    "checks_short": (
+        "РАЗДЕЛ «ЧТО ПРОВЕРИТЬ» — коротко: три–пять пунктов нумерованным списком, "
+        "без подзаголовков, гипотез и вступления. Каждый пункт — одно конкретное "
+        "действие аудитора (какой документ запросить, какой тариф или договор "
+        "открыть, какую выборку операций или обращений взять и что в ней искать) "
+        "и зачем — одной фразой, с якорем на факт, из которого это следует. Только "
+        "то, что вытекает из фактов отчёта; общих советов и «возможных рисков» не "
+        "пиши. Весь раздел — не длиннее 1 200 знаков."
+    ),
+    "summary_plain": (
+        "РАЗДЕЛ «ГЛАВНОЕ»: три–пять выводов — развёрнутый главный ответ из брифа. "
+        "Первый — прямой ответ на вопрос с главным числом или фактом. Дальше — то, "
+        "без чего ответ неполон: ключевые цифры с датами и источником, как менялось, "
+        "от чего зависит, где данные расходятся. Каждый вывод — связный абзац в "
+        "две-три фразы с якорями. Последним абзацем — что это значит для аудитора "
+        "Сбера, одной-двумя фразами, если это прямо видно из фактов; если не видно "
+        "— не пиши. Не повторяй одно и то же разными словами, не начинай с «в "
+        "целом». Текст читается отдельно от отчёта и не теряет смысла."
+    ),
     "conflicts": (
         "РАЗДЕЛ «РАСХОЖДЕНИЯ В ИСТОЧНИКАХ». Сравнение объектов уже написано в "
         "предыдущих разделах — не повторяй его, сводных таблиц по условиям не "
@@ -476,8 +615,10 @@ _SECTION_RULES = {
         "эквайрер, агент), что говорят договор и правила платёжной системы о "
         "таком споре и что будет дальше (например, после даты события).\n"
         "3. Болит у других — что из проблем конкурентов возможно у нас по "
-        "устройству продукта, и как это проверить у себя (только если такие "
-        "факты есть).\n"
+        "устройству продукта, и как это проверить у себя. Блок пишется ТОЛЬКО "
+        "если в фактах есть проблемы других банков; если их нет или сравнения "
+        "не просили — блока нет вовсе: ни заголовка, ни фразы «не заполняется», "
+        "следующие блоки нумеруй подряд.\n"
         "Каждый пункт опирается на факты; их якоря приведи. Расплывчатое "
         "(«возможны риски») недопустимо. Объём — по вопросу: если вопрос "
         "справочный (сравнить ставки, условия, путь клиента) — 3–5 точных "
@@ -490,10 +631,12 @@ _SECTION_RULES = {
         "развёрнутый главный ответ из брифа. Каждый вывод — связный абзац в "
         "две-четыре фразы: с самого важного факта (число, причина, "
         "расхождение), затем что это значит для проверки, затем якоря. Первый "
-        "вывод — прямой ответ на вопрос: если вопрос о рынке или ставках — "
-        "позиция банка относительно рынка одной фразой; если это вопрос-решение "
-        "(«стоит ли реагировать?», «насколько конкурентны условия?») — да или "
-        "нет, и почему. Если в фактах есть всплеск жалоб, сюжет или "
+        "вывод — прямой ответ на вопрос В ЕГО ФОРМЕ: на «какие проблемы», "
+        "«на что жалуются» — сами проблемы по убыванию веса, с числами; на "
+        "«сколько» — число; если вопрос о рынке или ставках — позиция банка "
+        "относительно рынка одной фразой. «Да» или «нет» — только когда вопрос "
+        "закрытый («стоит ли реагировать?», «насколько конкурентны условия?»); "
+        "на открытый вопрос с «Да, …» не начинай. Если в фактах есть всплеск жалоб, сюжет или "
         "существенные лазейки — отдельный вывод о них с числами. Последний "
         "вывод — одно главное, что проверить первым. Не повторяй одно и то же "
         "разными словами, не пиши маркетинговым тоном, не начинай с «в целом». "
@@ -506,14 +649,26 @@ def section_prompt(section: str, plan, question: str, labels: dict[str, str],
                    *, facts_text: str, prior_text: str = "",
                    gaps_text: str = "", brief=None, order=None) -> str:
     parts = [_common(plan, question, labels), ""]
+    mode = checks_mode(plan)
+    short_checks = section == "checks" and mode == "short"
     if brief is not None:
-        parts += [brief.render(None if section in LEAD else section), ""]
-    if section in LEAD:
+        parts += [brief.render(None if section in LEAD else section,
+                               sections=not short_checks), ""]
+    if short_checks:
+        parts.append(_CHECKS_SHORT_SCOPE)
+    elif section in LEAD:
         parts.append(_LEAD_SCOPE)
     else:
         parts.append(_BODY_SCOPE)
-    parts += ["", _SECTION_RULES[section]]
-    if section == "checks":
+    rules = section
+    if section.startswith(TOPIC):
+        rules = "topic"
+    elif section == "checks" and mode == "short":
+        rules = "checks_short"
+    elif section == "summary" and mode == "none":
+        rules = "summary_plain"
+    parts += ["", _SECTION_RULES[rules]]
+    if section == "checks" and mode == "full":
         parts += ["", _CHECKS_LOOPHOLES if "loopholes" in (order or ()) else _CHECKS_NO_LOOPHOLES]
     if section in LEAD:
         if prior_text:
@@ -542,12 +697,51 @@ _BODY_SCOPE = (
     "пиши «данных нет», «не нашлось», «подтвердить нельзя» — у другого раздела "
     "эти данные могут быть, а пробелы отчёта собирает отдельный блок. Не "
     "объясняй вопрос причинами, которых нет в твоих фактах.")
+_CHECKS_SHORT_SCOPE = (
+    "ТВОЙ МАТЕРИАЛ. Ты видишь готовое тело отчёта и все факты. Сравнение, таблицы, "
+    "жалобы и выводы уже написаны в теле — НЕ повторяй и не пересказывай их: ни "
+    "таблиц, ни подзаголовков, ни абзацев с выводами. Твой текст — только "
+    "нумерованный список действий аудитора, начинается сразу с «1.».")
 _LEAD_SCOPE = (
     "ТВОЙ МАТЕРИАЛ. Ты видишь бриф, готовое тело отчёта и все факты (не пиши «в "
     "переданных фактах», «в теле отчёта» — пиши о банке и продукте). Главные "
     "находки тела (событие, причина, довод банка, числа) обязаны попасть в твой "
     "текст — не упрощай их и не спорь с ними. Если на часть вопроса данных нет "
-    "во всех фактах — скажи это прямо одной фразой: «по … данных не нашлось».")
+    "во всех фактах — скажи это прямо одной фразой: «по … данных не нашлось». "
+    "Тело отчёта главнее указателя фактов: если раздел пишет, что число относится "
+    "к другому предмету или показателю, не выдавай его за ответ на вопрос. Оговорки "
+    "тела сохраняй: если раздел пишет, что цитата взята из материала о другом "
+    "(для бизнеса, о другом продукте, общий совет), не превращай её в «банк сам "
+    "признаёт» и не строй на ней главный вывод.")
+
+
+_ITEM = re.compile(r"^\s*(\d{1,2})[.)]\s+\S")
+_ITEM_FIRST = re.compile(r"^\s*1[.)]\s+\S")
+
+
+def only_actions(text: str, limit: int = 6) -> str:
+    """Короткий план проверки — только нумерованный список действий.
+
+    Прогон 11.11 (сравнение потребкредитов): писатель перед пятью пунктами
+    заново написал всё сравнение — с таблицей и числами, которые расходились
+    с телом отчёта. Правило в подсказке — просьба; здесь — гарантия: берём
+    последний список, начатый с «1.», и ничего кроме него.
+    """
+    lines = (text or "").splitlines()
+    starts = [i for i, ln in enumerate(lines) if _ITEM_FIRST.match(ln)]
+    if not starts:
+        return (text or "").strip()
+    out: list[str] = []
+    for ln in lines[starts[-1]:]:
+        if _ITEM.match(ln):
+            if len(out) >= limit:
+                break
+            out.append(ln.strip())
+        elif ln.startswith("#") or ln.lstrip().startswith("|"):
+            break
+        elif ln.strip() and out:
+            out[-1] += " " + ln.strip()
+    return "\n".join(out)
 
 
 # ── Запись ───────────────────────────────────────────────────────────────────
@@ -605,12 +799,14 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
         """Дизайнер раздела — фоновая задача. Факты — только те, что раздел
         сам процитировал: блок не должен спорить с текстом."""
         runstate.bind(state)        # вызывается после yield — контекст чужой
-        if key not in al_viz.SECTIONS or len(facts) < al_viz.MIN_FACTS or not (text or "").strip():
+        # свой раздел по теме рисуется как карта условий
+        vkey = "conditions" if key.startswith(TOPIC) else key
+        if vkey not in al_viz.SECTIONS or len(facts) < al_viz.MIN_FACTS or not (text or "").strip():
             return None
         n = len(slots)
         slots.append(key)
         prompt = al_viz.designer_prompt(
-            section=key, title=ttl[key], question=question, anchor=anchor,
+            section=vkey, title=ttl[key], question=question, anchor=anchor,
             labels=labels, facts_text=render_facts(facts, labels, state.own_meta),
             section_text=text, subjects=subjects)
 
@@ -633,7 +829,7 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
                     pass
             try:
                 built = al_viz.build(answer, facts=facts, labels=labels,
-                                     section=key, subjects=subjects)
+                                     section=vkey, subjects=subjects)
                 spent = asyncio.get_running_loop().time() - t0
                 if not built.html and built.rejected and spent < al_viz.TIMEOUT / 2:
                     # Одна попытка починить, если первый заход был быстрым:
@@ -644,7 +840,7 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
                                 _complete(al_viz.repair_prompt(prompt, answer, built.rejected)),
                                 al_viz.TIMEOUT - spent)
                         built2 = al_viz.build(answer2, facts=facts, labels=labels,
-                                              section=key, subjects=subjects)
+                                              section=vkey, subjects=subjects)
                         if built2.html or not built2.rejected:
                             log.info("визуализация %s: принята со второй попытки", key)
                             built = built2
@@ -701,19 +897,52 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
             registry=registry, available={k: len(material[k]) for k in default},
             default=default, labels=labels, state=state)
         runstate.bind(state)
-    order = [s_["key"] for s_ in brief.sections] if brief else default
+    task = getattr(plan, "task", None)
+    order = [s_["key"] for s_ in brief.sections] if brief else list(default)
+    # Свои разделы брифа — по характеристикам, кто бы их ни сообщил. Факты,
+    # ушедшие в них, из готовых разделов вынимаются: иначе «Карта условий»
+    # пересказывала бы «Как подключается сервис».
+    topic_attrs: set[str] = set()
+    for s_ in (brief.sections if brief else []):
+        if not s_["key"].startswith(TOPIC):
+            continue
+        got = facts_for_attrs(registry, s_["attributes"])
+        if got:
+            material[s_["key"]] = got
+            topic_attrs.update(s_["attributes"])
+            ttl[s_["key"]] = s_["title"] or "Подробности"
+    if topic_attrs:
+        for k in ("conditions", "reference", "regulatory"):
+            if k in material and k in order:
+                material[k] = [f for f in material[k] if f.attribute not in topic_attrs]
+    order = [k for k in order if material.get(k)]
+    # Сторонние публикации идут своим разделом — в разделе жалоб им не место.
+    if "reference" in order and "voice" in material:
+        material["voice"] = facts_for("voice", registry, plan, own, web_in_voice=False)
+        if not material["voice"]:
+            material.pop("voice")
+            order = [k for k in order if k != "voice"]
+    # Сравнения аудитор не просил и банк в вопросе один — раздела «против
+    # рынка» нет, даже если бриф его выбрал (аудит 11.11: 39 % таких отчётов).
+    if task not in (None, "compare") and len(subjects) < 2:
+        order = [k for k in order if k != "market"]
     # Вопрос сравнивает несколько банков — раздел сравнения обязателен и первым:
     # замер 26.09, «сравни путь оформления карты у 4 банков» — бриф выбросил его,
     # и отчёт описал один Сбер.
-    if len(subjects) >= 2 and "market" in material and order[:1] != ["market"]:
+    if (task in (None, "compare") and len(subjects) >= 2 and "market" in material
+            and order[:1] != ["market"]):
         order = ["market"] + [k for k in order if k != "market"]
     # Жалобы клиентов из AuditLens есть — раздел о них обязателен: это реальный
     # опыт клиентов, которого нет у «просто нейросети». В сравнении — сразу после
     # таблицы условий, в остальных вопросах — там, где его поставил бриф.
     has_voice = any(own.get(getattr(f, "url", ""), {}).get("kind") in ("complaints", "review")
                     for f in material.get("voice") or [])
-    if has_voice and "voice" not in order:
-        pos = 1 if order[:1] == ["market"] else 0
+    if has_voice and "voice" not in order and task in (None, "compare", "complaints",
+                                                         "product", "check", "news"):
+        # в сравнении и разборе жалоб — сразу за главным разделом; в рассказе о
+        # продукте — после его условий
+        pos = (1 if order[:1] == ["market"] else 0) if task in (None, "compare", "complaints") \
+            else len(order)
         order = order[:pos] + ["voice"] + order[pos:]
     # Лазейки — раздел, только если бриф счёл схемы относящимися к вопросу:
     # принудительный раздел в эквайринге и пути оформления карты превращался
@@ -723,8 +952,10 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
         if brief.title:
             # название отчёта — для истории, «Поделиться» и обложки PDF
             yield ("report_title", brief.title)
+    lead_order = lead_keys(plan)
+    short_checks = checks_mode(plan) == "short"
     yield ("titles", dict(ttl))
-    yield ("outline", [ttl[k] for k in LEAD] + [ttl[k] for k in order])
+    yield ("outline", [ttl[k] for k in lead_order] + [ttl[k] for k in order])
     if not order:
         return
 
@@ -763,6 +994,8 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
         async with gate_w:
             text = "".join([p async for p in al_viz.without_markers(
                 _without_heading(_stream_section(client, model, prompt), ttl[key]))])
+        if key == "checks" and short_checks:
+            text = only_actions(text)
         return _demote_text(text).strip()
 
     writers = [asyncio.create_task(_produce(k, p)) for k, _, p in items]
@@ -777,15 +1010,23 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
         отчёта 140 жалоб (26.09)."""
         for t, key in lead_tasks.items():
             if t.done() and key not in lead:
-                lead[key] = t.result()
+                try:
+                    lead[key] = t.result()
+                except Exception as e:  # noqa: BLE001 — отчёт без резюме лучше, чем без отчёта
+                    log.warning("досье: раздел %s не написан — %s", key, str(e)[:120])
+                    lead[key] = ""
+                    continue
                 log.info("досье: раздел %s — %d символов", key, len(lead[key]))
                 facts = _cited(lead[key])
                 if key == "summary":
                     seen = {f.id for f in facts}
                     facts += [f for f in _cited("".join(body.values()), 200)
                               if f.id not in seen][:max(0, 60 - len(facts))]
-                lead_slot[key] = _spawn(key, facts, lead[key])
+                # короткому списку действий карточка не нужна
+                lead_slot[key] = (None if key == "checks" and short_checks
+                                  else _spawn(key, facts, lead[key]))
 
+    failed: list[str] = []
     try:
         yield ("status", f"Пишу разделы одновременно: {len(items)}")
         for key, facts, _prompt in items:
@@ -797,7 +1038,19 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
                 if piece is None:
                     break
                 if isinstance(piece, Exception):
-                    raise piece
+                    # Один оборванный раздел не отменяет остальные: раньше обрыв
+                    # связи на втором разделе из четырёх превращал весь отчёт в
+                    # «неполный» без резюме и карточек.
+                    failed.append(key)
+                    log.warning("досье: раздел %s оборван — %s", key, str(piece)[:120])
+                    if len(failed) == len(items):
+                        raise piece
+                    note = ("\n\n⚠ _Раздел не дописан: модель прервала ответ. Остальные "
+                            "разделы и резюме собраны; повторите запрос, чтобы получить "
+                            "этот раздел целиком._\n")
+                    buf.append(note)
+                    yield ("chunk", note)
+                    break
                 buf.append(piece)
                 yield ("chunk", piece)
                 _take_lead()
@@ -817,11 +1070,12 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
         # жалобами, довод банка про перевод по СБП) и путали «одну группу из 7»
         # с «7 группами». Между собой — одновременно.
         prior = "\n\n".join(f"## {ttl[k]}\n\n{body[k]}" for k in order if k in body)
-        for k in LEAD:
+        for k in lead_order:
             lead_tasks[asyncio.create_task(_lead(k, prior))] = k
         writers.extend(lead_tasks)
         pending = set(lead_tasks)
-        yield ("status", "Пишу резюме и план проверки по готовому отчёту")
+        yield ("status", "Пишу резюме и план проверки по готовому отчёту"
+               if len(lead_order) > 1 else "Пишу главное по готовому отчёту")
         while pending:
             _done, pending = await asyncio.wait(pending, timeout=5.0,
                                                 return_when=asyncio.FIRST_COMPLETED)
@@ -831,7 +1085,7 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
         _take_lead()
 
         head = ""
-        for k in LEAD:
+        for k in lead_order:
             if not lead.get(k):
                 continue
             n = lead_slot.get(k)
@@ -959,11 +1213,96 @@ def _same_title(line: str, title: str) -> bool:
     return len(a & b) >= max(1, min(len(a), len(b)) // 2 + (1 if min(len(a), len(b)) > 1 else 0))
 
 
-# Временные отказы провайдера: перегрузка, лимит запросов, шлюз. Постоянные
-# ошибки (неверный запрос, нет модели) сюда не попадают — их повтор не лечит.
+# Временные отказы провайдера: перегрузка, лимит запросов, шлюз, обрыв связи.
+# Постоянные ошибки (неверный запрос, нет модели) сюда не попадают — их повтор
+# не лечит. Обрыв соединения добавлен 11.11: шлюз закрыл поток в первые секунды
+# раздела («peer closed connection», «Connection error»), повтора не было, и
+# отчёт с 729 собранными фактами ушёл пользователю как «неполный».
 _RETRY_ERR = re.compile(
     r"overload|rate.?limit|too many requests|\b(429|502|503|504)\b|"
-    r"timeout|timed out|temporar", re.IGNORECASE)
+    r"timeout|timed out|temporar|connection|peer closed|incomplete chunked|"
+    r"remoteprotocol|reset by peer|server disconnected|broken pipe", re.IGNORECASE)
+
+# ── Отказ модели вместо раздела ──────────────────────────────────────────────
+# Аудит 11.11: в шести отчётах раздел начинался словами «Я не могу сформировать
+# этот отчёт. Инструкции в начале запроса предписывают принять клиентскую
+# идентичность… Я Claude, разработан Anthropic» — и это уходило аудитору. В
+# наших промптах такого текста нет: его добавляет что-то по дороге к модели.
+# Поэтому начало раздела придерживается и проверяется; отказ переписывается, а
+# одиночная фраза о себе вырезается.
+_IDENTITY = re.compile(
+    r"\bclaude\b|anthropic|openai|chatgpt|клиентск\w+ (идентичност|личност)|"
+    r"(runtime|рантайм)[- ]идентичност|внутренн\w+ идентичност|"
+    r"я\s+(—|-|–)?\s*(языковая модель|ии-ассистент|искусственный интеллект)", re.I)
+_REFUSAL = re.compile(
+    r"не могу (помочь|сформировать|продолжить|выполнить|подготовить|написать|"
+    r"составить)|не стану|не буду (выполнять|делать|этого)|мне жаль, но|"
+    r"к сожалению, я не", re.I)
+_SENT_END = re.compile(r"(?<=[.!?…])\s+|\n")
+_GUARD_HEAD = 600          # сколько начала раздела держим до проверки
+
+
+class Refused(RuntimeError):
+    """Модель вместо раздела ответила отказом или рассказом о себе."""
+
+
+def clean_head(head: str) -> str:
+    """Начало раздела без фраз модели о себе. Бросает Refused, если после
+    этого остаётся отказ или ничего по существу."""
+    parts = _SENT_END.split(head)
+    seps = _SENT_END.findall(head)
+    kept, dropped = [], 0
+    for i, part in enumerate(parts):
+        sep = seps[i] if i < len(seps) else ""
+        if _IDENTITY.search(part):
+            dropped += 1
+            continue
+        kept.append(part + sep)
+    out = "".join(kept)
+    if _REFUSAL.search(out[:400]):
+        raise Refused(out[:120])
+    if dropped and len(out.strip()) < 80:
+        raise Refused(head[:120])
+    return out
+
+
+async def _guarded(pieces: AsyncIterator[str]) -> AsyncIterator[str]:
+    """Поток раздела под присмотром: начало проверяется целиком (отказ —
+    Refused, пока наружу не ушло ни куска), дальше текст идёт законченными
+    предложениями, и фраза модели о себе выбрасывается."""
+    head: str | None = ""
+    tail = ""
+    async for piece in pieces:
+        if head is not None:
+            head += piece
+            if len(head) < _GUARD_HEAD:
+                continue
+            tail, head = clean_head(head), None
+        else:
+            tail += piece
+        cut = max((m.end() for m in _SENT_END.finditer(tail)), default=0)
+        if not cut:
+            continue
+        ready, tail = tail[:cut], tail[cut:]
+        if _IDENTITY.search(ready):
+            ready = "".join(x for x in re.split(r"(?<=[.!?…\n])", ready)
+                            if not _IDENTITY.search(x))
+            log.warning("раздел: вырезана фраза модели о себе")
+        if ready:
+            yield ready
+    if head is not None:
+        tail = clean_head(head)
+    if tail and not _IDENTITY.search(tail):
+        yield tail
+
+
+def _fallback_writer(model: str) -> str:
+    """Чем переписать раздел, если основная модель отказывается и на повторе."""
+    for key in ("GPTR_WRITER_FALLBACK", "LLM_MODEL_REASONING", "LLM_MODEL_NAME"):
+        m = (os.getenv(key) or "").strip()
+        if m and m != model:
+            return m
+    return ""
 
 
 async def _stream_section(client, model: str, prompt: str,
@@ -971,21 +1310,34 @@ async def _stream_section(client, model: str, prompt: str,
     """Один раздел одним вызовом. Роль и правила уже внутри промпта, поэтому
     системное сообщение короткое — оно лишь фиксирует режим.
 
-    Перегрузка провайдера на старте раздела больше не роняет прогон: пока
-    наружу не ушло ни куска, повторяем. После первого же выданного куска
-    повтор запрещён — иначе читатель получил бы раздел дважды.
+    Перегрузка провайдера или обрыв связи на старте раздела не роняют прогон:
+    пока наружу не ушло ни куска, повторяем. После первого же выданного куска
+    повтор запрещён — иначе читатель получил бы раздел дважды. Отказ модели
+    («не могу…», «я Claude…») ловится на придержанном начале: раздел
+    переписывается той же моделью, а последняя попытка — запасной.
     """
-    for attempt in range(attempts):
+    fallback = _fallback_writer(model)
+    refused = tries = 0
+    while True:
+        # Два отказа подряд — дальше пишет запасная модель: третий заход той же
+        # обычно даёт тот же отказ, а раздел нужен читателю.
+        use = fallback if (refused >= 2 and fallback) else model
         sent = False
         try:
-            async for piece in _stream(client, model, question="", plan=None,
-                                       context="", raw_prompt=prompt):
+            async for piece in _guarded(_stream(client, use, question="", plan=None,
+                                                context="", raw_prompt=prompt)):
                 sent = True
                 yield piece
             return
-        except Exception as e:
-            if sent or attempt == attempts - 1 or not _RETRY_ERR.search(str(e)):
+        except Refused as e:
+            refused += 1
+            log.warning("раздел: модель %s ответила отказом (%s) — заход %d",
+                        use, str(e)[:60], refused)
+            if use == fallback or (refused >= 2 and not fallback):
                 raise
-            log.warning("раздел: %s — повтор %d из %d",
-                        str(e)[:80], attempt + 2, attempts)
-            await asyncio.sleep(2 * (attempt + 1))
+        except Exception as e:
+            tries += 1
+            if sent or tries >= attempts or not _RETRY_ERR.search(str(e)):
+                raise
+            log.warning("раздел: %s — повтор %d из %d", str(e)[:80], tries + 1, attempts)
+            await asyncio.sleep(2 * tries)

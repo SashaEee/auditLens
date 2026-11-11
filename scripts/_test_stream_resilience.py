@@ -13,7 +13,8 @@ def check(name, cond):
 
 # --- распознавание временных отказов
 temp = ["Overloaded", "Error code: 429 - rate limit", "503 Service Unavailable",
-        "Request timed out", "temporarily unavailable"]
+        "Request timed out", "temporarily unavailable", "Connection error.",
+        "peer closed connection without sending complete message body (incomplete chunked read)"]
 perm = ["invalid_request_error: unknown model", "authentication failed",
         "`temperature` is deprecated for this model"]
 for t in temp: check(f"временная: {t[:26]}", D._RETRY_ERR.search(t) is not None)
@@ -24,7 +25,9 @@ def make_stream(fail_times, fail_after_pieces=0):
     async def fake(client, model, *, question, plan, context, raw_prompt):
         calls["n"] += 1
         for i in range(fail_after_pieces):
-            yield f"кусок{i} "
+            # куски длиннее придержанного начала раздела: иначе наружу ещё ничего
+            # не ушло и повтор безопасен
+            yield f"Предложение {i} раздела о вкладах. " * 20
         if calls["n"] <= fail_times:
             raise RuntimeError("Overloaded")
         yield "готовый текст"

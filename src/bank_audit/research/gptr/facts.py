@@ -32,7 +32,7 @@ import re
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
-from ...ai.llm_utils import drop_known_rejected, remember_rejected
+from ...ai.llm_utils import drop_known_rejected, remember_extra_rejected, remember_rejected
 from ..entity_extractor import _BANK_DOMAINS
 from ..v2.tools.web_tools import REGULATOR_DOMAINS
 
@@ -47,8 +47,8 @@ async def call_model(client, model: str, kw: dict):
     страница стоила два запроса — 400 и повтор: замер 21.09.2026 дал 112
     лишних вызовов на один отчёт. Отказ, который модель назвала, снимается и
     запоминается за моделью (общая память в ai/llm_utils). Отказ без имени
-    параметра, как и раньше, лечится вслепую — без extra_body, — но не
-    запоминается: причина могла быть не в нём.
+    параметра лечится вслепую — без extra_body; если повтор прошёл и ключ в
+    extra_body был один, он тоже запоминается за моделью.
     """
     drop_known_rejected(model, kw)
     try:
@@ -56,9 +56,16 @@ async def call_model(client, model: str, kw: dict):
     except Exception as e:
         if remember_rejected(model, e, kw):
             return await client.chat.completions.create(**kw)
-        if kw.pop("extra_body", None) is None:
+        extra = kw.pop("extra_body", None)
+        if extra is None:
             raise
-        return await client.chat.completions.create(**kw)
+        resp = await client.chat.completions.create(**kw)
+        # Повтор без extra_body прошёл — причина была в нём. Шлюз перестал
+        # называть параметр в ошибке; без этой памяти каждый вызов стоил двух.
+        if remember_extra_rejected(model, e, extra):
+            log.warning("[llm] %s не принимает %s (шлюз параметр не назвал) — дальше не шлём",
+                        model, ", ".join(extra))
+        return resp
 
 # Сколько текста страницы отдаём извлекателю. Больше — дороже и хуже фокус.
 _PAGE_BUDGET = 14000
@@ -290,17 +297,20 @@ class FactRegistry:
 
 # ── Извлечение ────────────────────────────────────────────────────────────
 
-_ATTRS_SYSTEM = """Ты готовишь список характеристик для сравнительного разбора.
+_ATTRS_SYSTEM = """Ты готовишь список того, что нужно собрать, чтобы ответить аудитору.
 
-Выдели 5-9 характеристик, по которым нужно собрать данные, чтобы ответить на
-вопрос. Характеристика — это то, что сопоставимо между объектами и что можно
-подтвердить цитатой из источника: условие, срок, требование, шаг процесса,
-числовой параметр.
+Выдели 5-9 характеристик, по которым нужно найти сведения. Характеристика — это
+то, что можно подтвердить цитатой из источника: условие, срок, требование, шаг
+процесса, числовой показатель, дата, участник. Подбирай под вопрос: для
+сравнения — то, что сопоставимо между объектами; для рассказа о продукте — его
+условия, тарифы, порядок подключения, ограничения; для цифр рынка — доли,
+объёмы, динамика; для справки — как устроено, кто участники, как менялось.
 
 Отдельно назови ОДНУ характеристику наблюдаемой стороны: то, что видно про
 предмет вопроса со стороны, а не со слов самой организации (с чем сталкиваются
-на практике, какие расхождения с заявленным, на что жалуются). Она обязательна:
-аудит сопоставляет заявленное с наблюдаемым.
+на практике, какие расхождения с заявленным, на что жалуются). Если вопрос —
+справка, цифры рынка или текст нормы и взгляд клиентов ему не нужен, верни
+пустую строку.
 
 Ещё отдельно — ОДНА характеристика нормативной рамки: какие требования
 регулятора или закона действуют на предмет вопроса (что обязаны раскрывать,
@@ -339,6 +349,17 @@ async def plan_attributes(client, model: str, question: str, plan) -> Contract:
     intent = (getattr(plan, "intent_summary", "") or "").strip()
     product = (getattr(plan, "product", "") or "").strip()
     sections = ", ".join(getattr(plan, "output_sections", None) or [])
+    # Кондуктор уже назвал, что собирать, — второй вызов модели не нужен: это
+    # 6–20 секунд ожидания в начале каждого отчёта.
+    ready = [str(t).strip()[:120] for t in (getattr(plan, "topics", None) or []) if str(t).strip()]
+    if len(ready) >= 3:
+        observed = str(getattr(plan, "observed", "") or "").strip()[:120]
+        regulatory = str(getattr(plan, "regulatory", "") or "").strip()[:120]
+        attrs = ready[:8]
+        for extra in (observed, regulatory):
+            if extra and extra not in attrs:
+                attrs.append(extra)
+        return Contract(attrs, observed=observed, regulatory=regulatory)
     user = (f"# Вопрос аудитора\n{question}\n\n"
             f"# Что он хочет узнать\n{intent or '—'}\n\n"
             f"# Предмет\n{product or '—'}\n\n"
@@ -365,9 +386,9 @@ async def plan_attributes(client, model: str, question: str, plan) -> Contract:
         return Contract([product or "условия"], degraded=type(e).__name__)
     attrs = [str(a).strip()[:120] for a in (data.get("attributes") or []) if a]
     attrs = attrs[:8]
-    # Наблюдаемая сторона добавляется ВСЕГДА: без неё отчёт пересказывает
-    # обещания организаций, а расхождение с практикой остаётся непроверенным.
-    # Формулировку даёт модель под конкретный вопрос — списка тем в коде нет.
+    # Наблюдаемая сторона — когда она нужна вопросу: без неё отчёт о продукте
+    # пересказывает обещания организаций. Справке и цифрам рынка она не нужна —
+    # там модель возвращает пустую строку. Формулировку даёт модель.
     observed = str(data.get("observed") or "").strip()[:120]
     if observed and observed not in attrs:
         attrs.append(observed)
@@ -440,9 +461,20 @@ _EXTRACT_SYSTEM = """Ты извлекаешь ПРОВЕРЯЕМЫЕ факты
    рассказывает о них вскользь.
 6. "attribute" — одна из перечисленных характеристик, дословно и по-русски,
    без английских ключей и подчёркиваний.
+7. Только о ПРЕДМЕТЕ ВОПРОСА (он назван ниже). Число или условие про другой
+   продукт, другой рынок или другую тему — не факт для этого отчёта, даже если
+   оно подходит под название характеристики: «объём» страховых резервов не
+   становится «объёмом средств на металлических счетах». Сокращения читай по
+   смыслу страницы (ОМС — и металлический счёт, и медицинское страхование).
+   Страница целиком о другом — верни пустой список: {"facts": []}.
 
 Ответ — строго JSON: {"facts":[{"subject","attribute","value","unit","verbatim"}]}
 "subject" — один из данных слугов объектов или "" если факт общий."""
+
+# Вопрос о рынке, рейтинге, истории: организации заранее не известны.
+_OPEN_SUBJECTS = """
+Список объектов ОТКРЫТ: если факт относится к организации не из списка (банк,
+компания, ведомство), впиши в "subject" её название как на странице."""
 
 
 def _fit_page(text: str) -> str:
@@ -456,13 +488,21 @@ def _fit_page(text: str) -> str:
 
 async def extract_page(client, model: str, *, url: str, text: str,
                        attributes: list[str], subjects: list[str],
-                       labels: dict[str, str]) -> list[dict]:
-    """Одна страница → список сырых фактов (ещё без проверки цитат)."""
+                       labels: dict[str, str], open_list: bool = False,
+                       topic: str = "") -> list[dict]:
+    """Одна страница → список сырых фактов (ещё без проверки цитат).
+
+    topic — предмет вопроса. Без него извлекатель видел только названия
+    характеристик и подгонял под них любое число страницы: на вопрос о доле
+    рынка металлических счетов (ОМС) резервы по страхованию жизни из обзора ЦБ
+    стали «объёмом средств на металлических счетах», и резюме назвало их
+    главным числом рынка (прогон 11.11)."""
     if not (text or "").strip():
         return []
     subj_hint = ", ".join(f"{s} ({labels.get(s, s)})" for s in subjects) or "—"
     user = (f"# Страница\n{url}\n\n"
-            f"# Объекты исследования (слуги)\n{subj_hint}\n\n"
+            + (f"# Предмет вопроса\n{topic}\n\n" if topic else "")
+            + f"# Объекты исследования (слуги)\n{subj_hint}\n\n"
             f"# Характеристики, которые собираем\n"
             + "\n".join(f"- {a}" for a in attributes)
             + f"\n\n# Текст страницы\n{_fit_page(text)}")
@@ -472,7 +512,8 @@ async def extract_page(client, model: str, *, url: str, text: str,
     # а извлечение от этого не страдает — проверено на тех же страницах.
     kwargs: dict = {"model": model, "temperature": 0.0, "max_tokens": 4000,
                     "response_format": {"type": "json_object"},
-                    "messages": [{"role": "system", "content": _EXTRACT_SYSTEM},
+                    "messages": [{"role": "system", "content":
+                                  _EXTRACT_SYSTEM + (_OPEN_SUBJECTS if open_list else "")},
                                  {"role": "user", "content": user}]}
     if os.getenv("GPTR_EXTRACT_THINKING", "0") != "1":
         kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
@@ -603,12 +644,15 @@ async def extract_into(reg: FactRegistry, client, model: str, *,
     labels = dict(getattr(plan, "subject_labels", None) or {})
     domains = {s: _BANK_DOMAINS.get(s, "") for s in subjects}
     sem = asyncio.Semaphore(concurrency)
+    from ..v2.conductor import open_subjects
+    open_list = open_subjects(plan)
+    topic = subject_line(plan)
 
     async def one(url: str, text: str):
         async with sem:
             return url, await extract_page(
                 client, model, url=url, text=text, attributes=attributes,
-                subjects=subjects, labels=labels)
+                subjects=subjects, labels=labels, open_list=open_list, topic=topic)
 
     results = await asyncio.gather(*(one(u, t) for u, t in pages.items()),
                                    return_exceptions=True)
@@ -619,9 +663,12 @@ async def extract_into(reg: FactRegistry, client, model: str, *,
         url, items = res
         for it in items:
             forced = (subject_hints or {}).get(url)
-            subj = forced or str(it.get("subject") or "")
+            subj = forced or str(it.get("subject") or "").strip()
             if subj and subj not in subjects:
-                subj = ""
+                # Открытый список (рынок, рейтинг, история): организация вне
+                # плана остаётся при факте названием. Раньше она обнулялась, и
+                # «доля ВТБ 18 %» превращалась в безымянное «18 %».
+                subj = _free_subject(subj, labels) if open_list else ""
             reg.add(subject=subj,
                     attribute=ru_attribute(it.get("attribute"))[:120],
                     value=str(it.get("value") or "").strip()[:300],
@@ -631,6 +678,26 @@ async def extract_into(reg: FactRegistry, client, model: str, *,
                     stance=stance_for(url, subj, domains))
             added += 1
     return added
+
+
+def subject_line(plan) -> str:
+    """Предмет вопроса одной строкой — для извлекателя фактов."""
+    product = (getattr(plan, "product", "") or "").strip()
+    syn = [str(x).strip() for x in (getattr(plan, "product_synonyms", None) or []) if str(x).strip()]
+    intent = (getattr(plan, "intent_summary", "") or "").strip()
+    head = product + (f" (иначе: {', '.join(syn[:4])})" if product and syn else "")
+    return ". ".join(x for x in (head, intent[:300]) if x)
+
+
+def _free_subject(name: str, labels: dict[str, str]) -> str:
+    """Название организации вне плана: слуг, если это один из объектов под
+    другим написанием, иначе само название (коротко, без мусора)."""
+    clean = re.sub(r"\s+", " ", name).strip(" «»\"'.,;:")[:60]
+    low = clean.lower().replace("ё", "е")
+    for slug, label in labels.items():
+        if low in (slug.lower(), str(label).lower().replace("ё", "е")):
+            return slug
+    return clean if re.search(r"[A-Za-zА-Яа-яЁё]{2,}", clean) else ""
 
 
 async def extract_while_collecting(reg: FactRegistry, client, model: str, *,
@@ -648,7 +715,12 @@ async def extract_while_collecting(reg: FactRegistry, client, model: str, *,
     subjects = list(getattr(plan, "subjects", None) or [])
     own = [d for d in (_BANK_DOMAINS.get(s, "") for s in subjects) if d]
     seen: set[str] = set()
-    if not own:
+    # Вопрос без организаций (цифры рынка, справка): адресных сайтов нет, зато
+    # запросы прицельные — разбираем первоисточники и документы базы знаний по
+    # мере чтения. Раньше такие прогоны ждали конца сбора, и выписка фактов
+    # занимала 77 с из 187 (замер 11.11).
+    regs = tuple(REGULATOR_DOMAINS) if not own else ()
+    if not own and getattr(plan, "task", None) is None:
         return seen
     while running() and len(seen) < cap:
         fresh = {}
@@ -656,7 +728,9 @@ async def extract_while_collecting(reg: FactRegistry, client, model: str, *,
             if url in seen or len(seen) + len(fresh) >= cap:
                 continue
             host = urlparse(url).netloc.lower().removeprefix("www.")
-            if any(host == d or host.endswith("." + d) for d in own):
+            if (any(host == d or host.endswith("." + d) for d in own)
+                    or url in getattr(state, "preloaded", {})
+                    or any(host == d or host.endswith("." + d) for d in regs)):
                 fresh[url] = text
         if fresh:
             seen.update(fresh)

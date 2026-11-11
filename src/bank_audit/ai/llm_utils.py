@@ -225,6 +225,24 @@ def remember_rejected(model: str, err: Exception, kwargs: dict) -> str | None:
     return None
 
 
+def remember_extra_rejected(model: str, err: Exception, extra: dict | None) -> bool:
+    """Отказ БЕЗ имени параметра, а повтор без extra_body прошёл — значит, дело
+    было в нём: запоминаем его ключ за моделью.
+
+    С ноября 2026 шлюз отвечает «400 — Invalid request parameter», не называя
+    параметр. `remember_rejected` такой отказ не распознаёт, и слой фактов
+    платил двумя запросами за каждую страницу и каждую пачку критика (замер
+    11.11: 22 отказа на 26 успешных ответов в одном шаге). Запоминаем только
+    когда в extra_body один ключ: при нескольких виновного не определить.
+    """
+    if not isinstance(extra, dict) or len(extra) != 1:
+        return False
+    if getattr(err, "status_code", None) != 400 and "400" not in str(err)[:40]:
+        return False
+    _DROP_PARAMS.setdefault(model, set()).update(extra)
+    return True
+
+
 async def _resilient_create(orig, model: str, args, kwargs):
     stream = bool(kwargs.get("stream"))
     if model in _NEEDS_RC:

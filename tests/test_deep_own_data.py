@@ -181,7 +181,7 @@ def _fake_writer(monkeypatch, brief=None, delay=0.3):
     """Писатель без сети: раздел отвечает своим ключом, промпты копятся."""
     import asyncio
     prompts = {}
-    monkeypatch.setattr(dossier, "facts_for", lambda key, reg, plan, own=None: [object()])
+    monkeypatch.setattr(dossier, "facts_for", lambda key, reg, plan, own=None, **kw: [object()])
     monkeypatch.setattr(dossier, "render_facts", lambda facts, labels, own=None: "")
     monkeypatch.setattr(dossier.al_brief, "facts_digest", lambda *a, **k: "")
 

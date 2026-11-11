@@ -52,6 +52,10 @@ class OwnData:
     complaints: int = 0
     loopholes: int = 0
     market: int = 0
+    knowledge: int = 0
+    news: int = 0
+    # Что искали в собственных данных и не нашли — строками для «Честных пробелов»
+    notes: list[str] = field(default_factory=list)
 
     def page(self, url: str, title: str, lines: list[str], kind: str) -> str:
         text = "\n".join([title, *lines])
@@ -144,19 +148,64 @@ def normalize_scope(data: dict, question: str, plan) -> dict:
     days = min((7, 30, 90, 180, 365), key=lambda d: abs(d - days))
     category = data.get("category") if data.get("category") in T.CATEGORY_IDS else None
     nature = (getattr(plan, "question_nature", "") or "").lower()
+    task = getattr(plan, "task", None)
 
     def flag(key: str, default: bool) -> bool:
         v = data.get(key)
         return default if v is None else v is not False
 
+    if task is None:
+        # План без типа задачи (старый формат) — прежнее правило.
+        complaints = flag("complaints", True) or nature not in ("regulatory",)
+        loopholes = nature != "regulatory"
+    else:
+        # Жалобы и лазейки — там, где они относятся к вопросу аудитора: сравнение
+        # (владелец 26.09: «куда делись разделы с отзывами», «лазейки также не
+        # попали»), продукт, жалобы, план проверки, разбор новости. В справке,
+        # цифрах рынка и тексте нормы они превращались в общий жалобный фон Сбера
+        # (аудит 11.11: раздел жалоб в 76 % отчётов) — там только по прямой просьбе.
+        asked_c = bool(_ASKED_COMPLAINTS.search(question or ""))
+        asked_l = bool(_ASKED_LOOPHOLES.search(question or ""))
+        audit_task = task in ("compare", "product", "complaints", "check", "news")
+        complaints = asked_c or bool(getattr(plan, "needs_complaints", False)) or audit_task
+        loopholes = asked_l or (audit_task and nature != "regulatory")
     return {"product": product, "themes": themes, "days": days,
-            # Жалобы — почти всегда (владелец 26.09: «куда делись разделы с отзывами
-            # клиентов?» — в сравнениях срез их отключал, и раздел пропадал).
-            "complaints": flag("complaints", True) or nature not in ("regulatory",),
-            # Лазейки — тоже почти всегда (владелец 26.09: «лазейки также не
-            # попали»): в сравнениях срез их отключал, и раздел пропадал.
-            "loopholes": nature != "regulatory",
+            "complaints": complaints, "loopholes": loopholes,
+            # список банков по числу жалоб — когда вопрос о жалобах или сравнении;
+            # в рассказе о продукте Сбера конкурентов аудитор не просил
+            "rivals": task in (None, "compare", "complaints"),
             "category": category, "market": flag("market", False) and bool(category)}
+
+
+_ASKED_COMPLAINTS = re.compile(r"жалоб|отзыв|претензи|обращени|недовольн|клиентск\w+ (опыт|бол)", re.I)
+_ASKED_LOOPHOLES = re.compile(r"лазейк|уязвим|мошенн|схем\w* (обход|мошен)|злоупотребл|фрод", re.I)
+# Слова, которые есть почти в любой жалобе на банк и предмета вопроса не различают.
+_COMMON_WORDS = {"банк", "банка", "банке", "сбер", "сбербанк", "сбербанка", "сбербанке", "карта",
+                 "карты", "счёт", "счет", "счета", "кредит", "кредита", "сервис", "сервиса", "услуга",
+                 "услуги", "продукт", "продукта", "клиент", "клиента", "клиентов", "клиенты", "жалобы",
+                 "жалоб", "отзывы", "отзывов", "проблемы", "проблем", "условия", "условий", "тарифы",
+                 "тарифов", "физлиц", "физических", "юрлиц", "россии", "рынок", "рынка", "данные",
+                 "информация", "информацию", "анализ", "сравнение", "онлайн", "через", "для"}
+
+
+def subject_stems(plan, question: str) -> list[str]:
+    """Основы слов, по которым жалоба опознаётся как «про предмет вопроса»."""
+    src = " ".join([getattr(plan, "product", "") or "",
+                    " ".join(getattr(plan, "product_synonyms", None) or [])])
+    if not src.strip():
+        src = question or ""
+    words = [w for w in re.findall(r"[a-zа-яё]{4,}", src.lower()) if w not in _COMMON_WORDS]
+    return list(dict.fromkeys(w[:6] if len(w) > 6 else w[:max(4, len(w) - 1)] for w in words))[:12]
+
+
+def bank_level(plan, scope: dict, question: str) -> bool:
+    """Вопрос про жалобы на банк в целом («сколько жалоб на Сбер»), а не про
+    продукт: только тогда уместна сводка по всему банку."""
+    if getattr(plan, "task", None) is None:
+        return True                      # старый формат плана — как раньше
+    if scope.get("product") or scope.get("themes"):
+        return False
+    return getattr(plan, "task", "") == "complaints" and not subject_stems(plan, "")
 
 
 # ── жалобы ───────────────────────────────────────────────────────────────────
@@ -264,7 +313,7 @@ def _complaints_for_bank(od: OwnData, slug: str, bank: str, scope: dict, anchor:
         if tr:
             rows.append(line("Жалобы: по месяцам", tr[0], tr[1]))
         banks = [b for b in ov.get("banks_by_complaints") or [] if b.get("n")]
-        if len(banks) > 1:
+        if len(banks) > 1 and scope.get("rivals", True):
             rows.append(line("Жалобы: банки по числу жалоб", _n(len(banks)),
                              f"Банки по числу жалоб за {base_days} дней"
                              + (f" (продукт «{product}»)" if product else "") + ": "
@@ -421,21 +470,73 @@ def collect_complaints(od: OwnData, plan, scope: dict, question: str) -> None:
         sig = _j("complaint_signals", bank=_bank_name(anchor, labels), product=scope["product"])
         signal_themes = [s["theme"] for s in (sig.get("signals") or [])[:2]
                          if not scope["themes"] or s["theme"] in scope["themes"]]
+    # Сводка по продукту или теме — когда срез их опознал; сводка по всему банку —
+    # только на вопрос о банке в целом. Иначе отчёт о сервисе, которого нет в
+    # справочнике продуктов жалоб, получал общий жалобный фон Сбера: 2 485 жалоб
+    # за 90 дней, блокировки, справки (аудит 11.11, «Своё дело», драгметаллы).
+    overview = bool(scope["product"] or scope["themes"]) or bank_level(plan, scope, question)
+    stems = subject_stems(plan, question)
     for slug in subjects:
         bank = _bank_name(slug, labels)
-        try:
-            done = _complaints_for_bank(od, slug, bank, scope, slug == anchor, signal_themes)
-        except Exception as e:  # noqa: BLE001 — банк без корпуса не должен ронять сбор
-            log.info("жалобы %s: %s", bank, type(e).__name__)
-            continue
+        done: list[str] = []
+        if overview:
+            try:
+                done = _complaints_for_bank(od, slug, bank, scope, slug == anchor, signal_themes)
+            except Exception as e:  # noqa: BLE001 — банк без корпуса не должен ронять сбор
+                log.info("жалобы %s: %s", bank, type(e).__name__)
+                continue
         # Жалобы-цитаты по предмету — конкурентам и точке отсчёта, если темы не
         # разобраны (для темы они уже пришли выборкой сигнала или лентой).
         if slug != anchor or not done:
-            query = (getattr(plan, "product", "") or question)[:120]
-            res = _j("complaint_search", query=query, bank=bank, product=scope["product"],
-                     days=max(scope["days"], 90),
-                     limit=_COMPLAINTS_PER_BANK if slug == anchor else 8)
-            _complaint_quotes(od, slug, bank, res.get("complaints") or [], None)
+            try:
+                _on_topic(od, slug, bank, plan, scope, question, stems, overview,
+                          _COMPLAINTS_PER_BANK if slug == anchor else 8)
+            except Exception as e:  # noqa: BLE001
+                log.info("жалобы по предмету %s: %s", bank, type(e).__name__)
+
+
+def _on_topic(od: OwnData, slug: str, bank: str, plan, scope: dict, question: str,
+              stems: list[str], overview: bool, limit: int) -> None:
+    """Жалобы именно по предмету вопроса: поиск по корпусу и отсев тех, где
+    предмет не назван. Без сводки (overview=False) число найденных — отдельный
+    факт; ничего не нашлось — строка в «Честные пробелы», а не раздел."""
+    days = max(scope["days"], 90)
+    asks = [(getattr(plan, "product", "") or question)[:120]]
+    asks += [str(x)[:80] for x in (getattr(plan, "product_synonyms", None) or [])[:2]]
+    items, seen, total, link = [], set(), 0, ""
+    for ask in dict.fromkeys(a for a in asks if a.strip()):
+        res = _j("complaint_search", query=ask, bank=bank, product=scope["product"],
+                 days=days, limit=limit)
+        link = link or res.get("link") or ""
+        total = max(total, int(res.get("by_words") or 0))
+        for it in res.get("complaints") or []:
+            if it.get("url") and it["url"] not in seen:
+                seen.add(it["url"])
+                items.append(it)
+    if overview or getattr(plan, "task", None) is None:
+        picked = items                      # срез уже сузил выборку — отсев не нужен
+    else:
+        def about(it: dict) -> bool:
+            low = " ".join(str(it.get(k) or "") for k in ("text", "summary", "quote", "product")
+                           ).lower().replace("ё", "е")
+            return any(st.replace("ё", "е") in low for st in stems)
+        picked = [it for it in items if about(it)] if stems else []
+    subject = (getattr(plan, "product", "") or "").strip() or "предмету вопроса"
+    if not picked:
+        if not overview:
+            od.notes.append(f"{bank}: жалоб по теме «{subject}» за {days} дней в данных "
+                            f"раздела «Аудит отзывов» не найдено.")
+        return
+    if not overview:
+        n = max(total, len(picked)) if total and total <= 5 * len(picked) else len(picked)
+        url = link or T.link_reviews(bank, scope["product"], days=days)
+        txt = (f"Жалоб на {bank} по теме «{subject}» за {days} дней в разделе «Аудит отзывов» "
+               f"найдено: {_n(n)}. Это жалобы, где предмет назван в тексте; сводка по банку "
+               f"в целом к вопросу не относится и в отчёт не включена.")
+        od.page(url, f"AuditLens · Отзывы: {bank} — жалобы по теме «{subject}»", [txt], "complaints")
+        od.fact(subject=slug, attribute="Жалобы: по предмету вопроса", value=_n(n),
+                verbatim=txt, url=url)
+    _complaint_quotes(od, slug, bank, picked[:limit], None)
 
 
 # ── лазейки ──────────────────────────────────────────────────────────────────
@@ -637,6 +738,162 @@ def collect_market(od: OwnData, plan, scope: dict) -> None:
             od.market += 1
 
 
+# ── база знаний ──────────────────────────────────────────────────────────────
+# Аудит 11.11: в базе знаний 14 387 документов 24 банков, быстрый режим ищет в
+# ней в 56 % ответов, а отчёт не обращался ни разу и заново ходил на сайты,
+# закрытые защитой от ботов. Документы отдаются отчёту как прочитанные страницы:
+# факты из них выписывает тот же слой, цитаты сверяются так же.
+
+KNOWLEDGE = "knowledge"
+_KB_DOCS = int(os.getenv("GPTR_KB_DOCS", "8"))             # документов на точку отсчёта
+_KB_DOCS_OTHER = int(os.getenv("GPTR_KB_DOCS_OTHER", "3"))  # на каждого конкурента
+_KB_CHARS = int(os.getenv("GPTR_KB_CHARS", "12000"))        # знаков одного документа
+_KB_MAX_AGE = int(os.getenv("GPTR_KB_MAX_AGE_DAYS", "120"))
+
+
+def _kb_text(document_id: int, hit_idx: list[int], words: set[str], budget: int) -> str:
+    """Текст документа под вопрос: найденные поиском фрагменты и соседние, плюс
+    фрагменты со словами вопроса, в порядке документа. Короткий — целиком."""
+    rows = T._q("SELECT dc.idx, dc.text FROM document_chunk dc WHERE dc.document_id = :i "
+                "AND NOT EXISTS (SELECT 1 FROM document_chunk_excluded x "
+                "WHERE x.chunk_id = dc.chunk_id) ORDER BY dc.idx", {"i": int(document_id)})
+    chunks = {r["idx"]: (r["text"] or "") for r in rows}
+    if not chunks:
+        return ""
+    if sum(len(t) for t in chunks.values()) <= budget:
+        return "\n\n".join(chunks[i] for i in sorted(chunks))
+    want: list[int] = []
+    for i in hit_idx:
+        want += [i, i + 1]
+    scored = sorted(((sum(1 for w in words if w in t.lower()), i) for i, t in chunks.items()),
+                    key=lambda x: (-x[0], x[1]))
+    want += [i for sc, i in scored if sc > 0]
+    picked, left = [], budget
+    for i in dict.fromkeys(want):
+        t = chunks.get(i)
+        if not t or left <= 0:
+            continue
+        picked.append(i)
+        left -= len(t)
+    out, prev = [], None
+    for i in sorted(picked):
+        if prev is not None and i != prev + 1:
+            out.append("[…]")
+        out.append(chunks[i])
+        prev = i
+    return "\n\n".join(out)[:budget + 200]
+
+
+def collect_knowledge(od: OwnData, plan, question: str, state=None) -> None:
+    """Документы базы знаний по предмету вопроса — в страницы прогона."""
+    from ...rag.retriever import hybrid_search
+    state = state or runstate.current()
+    subjects = [s for s in (getattr(plan, "subjects", None) or []) if s][:_MAX_BANKS]
+    from .dossier import anchor_of
+    anchor = anchor_of(plan) or (subjects[0] if subjects else "")
+    topic = (getattr(plan, "product", "") or "").strip() or (question or "")[:200]
+    extra = " ".join((getattr(plan, "topics", None) or [])[:4])
+    query = f"{topic} {extra}".strip()[:300]
+    words = {w for w in re.findall(r"[a-zа-яё]{5,}", query.lower()) if w not in _COMMON_WORDS}
+    stems = [st.replace("ё", "е") for st in subject_stems(plan, question)]
+    targets: list[tuple[str | None, int]] = [(s, _KB_DOCS if s == anchor else _KB_DOCS_OTHER)
+                                             for s in subjects] or [(None, _KB_DOCS)]
+    for slug, n in targets:
+        try:
+            res = hybrid_search(query, limit=n, per_doc=4, bank_slugs=[slug] if slug else None,
+                                max_age_days=_KB_MAX_AGE)
+        except Exception as e:  # noqa: BLE001 — без базы знаний отчёт идёт на сайты
+            log.info("база знаний %s: %s", slug or "все", type(e).__name__)
+            continue
+        for g in (res.get("groups") or [])[:n]:
+            url = (g.get("url") or "").strip()
+            if not url or url in state.preloaded:
+                continue
+            text_ = _kb_text(g["document_id"], [h.get("idx") for h in g.get("hits") or []
+                                                 if h.get("idx") is not None], words, _KB_CHARS)
+            if len(text_) < 400:
+                continue
+            # Документ обязан говорить о предмете вопроса. Без банка в запросе поиск
+            # приносил близкое «по буквам»: на «ОМС» — обзор ЦБ о страховании.
+            low = text_.lower().replace("ё", "е")
+            hit = sum(1 for w in stems if w in low)
+            if stems and hit < (1 if slug else min(2, len(stems))):
+                continue
+            title = (g.get("title") or "").strip()
+            page = (f"# {title}\n\n" if title else "") + text_
+            state.preloaded[url] = page
+            state.kb_meta[url] = {"doc": g["document_id"], "title": title,
+                                  "loaded": str(g.get("fetched_at") or "")[:10],
+                                  "link": T.link_doc(g["document_id"]), "subject": slug or ""}
+            state.note_page(url, page)
+            od.knowledge += 1
+
+
+# ── ссылки из вопроса ────────────────────────────────────────────────────────
+_URL_RX = re.compile(r"https?://[^\s)»\"'<>\]]+")
+
+
+def collect_named_urls(od: OwnData, question: str, state=None) -> None:
+    """Страницы, на которые аудитор сам дал ссылку («разбери новость: …»),
+    читаются первыми и разбираются вне очереди. Не открылась (платный доступ,
+    защита от ботов) — берём текст той же новости из ленты AuditLens."""
+    state = state or runstate.current()
+    for url in dict.fromkeys(u.rstrip(".,;:!?") for u in _URL_RX.findall(question or "")):
+        if len(state.preloaded) >= 12 or url in state.preloaded:
+            continue
+        text_ = ""
+        try:
+            from .scraper import AuditLensScraper
+            text_ = AuditLensScraper(url, state=state).scrape()[0] or ""
+        except Exception as e:  # noqa: BLE001 — ссылка могла не открыться
+            log.info("ссылка из вопроса %s: %s", url[:70], type(e).__name__)
+        if len(text_) < 400 or url in state.unreadable:
+            res = _j("news_find", url=url)
+            row = next(iter(res.get("news") or []), None)
+            if row and len((row.get("text") or "")) >= 200:
+                text_ = "\n\n".join(x for x in (f"# {row.get('title') or ''}".strip(),
+                                                 row.get("text") or "") if x)
+                when = str(row.get("ts") or "")[:10]
+                if when:
+                    state.page_dates.setdefault(url, when)
+            else:
+                od.notes.append(f"Ссылку из вопроса прочитать не удалось: {url}.")
+                continue
+        state.preloaded[url] = text_
+        state.note_page(url, text_)
+
+
+# ── новости ──────────────────────────────────────────────────────────────────
+
+NEWS = "news"
+_NEWS_MAX = int(os.getenv("GPTR_OWN_NEWS", "6"))
+
+
+def collect_news(od: OwnData, plan, question: str) -> None:
+    """Новости AuditLens по предмету вопроса за 60 дней: заголовок и суть с датой.
+    Берутся только те, где предмет назван — близкие «по смыслу» отсеиваются."""
+    topic = (getattr(plan, "product", "") or "").strip() or (question or "")[:200]
+    res = _j("news_find", query=topic[:200], days=60)
+    stems = subject_stems(plan, question)
+    for r in (res.get("news") or []):
+        url, title = (r.get("url") or "").strip(), (r.get("title") or "").strip()
+        body = (r.get("text") or "").strip()
+        if not url or len(title) < 12 or url in od.pages:
+            continue
+        low = f"{title} {body}".lower().replace("ё", "е")
+        if stems and not any(st.replace("ё", "е") in low for st in stems):
+            continue
+        when = str(r.get("ts") or "")[:10]
+        lines = [x for x in (body, f"Суть: {r['summary']}" if r.get("summary") else "",
+                             f"Источник: {r.get('source') or '—'}; дата: {_dm(when)}.") if x]
+        od.page(url, title, lines, NEWS)
+        od.fact(subject="", attribute="Новость", value=(r.get("summary") or title)[:300],
+                verbatim=title, url=url, date=when)
+        od.news += 1
+        if od.news >= _NEWS_MAX:
+            break
+
+
 # ── вход ─────────────────────────────────────────────────────────────────────
 
 async def collect(client, model: str, question: str, plan, state=None) -> OwnData:
@@ -651,9 +908,13 @@ async def collect(client, model: str, question: str, plan, state=None) -> OwnDat
 
     def work():
         runstate.bind(state)
-        for need, fn, args in ((scope["complaints"], collect_complaints, (od, plan, scope, question)),
+        has_task = getattr(plan, "task", None) is not None
+        for need, fn, args in ((has_task, collect_named_urls, (od, question, state)),
+                               (has_task, collect_knowledge, (od, plan, question, state)),
+                               (scope["complaints"], collect_complaints, (od, plan, scope, question)),
                                (scope["loopholes"], collect_loopholes, (od, plan, question)),
-                               (scope["market"], collect_market, (od, plan, scope))):
+                               (scope["market"], collect_market, (od, plan, scope)),
+                               (has_task, collect_news, (od, plan, question))):
             if not need:
                 continue
             try:
@@ -664,6 +925,6 @@ async def collect(client, model: str, question: str, plan, state=None) -> OwnDat
     state.own_meta.update(od.meta)
     state.own_scope = dict(scope)
     log.info("собственные данные: срез %s; страниц %d, фактов %d (жалоб %d, лазеек %d, "
-             "рынок %d)", scope, len(od.pages), len(od.facts), od.complaints, od.loopholes,
-             od.market)
+             "рынок %d, база знаний %d, новости %d)", scope, len(od.pages), len(od.facts),
+             od.complaints, od.loopholes, od.market, od.knowledge, od.news)
     return od
