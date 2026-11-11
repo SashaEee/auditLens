@@ -27,6 +27,7 @@ Banksta (~100 постов в сутки) и Frank Media (~40) в пул поп�
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import os
@@ -163,6 +164,154 @@ def _fetch_tg(src: dict, since: datetime, last_post: int | None) -> tuple[list[d
     return posts, (max(out) if out else last_post)
 
 
+# ── Страницы со списком публикаций (исследования) ────────────────────────────
+# У сайтов исследований лент нет: следим за страницей, где публикации перечислены
+# ссылками. Новым считается то, чего ещё нет в news_item. Всё, что лежало на
+# странице при первом проходе, запоминается «старым» — иначе в день подключения
+# в поток ушла бы сотня докладов прошлых лет как свежие новости.
+PAGE_OLD_DAYS = 60       # на сколько дней назад относим то, что было на сайте до нас
+PAGE_NEW_MAX = 8         # больше новых ссылок без даты за проход — это смена адресов
+_A_RE = re.compile(r'<a\b[^>]*?href="([^"#][^"]*)"[^>]*>(.*?)</a>', re.S | re.I)
+_RU_MONTHS = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа",
+              "сентября", "октября", "ноября", "декабря")
+_D_NUM = re.compile(r"(?<!\d)(\d{1,2})\.(\d{2})\.(20\d\d)(?!\d)")
+_D_RU = re.compile(r"(?<!\d)(\d{1,2})\s+(" + "|".join(_RU_MONTHS) + r")\s+(20\d\d)", re.I)
+_D_URL = re.compile(r"(?<!\d)(20\d\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?!\d)")
+
+
+def _dates_in(text_: str) -> list[date]:
+    """Даты в тексте по порядку появления: «23.09.2026» и «23 сентября 2026»."""
+    hits = []
+    for m in _D_NUM.finditer(text_ or ""):
+        hits.append((m.start(), int(m.group(3)), int(m.group(2)), int(m.group(1))))
+    for m in _D_RU.finditer(text_ or ""):
+        hits.append((m.start(), int(m.group(3)), _RU_MONTHS.index(m.group(2).lower()) + 1,
+                     int(m.group(1))))
+    out = []
+    for _pos, y, mo, d in sorted(hits):
+        try:
+            out.append(date(y, mo, d))
+        except ValueError:
+            continue
+    return out
+
+
+def parse_listing(page: str, page_url: str, src: dict) -> list[dict]:
+    """Публикации на странице-списке: ссылки, чей путь подходит под src["link"].
+    Дата — из адреса (…_20260821_…), иначе из текста рядом со ссылкой с той
+    стороны, которую назвал источник (src["date"]: before | after). Без этого
+    указания соседний текст не читаем: дата следующей карточки стоит так же
+    близко, как своя."""
+    from urllib.parse import urljoin, urlparse
+    host = urlparse(page_url).netloc.removeprefix("www.")
+    link = re.compile(src["link"])
+    hits = []
+    for m in _A_RE.finditer(page or ""):
+        url = urljoin(page_url, html.unescape(m.group(1)).strip())
+        pu = urlparse(url)
+        if pu.netloc.removeprefix("www.") != host or not link.search(pu.path):
+            continue
+        hits.append((m, url, pu.path))
+    out, seen = [], set()
+    for k, (m, url, path) in enumerate(hits):
+        title = clean_line(nm._strip_html(m.group(2)))
+        if url in seen or letters(title) < 12:
+            continue
+        seen.add(url)
+        d = None
+        um = _D_URL.search(path)
+        if um:
+            try:
+                d = date(int(um.group(1)), int(um.group(2)), int(um.group(3)))
+            except ValueError:
+                d = None
+        side = src.get("date")
+        if d is None and side == "before":
+            lo = max(hits[k - 1][0].end() if k else 0, m.start() - 900)
+            ds = _dates_in(nm._strip_html(page[lo:m.start()]))
+            d = ds[-1] if ds else None
+        elif d is None and side == "after":
+            hi = min(hits[k + 1][0].start() if k + 1 < len(hits) else len(page), m.end() + 900)
+            ds = _dates_in(nm._strip_html(page[m.end():hi]))
+            d = ds[0] if ds else None
+        # пояснение под заголовком — до следующей публикации; оборванный на
+        # середине тег отбрасываем, а где дата замыкает карточку — режем по дате
+        hi = min(next((h[0].start() for h in hits[k + 1:] if h[1] != url), len(page)), m.end() + 1200)
+        note = nm._strip_html(re.sub(r"<[^>]*$", "", page[m.end():hi]))
+        if side == "after":
+            dm = min((x.start() for x in (_D_NUM.search(note), _D_RU.search(note)) if x), default=None)
+            note = note[:dm] if dm is not None else ""
+        note = clean_line(note)[:320]
+        if letters(note) < 40 or note[:40].lower() == title[:40].lower():
+            note = ""
+        out.append({"url": url, "title": title[:300], "date": d, "note": note})
+    return out
+
+
+def page_rows(src: dict, found: list[dict], known: set[str], boot: bool,
+              now: datetime | None = None) -> list[dict]:
+    """Строки для записи: только то, чего ещё нет. Время публикации: дата со
+    страницы (сегодняшняя — время находки); без даты — время находки, а при
+    первом проходе и при подозрении на смену адресов — «давно»."""
+    now = now or datetime.now(timezone.utc)
+    today = now.astimezone(MSK).date()
+    fresh = [f for f in found if nm._url_hash(f["url"]) not in known]
+    old_mode = boot or sum(1 for f in fresh if not f["date"]) > PAGE_NEW_MAX
+    if old_mode and not boot and fresh:
+        log.warning("newsflow.page: %s — %d новых ссылок без даты за проход, считаю старыми "
+                    "(похоже на смену адресов)", src["key"], len(fresh))
+    base = now - timedelta(days=PAGE_OLD_DAYS)
+    rows = []
+    for i, f in enumerate(fresh):
+        d = f["date"]
+        if d:
+            ts = now if d >= today else datetime(d.year, d.month, d.day, 12, tzinfo=MSK)
+        else:
+            ts = base - timedelta(minutes=i) if old_mode else now
+        rows.append(_row(src, f["url"], ts, f["title"], f.get("note") or f["title"]))
+    return rows
+
+
+def _page_known(hashes: list[str]) -> set[str]:
+    """Какие из найденных ссылок уже записаны."""
+    if not hashes:
+        return set()
+    with db.session() as s:
+        return {r[0] for r in s.execute(
+            text("SELECT url_hash FROM news_item WHERE url_hash = ANY(:h)"), {"h": hashes}).all()}
+
+
+def _fetch_page(src: dict) -> tuple[list[dict], str | None]:
+    """Публикации со страниц источника и ошибка, если какая-то страница не
+    прочиталась или ссылок на ней не нашлось (вёрстка изменилась).
+
+    «Первый проход» определяется по каждой странице отдельно: ни одна её ссылка
+    ещё не записана. Так страница, не открывшаяся в день подключения, при
+    первом удачном чтении тоже запомнится как старое, а не уйдёт в поток."""
+    pages, errs = [], []
+    for pu in src.get("pages") or [src["url"]]:
+        try:
+            r = nm._get(pu)
+            if r.status_code != 200:
+                raise RuntimeError(f"http {r.status_code}")
+            got = parse_listing(r.text, pu, src)
+            if not got:
+                raise RuntimeError("публикаций на странице не найдено")
+            pages.append(got)
+        except Exception as e:  # noqa: BLE001 — одна страница, не источник целиком
+            errs.append(f"{pu.rsplit('/', 2)[-2] or pu}: {type(e).__name__}: {str(e)[:80]}")
+    if not pages:
+        return [], "; ".join(errs)[:200] or "публикаций не найдено"
+    known = _page_known([nm._url_hash(f["url"]) for got in pages for f in got])
+    rows, now = [], datetime.now(timezone.utc)
+    for got in pages:
+        boot = not any(nm._url_hash(f["url"]) in known for f in got)
+        rows += page_rows(src, got, known, boot, now)
+    # одна публикация может стоять на двух страницах источника
+    uniq = {r["h"]: r for r in reversed(rows)}
+    return list(reversed(uniq.values())), ("; ".join(errs)[:200] or None)
+
+
 def _row(src: dict, url: str, ts, title: str, body: str, image=None, parent=None) -> dict:
     return {"h": nm._url_hash(url), "u": url[:800], "pu": parent, "s": src["key"],
             "tag": src.get("tag"), "cls": src.get("cls", "bank"), "dim": src.get("dimension"),
@@ -212,6 +361,8 @@ def collect() -> dict:
                         continue
                     rows.append(_row(src, p["url"], p["ts"], clean_title(p["body"]),
                                      p["body"], p.get("image")))
+            elif src["kind"] == "page":
+                rows, err = _fetch_page(src)
             else:
                 r = nm._get(src["url"])
                 if r.status_code != 200:
@@ -1083,6 +1234,67 @@ def mark_published(event_ids: list[int]) -> None:
     with db.session() as s:
         s.execute(text("""UPDATE news_item SET published_on = (now() AT TIME ZONE 'Europe/Moscow')::date
                           WHERE event_id = ANY(:e) AND published_on IS NULL"""), {"e": event_ids})
+
+
+# ── Полка «Исследования и обзоры» ────────────────────────────────────────────
+# Исследование — не новость дня: в выпуск оно попадает, только если сильная
+# модель увидела в нём повод для проверки. Чтобы новые источники из списка
+# руководства были видны и без этого, свежие публикации по теме финансов
+# показываются отдельной полкой под карточками выпуска.
+SHELF_MIN_REL = int(os.getenv("NEWSFLOW_SHELF_MIN_REL", "4"))
+SHELF_PER_SOURCE = int(os.getenv("NEWSFLOW_SHELF_PER_SOURCE", "3"))
+SHELF_NEW_DAYS = 7
+
+
+def research_shelf(limit: int = 8) -> list[dict]:
+    """Последние публикации источников-исследований: не больше SHELF_PER_SOURCE
+    от одного источника, без материалов не по теме (оценка ступени 1 ниже
+    SHELF_MIN_REL). Неоценённое (только что собрано) показываем."""
+    keys = list(nm.RESEARCH_KEYS)
+    if not keys:
+        return []
+    with db.session() as s:
+        # по SHELF_PER_SOURCE самых свежих от каждого источника — иначе сотня
+        # докладов одного сайта вытеснила бы остальные из выборки
+        rows = s.execute(text("""
+            SELECT id, source, url, title, ts, first_seen, rel, value, summary, body FROM (
+                SELECT id, source, url, title, ts, first_seen, rel, value,
+                       s2->>'summary' AS summary, left(body, 400) AS body,
+                       row_number() OVER (PARTITION BY source ORDER BY ts DESC NULLS LAST, id DESC) AS rn
+                FROM news_item
+                WHERE source = ANY(:k) AND (rel IS NULL OR rel >= :m)) q
+            WHERE rn <= :p
+            ORDER BY ts DESC NULLS LAST, id DESC
+        """), {"k": keys, "m": SHELF_MIN_REL, "p": SHELF_PER_SOURCE}).mappings().all()
+    return shelf_pick([dict(r) for r in rows], limit)
+
+
+def shelf_pick(rows: list[dict], limit: int = 8, now: datetime | None = None) -> list[dict]:
+    """Строки полки из записей, уже упорядоченных от новых к старым."""
+    now = now or datetime.now(timezone.utc)
+    per: dict[str, int] = {}
+    out = []
+    for r in rows:
+        if per.get(r["source"], 0) >= SHELF_PER_SOURCE:
+            continue
+        per[r["source"]] = per.get(r["source"], 0) + 1
+        ts, seen = r["ts"], r["first_seen"]
+        # дата известна, если она взята со страницы (полдень по Москве) или
+        # публикацию нашли сразу; у лежавшего на сайте до нас даты нет
+        dated = bool(ts) and ((ts.astimezone(MSK).strftime("%H:%M:%S") == "12:00:00")
+                              or (seen is not None and abs((seen - ts).total_seconds()) < 36 * 3600))
+        note = (r["summary"] or "").strip()
+        if not note:
+            b = clean_line(r["body"] or "")
+            note = b if b and b[:40].lower() != (r["title"] or "")[:40].lower() else ""
+        out.append({"id": r["id"], "source": r["source"], "url": r["url"], "title": r["title"],
+                    "date": ts.astimezone(MSK).date().isoformat() if dated else None,
+                    "new": bool(dated and (now - ts).days < SHELF_NEW_DAYS),
+                    "note": note[:300], "value": r["value"],
+                    "pdf": (r["url"] or "").lower().split("?")[0].endswith(".pdf")})
+        if len(out) >= limit:
+            break
+    return out
 
 
 def health() -> dict:

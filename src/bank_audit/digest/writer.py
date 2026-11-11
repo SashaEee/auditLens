@@ -202,6 +202,49 @@ def _reach_of(url: str | None, bodies: dict[str, str] | None) -> str:
     return "ok" if bodies[u] else "unreachable"
 
 
+# Документы ЦБ (указания, положения, информационные письма, «Вестник») и многие
+# исследования лежат файлами PDF. Разбор как HTML клал в текст новости сырые
+# байты файла («<>/Filter/FlateDecode/ID[…»): сильная модель видела кашу и
+# ставила нормативным актам 0–3 — за две недели так пропало 17 документов ЦБ
+# (замер 11.11.2026). Теперь PDF читается как PDF, а иной двоичный файл (архив,
+# таблица) текста не даёт — оценка идёт по заголовку.
+_PDF_PAGES = int(os.getenv("DIGEST_NEWS_PDF_PAGES", "12"))
+
+
+def _is_pdf(content: bytes, content_type: str | None = None) -> bool:
+    return content[:5] == b"%PDF-" or "application/pdf" in (content_type or "").lower()
+
+
+def _is_binary(content: bytes) -> bool:
+    """Не текст: архивы и офисные файлы (PK), либо нулевые байты в начале."""
+    head = content[:2048]
+    return head[:2] == b"PK" or b"\x00" in head
+
+
+def _pdf_text(content: bytes, cap: int) -> str:
+    """Текст первых страниц PDF, пока не наберётся cap знаков. Скан без
+    текстового слоя даёт пустую строку — это честнее мусора."""
+    import io
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(content))
+        parts, n = [], 0
+        for page in reader.pages[:_PDF_PAGES]:
+            t = " ".join((page.extract_text() or "").split())
+            if t:
+                parts.append(t)
+                n += len(t)
+            if n >= cap:
+                break
+        txt = " ".join(parts)
+        # доля букв: текстовый слой из одних псевдографических символов — не текст
+        if txt and sum(ch.isalpha() for ch in txt[:2000]) < 0.4 * len(txt[:2000]):
+            return ""
+        return txt[:cap]
+    except Exception:  # noqa: BLE001 — битый или защищённый файл
+        return ""
+
+
 def _news_bodies(urls: list[str], max_chars: int | None = None,
                  max_n: int | None = None) -> dict[str, str]:
     """Полные тексты статей финалистов: HTTP-only (без Playwright — дайджест не
@@ -221,6 +264,10 @@ def _news_bodies(urls: list[str], max_chars: int | None = None,
                               timeout=_FETCH_TIMEOUT_S) as c:
                 r = c.get(url)
             if r.status_code != 200 or not r.content:
+                return url, ""
+            if _is_pdf(r.content, r.headers.get("content-type")):
+                return url, _pdf_text(r.content, cap)
+            if _is_binary(r.content):
                 return url, ""
             doc = parse_html(r.content, url)
             txt = " ".join((doc.text or "").split())

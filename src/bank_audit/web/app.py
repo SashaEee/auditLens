@@ -1407,6 +1407,25 @@ def overview_digest_dates():
     return {"dates": digest_store.list_dates()}
 
 
+@app.get("/api/overview/research")
+def overview_research(limit: int = Query(8, ge=1, le=20)):
+    """Полка «Исследования и обзоры»: свежие публикации источников-исследований
+    (Банк России, Ассоциация банков России, «Эксперт РА», ВШЭ, BusinesStat)."""
+    from ..digest import newsflow as nf
+    from ..digest.news import SOURCES
+    from .sources_catalog import news_source_label
+    try:
+        items = nf.research_shelf(limit)
+    except Exception:  # noqa: BLE001 — полка не должна ронять страницу
+        log.warning("overview: полка исследований не собрана", exc_info=True)
+        items = []
+    for it in items:
+        it["source_label"] = news_source_label(it["source"])
+    return {"items": items,
+            "sources": [{"key": s["key"], "label": news_source_label(s["key"]), "url": s["url"]}
+                        for s in SOURCES if s.get("tag") == "research"]}
+
+
 class DigestRefreshRequest(BaseModel):
     force: bool = True
     sections: Optional[list[str]] = None

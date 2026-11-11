@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 9b191585512385d046ecb76ee85f29de508acf7b7849ffa3993e05eea6eb9605): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 4ae07dce99c129374c4ea24307a6d290f4fecd295069dcc68e0c5f5c33786bdc): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -3513,7 +3513,23 @@ const FY_SRC = {
   tg_frankmedia: "Frank Media",
   tg_kommersant: "Коммерсантъ",
   tg_rbc: "РБК",
-  web_search: "веб-поиск"
+  web_search: "веб-поиск",
+  tg_truba: "Труба под Неглинной",
+  tg_ipoteka: "Ипотека и недвижимость",
+  tg_fm_invest: "Frank Media Invest",
+  tg_dengi_efir: "Деньги в эфире",
+  tg_bitkogan: "bitkogan",
+  tg_kot_finance: "Кот.Финанс",
+  tg_rapsi: "РАПСИ",
+  tg_ej: "Ёж",
+  tg_expoforum: "Экспофорум",
+  tg_schema: "Схема",
+  tg_finpodbor: "ФинПодбор",
+  cbr_research: "ЦБ · исследования",
+  asros_research: "Ассоциация банков России",
+  raexpert_research: "Эксперт РА",
+  hse_bankslab: "ВШЭ · банковская лаборатория",
+  businesstat: "BusinesStat"
 };
 const fySrcName = t => FY_SRC[t.source] || t.domain || "источник";
 const fyHash = s => {
@@ -5696,6 +5712,81 @@ function SinceStrip() {
     onClick: sendWhy
   }, "\u041E\u0442\u043F\u0440\u0430\u0432\u0438\u0442\u044C"))))));
 }
+
+// «Исследования и обзоры»: свежие публикации источников-исследований (Банк России,
+// Ассоциация банков России, «Эксперт РА», ВШЭ, BusinesStat). Исследование — не
+// новость дня: в выпуск оно попадает, только если в нём есть повод для проверки,
+// поэтому новое по теме финансов показываем отдельной полкой под карточками.
+const ovrDay = v => {
+  try {
+    const d = new Date(v + "T12:00:00+03:00");
+    return d.toLocaleDateString("ru", {
+      day: "numeric",
+      month: "long",
+      ...(d.getFullYear() !== new Date().getFullYear() ? {
+        year: "numeric"
+      } : {})
+    });
+  } catch {
+    return "";
+  }
+};
+function OvResearch({
+  data
+}) {
+  const items = data && data.items || [];
+  if (!items.length) return null;
+  const names = (data.sources || []).map(x => (x.label || "").split(" — ")[0]).filter(Boolean);
+  return /*#__PURE__*/React.createElement("section", {
+    className: "ovr",
+    "aria-label": "\u0418\u0441\u0441\u043B\u0435\u0434\u043E\u0432\u0430\u043D\u0438\u044F \u0438 \u043E\u0431\u0437\u043E\u0440\u044B"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ovc-h"
+  }, /*#__PURE__*/React.createElement("h2", {
+    className: "eyebrow"
+  }, "\u0418\u0441\u0441\u043B\u0435\u0434\u043E\u0432\u0430\u043D\u0438\u044F \u0438 \u043E\u0431\u0437\u043E\u0440\u044B"), /*#__PURE__*/React.createElement(RvInfo, {
+    label: "\u0427\u0442\u043E \u0437\u0434\u0435\u0441\u044C"
+  }, "\u041D\u043E\u0432\u044B\u0435 \u043F\u0443\u0431\u043B\u0438\u043A\u0430\u0446\u0438\u0438 \u043D\u0430 \u0441\u0430\u0439\u0442\u0430\u0445 \u0438\u0441\u0441\u043B\u0435\u0434\u043E\u0432\u0430\u043D\u0438\u0439: ", names.join(", "), ". \u041F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0435\u043C \u043C\u0430\u0442\u0435\u0440\u0438\u0430\u043B\u044B \u043F\u043E \u0442\u0435\u043C\u0435 \u0444\u0438\u043D\u0430\u043D\u0441\u043E\u0432, \u043D\u0435 \u0431\u043E\u043B\u044C\u0448\u0435 \u0442\u0440\u0451\u0445 \u043E\u0442 \u043E\u0434\u043D\u043E\u0433\u043E \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430. \u0415\u0441\u043B\u0438 \u0432 \u0438\u0441\u0441\u043B\u0435\u0434\u043E\u0432\u0430\u043D\u0438\u0438 \u0435\u0441\u0442\u044C \u043F\u043E\u0432\u043E\u0434 \u0434\u043B\u044F \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438, \u043E\u043D\u043E \u0432\u044B\u0439\u0434\u0435\u0442 \u0438 \u0432 \u043D\u043E\u0432\u043E\u0441\u0442\u044F\u0445 \u0432\u044B\u043F\u0443\u0441\u043A\u0430.")), /*#__PURE__*/React.createElement("div", {
+    className: "surface ovr-card"
+  }, items.map(it => /*#__PURE__*/React.createElement("div", {
+    key: it.id,
+    className: "ca-hov"
+  }, /*#__PURE__*/React.createElement("a", {
+    className: "ovr-it",
+    href: it.url,
+    target: "_blank",
+    rel: "noopener noreferrer",
+    onClick: () => trkEvent({
+      kind: "news_click",
+      page: "overview",
+      payload: {
+        url: it.url,
+        source: it.source,
+        group: "research",
+        title: it.title
+      }
+    })
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "ovr-t"
+  }, it.title), it.note && /*#__PURE__*/React.createElement("span", {
+    className: "ovr-n"
+  }, it.note), /*#__PURE__*/React.createElement("span", {
+    className: "ovr-m"
+  }, it.source_label, it.date ? ` · ${ovrDay(it.date)}` : "", it.pdf ? " · PDF" : "", it.new && /*#__PURE__*/React.createElement("span", {
+    className: "ovr-new"
+  }, "\u043D\u043E\u0432\u043E\u0435"), /*#__PURE__*/React.createElement(Ic.ext, null))), /*#__PURE__*/React.createElement(CaseAddBtn, {
+    variant: "icon",
+    className: "ca-float",
+    item: caNews({
+      url: it.url,
+      title: it.title,
+      source: it.source,
+      ts: it.date,
+      summary: it.note
+    }, "research"),
+    src: "news_research"
+  })))));
+}
 function OverviewPage() {
   const [dg, setDg] = useState(null);
   const [summary, setSummary] = useState(null);
@@ -5753,6 +5844,10 @@ function OverviewPage() {
   });
   useEffect(() => {
     apiFetch("/api/overview/live").then(setLive).catch(() => {});
+  }, []);
+  const [research, setResearch] = useState(null);
+  useEffect(() => {
+    apiFetch("/api/overview/research").then(setResearch).catch(() => {});
   }, []);
   useEffect(() => {
     Promise.allSettled([loadDigest(), apiFetch("/api/summary")]).then(([d, s]) => {
@@ -6298,7 +6393,9 @@ function OverviewPage() {
     className: "bf-fon"
   }, /*#__PURE__*/React.createElement("span", {
     className: "bf-fon-l"
-  }, "\u0424\u043E\u043D \u0440\u044B\u043D\u043A\u0430"), /*#__PURE__*/React.createElement("span", null, head.market_note))), /*#__PURE__*/React.createElement("aside", {
+  }, "\u0424\u043E\u043D \u0440\u044B\u043D\u043A\u0430"), /*#__PURE__*/React.createElement("span", null, head.market_note)), /*#__PURE__*/React.createElement(OvResearch, {
+    data: research
+  })), /*#__PURE__*/React.createElement("aside", {
     className: "bf-news"
   }, /*#__PURE__*/React.createElement("div", {
     className: "bf-news-h"

@@ -169,6 +169,23 @@ _NEWS_RU = {
     "vedomosti_econ": "Ведомости — экономика",
     "kommersant_econ": "Коммерсантъ — экономика",
     "web_sber": "Поиск: происшествия со Сбером",
+    # каналы и исследования из списка руководства (11.11.2026)
+    "tg_truba": "Труба под Неглинной",
+    "tg_ipoteka": "Ипотека и недвижимость",
+    "tg_fm_invest": "Frank Media Invest",
+    "tg_dengi_efir": "Деньги в эфире",
+    "tg_bitkogan": "bitkogan",
+    "tg_kot_finance": "Кот.Финанс",
+    "tg_rapsi": "РАПСИ — новости",
+    "tg_ej": "Ёж",
+    "tg_expoforum": "Экспофорум",
+    "tg_schema": "Схема",
+    "tg_finpodbor": "ФинПодбор",
+    "cbr_research": "Банк России — исследования",
+    "asros_research": "Ассоциация банков России — аналитика",
+    "raexpert_research": "Эксперт РА — исследования",
+    "hse_bankslab": "ВШЭ — лаборатория банковской деятельности",
+    "businesstat": "BusinesStat — обзоры рынков",
 }
 
 
@@ -180,7 +197,9 @@ def news_source_label(key: str | None) -> str:
 def _news_sources() -> list[dict]:
     from ..digest.news import SOURCES
     tag_ru = {"regulator": "Регулятор", "market": "Рынок и деловая пресса",
-              "incident": "Инциденты", "scheme": "Схемы мошенничества"}
+              "incident": "Инциденты", "scheme": "Схемы мошенничества",
+              "research": "Исследования и аналитика"}
+    kind_ru = {"rss": "RSS-лента", "tg": "Телеграм-канал", "page": "Страница публикаций"}
     out = []
     for s in SOURCES:
         dom = normalize_domain(s["url"])
@@ -190,7 +209,7 @@ def _news_sources() -> list[dict]:
             "url": s["url"],
             "title": dom,
             "role": tag_ru.get(s.get("tag"), s.get("tag") or ""),
-            "kind": "RSS-лента" if s.get("kind") == "rss" else "Телеграм-канал",
+            "kind": kind_ru.get(s.get("kind"), "Телеграм-канал"),
         })
     # региональные сюжеты о Сбере, которых нет в лентах (digest/newsflow.collect_search)
     from urllib.parse import quote

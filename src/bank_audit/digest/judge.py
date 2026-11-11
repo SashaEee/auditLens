@@ -52,7 +52,12 @@ def _issue(day: date) -> tuple[dict, list[dict], list[dict]]:
     nw = (secs.get("news") or {}).get("payload") or {}
     items = [it for g in (nw.get("groups") or []) for it in (g.get("items") or [])]
     pub = {it.get("url") for it in items}
-    pool = [p for p in (nw.get("pool") or []) if p.get("url") not in pub][:25]
+    # Повтор уже вышедшего редакция снимает сама (newsflow.classify_repeats) —
+    # это не пропуск. Без этого судья четыре дня подряд (08–11.11.2026) записывал
+    # в «пропущенное» штраф ЦБ Сберу, вышедший первой строкой выпуска 06.11.
+    rep = {r.get("url") for r in (nw.get("repeats") or [])}
+    pool = [p for p in (nw.get("pool") or [])
+            if p.get("url") not in pub and p.get("url") not in rep][:25]
     return head, items, pool
 
 

@@ -110,7 +110,60 @@ SOURCES: list[dict] = [
     {"key": "tg_minfin",     "kind": "tg",  "url": "https://t.me/s/minfin",             "tag": "regulator", "dimension": "compliance", "cls": "gen"},
     {"key": "tg_mintsifry",  "kind": "tg",  "url": "https://t.me/s/mintsifry",          "tag": "regulator", "dimension": "compliance", "cls": "gen"},
     {"key": "tg_rospotreb",  "kind": "tg",  "url": "https://t.me/s/rospotrebnadzor_ru", "tag": "regulator", "dimension": "compliance", "cls": "gen"},
+    # ── телеграм-каналы из списка руководства (бэклог, 11.11.2026) ──
+    # Замер 11.11 по публичному просмотру каналов (постов в сутки · доля постов про
+    # финансы): «Труба» ≈11 · почти все; «Ипотека и недвижимость» ≈10 · три четверти;
+    # Frank Media Invest ≈10 · больше половины; «Деньги в эфире» ≈10 · меньше половины;
+    # bitkogan ≈3 (мнения); «Кот.Финанс» ≈1,5 (облигации); РАПСИ ≈19 (суды, про банки —
+    # каждый седьмой); «Ёж» ≈200 (лента обо всём); Expoforum <1 (анонсы площадки);
+    # «Схема» и «ФинПодбор» 3–4 (акции банков и способы обойти их условия).
+    # Берём все: отсев по теме делает ступень 1 на дешёвой модели, а отдачу каждого
+    # канала за две недели показывает «Пульс» (newsflow.health → yield_14d) —
+    # слабые исключаем по цифрам, а не на глаз. Каналы без редакции — классом gen.
+    {"key": "tg_truba",       "kind": "tg", "url": "https://t.me/s/trubapodneglinnoy", "tag": "regulator", "dimension": "compliance", "cls": "bank"},
+    {"key": "tg_ipoteka",     "kind": "tg", "url": "https://t.me/s/ipotekahouse",      "tag": "market",    "dimension": "market",     "cls": "bank"},
+    {"key": "tg_fm_invest",   "kind": "tg", "url": "https://t.me/s/fm_invest",         "tag": "market",    "dimension": "market",     "cls": "bank"},
+    {"key": "tg_dengi_efir",  "kind": "tg", "url": "https://t.me/s/ekonomika_banki",   "tag": "market",    "dimension": "market",     "cls": "gen"},
+    {"key": "tg_bitkogan",    "kind": "tg", "url": "https://t.me/s/bitkogan",          "tag": "market",    "dimension": "market",     "cls": "gen"},
+    {"key": "tg_kot_finance", "kind": "tg", "url": "https://t.me/s/mkot_finance",      "tag": "market",    "dimension": "market",     "cls": "gen"},
+    {"key": "tg_rapsi",       "kind": "tg", "url": "https://t.me/s/rapsinewsru",       "tag": "regulator", "dimension": "compliance", "cls": "gen"},
+    {"key": "tg_ej",          "kind": "tg", "url": "https://t.me/s/ejdailyru",         "tag": "market",    "dimension": "market",     "cls": "gen"},
+    {"key": "tg_expoforum",   "kind": "tg", "url": "https://t.me/s/expo_forum",        "tag": "market",    "dimension": "market",     "cls": "gen"},
+    {"key": "tg_schema",      "kind": "tg", "url": "https://t.me/s/CXEMA_Channel",     "tag": "scheme",    "dimension": "conduct",    "cls": "gen"},
+    {"key": "tg_finpodbor",   "kind": "tg", "url": "https://t.me/s/bankiclub",         "tag": "market",    "dimension": "market",     "cls": "gen"},
+    # ── исследования и аналитика (бэклог, 11.11.2026) ──
+    # Лент у этих сайтов нет (проверено 11.11: RSS 404 или отсутствует) — следим за
+    # страницей со списком публикаций (kind=page, разбор в newsflow._fetch_page):
+    # link — какие ссылки на странице считать публикациями, pages — какие страницы
+    # читать, date — с какой стороны от ссылки стоит дата (если она не в адресе).
+    # Первый проход запоминает уже лежащее на сайте как старое, новым считается
+    # только появившееся после него. Портал РЭШ (guru.nes.ru) без
+    # браузера отдаёт заглушку защиты — за ним следить нельзя, он только в
+    # доверенных источниках ИИ-помощника (миграция 112).
+    {"key": "cbr_research",   "kind": "page", "url": "https://www.cbr.ru/ec_research/",
+     "pages": ["https://www.cbr.ru/ec_research/analitics/", "https://www.cbr.ru/ec_research/ser/"],
+     "link": r"^/(?:Content/Document/File/\d+/analytic_note_[^/]+\.pdf|ec_research/analitics/[\w-]+/|ec_research/ser/wp_\d+/)$",
+     "tag": "research", "dimension": "market", "cls": "bank"},
+    {"key": "asros_research", "kind": "page", "url": "https://www.asros.ru/analytics/",
+     "pages": ["https://www.asros.ru/analytics/asros/", "https://www.asros.ru/analytics/macro/"],
+     "link": r"^/analytics/(?:asros|macro)/[\w-]{12,}/?$", "date": "before",
+     "tag": "research", "dimension": "market", "cls": "bank"},
+    {"key": "raexpert_research", "kind": "page", "url": "https://raexpert.ru/researches/",
+     "pages": ["https://raexpert.ru/topics/banks/"],
+     # только исследования: рейтинговые действия по отдельным банкам (/releases/) —
+     # десяток однотипных сообщений в неделю, полку они бы забили
+     "link": r"^/researches/banks/[\w-]{4,}/?$", "date": "after",
+     "tag": "research", "dimension": "market", "cls": "bank"},
+    {"key": "hse_bankslab",   "kind": "page", "url": "https://bankslab.hse.ru/news/",
+     "link": r"^/news/\d+\.html$",
+     "tag": "research", "dimension": "market", "cls": "bank"},
+    {"key": "businesstat",    "kind": "page", "url": "https://businesstat.ru/news/",
+     "link": r"^/news/[\w-]{4,}/$",
+     "tag": "research", "dimension": "market", "cls": "gen"},
 ]
+
+# Ключи источников-исследований: полка «Исследования и обзоры» в «Новостных обзорах».
+RESEARCH_KEYS: tuple[str, ...] = tuple(s["key"] for s in SOURCES if s.get("tag") == "research")
 
 # Точечные поисковые запросы (SearXNG). У выдачи нет дат → берём мало и метим.
 SEARCH_QUERIES = [
@@ -509,7 +562,15 @@ _AUTHORITY = {"cbr_press": 0, "cbr_news": 0, "tg_cbr": 1,
               "banki_news": 2, "frankmedia": 2, "vedomosti_fin": 2,
               "tg_frankmedia": 3, "tg_banksta": 3, "tg_cyberpolice": 3,
               "kommersant_econ": 4, "vedomosti_econ": 4,
-              "tg_rbc": 5, "ria_novosti": 5, "web_search": 6, "web_sber": 6}
+              "tg_rbc": 5, "ria_novosti": 5, "web_search": 6, "web_sber": 6,
+              # первоисточники исследований — выше пересказов в прессе и каналах
+              "cbr_research": 0, "asros_research": 2, "raexpert_research": 2, "hse_bankslab": 3,
+              "businesstat": 5,
+              # каналы из списка руководства: редакционные — рядом с прессой,
+              # авторские и подборки — ниже (ведущей записью события станет издание)
+              "tg_fm_invest": 3, "tg_truba": 4, "tg_ipoteka": 4, "tg_rapsi": 4,
+              "tg_bitkogan": 5, "tg_kot_finance": 5,
+              "tg_dengi_efir": 6, "tg_ej": 6, "tg_expoforum": 6, "tg_schema": 6, "tg_finpodbor": 6}
 
 
 def _sem_dedupe(items: list[dict]) -> list[dict]:
@@ -652,7 +713,7 @@ def fetch_all() -> tuple[list[dict], list[dict]]:
     Конвейер пула: окно свежести → дедуп заголовков → смысловой дедуп →
     межднёвная память → сборка по квотам (регуляторика с приоритетом решений,
     потолок общих лент и недатированных)."""
-    tasks = [*SOURCES]
+    tasks = [x for x in SOURCES if x.get("kind") in ("rss", "tg")]
     with cf.ThreadPoolExecutor(max_workers=6) as ex:
         results = list(ex.map(_fetch_source, tasks))
     items = [it for r, _ in results for it in r]

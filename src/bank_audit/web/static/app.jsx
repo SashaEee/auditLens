@@ -1703,7 +1703,12 @@ function OvSeg({page}){
 
 const FY_SRC={cbr_press:"ЦБ РФ",cbr_news:"ЦБ РФ",banki_news:"Банки.ру",frankmedia:"Frank Media",
   tg_cbr:"ЦБ · Telegram",tg_banksta:"Банкста",tg_cyberpolice:"Киберполиция",tg_frankmedia:"Frank Media",
-  tg_kommersant:"Коммерсантъ",tg_rbc:"РБК",web_search:"веб-поиск"};
+  tg_kommersant:"Коммерсантъ",tg_rbc:"РБК",web_search:"веб-поиск",
+  tg_truba:"Труба под Неглинной",tg_ipoteka:"Ипотека и недвижимость",tg_fm_invest:"Frank Media Invest",
+  tg_dengi_efir:"Деньги в эфире",tg_bitkogan:"bitkogan",tg_kot_finance:"Кот.Финанс",tg_rapsi:"РАПСИ",
+  tg_ej:"Ёж",tg_expoforum:"Экспофорум",tg_schema:"Схема",tg_finpodbor:"ФинПодбор",
+  cbr_research:"ЦБ · исследования",asros_research:"Ассоциация банков России",raexpert_research:"Эксперт РА",
+  hse_bankslab:"ВШЭ · банковская лаборатория",businesstat:"BusinesStat"};
 const fySrcName=(t)=>FY_SRC[t.source]||t.domain||"источник";
 const fyHash=(s)=>{let h=0;for(let i=0;i<(s||"").length;i++)h=(h*31+s.charCodeAt(i))|0;return Math.abs(h);};
 
@@ -2811,6 +2816,34 @@ function SinceStrip(){
   </section>;
 }
 
+// «Исследования и обзоры»: свежие публикации источников-исследований (Банк России,
+// Ассоциация банков России, «Эксперт РА», ВШЭ, BusinesStat). Исследование — не
+// новость дня: в выпуск оно попадает, только если в нём есть повод для проверки,
+// поэтому новое по теме финансов показываем отдельной полкой под карточками.
+const ovrDay=v=>{try{const d=new Date(v+"T12:00:00+03:00");
+  return d.toLocaleDateString("ru",{day:"numeric",month:"long",...(d.getFullYear()!==new Date().getFullYear()?{year:"numeric"}:{})});}catch{return "";}};
+function OvResearch({data}){
+  const items=(data&&data.items)||[];
+  if(!items.length)return null;
+  const names=(data.sources||[]).map(x=>(x.label||"").split(" — ")[0]).filter(Boolean);
+  return <section className="ovr" aria-label="Исследования и обзоры">
+    <div className="ovc-h"><h2 className="eyebrow">Исследования и обзоры</h2>
+      <RvInfo label="Что здесь">Новые публикации на сайтах исследований: {names.join(", ")}. Показываем материалы по теме финансов, не больше трёх от одного источника. Если в исследовании есть повод для проверки, оно выйдет и в новостях выпуска.</RvInfo></div>
+    <div className="surface ovr-card">
+      {items.map(it=><div key={it.id} className="ca-hov">
+        <a className="ovr-it" href={it.url} target="_blank" rel="noopener noreferrer"
+           onClick={()=>trkEvent({kind:"news_click",page:"overview",payload:{url:it.url,source:it.source,group:"research",title:it.title}})}>
+          <span className="ovr-t">{it.title}</span>
+          {it.note&&<span className="ovr-n">{it.note}</span>}
+          <span className="ovr-m">{it.source_label}{it.date?` · ${ovrDay(it.date)}`:""}{it.pdf?" · PDF":""}
+            {it.new&&<span className="ovr-new">новое</span>}<Ic.ext/></span>
+        </a>
+        <CaseAddBtn variant="icon" className="ca-float" item={caNews({url:it.url,title:it.title,source:it.source,ts:it.date,summary:it.note},"research")} src="news_research"/>
+      </div>)}
+    </div>
+  </section>;
+}
+
 function OverviewPage(){
   const[dg,setDg]=useState(null);
   const[summary,setSummary]=useState(null);
@@ -2848,6 +2881,8 @@ function OverviewPage(){
 
   const loadDigest=()=>apiFetch("/api/overview/digest").then(d=>{setDg(d);return d;});
   useEffect(()=>{apiFetch("/api/overview/live").then(setLive).catch(()=>{});},[]);
+  const [research,setResearch]=useState(null);
+  useEffect(()=>{apiFetch("/api/overview/research").then(setResearch).catch(()=>{});},[]);
   useEffect(()=>{
     Promise.allSettled([loadDigest(),apiFetch("/api/summary")]).then(([d,s])=>{
       if(s.status==="fulfilled")setSummary(s.value);
@@ -3219,6 +3254,8 @@ function OverviewPage(){
                 За сутки резких сигналов не выявлено{head.stats?` · проверено ${head.stats.checked_themes} тем жалоб`:""}</div>
             </div>}
         {head.market_note&&<div className="bf-fon"><span className="bf-fon-l">Фон рынка</span><span>{head.market_note}</span></div>}
+        {/* под карточками — полка исследований: левая колонка короче ленты новостей */}
+        <OvResearch data={research}/>
       </div>
 
       {/* ④ Новости для аудитора — первые восемь, остальное по кнопке; колонка
