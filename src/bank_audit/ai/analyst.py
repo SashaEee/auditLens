@@ -7,7 +7,7 @@
      LLM_MODEL_NAME — напр. accounts/fireworks/models/llama-v3p3-70b-instruct
 """
 from __future__ import annotations
-import asyncio, contextvars, json, os, logging, time
+import asyncio, contextvars, json, os, logging, re, time
 from typing import AsyncIterator
 from openai import AsyncOpenAI
 from sqlalchemy import text
@@ -1075,6 +1075,49 @@ async def _with_heartbeat(agen: AsyncIterator[str],
             pass
 
 
+# ── Реплика в продолжение разговора ──────────────────────────────────────────
+# Аудит 11.11: при включённом режиме отчёта «хочу», «сформируй файл», «Сколько
+# всего таких жалоб?» запускали пятиминутное исследование на 20–40 тысяч знаков.
+# Такая реплика — не новый вопрос: на неё отвечает быстрый режим, у которого
+# есть весь разговор.
+_REPLY_CONSENT = re.compile(
+    r"^\s*(да|ага|угу|ок|окей|хорошо|хочу|давай(те)?|собери|сделай|продолжай|покажи|выведи|"
+    r"новая задача|новый диалог)([\s,.!]+(да|пожалуйста|давай|хочу|собери|сделай( это)?|"
+    r"в справку|это))*[\s.!]*$", re.I)
+_REPLY_FORMAT = re.compile(
+    r"(сформируй|сделай|собери|сведи|оформи|выгрузи|покажи|выведи|дай|добавь|пришли)\w*\b.{0,60}"
+    r"(файл|таблиц|excel|эксель|word|pdf|слайд|презентац|списк|список|ссылк|источник|"
+    r"цитат|кратк|короч)", re.I)
+_REPLY_ANAPHORA = re.compile(
+    r"\b(таких|такие|такой|этих|эти|этого|этот|эту|это|этим|данн(ый|ую|ые|ого|ым|ых)|выше|"
+    r"предыдущ\w+|указанн\w+|перечисленн\w+|оттуда)\b", re.I)
+_REPLY_LEAD = re.compile(r"^\s*(да|ага|ок|окей|хорошо|давай(те)?)\b[\s,]", re.I)
+_REPLY_ALL = re.compile(r"^\s*(покажи|выведи|дай|перечисли)\s+(все|всё|весь|полный|остальн)", re.I)
+_REPLY_META = re.compile(
+    r"из как(ого|их) источник|откуда (эт|цифр|данн|ты|взят)|почему ты|ты везде|ты уверен|"
+    r"где ты (взял|наш[её]л)|в каком месте|это точно|что значит|расшифруй", re.I)
+_REPLY_RESEARCH = re.compile(
+    r"сравни|исследуй|проанализируй|найди|собери (всю|все|информаци)|добавь .{0,40}"
+    r"(банк|сравнени)|за \d{4}|https?://", re.I)
+
+
+def is_followup_reply(question: str, history: list[dict] | None) -> bool:
+    """Короткая реплика к уже данному ответу: согласие, просьба переоформить
+    или уточнение со ссылкой на сказанное («таких», «это», «выше»)."""
+    q = (question or "").strip()
+    if not q or len(q) > 90:
+        return False
+    if not any(h.get("role") == "assistant" and (h.get("content") or "").strip()
+               for h in (history or [])[-6:]):
+        return False
+    if _REPLY_CONSENT.match(q):
+        return True
+    if _REPLY_RESEARCH.search(q):
+        return False
+    return bool(_REPLY_FORMAT.search(q) or _REPLY_ANAPHORA.search(q) or _REPLY_LEAD.match(q)
+                or _REPLY_ALL.match(q) or _REPLY_META.search(q))
+
+
 async def stream_analysis(question: str, history: list[dict],
                            force_deep: bool | None = None,
                            session_hint: str | None = None) -> AsyncIterator[str]:
@@ -1092,6 +1135,13 @@ async def stream_analysis(question: str, history: list[dict],
     _prior_deep = any((h.get("role") == "assistant"
                        and len(h.get("content") or "") > 2500)
                       for h in (history or [])[-4:])
+    if force_deep is not False and is_followup_reply(question, history):
+        log.info("[stream_analysis] реплика в продолжение разговора — быстрый ответ")
+        force_deep = False
+        yield json.dumps({"type": "notice", "kind": "reply",
+                          "text": "Это уточнение к прошлому ответу — отвечаю коротко, без нового "
+                                  "исследования. Нужен новый отчёт — задайте вопрос целиком."},
+                         ensure_ascii=False)
     if force_deep is True or (force_deep is None
                               and (is_deep_question(question) or _prior_deep)):
         if os.getenv("DEEP_V2", "1").lower() in ("1", "true", "yes"):

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 
 from openai import AsyncOpenAI
 
@@ -35,8 +36,10 @@ def clarify_enabled() -> bool:
 
 
 def _clarify_model() -> str:
-    return (os.getenv("LLM_MODEL_REASONING") or os.getenv("LLM_MODEL_ANALYST")
-            or os.getenv("LLM_MODEL_SMART") or LLM_MODEL_NAME)
+    # Быстрая модель: воронка — это «хватает ли деталей», а не рассуждение.
+    # На модели для рассуждений ответ шёл в среднем 9 секунд (аудит 11.11).
+    return (os.getenv("CLARIFY_MODEL") or os.getenv("LLM_MODEL_SMART")
+            or os.getenv("LLM_MODEL_REASONING") or LLM_MODEL_NAME)
 
 
 def _client() -> AsyncOpenAI:
@@ -44,43 +47,53 @@ def _client() -> AsyncOpenAI:
     return _patch_client_reasoning_effort(c)
 
 
-SYSTEM_PROMPT_CLARIFY = """Ты — ФИЛЬТР ПОЛНОТЫ запроса для аудиторской deep-research системы по банковским продуктам РФ.
-Единственная задача: решить, достаточно ли в запросе деталей, чтобы исследование дало КОНКРЕТНЫЙ (не обобщённый) ответ. Если да — пропустить. Если нет — задать 2-4 точечных уточняющих вопроса.
+SYSTEM_PROMPT_CLARIFY = """Ты — ФИЛЬТР ПОЛНОТЫ запроса для аудиторов Сбербанка: их вопрос уходит в исследование на несколько минут.
+Единственная задача: решить, хватает ли в запросе деталей, чтобы исследование дало КОНКРЕТНЫЙ ответ. Если да — пропустить. Если нет — задать 1-3 точечных уточняющих вопроса.
+
+Запросы бывают разные: рассказать о продукте или сервисе, разобрать жалобы, найти нормы, собрать цифры рынка, дать справку, разобрать новость, составить план проверки — и сравнить банки. Сравнение — лишь один из видов, не подводи к нему остальные.
 
 ПРАВИЛА:
-1. Запрос уже конкретен (ясно: продукт/аспект + что сравнивать + по возможности банки) → верни {"complete": true, "questions": []}. НЕ выдумывай вопросы ради вопросов — это раздражает пользователя.
-2. Запрос расплывчат → {"complete": false, "questions": [...]} с 2-4 вопросами СТРОГО про недостающие оси ИМЕННО ЭТОГО запроса.
-   ЗАПРЕЩЕНО унифицировать. Спрашивай по сути продукта:
-     • переводы → тип перевода (исходящие/входящие/загран/между своими/C2C);
-     • карты → тип карты, валюта, сегмент (дебет/кредит);
-     • вклады → срок, сумма, капитализация;
-     • ипотека/кредиты → сегмент заёмщика, цель, сумма/срок.
-   Вопрос задавай только если ответ РЕАЛЬНО меняет результат.
-3. Максимум 4 вопроса. 2 точных лучше, чем 4 общих.
-4. Каждый вопрос: 2-5 кликабельных вариантов (options) + allow_other:true. type: "single" (один), "multi" (несколько), "text" (свободный ответ, options=[]).
-5. Если банки в запросе УЖЕ названы — НЕ спрашивай про банки. Если нет — дай вариант "Топ-4: Сбербанк, Альфа-Банк, Т-Банк, ВТБ" (recommended:true) + пару конкретных.
+1. Запрос понятен (ясно, о чём он и что нужно получить) → верни {"complete": true, "questions": []}. Большинство запросов таковы. НЕ выдумывай вопросы ради вопросов — это раздражает.
+2. Запрос расплывчат → {"complete": false, "questions": [...]} с 1-3 вопросами СТРОГО про то, без чего ответ выйдет не тем:
+     • не назван предмет («сравни условия», «жалобы на продукт») → какой продукт или сервис;
+     • предмет слишком широк и ответ зависит от вида (переводы → какие; карты → дебетовые или кредитные; кредиты → потребительский, ипотека, автокредит);
+     • нужен период, а его нет, и от него зависит ответ («динамика», «что изменилось») → за какой период.
+   Вопрос задавай только если ответ РЕАЛЬНО меняет результат. Период для жалоб по умолчанию — 90 дней, о нём не спрашивай.
+3. ПРО БАНКИ спрашивай ТОЛЬКО если аудитор просит сравнение, а с кем — не сказал (смотри строку «Сравнение» ниже). Тогда один вопрос «С кем сравнить?» с вариантами: "Топ-4: Альфа-Банк, Т-Банк, ВТБ, Газпромбанк", пара конкретных банков, подходящих к продукту, и «Только Сбер, без сравнения». Если сравнения не просят — вопрос о банках ЗАПРЕЩЁН: отчёт будет про Сбер.
+4. Максимум 3 вопроса. Один точный лучше трёх общих.
+5. Каждый вопрос: 2-5 кликабельных вариантов (options) + allow_other:true. type: "single" (один), "multi" (несколько), "text" (свободный ответ, options=[]).
 
 Верни СТРОГО JSON (без преамбулы, без markdown-fence):
 {"complete": bool, "reason": "<кратко>", "questions": [
   {"id":"<snake_case>", "question":"<текст>", "type":"single|multi|text", "allow_other": true,
    "options":[{"value":"<машинный>","label":"<для UI>","hint":"<опц короткий>","recommended":<опц bool>}]}]}
 
-ПРИМЕР A (полный запрос):
-"Сравни комиссии за исходящие SWIFT-переводы физлиц в Сбербанке и Т-Банке"
-→ {"complete": true, "questions": [], "reason": "продукт, аспект, тип перевода и банки заданы"}
+ПРИМЕР A (понятный запрос, сравнения не просят):
+"Сервис Своё дело для самозанятых в Сбере"
+→ {"complete": true, "questions": [], "reason": "предмет назван, нужен рассказ о сервисе"}
 
-ПРИМЕР B (расплывчатый):
-"Проанализируй условия переводов в разных банках"
-→ {"complete": false, "reason": "не заданы тип перевода, банки, фокус",
+ПРИМЕР B (понятный запрос со сравнением):
+"Сравни комиссии за исходящие SWIFT-переводы физлиц в Сбербанке и Т-Банке"
+→ {"complete": true, "questions": [], "reason": "продукт, вид перевода и банки заданы"}
+
+ПРИМЕР C (расплывчатый, сравнение просят, банки не названы):
+"Сравни условия переводов с конкурентами"
+→ {"complete": false, "reason": "не задан вид перевода и с кем сравнивать",
 "questions": [
-{"id":"transfer_type","question":"Какие переводы анализируем?","type":"single","allow_other":true,
- "options":[{"value":"outgoing_intl","label":"Исходящие заграничные","recommended":true},
- {"value":"incoming","label":"Входящие"},{"value":"c2c_internal","label":"Между своими счетами"},
- {"value":"c2c_sbp","label":"На карты других банков (СБП/C2C)"}]},
-{"id":"banks","question":"Какие банки сравнить?","type":"multi","allow_other":true,
- "options":[{"value":"top4","label":"Топ-4: Сбер, Альфа, Т-Банк, ВТБ","recommended":true},
- {"value":"sberbank","label":"Сбербанк"},{"value":"gazprombank","label":"Газпромбанк"}]},
-{"id":"focus","question":"Что важнее всего в сравнении?","type":"text","allow_other":false,"options":[]}]}
+{"id":"transfer_type","question":"Какие переводы сравниваем?","type":"single","allow_other":true,
+ "options":[{"value":"sbp","label":"По номеру телефона (СБП)","recommended":true},
+ {"value":"intl","label":"Заграничные"},{"value":"card2card","label":"С карты на карту"}]},
+{"id":"banks","question":"С кем сравнить?","type":"multi","allow_other":true,
+ "options":[{"value":"top4","label":"Топ-4: Альфа-Банк, Т-Банк, ВТБ, Газпромбанк","recommended":true},
+ {"value":"tinkoff","label":"Т-Банк"},{"value":"vtb","label":"ВТБ"},
+ {"value":"none","label":"Только Сбер, без сравнения"}]}]}
+
+ПРИМЕР D (не назван предмет):
+"Жалобы клиентов Сбера на продукт за последние 90 дней"
+→ {"complete": false, "reason": "не назван продукт",
+"questions": [{"id":"product","question":"По какому продукту смотреть жалобы?","type":"single","allow_other":true,
+ "options":[{"value":"debit","label":"Дебетовые карты"},{"value":"credit_card","label":"Кредитные карты"},
+ {"value":"deposit","label":"Вклады"},{"value":"mortgage","label":"Ипотека"}]}]}
 """
 
 
@@ -131,9 +144,13 @@ async def generate_clarifications(question: str, history: list | None = None) ->
     if len(q) < 3:
         return {"complete": True, "questions": [], "reason": "too_short"}
     hinted = detect_bank_slugs(q)
+    # Просят ли сравнение — решает то же правило, что и в планировщике отчёта:
+    # аудит 11.11 — воронка сама подставляла «Топ-4 банков» в 16 % вопросов.
+    from ..research.v2.conductor import _COMPARE_RX
+    asks_compare = bool(_COMPARE_RX.search(q))
     user_msg = (f"Запрос аудитора:\n{q}\n\n"
-                f"Банки, явно упомянутые в запросе: "
-                f"{', '.join(hinted) if hinted else '(не указаны — предложи топ-4 + другое)'}\n\n"
+                f"Банки, названные в запросе: {', '.join(hinted) if hinted else 'не названы'}\n"
+                f"Сравнение: {'аудитор просит сравнение' if asks_compare else 'сравнения не просят — о банках не спрашивай'}\n\n"
                 f"Верни JSON по контракту.")
     try:
         resp = await _client().chat.completions.create(
@@ -161,7 +178,23 @@ async def generate_clarifications(question: str, history: list | None = None) ->
     if data is None:
         log.warning("[clarify] no JSON parse, raw200=%r — fail-open", raw[:200])
         return {"complete": True, "questions": [], "reason": "parse_fail"}
-    return _validate(data)
+    return drop_bank_questions(_validate(data), asks_compare)
+
+
+_BANK_Q = re.compile(r"банк|конкурент|с кем сравн|сравнить с", re.I)
+
+
+def drop_bank_questions(res: dict, asks_compare: bool) -> dict:
+    """Сравнения не просят — вопрос «какие банки сравнить?» снимается, даже если
+    модель его задала: отчёт будет про Сбер, и подводить аудитора к сравнению
+    незачем."""
+    if asks_compare or res.get("complete"):
+        return res
+    keep = [q for q in res.get("questions") or []
+            if q.get("id") not in ("banks", "bank", "competitors") and not _BANK_Q.search(q.get("question") or "")]
+    if not keep:
+        return {"complete": True, "questions": [], "reason": "bank_question_dropped"}
+    return {**res, "questions": keep}
 
 
 # ── Сборка обогащённого промпта ──────────────────────────────────────────────
