@@ -4384,7 +4384,9 @@ html.dark .wn-wrap{background:color-mix(in oklab,var(--paper),transparent 30%)}
 .wn-go:focus-visible,.wn-ok:focus-visible{outline:2px solid var(--select);outline-offset:2px}
 @media(prefers-reduced-motion:reduce){.wn-wrap,.wn-modal{animation:none}}
 @media(max-width:640px){.wn-top{padding:22px 20px 2px}.wn-items{grid-template-columns:1fr;gap:14px;padding:16px 20px 0}
-  .wn-more{margin:16px 20px 0}.wn-actions{padding:18px 20px 20px}}
+  .wn-more{margin:16px 20px 0}
+  /* кнопки всегда под рукой: окно на телефоне прокручивается, а они прилипают к низу */
+  .wn-actions{position:sticky;bottom:0;margin-top:14px;padding:12px 20px calc(14px + env(safe-area-inset-bottom));background:var(--surface);box-shadow:0 -1px 0 var(--hair)}}
 
 /* ── Поле вопроса ── */
 .chat-shell .composer-dock{padding:10px 32px 18px}
