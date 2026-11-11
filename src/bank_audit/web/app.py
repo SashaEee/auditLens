@@ -804,6 +804,17 @@ def admin_agent_eval(limit: int = 12, engine: str = "hermes",
     return res
 
 
+@app.get("/api/admin/pulse/report-steps")
+def admin_report_steps(days: int = 30, user: CurrentUser = Depends(get_current_user)):
+    """«Пульс» → «Качество ИИ»: какие задачи ставят отчёту, сколько занимает каждый
+    шаг и сколько отчётов оборвано. Аудит 11.11: учёта по шагам не было, и никто
+    не видел, что план занимает минуту из пяти."""
+    if not telemetry.can_pulse(user.username):
+        raise HTTPException(403, "admin only")
+    from ..ai import report_stats
+    return report_stats.steps(max(1, min(int(days or 30), 180)))
+
+
 class AgentEvalReq(BaseModel):
     model: Optional[str] = None
     judge: bool = True
@@ -5379,6 +5390,10 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
     files: list = []                     # файлы, которые агент отдал в ответе (ai/agent_files.py)
     report_title: Optional[str] = None   # из брифа отчёта; у быстрых — составим после
     saved_title: Optional[str] = None
+    # Как понят вопрос (задача, рамка) и сколько занял каждый шаг — в payload
+    # отчёта: по ним «Пульс» видит, на что уходит время и какие задачи ставят.
+    plan_info: Optional[dict] = None
+    timings: Optional[dict] = None
     t0 = time.monotonic()
 
     def _persist(finished: bool) -> int | None:
@@ -5422,6 +5437,7 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                              "ranking": ranking, "insights": insights,
                              "status": status, "elapsed_s": elapsed,
                              "files": files or None,
+                             "plan": plan_info, "timings": timings,
                              "payload_v": 2},
                     banks=banks, title=saved_title)
                 if report_title:
@@ -5496,6 +5512,9 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                     insights = data["items"]
                 elif t == "mode":
                     mode = data.get("value")
+                elif t == "plan":
+                    plan_info = {k: data.get(k) for k in ("task", "scope", "checks", "deliverable",
+                                                          "period", "subjects", "question_nature")}
                 elif t == "report_title" and data.get("title"):
                     report_title = str(data["title"])[:200]
                 elif t == "engine":
@@ -5514,6 +5533,8 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                 elif t == "done" and not persisted:
                     # Персистим ДО done: клиент успевает получить report_id
                     # (кнопка «Поделиться» доступна сразу после прогона).
+                    if isinstance(data.get("timings"), dict):
+                        timings = data["timings"]
                     persisted = True
                     rid = _persist(True)
                     if rid:
