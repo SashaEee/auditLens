@@ -1276,7 +1276,10 @@ def research_shelf(limit: int = 8) -> list[dict]:
                        s2->>'summary' AS summary, left(body, 400) AS body, body_full,
                        row_number() OVER (PARTITION BY source ORDER BY ts DESC NULLS LAST, id) AS rn
                 FROM news_item
-                WHERE source = ANY(:k) AND (rel IS NULL OR rel >= :m)) q
+                -- у источника «обо всех рынках» (cls=gen) планка на балл выше: на 5
+                -- прошли продажи лакокрасочных материалов
+                WHERE source = ANY(:k)
+                  AND (rel IS NULL OR rel >= CASE WHEN cls = 'gen' THEN :m + 1 ELSE :m END)) q
             WHERE rn <= :p
             ORDER BY ts DESC NULLS LAST, id
         """), {"k": keys, "m": SHELF_MIN_REL, "p": SHELF_PER_SOURCE * 4}).mappings().all()
