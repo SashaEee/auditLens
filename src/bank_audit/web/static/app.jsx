@@ -7889,17 +7889,17 @@ function DocRailSlot({children}){
 // ─── Keyboard shortcuts overlay (?) ────────────────────────────────────────
 const KBD_SHORTCUTS = [
   {keys:["?"],          action:"Показать эту справку"},
-  {keys:["/"],          action:"Фокус в поле ввода"},
-  {keys:["⌘","K"],      action:"Command palette"},
-  {keys:["J"],          action:"Следующая секция"},
-  {keys:["K"],          action:"Предыдущая секция"},
+  {keys:["/"],          action:"Перейти в поле вопроса"},
+  {keys:["⌘","K"],      action:"История разговоров и отчётов"},
+  {keys:["J"],          action:"Следующий раздел отчёта"},
+  {keys:["K"],          action:"Предыдущий раздел отчёта"},
   {keys:["G","G"],      action:"К началу отчёта"},
   {keys:["["],          action:"Предыдущая цитата"},
   {keys:["]"],          action:"Следующая цитата"},
   {keys:["Enter"],      action:"Открыть источник цитаты в новой вкладке"},
-  {keys:["S"],          action:"Скрыть/показать панель источников"},
-  {keys:["T"],          action:"Скрыть/показать оглавление"},
-  {keys:["⌘","P"],      action:"Печать / экспорт PDF"},
+  {keys:["S"],          action:"Скрыть или показать источники"},
+  {keys:["T"],          action:"Скрыть или показать оглавление"},
+  {keys:["⌘","P"],      action:"Печать или сохранение в PDF"},
   {keys:["Esc"],        action:"Закрыть окно"},
 ];
 function KbdHelp({onClose}){
@@ -8907,6 +8907,13 @@ function AIPage(){
             // сворачивается в полоску, чтобы не заслонять чтение.
             const consoleMode = m.role==="ai" && loading && i===msgs.length-1 && m.phase!=="done";
             const draftMode = consoleMode && (m.text||"").length>400;
+            // Отчёт сорвался, не начавшись: шапку «Отчёт» с пустым документом не рисуем —
+            // только что случилось и «Повторить».
+            if(!consoleMode && m.err && !(m.text||"").trim())
+              return <div key={i} className="chat-msg ai quick-msg">
+                <div className="who">ИИ-помощник</div>
+                <AiError text={m.err} onRetry={userQ!=="Аудит-отчёт"?()=>retryLast(userQ):null}/>
+              </div>;
             return <div key={i} className={`chat-msg ${m.role}`}>
               {consoleMode &&
                 <div className="chat-bubble chat-bubble-deep">

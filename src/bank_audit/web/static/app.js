@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 f5ed355a69a5e8174d95de3198f4cd7aa9bd20a3985a10ef2e6a2411d656ee6b): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 062aac103fe2eb010ec52b1b627dfd5bdec9ae780d990fe710ce3780e75054b4): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -15429,16 +15429,16 @@ const KBD_SHORTCUTS = [{
   action: "Показать эту справку"
 }, {
   keys: ["/"],
-  action: "Фокус в поле ввода"
+  action: "Перейти в поле вопроса"
 }, {
   keys: ["⌘", "K"],
-  action: "Command palette"
+  action: "История разговоров и отчётов"
 }, {
   keys: ["J"],
-  action: "Следующая секция"
+  action: "Следующий раздел отчёта"
 }, {
   keys: ["K"],
-  action: "Предыдущая секция"
+  action: "Предыдущий раздел отчёта"
 }, {
   keys: ["G", "G"],
   action: "К началу отчёта"
@@ -15453,13 +15453,13 @@ const KBD_SHORTCUTS = [{
   action: "Открыть источник цитаты в новой вкладке"
 }, {
   keys: ["S"],
-  action: "Скрыть/показать панель источников"
+  action: "Скрыть или показать источники"
 }, {
   keys: ["T"],
-  action: "Скрыть/показать оглавление"
+  action: "Скрыть или показать оглавление"
 }, {
   keys: ["⌘", "P"],
-  action: "Печать / экспорт PDF"
+  action: "Печать или сохранение в PDF"
 }, {
   keys: ["Esc"],
   action: "Закрыть окно"
@@ -17297,6 +17297,17 @@ function AIPage() {
       // сворачивается в полоску, чтобы не заслонять чтение.
       const consoleMode = m.role === "ai" && loading && i === msgs.length - 1 && m.phase !== "done";
       const draftMode = consoleMode && (m.text || "").length > 400;
+      // Отчёт сорвался, не начавшись: шапку «Отчёт» с пустым документом не рисуем —
+      // только что случилось и «Повторить».
+      if (!consoleMode && m.err && !(m.text || "").trim()) return /*#__PURE__*/React.createElement("div", {
+        key: i,
+        className: "chat-msg ai quick-msg"
+      }, /*#__PURE__*/React.createElement("div", {
+        className: "who"
+      }, "\u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A"), /*#__PURE__*/React.createElement(AiError, {
+        text: m.err,
+        onRetry: userQ !== "Аудит-отчёт" ? () => retryLast(userQ) : null
+      }));
       return /*#__PURE__*/React.createElement("div", {
         key: i,
         className: `chat-msg ${m.role}`
