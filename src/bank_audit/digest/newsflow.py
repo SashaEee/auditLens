@@ -402,33 +402,68 @@ def collect() -> dict:
 SEARCH_SRC = {"key": "web_sber", "tag": "incident", "dimension": "fraud", "cls": "bank"}
 SEARCH_EVERY_MIN = int(os.getenv("NEWSFLOW_SEARCH_EVERY_MIN", "120"))
 SEARCH_MAX_AGE_H = int(os.getenv("NEWSFLOW_SEARCH_MAX_AGE_H", "48"))
-SEARCH_MAX_FETCH = int(os.getenv("NEWSFLOW_SEARCH_MAX_FETCH", "40"))
+SEARCH_MAX_FETCH = int(os.getenv("NEWSFLOW_SEARCH_MAX_FETCH", "60"))
+SEARCH_PAGE = int(os.getenv("NEWSFLOW_SEARCH_PAGE", "50"))
+# Разбор 11.11.2026 (пять недель работы): из 407 находок до сильной модели дошли
+# 13, в выпуск — 3, и ни одной истории, которой не было бы в лентах. Причины:
+# • у Яндекса брались первые 10 документов «по релевантности», а в двухдневном
+#   окне свежести наверху стоит самое старое — находки приходили раз в сутки,
+#   ночью, через 36–45 часов после публикации. Теперь берём до SEARCH_PAGE
+#   документов в двух порядках: по релевантности и по времени;
+# • запросы были только про хищения и уголовные дела. Проверка на живой выдаче
+#   за неделю: прежние семь нашли 0 пропущенных историй, а запросы про списания,
+#   надзор и суды — три («Сбербанк признал повторное списание средств со счетов»,
+#   её продолжение и «Роспотребнадзор по Коми добрался до Сбербанка»); в лентах
+#   не было ни одной.
 SEARCH_QUERIES = (
+    # хищения и уголовные дела
     "Сбербанк хищение",
     "у Сбербанка похитили",
     "сотрудник Сбербанка задержан",
+    "сотрудник Сбербанка осуждён",
     "Сбербанк уголовное дело",
     "служба безопасности Сбербанка",
     "Сбербанк мошенническая схема",
     "Сбербанк обналичивание",
+    # деньги и данные клиентов
+    "клиентов Сбербанка похитил деньги со счетов",
+    "Сбербанк ошибочное списание",
+    "Сбербанк утечка данных клиентов",
+    # надзор и суды
+    "Сбербанк прокуратура клиент вернули деньги",
+    "суд обязал Сбербанк вернуть",
+    "Сбербанк оштрафован",
+    "Сбербанк Роспотребнадзор",
 )
 # не новости: соцсети и видео, мессенджеры, справочники и судебные базы, сайты
-# банков и агрегаторов (banki.ru и так в лентах), энциклопедии
+# банков и агрегаторов (banki.ru и так в лентах), энциклопедии; вакансии, форумы
+# и вопросы-ответы, торговые площадки, дочерние сайты Сбера
 _SEARCH_SKIP = re.compile(
     r"(?:^|\.)(?:dzen\.ru|vk\.(?:ru|com)|vkvideo\.ru|rutube\.ru|youtube\.com|youtu\.be|t\.me|"
     r"max\.ru|ok\.ru|pikabu\.ru|otzovik\.com|irecommend\.ru|livejournal\.com|teletype\.in|"
     r"tiktok\.com|sudact\.ru|garant\.ru|harant\.ru|consultant\.ru|zakonrf\.info|sudrf\.ru|"
     r"kad\.arbitr\.ru|pravo\.gov\.ru|cyberleninka\.ru|wikipedia\.org|tadviser\.ru|"
     r"sberbank\.(?:ru|com)|sber\.ru|sbersova\.ru|banki\.ru|sravni\.ru|finuslugi\.ru|"
-    r"bankiros\.ru|vbr\.ru)$", re.I)
+    r"bankiros\.ru|vbr\.ru|"
+    r"hh\.ru|superjob\.ru|rabota\.ru|changellenge\.com|otvet\.mail\.ru|meshok\.net|avito\.ru|"
+    r"sberleasing\.ru|sberbank-ast\.ru)$"
+    r"|(?:^|\.)forum[a-z0-9-]*\.", re.I)
 _SBER_RE = re.compile(r"сбер", re.I)
 # Мусорные домены SEO-выдачи (на проде в первый же проход: meshlink.mom — «как снять деньги…»)
 _JUNK_TLD = re.compile(r"\.(?:mom|site|xyz|online|top|click|shop|store|fun|space|icu|buzz|website|pw)$", re.I)
 # Поиск отвечает только за ПРОИСШЕСТВИЯ: остальное с его выдачи — кликбейт «Сбербанк изменил
 # правила для всех» и советы, которые ступень 1 оценивала на 6–9. Не происшествие из поиска →
 # rel не выше 4: дальше по конвейеру не идёт (полный текст, склейка и ступень 2 — от 5–6).
-SEARCH_TYPES = ("fraud", "enforcement", "court", "incident", "data_leak")
+SEARCH_TYPES = ("fraud", "enforcement", "court", "incident", "data_leak", "consumer", "regulator")
 SEARCH_OTHER_REL_CAP = 4
+# Потолок ценности происшествия, известного от одного сайта из поиска: в ленту
+# выпуска проходит (от 6), в поводы дня — нет (от 7). См. unconfirmed_incident.
+SEARCH_SOLO_CAP = 6
+# Страницы «работает ли сегодня»: собираются автоматически каждый день
+# («Сегодня, 6 ноября, у многих пользователей не работает Сбербанк»,
+# «Сбербанк 26 октября работает с перебоями») — не новости.
+_SEARCH_DAILY = re.compile(
+    r"^\s*сегодня,?\s+\d{1,2}\s+[а-яё]+|сбер\w*\s+\d{1,2}\s+[а-яё]+\s+работает с перебоями", re.I)
 _OG_TITLE_RE = re.compile(r'<meta[^>]{0,200}?property="og:title"[^>]{0,200}?content="([^"]{10,300})"'
                           r'|<meta[^>]{0,200}?content="([^"]{10,300})"[^>]{0,200}?property="og:title"', re.I)
 
@@ -464,20 +499,26 @@ def collect_search(force: bool = False) -> dict:
     cands: list[dict] = []
     err = None
     for q in SEARCH_QUERIES:
-        r = sg.yandex_search(q, fresh_hours=SEARCH_MAX_AGE_H, max_results=10, caller="newsflow")
-        if r.status not in ("ok", "empty"):
-            err = f"поиск {r.status}: {(r.detail or '')[:120]}"
-            continue
-        for it in r.items:
-            u = it.get("url") or ""
-            if not u or u in seen:
+        # два порядка: по времени — чтобы свежее не ждало, пока состарится до
+        # первых мест, по релевантности — полнота (у порядка по времени Яндекс
+        # отдаёт меньше документов)
+        for by_time in (True, False):
+            r = sg.yandex_search(q, fresh_hours=SEARCH_MAX_AGE_H, max_results=SEARCH_PAGE,
+                                 page_size=SEARCH_PAGE, by_time=by_time, caller="newsflow")
+            if r.status not in ("ok", "empty"):
+                err = f"поиск {r.status}: {(r.detail or '')[:120]}"
                 continue
-            seen.add(u)
-            host = _host_of(u)
-            if _SEARCH_SKIP.search(host) or _JUNK_TLD.search(host) \
-                    or not _SBER_RE.search(it.get("title") or ""):
-                continue
-            cands.append(it)
+            for it in r.items:
+                u = it.get("url") or ""
+                if not u or u in seen:
+                    continue
+                seen.add(u)
+                host = _host_of(u)
+                title = it.get("title") or ""
+                if _SEARCH_SKIP.search(host) or _JUNK_TLD.search(host) \
+                        or not _SBER_RE.search(title) or _SEARCH_DAILY.search(title):
+                    continue
+                cands.append(it)
     if cands:                                   # уже виденные адреса не качаем
         with db.session() as s:
             have = {r[0] for r in s.execute(text(
@@ -747,13 +788,19 @@ def _event_rows(ids: list[int] | None = None, since_h: float = 30) -> list[dict]
     """События окна: ведущая запись (самый длинный текст у самого авторитетного
     источника) и заголовки остальных источников события."""
     with db.session() as s:
+        # Найденное поиском узнаём с опозданием (Яндекс индексирует региональные
+        # издания до суток): его давность для окна — от момента находки, иначе
+        # запись старше окна оценки уже в день находки и не оценивается никогда
+        # (так было с 11 событиями из 11 за две недели до 11.11.2026).
         rows = s.execute(text(f"""
-            SELECT id, event_id, source, url, title, body, ts, rel, rtype, value, s2, image
+            SELECT id, event_id, source, url, title, body, ts, first_seen, rel, rtype, value, s2, image
             FROM news_item
             WHERE event_id IS NOT NULL AND rel >= 5
-              AND coalesce(ts, first_seen) > now() - make_interval(hours => :h)
+              AND greatest(coalesce(ts, first_seen),
+                           CASE WHEN source = :sk THEN first_seen END)
+                  > now() - make_interval(hours => :h)
               {"AND event_id = ANY(:ids)" if ids else ""}
-        """), {"h": since_h, **({"ids": ids} if ids else {})}).mappings().all()
+        """), {"h": since_h, "sk": SEARCH_SRC["key"], **({"ids": ids} if ids else {})}).mappings().all()
     ev: dict[int, list[dict]] = {}
     for r in rows:
         ev.setdefault(r["event_id"], []).append(dict(r))
@@ -768,8 +815,34 @@ def _event_rows(ids: list[int] | None = None, since_h: float = 30) -> list[dict]
                     "rel": max(x["rel"] or 0 for x in items),
                     "rtype": lead["rtype"], "s2": (lead_s2 or {}).get("s2"),
                     "value": (lead_s2 or {}).get("value"),
-                    "ts": max((x["ts"] for x in items if x["ts"]), default=None)})
+                    "ts": max((x["ts"] for x in items if x["ts"]), default=None),
+                    "fresh": fresh_ts(items)})
     return out
+
+
+def fresh_ts(items: list[dict]) -> datetime | None:
+    """От какого момента считать давность события для окна выпуска: время
+    публикации, а у записей поиска — время, когда мы их нашли."""
+    key = SEARCH_SRC["key"]
+    return max((t for t in ((x.get("first_seen") if x.get("source") == key else None) or x.get("ts")
+                            for x in items) if t), default=None)
+
+
+def search_only(e: dict) -> bool:
+    """Событие известно только из поиска: в лентах его нет."""
+    key = SEARCH_SRC["key"]
+    return bool(e.get("items")) and all(x.get("source") == key for x in e["items"])
+
+
+def unconfirmed_incident(e: dict) -> bool:
+    """Происшествие, о котором пишет один сайт из поиска и молчат все ленты.
+    Настоящий сбой за час расходится по лентам, а первая ступень ставила 8–10
+    и страницам «у многих не работает Сбербанк» одного сайта. Такое событие
+    в выпуск идёт строкой ленты, но поводом дня (карточкой, заголовком) стать
+    не может, пока о нём не напишет второе издание."""
+    if (e.get("s2") or {}).get("category") != "incident" or not search_only(e):
+        return False
+    return len({_host_of(x.get("url") or "") for x in e["items"]}) < 2
 
 
 def _valid_codes(v) -> list[str]:
@@ -861,8 +934,11 @@ async def stage2(since_h: float = 30, limit: int = 120) -> dict:
             lead = e["lead"]
             others = [x for x in e["items"] if x is not lead][:5]
             ts = lead["ts"].astimezone(MSK).strftime("%d.%m %H:%M") if lead["ts"] else "?"
+            found = (" Найдено поиском по региональным изданиям: такие сообщения доходят с "
+                     "опозданием, давность до трёх суток устаревшей не считай."
+                     if lead["source"] == SEARCH_SRC["key"] else "")
             parts.append(
-                f"[{k}] Источник: {lead['source']}, {ts}. Заголовок: {lead['title']}\n"
+                f"[{k}] Источник: {lead['source']}, {ts}.{found} Заголовок: {lead['title']}\n"
                 f"Текст: {(lead['body'] or '')[:3500]}"
                 + (f"\nТо же событие в других источниках ({e['n_sources']}): "
                    + "; ".join((x['title'] or '')[:120] for x in others) if others else ""))
@@ -989,10 +1065,13 @@ def day_events(window_h: float = 26, reg_window_h: float = 96,
         if e["s2"] is None:
             continue
         cat = (e["s2"] or {}).get("category")
-        age_h = ((datetime.now(timezone.utc) - e["ts"]).total_seconds() / 3600.0) if e["ts"] else 0
+        born = e.get("fresh") or e["ts"]
+        age_h = ((datetime.now(timezone.utc) - born).total_seconds() / 3600.0) if born else 0
         limit_h = max(reg_window_h, window_h) if cat in ("enforcement", "regulation", "court") else window_h
         if age_h > limit_h:
             continue
+        if unconfirmed_incident(e) and (e["value"] or 0) > SEARCH_SOLO_CAP:
+            e["value"] = SEARCH_SOLO_CAP
         with db.session() as s:
             prev = s.execute(text("""SELECT min(published_on) FROM news_item
                                      WHERE event_id = :e AND published_on IS NOT NULL"""),

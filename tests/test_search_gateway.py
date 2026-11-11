@@ -163,6 +163,22 @@ def test_search_sends_site_in_query_and_remembers_meta(fresh_gw, monkeypatch):
     assert meta["date"] == "2026-09-21" and meta["cache_url"]
 
 
+def test_search_can_ask_newest_first_and_a_full_page(fresh_gw, monkeypatch):
+    bodies = []
+
+    def handler(req):
+        bodies.append(json.loads(req.content))
+        return httpx.Response(200, json={"raw_text": XML_OK})
+    _mock_client(monkeypatch, handler)
+    gw.yandex_search("ипотека")                                  # как раньше: порядок и размер Яндекса
+    gw.yandex_search("ипотека", by_time=True, page_size=50)
+    gw.yandex_search("ипотека", page_size=500)                   # больше ста Яндекс не отдаёт
+    assert "sortSpec" not in bodies[0] and "groupSpec" not in bodies[0]
+    assert bodies[1]["sortSpec"] == {"sortMode": "SORT_MODE_BY_TIME", "sortOrder": "SORT_ORDER_DESC"}
+    assert bodies[1]["groupSpec"]["groupsOnPage"] == "50" and bodies[1]["groupSpec"]["docsInGroup"] == "1"
+    assert bodies[2]["groupSpec"]["groupsOnPage"] == "100" and "sortSpec" not in bodies[2]
+
+
 def test_not_configured_is_down(monkeypatch):
     monkeypatch.delenv("SEARCH_GATEWAY_URL", raising=False)
     monkeypatch.setattr(gw, "emit", lambda *a, **k: None)

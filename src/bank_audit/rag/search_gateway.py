@@ -416,12 +416,22 @@ class SearchResult:
 
 def yandex_search(query: str, *, sites: list[str] | None = None,
                   fresh_hours: int | None = None, max_results: int = 10,
-                  max_wait: float = 8.0, caller: str = "") -> SearchResult:
-    """Поиск Яндекса через шлюз. Никогда не кидает исключений."""
+                  max_wait: float = 8.0, caller: str = "",
+                  by_time: bool = False, page_size: int | None = None) -> SearchResult:
+    """Поиск Яндекса через шлюз. Никогда не кидает исключений.
+
+    by_time — сначала самые свежие (по умолчанию порядок Яндекса «по релевантности»:
+    для отчётов он точнее, но в окне свежести ставит наверх самое старое);
+    page_size — сколько документов просить (без него Яндекс отдаёт 20)."""
     t0 = time.monotonic()
     text = build_query(query, sites, fresh_hours)
     body = {"query": {"searchType": "SEARCH_TYPE_RU", "queryText": text},
             "responseFormat": "FORMAT_XML", "maxPassages": "2"}
+    if by_time:
+        body["sortSpec"] = {"sortMode": "SORT_MODE_BY_TIME", "sortOrder": "SORT_ORDER_DESC"}
+    if page_size:
+        body["groupSpec"] = {"groupMode": "GROUP_MODE_DEEP", "docsInGroup": "1",
+                             "groupsOnPage": str(max(1, min(int(page_size), 100)))}
     rep = _post(_YANDEX_PATH, body, max_wait=max_wait)
     if rep.status != OK:
         res = SearchResult(rep.status, [], rep.detail)
@@ -433,7 +443,8 @@ def yandex_search(query: str, *, sites: list[str] | None = None,
         res = SearchResult(status, items[:max_results], detail)
     emit("web_search", "yandex", res.status, dur_ms=int((time.monotonic() - t0) * 1000),
          n=len(res.items), http_status=rep.http_status, caller=caller,
-         sites=bool(sites or _SITE_RE.search(query or "")), fresh=bool(fresh_hours))
+         sites=bool(sites or _SITE_RE.search(query or "")), fresh=bool(fresh_hours),
+         **({"by_time": True} if by_time else {}))
     return res
 
 
