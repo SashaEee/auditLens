@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 b2350255fd287409b714d014c9aea17b6ad52fad6a2167cc6f658e9f74bd889b): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 77fb90be1491e90d7597fafb6c63eb22df5abff9843e132ba51812d351f698f3): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -108,6 +108,16 @@ const awTemplates = me => {
     slot: "ссылка или текст новости"
   }];
 };
+// шаблон, отправленный без подстановки: что искать и что подсказать
+const AW_BLANK = [{
+  rx: /(на продукт за последние|условия продукта в Сбере|в регулировании продукта в|схемы вокруг продукта:)/i,
+  slot: /продукта?(?= за последние| в Сбере| в \d| *:)/i,
+  hint: "Впишите продукт вместо слова «продукт» — например, «вклады» или «эквайринг»."
+}, {
+  rx: /новость: ссылка или текст новости\s*$/i,
+  slot: /ссылка или текст новости/i,
+  hint: "Вставьте ссылку на новость или её текст."
+}];
 // нормализация вопроса для склейки повторов и подсказки «уже спрашивали»
 const awNorm = s => String(s || "").toLowerCase().replace(/ё/g, "е").replace(/[^a-zа-я0-9]+/g, " ").trim();
 const AW_KIND = {
@@ -13824,6 +13834,30 @@ const STANCE_UI = {
     hint: "требования закона и регулятора"
   }
 };
+
+// Как понят вопрос: задача и рамка. Аудит 11.11 — отчёт сам добавлял конкурентов
+// и «план проверки» к вопросам, где их не просили; теперь рамку видно с первых секунд.
+const DR_TASK = {
+  compare: "сравнение с конкурентами",
+  product: "всё о продукте",
+  complaints: "жалобы и опыт клиентов",
+  regulation: "нормы и требования",
+  market_data: "рынок и цифры",
+  explain: "справка",
+  news: "разбор новости",
+  check: "план проверки"
+};
+const DR_CHECKS = {
+  full: "с планом проверки",
+  short: "с коротким списком «что проверить»",
+  none: "без плана проверки"
+};
+const drScope = u => {
+  const n = (u.names || []).filter(Boolean);
+  if (u.scope === "none" || !n.length) return "без привязки к банкам";
+  if (u.scope === "sber") return "только " + n.join(" и ") + ", без конкурентов";
+  return n.slice(0, 5).join(", ") + (n.length > 5 ? ` и ещё ${n.length - 5}` : "");
+};
 function DeepConsole({
   m,
   loading,
@@ -13850,7 +13884,7 @@ function DeepConsole({
     const done = status === "done";
     switch (key) {
       case "parse":
-        return done ? `${contract.length} характеристик` : "строю план и контракт";
+        return done ? `${contract.length} ${plural(contract.length, "характеристика", "характеристики", "характеристик")}` : "строю план и контракт";
       case "collect":
         return done ? `${srcN} источников` : prog.pages ? `прочитано ${prog.pages}${prog.blocked ? ` · ${prog.blocked} закрыто` : ""}` : `${subq.length || "…"} подзапросов`;
       case "facts":
@@ -13950,7 +13984,26 @@ function DeepConsole({
       style: {
         color: status === "running" ? "var(--accent)" : "var(--ink-3)"
       }
-    }, right(d.key, status))), d.key === "parse" && status !== "pending" && contract.length > 0 && /*#__PURE__*/React.createElement("div", {
+    }, right(d.key, status))), status === "running" && loading && m.stageStatus && m.stageStatus.label && /*#__PURE__*/React.createElement("div", {
+      className: "dr-con-now",
+      "aria-live": "polite"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "dr-con-now-l"
+    }, m.stageStatus.label), m.stageStatus.detail && /*#__PURE__*/React.createElement("span", {
+      className: "dr-con-now-d"
+    }, m.stageStatus.detail)), d.key === "parse" && status !== "pending" && m.understood && m.understood.task && /*#__PURE__*/React.createElement("div", {
+      className: "dr-con-understood"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "dr-con-u-k"
+    }, "\u0412\u043E\u043F\u0440\u043E\u0441 \u043F\u043E\u043D\u044F\u0442 \u043A\u0430\u043A"), /*#__PURE__*/React.createElement("span", {
+      className: "dr-con-u-v"
+    }, DR_TASK[m.understood.task] || m.understood.task), /*#__PURE__*/React.createElement("span", {
+      className: "dr-con-u-sep"
+    }, "\xB7"), /*#__PURE__*/React.createElement("span", null, drScope(m.understood)), m.understood.period && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+      className: "dr-con-u-sep"
+    }, "\xB7"), /*#__PURE__*/React.createElement("span", null, m.understood.period)), DR_CHECKS[m.understood.checks] && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+      className: "dr-con-u-sep"
+    }, "\xB7"), /*#__PURE__*/React.createElement("span", null, DR_CHECKS[m.understood.checks]))), d.key === "parse" && status !== "pending" && contract.length > 0 && /*#__PURE__*/React.createElement("div", {
       className: "dr-con-contract"
     }, /*#__PURE__*/React.createElement("div", {
       className: "dr-con-sub-h"
@@ -14741,7 +14794,9 @@ function SourcesRail({
       title: "\u0434\u0430\u0442\u0430 \u043F\u0443\u0431\u043B\u0438\u043A\u0430\u0446\u0438\u0438 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430"
     }, "\xB7 ", fmtDateMsk(s.published)) : s.fetched_at && /*#__PURE__*/React.createElement("span", {
       title: "\u0434\u0430\u0442\u0430 \u0441\u0431\u043E\u0440\u0430; \u0441\u0430\u043C \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A \u0434\u0430\u0442\u044B \u043D\u0435 \u043E\u0431\u044A\u044F\u0432\u0438\u043B"
-    }, "\xB7 \u0441\u043E\u0431\u0440\u0430\u043D\u043E ", formatRelDate(s.fetched_at)), s.dead && /*#__PURE__*/React.createElement("span", {
+    }, "\xB7 \u0441\u043E\u0431\u0440\u0430\u043D\u043E ", formatRelDate(s.fetched_at)), s.kb_loaded && /*#__PURE__*/React.createElement("span", {
+      title: "\u0422\u0435\u043A\u0441\u0442 \u0432\u0437\u044F\u0442 \u0438\u0437 \u0431\u0430\u0437\u044B \u0437\u043D\u0430\u043D\u0438\u0439 AuditLens: \u044D\u0442\u043E \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u043D\u0430 \u0434\u0430\u0442\u0443 \u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0438, \u0430 \u043D\u0435 \u043D\u0430 \u0441\u0435\u0433\u043E\u0434\u043D\u044F"
+    }, "\xB7 \u0438\u0437 \u0431\u0430\u0437\u044B \u0437\u043D\u0430\u043D\u0438\u0439, \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D\u043E ", fmtDateMsk(s.kb_loaded)), s.dead && /*#__PURE__*/React.createElement("span", {
       className: "dr-rail-dead",
       title: "\u0421\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430 \u0441\u0435\u0439\u0447\u0430\u0441 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u0435\u0442\u0441\u044F \u2014 \u0446\u0438\u0442\u0430\u0442\u0430 \u0438 \u0434\u0430\u0442\u0430 \u0432\u0437\u044F\u0442\u044B \u043F\u0440\u0438 \u0441\u0431\u043E\u0440\u0435"
     }, "\u0441\u0441\u044B\u043B\u043A\u0430 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u0435\u0442\u0441\u044F"))));
@@ -15442,6 +15497,7 @@ function AIPage() {
     stopArmT.current = setTimeout(() => setStopArm(false), 4000);
   };
   const [deepMode, setDeepMode] = useState(false);
+  const [slotHint, setSlotHint] = useState("");
   const [showKbd, setShowKbd] = useState(false);
   const [hoverCite, setHoverCite] = useState(null); // {n, anchor} для tooltip
   const [activeCite, setActiveCite] = useState(null); // подсветка bidirectional
@@ -15797,6 +15853,10 @@ function AIPage() {
                 updateLast(() => ({
                   mode: data.value
                 }));
+              } else if (data.type === "notice" && data.text) {
+                updateLast(() => ({
+                  notice: data.text
+                }));
               } else if (data.type === "phase") {
                 updateLast(() => ({
                   phase: data.value
@@ -15807,6 +15867,14 @@ function AIPage() {
                 updateLast(() => ({
                   plan: data.steps,
                   stepStates: {},
+                  understood: {
+                    task: data.task || "",
+                    scope: data.scope || "",
+                    checks: data.checks || "",
+                    period: data.period || "",
+                    deliverable: data.deliverable || "",
+                    names: (data.subjects || []).map(x => (data.subject_labels || {})[x] || x)
+                  },
                   contract: data.attributes || [],
                   degraded: data.degraded || "",
                   observedAttr: data.observed_attribute || "",
@@ -16041,6 +16109,22 @@ function AIPage() {
   const send = async txt => {
     const t = (txt || q).trim();
     if (!t || loading) return;
+    // Шаблон со стартовой страницы, в котором не вписали продукт или новость:
+    // такие вопросы уходили как есть («Жалобы клиентов Сбера на продукт…») и
+    // получали ответ «уточните продукт» (аудит 11.11 — 15 раз за шесть недель).
+    const blank = AW_BLANK.find(b => b.rx.test(t));
+    if (blank && !txt) {
+      setSlotHint(blank.hint);
+      const el = inputRef.current,
+        i = t.search(blank.slot);
+      if (el && i >= 0) {
+        el.focus();
+        const mm = t.slice(i).match(blank.slot);
+        el.setSelectionRange(i, i + (mm ? mm[0].length : 0));
+      }
+      return;
+    }
+    setSlotHint("");
     setQ("");
     // Выключенный тумблер = ЯВНЫЙ выбор быстрого режима, а не «решай сам».
     // Прежний null уходил в авто-определение, и после первого глубокого отчёта
@@ -16133,7 +16217,8 @@ function AIPage() {
         action: "quick_upsell"
       }
     });
-    setDeepMode(true);
+    // режим отчёта — только на этот запуск: раньше он оставался включённым, и
+    // следующая реплика «хочу» или «сформируй файл» запускала новый отчёт
     setMsgs(m => [...m, {
       role: "user",
       text: srcQ
@@ -16535,7 +16620,10 @@ function AIPage() {
       className: "chat-msg ai quick-msg"
     }, /*#__PURE__*/React.createElement("div", {
       className: "who"
-    }, "AuditLens AI", m.engine === "hermes" ? " · Hermes ✦" : ""), m.tools && m.tools.length > 0 && /*#__PURE__*/React.createElement("div", {
+    }, "AuditLens AI", m.engine === "hermes" ? " · Hermes ✦" : ""), m.notice && /*#__PURE__*/React.createElement("div", {
+      className: "ai-notice",
+      role: "status"
+    }, m.notice), m.tools && m.tools.length > 0 && /*#__PURE__*/React.createElement("div", {
       className: "quick-tools"
     }, collapseTools(m.tools).map(({
       lbl,
@@ -16571,7 +16659,7 @@ function AIPage() {
       className: "quick-src-bank"
     }, s.bank_name || domainOf(s.url) || "источник"), /*#__PURE__*/React.createElement("span", {
       className: "quick-src-dom"
-    }, domainOf(s.url) || "—")))), m.text && !loading && prevQ && /*#__PURE__*/React.createElement("div", {
+    }, domainOf(s.url) || "—")))), m.text && !loading && prevQ && !m.notice && /*#__PURE__*/React.createElement("div", {
       className: "quick-upsell"
     }, /*#__PURE__*/React.createElement("span", {
       className: "quick-upsell-t"
@@ -16673,7 +16761,10 @@ function AIPage() {
       type: "button",
       onClick: () => openSession(hit.session_id)
     }, "\u043E\u0442\u043A\u0440\u044B\u0442\u044C ", hit.report_id ? "отчёт" : "ответ")) : null;
-  })(), /*#__PURE__*/React.createElement("div", {
+  })(), slotHint && /*#__PURE__*/React.createElement("div", {
+    className: "aw-dup aw-slot",
+    role: "alert"
+  }, slotHint), /*#__PURE__*/React.createElement("div", {
     className: "chat-input-wrap"
   }, deepMode && /*#__PURE__*/React.createElement("div", {
     className: "composer-accent"
@@ -16683,7 +16774,10 @@ function AIPage() {
     rows: 1,
     placeholder: deepMode ? "Опишите задачу для глубокого исследования…" : "Спросите о продукте, жалобах, регулировании или новости…",
     value: q,
-    onChange: e => setQ(e.target.value),
+    onChange: e => {
+      setQ(e.target.value);
+      if (slotHint) setSlotHint("");
+    },
     onKeyDown: e => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
@@ -29742,6 +29836,10 @@ const PU2_CSS_QUALITY = `
 .pu2-qa-sw{width:9px;height:9px;border-radius:2px;display:inline-block;flex:none;background:var(--viz)}
 .pu2-qa-sw.b{background:var(--neg)}.pu2-qa-sw.s{background:var(--viz-3)}.pu2-qa-sw.w{background:var(--warn)}
 .pu2-qa-stats{display:flex;gap:12px 28px;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1px solid var(--hair)}
+.pu2-qa-steps{display:grid;grid-template-columns:1fr 1fr;gap:8px 32px}
+.pu2-qa-sub{font-size:12px;color:var(--ink-3);margin:0 0 8px}
+.pu2-qa-note{font-size:12.5px;color:var(--ink-3);margin-top:10px;line-height:1.45}
+@media (max-width:900px){.pu2-qa-steps{grid-template-columns:1fr}}
 .pu2-qa-stats b{display:block;font-size:18px;font-weight:600;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
 .pu2-qa-stats span{font-size:12.5px;color:var(--ink-3)}
 .pu2-qa-duo{display:flex;gap:32px;align-items:flex-end}
@@ -30507,6 +30605,54 @@ function PuQaReports() {
     }
   }));
 }
+
+// «Отчёт: задачи и шаги» — что спрашивают и на что уходит время (аудит 11.11:
+// учёта по шагам не было, план занимал минуту из пяти, и этого никто не видел)
+function PuQaSteps() {
+  const {
+    d,
+    err,
+    reload
+  } = usePuData("/api/admin/pulse/report-steps?days=30");
+  const tasks = d && d.tasks || [],
+    steps = d && d.steps || [];
+  const tmax = Math.max(1, ...tasks.map(t => +t.n || 0)),
+    smax = Math.max(1, ...steps.map(x => +x.median_s || 0));
+  return /*#__PURE__*/React.createElement(PuCard, {
+    title: "\u041E\u0442\u0447\u0451\u0442: \u0437\u0430\u0434\u0430\u0447\u0438 \u0438 \u0448\u0430\u0433\u0438",
+    meta: "30 \u0434\u043D\u0435\u0439",
+    span: 8
+  }, !d ? err ? /*#__PURE__*/React.createElement(PuLoadErr, {
+    onRetry: reload
+  }, "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u0441\u0432\u043E\u0434\u043A\u0443 \u043F\u043E \u043E\u0442\u0447\u0451\u0442\u0430\u043C.") : /*#__PURE__*/React.createElement(Skel, {
+    h: 150
+  }) : !d.reports ? /*#__PURE__*/React.createElement(PuEmpty, null, "\u0417\u0430 \u043F\u0435\u0440\u0438\u043E\u0434 \u043E\u0442\u0447\u0451\u0442\u043E\u0432 \u043D\u0435 \u0437\u0430\u043A\u0430\u0437\u044B\u0432\u0430\u043B\u0438.") : /*#__PURE__*/React.createElement("div", {
+    className: "pu2-qa-steps"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "pu2-qa-sub"
+  }, "\u041A\u0430\u043A\u0438\u0435 \u0437\u0430\u0434\u0430\u0447\u0438 \u0441\u0442\u0430\u0432\u044F\u0442 \xB7 ", puNum(d.reports), " ", plural(d.reports, "отчёт", "отчёта", "отчётов")), tasks.map(t => /*#__PURE__*/React.createElement(PuHBar, {
+    key: t.key || "none",
+    label: t.label,
+    value: t.n,
+    max: tmax,
+    right: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("b", null, puNum(t.n)), t.median_s != null && /*#__PURE__*/React.createElement("span", {
+      className: "pu2-muted"
+    }, " \xB7 ", puDur(t.median_s)), t.broken > 0 && /*#__PURE__*/React.createElement("span", {
+      className: "pu2-qa-b"
+    }, " \xB7 \u043E\u0431\u043E\u0440\u0432\u0430\u043D\u043E ", puNum(t.broken))),
+    tip: t.key ? undefined : "Отчёты до 11.11.2026: тип задачи тогда не определялся"
+  }))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "pu2-qa-sub"
+  }, "\u041D\u0430 \u0447\u0442\u043E \u0443\u0445\u043E\u0434\u0438\u0442 \u0432\u0440\u0435\u043C\u044F \xB7 \u043C\u0435\u0434\u0438\u0430\u043D\u0430 \u0448\u0430\u0433\u0430"), !steps.length ? /*#__PURE__*/React.createElement(PuEmpty, null, "\u041F\u043E\u044F\u0432\u0438\u0442\u0441\u044F \u043F\u043E\u0441\u043B\u0435 \u043F\u0435\u0440\u0432\u044B\u0445 \u043E\u0442\u0447\u0451\u0442\u043E\u0432 \u0441 \u0443\u0447\u0451\u0442\u043E\u043C \u0448\u0430\u0433\u043E\u0432.") : steps.map(x => /*#__PURE__*/React.createElement(PuHBar, {
+    key: x.key,
+    label: x.label,
+    value: x.median_s,
+    max: smax,
+    right: /*#__PURE__*/React.createElement("b", null, x.median_s != null ? puDur(x.median_s) : "—")
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "pu2-qa-note"
+  }, "\u0412\u0435\u0441\u044C \u043E\u0442\u0447\u0451\u0442: ", d.median_s != null ? puDur(d.median_s) : "—", " (\u043C\u0435\u0434\u0438\u0430\u043D\u0430)", d.broken > 0 ? ` · оборвано ${puNum(d.broken)} из ${puNum(d.reports)}` : " · оборванных нет", d.timed < d.reports ? ` · шаги учтены у ${puNum(d.timed)}` : ""))));
+}
 function PuQualitySec() {
   const c = usePu(),
     m = c.m || {};
@@ -30526,7 +30672,7 @@ function PuQualitySec() {
     ev: ev,
     eng: eng,
     setEng: setEng
-  }), /*#__PURE__*/React.createElement(PuQaRuns, {
+  }), /*#__PURE__*/React.createElement(PuQaSteps, null), /*#__PURE__*/React.createElement(PuQaRuns, {
     m: m
   }), /*#__PURE__*/React.createElement(PuQaRatings, {
     m: m

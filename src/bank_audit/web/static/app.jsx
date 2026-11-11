@@ -47,6 +47,13 @@ const awTemplates=me=>{
     {k:"Разобрать новость",t:"Разбери для аудита розницы Сбера новость: ссылка или текст новости",slot:"ссылка или текст новости"},
   ];
 };
+// шаблон, отправленный без подстановки: что искать и что подсказать
+const AW_BLANK=[
+  {rx:/(на продукт за последние|условия продукта в Сбере|в регулировании продукта в|схемы вокруг продукта:)/i,
+   slot:/продукта?(?= за последние| в Сбере| в \d| *:)/i,hint:"Впишите продукт вместо слова «продукт» — например, «вклады» или «эквайринг»."},
+  {rx:/новость: ссылка или текст новости\s*$/i,slot:/ссылка или текст новости/i,
+   hint:"Вставьте ссылку на новость или её текст."},
+];
 // нормализация вопроса для склейки повторов и подсказки «уже спрашивали»
 const awNorm=s=>String(s||"").toLowerCase().replace(/ё/g,"е").replace(/[^a-zа-я0-9]+/g," ").trim();
 const AW_KIND={review_spike:"Жалобы · сигнал дня",news_alert:"Новость дня",tariff_move:"Тарифы",mass_move:"Тарифы · массово",
@@ -6906,6 +6913,16 @@ const STANCE_UI = {
   regulatory: {label:"нормы",      hint:"требования закона и регулятора"},
 };
 
+// Как понят вопрос: задача и рамка. Аудит 11.11 — отчёт сам добавлял конкурентов
+// и «план проверки» к вопросам, где их не просили; теперь рамку видно с первых секунд.
+const DR_TASK={compare:"сравнение с конкурентами",product:"всё о продукте",complaints:"жалобы и опыт клиентов",
+  regulation:"нормы и требования",market_data:"рынок и цифры",explain:"справка",news:"разбор новости",check:"план проверки"};
+const DR_CHECKS={full:"с планом проверки",short:"с коротким списком «что проверить»",none:"без плана проверки"};
+const drScope=u=>{const n=(u.names||[]).filter(Boolean);
+  if(u.scope==="none"||!n.length)return "без привязки к банкам";
+  if(u.scope==="sber")return "только "+n.join(" и ")+", без конкурентов";
+  return n.slice(0,5).join(", ")+(n.length>5?` и ещё ${n.length-5}`:"");};
+
 function DeepConsole({m, loading, elapsed}){
   const phase=m.phase;
   const curIdx = phase==="done" ? DEEP_FLOW.length
@@ -6928,7 +6945,7 @@ function DeepConsole({m, loading, elapsed}){
     if(status==="pending") return "";
     const done=status==="done";
     switch(key){
-      case "parse":   return done?`${contract.length} характеристик`
+      case "parse":   return done?`${contract.length} ${plural(contract.length,"характеристика","характеристики","характеристик")}`
                                  :"строю план и контракт";
       case "collect": return done?`${srcN} источников`
                                  :(prog.pages?`прочитано ${prog.pages}${prog.blocked?` · ${prog.blocked} закрыто`:""}`
@@ -6983,8 +7000,24 @@ function DeepConsole({m, loading, elapsed}){
                 </span>
                 <span className="dr-con-right mono" style={{color:status==="running"?"var(--accent)":"var(--ink-3)"}}>{right(d.key,status)}</span>
               </div>
+              {/* Что происходит прямо сейчас: сервер присылал эти подписи всегда,
+                  но интерфейс их не показывал — ожидание выглядело немым. */}
+              {status==="running" && loading && m.stageStatus && m.stageStatus.label &&
+                <div className="dr-con-now" aria-live="polite">
+                  <span className="dr-con-now-l">{m.stageStatus.label}</span>
+                  {m.stageStatus.detail && <span className="dr-con-now-d">{m.stageStatus.detail}</span>}
+                </div>}
               {/* КОНТРАКТ: что отчёт обязан закрыть. Главная опора доверия —
                   аудитор сразу видит рамку разбора, а не «идёт анализ». */}
+              {d.key==="parse" && status!=="pending" && m.understood && m.understood.task &&
+                <div className="dr-con-understood">
+                  <span className="dr-con-u-k">Вопрос понят как</span>
+                  <span className="dr-con-u-v">{DR_TASK[m.understood.task]||m.understood.task}</span>
+                  <span className="dr-con-u-sep">·</span>
+                  <span>{drScope(m.understood)}</span>
+                  {m.understood.period && <><span className="dr-con-u-sep">·</span><span>{m.understood.period}</span></>}
+                  {DR_CHECKS[m.understood.checks] && <><span className="dr-con-u-sep">·</span><span>{DR_CHECKS[m.understood.checks]}</span></>}
+                </div>}
               {d.key==="parse" && status!=="pending" && contract.length>0 &&
                 <div className="dr-con-contract">
                   <div className="dr-con-sub-h">Контракт разбора · что обязаны закрыть</div>
@@ -7558,6 +7591,8 @@ function SourcesRail({sources, activeN, onHover, onClick, failed}){
                 ? <span title="дата публикации источника">· {fmtDateMsk(s.published)}</span>
                 : s.fetched_at && <span title="дата сбора; сам источник даты не объявил">
                     · собрано {formatRelDate(s.fetched_at)}</span>}
+              {s.kb_loaded && <span title="Текст взят из базы знаний AuditLens: это страница на дату загрузки, а не на сегодня">
+                · из базы знаний, загружено {fmtDateMsk(s.kb_loaded)}</span>}
               {s.dead && <span className="dr-rail-dead"
                 title="Страница источника сейчас не открывается — цитата и дата взяты при сборе">
                 ссылка не открывается</span>}
@@ -7969,6 +8004,7 @@ function AIPage(){
     if(stopArm){ setStopArm(false); abortRef.current?.abort(); return; }
     setStopArm(true); stopArmT.current=setTimeout(()=>setStopArm(false),4000); };
   const[deepMode,setDeepMode]=useState(false);
+  const[slotHint,setSlotHint]=useState("");
   const[showKbd,setShowKbd]=useState(false);
   const[hoverCite,setHoverCite]=useState(null);          // {n, anchor} для tooltip
   const[activeCite,setActiveCite]=useState(null);        // подсветка bidirectional
@@ -8190,12 +8226,17 @@ function AIPage(){
                 updateLast(()=>({files:data.files}));
               }else if(data.type==="mode"){
                 updateLast(()=>({mode:data.value}));
+              }else if(data.type==="notice"&&data.text){
+                updateLast(()=>({notice:data.text}));
               }else if(data.type==="phase"){
                 updateLast(()=>({phase:data.value}));
               }else if(data.type==="plan"&&Array.isArray(data.steps)){
                 // Контракт и подзапросы — то, по чему аудитор понимает рамку
                 // разбора ещё до появления первых фактов.
                 updateLast(()=>({plan:data.steps,stepStates:{},
+                  understood:{task:data.task||"",scope:data.scope||"",checks:data.checks||"",
+                    period:data.period||"",deliverable:data.deliverable||"",
+                    names:(data.subjects||[]).map(x=>(data.subject_labels||{})[x]||x)},
                   contract:data.attributes||[],
                   degraded:data.degraded||"",
                   observedAttr:data.observed_attribute||"",
@@ -8333,6 +8374,17 @@ function AIPage(){
   const send=async(txt)=>{
     const t=(txt||q).trim();
     if(!t||loading)return;
+    // Шаблон со стартовой страницы, в котором не вписали продукт или новость:
+    // такие вопросы уходили как есть («Жалобы клиентов Сбера на продукт…») и
+    // получали ответ «уточните продукт» (аудит 11.11 — 15 раз за шесть недель).
+    const blank=AW_BLANK.find(b=>b.rx.test(t));
+    if(blank&&!txt){
+      setSlotHint(blank.hint);
+      const el=inputRef.current, i=t.search(blank.slot);
+      if(el&&i>=0){el.focus(); const mm=t.slice(i).match(blank.slot); el.setSelectionRange(i,i+(mm?mm[0].length:0));}
+      return;
+    }
+    setSlotHint("");
     setQ("");
     // Выключенный тумблер = ЯВНЫЙ выбор быстрого режима, а не «решай сам».
     // Прежний null уходил в авто-определение, и после первого глубокого отчёта
@@ -8382,7 +8434,8 @@ function AIPage(){
   const runDeepFromQuick=(srcQ)=>{
     if(loading||!srcQ)return;
     trkEvent({kind:"ui",page:"ai",payload:{action:"quick_upsell"}});
-    setDeepMode(true);
+    // режим отчёта — только на этот запуск: раньше он оставался включённым, и
+    // следующая реплика «хочу» или «сформируй файл» запускала новый отчёт
     setMsgs(m=>[...m,{role:"user",text:srcQ}]);
     runSend(srcQ,true);
   };
@@ -8607,6 +8660,7 @@ function AIPage(){
           const qText = stripFileMarks(m.text, m.files);
           return <div key={i} className="chat-msg ai quick-msg">
             <div className="who">AuditLens AI{m.engine==="hermes"?" · Hermes ✦":""}</div>
+            {m.notice && <div className="ai-notice" role="status">{m.notice}</div>}
             {m.tools&&m.tools.length>0 &&
               <div className="quick-tools">
                 {collapseTools(m.tools).map(({lbl,n},ti,arr)=>(
@@ -8628,7 +8682,7 @@ function AIPage(){
                     <span className="quick-src-dom">{domainOf(s.url)||"—"}</span>
                   </a>))}
               </div>}
-            {m.text && !loading && prevQ &&
+            {m.text && !loading && prevQ && !m.notice &&
               <div className="quick-upsell">
                 <span className="quick-upsell-t">Нужен документ для аудит-дела — с таблицей, рисками и проверкой чисел?</span>
                 <button className="quick-upsell-btn" onClick={()=>runDeepFromQuick(prevQ)}>
@@ -8672,11 +8726,12 @@ function AIPage(){
             const hit=sessAll.find(x=>{const f=awNorm(x.first_q||x.title); return f&&(x.n_answers>0||x.report_id)&&(f===n||(n.length>=30&&f.startsWith(n.slice(0,60))));});
             return hit?<div className="aw-dup" role="status">Вы уже спрашивали это {fmtHistTime(hit.updated_at)} —
               <button type="button" onClick={()=>openSession(hit.session_id)}>открыть {hit.report_id?"отчёт":"ответ"}</button></div>:null;})()}
+          {slotHint && <div className="aw-dup aw-slot" role="alert">{slotHint}</div>}
           <div className="chat-input-wrap">
             {deepMode && <div className="composer-accent"/>}
             <textarea ref={inputRef} className="chat-textarea" rows={1}
               placeholder={deepMode?"Опишите задачу для глубокого исследования…":"Спросите о продукте, жалобах, регулировании или новости…"}
-              value={q} onChange={e=>setQ(e.target.value)}
+              value={q} onChange={e=>{setQ(e.target.value); if(slotHint)setSlotHint("");}}
               onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}/>
             <div className="composer-bar">
               <div className="seg">
@@ -14213,6 +14268,10 @@ const PU2_CSS_QUALITY=`
 .pu2-qa-sw{width:9px;height:9px;border-radius:2px;display:inline-block;flex:none;background:var(--viz)}
 .pu2-qa-sw.b{background:var(--neg)}.pu2-qa-sw.s{background:var(--viz-3)}.pu2-qa-sw.w{background:var(--warn)}
 .pu2-qa-stats{display:flex;gap:12px 28px;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1px solid var(--hair)}
+.pu2-qa-steps{display:grid;grid-template-columns:1fr 1fr;gap:8px 32px}
+.pu2-qa-sub{font-size:12px;color:var(--ink-3);margin:0 0 8px}
+.pu2-qa-note{font-size:12.5px;color:var(--ink-3);margin-top:10px;line-height:1.45}
+@media (max-width:900px){.pu2-qa-steps{grid-template-columns:1fr}}
 .pu2-qa-stats b{display:block;font-size:18px;font-weight:600;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
 .pu2-qa-stats span{font-size:12.5px;color:var(--ink-3)}
 .pu2-qa-duo{display:flex;gap:32px;align-items:flex-end}
@@ -14537,6 +14596,35 @@ function PuQaReports(){
   </PuCard>;
 }
 
+// «Отчёт: задачи и шаги» — что спрашивают и на что уходит время (аудит 11.11:
+// учёта по шагам не было, план занимал минуту из пяти, и этого никто не видел)
+function PuQaSteps(){
+  const {d,err,reload}=usePuData("/api/admin/pulse/report-steps?days=30");
+  const tasks=(d&&d.tasks)||[], steps=(d&&d.steps)||[];
+  const tmax=Math.max(1,...tasks.map(t=>+t.n||0)), smax=Math.max(1,...steps.map(x=>+x.median_s||0));
+  return <PuCard title="Отчёт: задачи и шаги" meta="30 дней" span={8}>
+    {!d?(err?<PuLoadErr onRetry={reload}>Не удалось загрузить сводку по отчётам.</PuLoadErr>:<Skel h={150}/>)
+      :!d.reports?<PuEmpty>За период отчётов не заказывали.</PuEmpty>:<div className="pu2-qa-steps">
+      <div>
+        <div className="pu2-qa-sub">Какие задачи ставят · {puNum(d.reports)} {plural(d.reports,"отчёт","отчёта","отчётов")}</div>
+        {tasks.map(t=><PuHBar key={t.key||"none"} label={t.label} value={t.n} max={tmax}
+          right={<><b>{puNum(t.n)}</b>{t.median_s!=null&&<span className="pu2-muted"> · {puDur(t.median_s)}</span>}
+            {t.broken>0&&<span className="pu2-qa-b"> · оборвано {puNum(t.broken)}</span>}</>}
+          tip={t.key?undefined:"Отчёты до 11.11.2026: тип задачи тогда не определялся"}/>)}
+      </div>
+      <div>
+        <div className="pu2-qa-sub">На что уходит время · медиана шага</div>
+        {!steps.length?<PuEmpty>Появится после первых отчётов с учётом шагов.</PuEmpty>
+          :steps.map(x=><PuHBar key={x.key} label={x.label} value={x.median_s} max={smax}
+            right={<b>{x.median_s!=null?puDur(x.median_s):"—"}</b>}/>)}
+        <div className="pu2-qa-note">Весь отчёт: {d.median_s!=null?puDur(d.median_s):"—"} (медиана)
+          {d.broken>0?` · оборвано ${puNum(d.broken)} из ${puNum(d.reports)}`:" · оборванных нет"}
+          {d.timed<d.reports?` · шаги учтены у ${puNum(d.timed)}`:""}</div>
+      </div>
+    </div>}
+  </PuCard>;
+}
+
 function PuQualitySec(){
   const c=usePu(), m=c.m||{};
   const[eng,setEng]=useState("hermes");
@@ -14546,6 +14634,7 @@ function PuQualitySec(){
   useEffect(()=>{ if(!running||!c.visible) return; const t=setInterval(reload,20000); return ()=>clearInterval(t); },[running,c.visible,reload]);
   return <div className="pu2-grid">
     <PuQaEval ev={ev} eng={eng} setEng={setEng}/>
+    <PuQaSteps/>
     <PuQaRuns m={m}/>
     <PuQaRatings m={m}/>
     <PuQaCases ev={ev} eng={eng}/>
