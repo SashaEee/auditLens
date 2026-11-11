@@ -627,12 +627,21 @@ def fetch_bodies(limit: int = 40) -> int:
         if url not in bodies:           # не пробовали скачать — «полный текст» не ставим
             continue
         b = (bodies.get(url) or "").strip()
-        payload.append({"id": rid, "b": b[:BODY_CHARS] if len(b) > 200 else None})
+        payload.append({"id": rid, "b": b[:BODY_CHARS] if len(b) > 200 else None, "cap": BODY_CHARS})
     if not payload:
         return 0
     with db.session() as s:
-        s.execute(text("""UPDATE news_item SET body = coalesce(:b, body), body_full = true
-                          WHERE id = :id"""), payload)
+        # у публикации со страницы-списка в body лежит пояснение из карточки
+        # (одна-две фразы о сути) — оставляем его первым абзацем перед полным
+        # текстом: оно нужно полке исследований и полезно модели
+        s.execute(text("""
+            UPDATE news_item SET body = CASE
+                    WHEN CAST(:b AS text) IS NULL THEN body
+                    WHEN tag = 'research' AND body <> title AND length(body) BETWEEN 40 AND 400
+                        THEN left(body || chr(10) || chr(10) || CAST(:b AS text), :cap)
+                    ELSE CAST(:b AS text) END,
+                body_full = true
+            WHERE id = :id"""), payload)
     return sum(1 for p in payload if p["b"])
 
 
@@ -1241,7 +1250,9 @@ def mark_published(event_ids: list[int]) -> None:
 # модель увидела в нём повод для проверки. Чтобы новые источники из списка
 # руководства были видны и без этого, свежие публикации по теме финансов
 # показываются отдельной полкой под карточками выпуска.
-SHELF_MIN_REL = int(os.getenv("NEWSFLOW_SHELF_MIN_REL", "4"))
+# от 5 по шкале ступени 1 — про банки и розничные продукты; на 4 проходили
+# анонсы выступлений на конференциях и общая макроэкономика (замер 11.11.2026)
+SHELF_MIN_REL = int(os.getenv("NEWSFLOW_SHELF_MIN_REL", "5"))
 SHELF_PER_SOURCE = int(os.getenv("NEWSFLOW_SHELF_PER_SOURCE", "3"))
 SHELF_NEW_DAYS = 7
 
@@ -1254,18 +1265,20 @@ def research_shelf(limit: int = 8) -> list[dict]:
     if not keys:
         return []
     with db.session() as s:
+        # при равной дате — в порядке страницы (записи вставлены сверху вниз,
+        # верхняя на сайте — самая свежая);
         # по нескольку самых свежих от каждого источника — иначе сотня докладов
         # одного сайта вытеснила бы остальные из выборки; с запасом, потому что
         # повторы одной серии полка пропускает (shelf_pick)
         rows = s.execute(text("""
-            SELECT id, source, url, title, ts, first_seen, rel, value, summary, body FROM (
+            SELECT id, source, url, title, ts, first_seen, rel, value, summary, body, body_full FROM (
                 SELECT id, source, url, title, ts, first_seen, rel, value,
-                       s2->>'summary' AS summary, left(body, 400) AS body,
-                       row_number() OVER (PARTITION BY source ORDER BY ts DESC NULLS LAST, id DESC) AS rn
+                       s2->>'summary' AS summary, left(body, 400) AS body, body_full,
+                       row_number() OVER (PARTITION BY source ORDER BY ts DESC NULLS LAST, id) AS rn
                 FROM news_item
                 WHERE source = ANY(:k) AND (rel IS NULL OR rel >= :m)) q
             WHERE rn <= :p
-            ORDER BY ts DESC NULLS LAST, id DESC
+            ORDER BY ts DESC NULLS LAST, id
         """), {"k": keys, "m": SHELF_MIN_REL, "p": SHELF_PER_SOURCE * 4}).mappings().all()
     return shelf_pick([dict(r) for r in rows], limit)
 
@@ -1293,8 +1306,11 @@ def shelf_pick(rows: list[dict], limit: int = 8, now: datetime | None = None) ->
                               or (seen is not None and abs((seen - ts).total_seconds()) < 36 * 3600))
         note = (r["summary"] or "").strip()
         if not note:
-            b = clean_line(r["body"] or "")
-            note = b if b and b[:40].lower() != (r["title"] or "")[:40].lower() else ""
+            raw = r["body"] or ""
+            if r.get("body_full"):      # пояснение из карточки — первый абзац перед полным текстом
+                raw = raw.split("\n\n", 1)[0] if "\n\n" in raw else ""
+            b = clean_line(raw)
+            note = b if letters(b) >= 40 and b[:40].lower() != (r["title"] or "")[:40].lower() else ""
         out.append({"id": r["id"], "source": r["source"], "url": r["url"], "title": r["title"],
                     "date": ts.astimezone(MSK).date().isoformat() if dated else None,
                     "new": bool(dated and (now - ts).days < SHELF_NEW_DAYS),

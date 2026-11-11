@@ -297,6 +297,15 @@ def test_shelf_shows_one_item_of_a_monthly_series():
     assert [g["id"] for g in nf.shelf_pick(rows, 8, NOW)] == [1, 4, 5]
 
 
+def test_shelf_keeps_the_card_note_after_the_full_text_is_loaded():
+    note = "Доля десяти крупнейших банков в прибыли сектора снизилась с 75 до 72 процентов."
+    full = "Главная Аналитика Исследования Итоги банковского сектора за полугодие " + "текст отчёта " * 40
+    with_note = _item(1, "raexpert_research", NOW, NOW, body=(note + "\n\n" + full)[:400], body_full=True)
+    only_full = _item(2, "cbr_research", NOW, NOW, body=full[:400], body_full=True)
+    got = {g["id"]: g["note"] for g in nf.shelf_pick([with_note, only_full], 8, NOW)}
+    assert got == {1: note, 2: ""}       # меню и шапку страницы за пояснение не выдаём
+
+
 def test_shelf_note_is_empty_when_body_only_repeats_the_title():
     r = _item(1, "hse_bankslab", NOW, NOW)
     r["body"] = r["title"]
