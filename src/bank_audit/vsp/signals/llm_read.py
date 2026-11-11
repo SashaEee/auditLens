@@ -422,10 +422,11 @@ class Reader:
             ex["reasoning_effort"] = "low"
         return {k: v for k, v in ex.items() if k not in self.drop}
 
-    async def ask(self, user: str) -> tuple[object, float]:
+    async def ask(self, user: str, system: str | None = None) -> tuple[object, float]:
+        """system — своя подсказка на этот вызов (один клиент с общим ограничителем на разные задачи)."""
         for attempt in range(5):
             kw = dict(model=self.model, max_tokens=8000,
-                      messages=[{"role": "system", "content": self.system}, {"role": "user", "content": user}],
+                      messages=[{"role": "system", "content": system or self.system}, {"role": "user", "content": user}],
                       **self._extras())
             try:
                 async with self.sem:

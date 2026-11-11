@@ -24,7 +24,7 @@ class Editor:
     def __init__(self, *a, **k):
         self.system, self.calls, self.model = "", 0, "fake"
 
-    async def ask(self, user):
+    async def ask(self, user, system=None):
         self.calls += 1
         if "Перечень почерков" not in user:                         # предложить каталог для типа
             if "биометри" in user:
@@ -178,7 +178,7 @@ class Editor2:
     def __init__(self):
         self.system, self.model, self.kinds_of_call = "", "fake", []
 
-    async def ask(self, user):
+    async def ask(self, user, system=None):
         if "не подошли" in user:                                   # шаг 3: остаток
             self.kinds_of_call.append("more")
             return {"motifs": [{"name": "Сим-карту выдают вместе с картой", "description": "Клиенты пишут, что вместе с "

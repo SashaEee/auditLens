@@ -185,15 +185,11 @@ async def build(store: Store, *, cap_rub: float | None = None, reader: Reader | 
     spent = {"rub": 0.0, "calls": 0}
     now = utcnow()
 
-    def rdr(system: str) -> Reader:
-        """Свой читатель на тип: подсказка у типа одна, и расход держится под лимитом токенов в минуту."""
-        if reader is not None:
-            reader.system = system
-            return reader
-        return Reader(MOTIF_MODEL, system)
+    # один клиент на весь запуск: типы идут параллельно, а расход токенов в минуту считается общий
+    rd = reader or Reader(MOTIF_MODEL, "")
 
-    async def ask(rd: Reader, user: str):
-        d, rub = await rd.ask(user)
+    async def ask(system: str, user: str):
+        d, rub = await rd.ask(user, system=system)
         spent["rub"] += rub
         spent["calls"] += 1
         return d if isinstance(d, dict) else {}
@@ -230,7 +226,7 @@ async def build(store: Store, *, cap_rub: float | None = None, reader: Reader | 
         save_motifs(rows)
         return len(rows)
 
-    async def assign(kind: int, items: list[tuple[str, dict]], rd_k: Reader) -> list[tuple[str, dict]]:
+    async def assign(kind: int, items: list[tuple[str, dict]], system: str) -> list[tuple[str, dict]]:
         """Отнести описания к каталогу. Возвращает те, что модель отправила в «прочее» (0) — их ещё не сохраняем:
         остаток посмотрим на новые почерки. Пропущенные моделью остаются на следующий запуск."""
         cat = catalog(kind)
@@ -240,7 +236,7 @@ async def build(store: Store, *, cap_rub: float | None = None, reader: Reader | 
         async def one(batch: list[tuple[str, dict]]) -> None:
             if spent["rub"] >= cap:
                 return
-            d = await ask(rd_k, head + "\n\nИстории:\n" + "\n".join(
+            d = await ask(system, head + "\n\nИстории:\n" + "\n".join(
                 f"[{i}] {lb} | Пересказ: {x['episode'][:260]}" for i, (lb, x) in enumerate(batch, 1)))
             rows, done = [], set()
             for it in d.get("items") or []:
@@ -263,10 +259,8 @@ async def build(store: Store, *, cap_rub: float | None = None, reader: Reader | 
         await asyncio.gather(*(one(items[i:i + ASSIGN_BATCH]) for i in range(0, len(items), ASSIGN_BATCH)))
         return left
 
-    for kind in sorted(pend):
+    async def do_kind(kind: int) -> None:
         todo = pend[kind]
-        if not todo or kind not in KINDS or (kinds and kind not in kinds):
-            continue
         if other_id(kind) not in ms:
             save_motifs([{"motif_id": other_id(kind), "kind": kind, "name": f"Прочее: {kind_name(kind).lower()}",
                           "description": "", "benign": "", "ops": "", "metric": "", "created_at": now, "updated_at": now}])
@@ -274,30 +268,33 @@ async def build(store: Store, *, cap_rub: float | None = None, reader: Reader | 
         # 1) каталог для типа, у которого его ещё нет
         if not catalog(kind) and len(todo) >= PROPOSE_MIN and spent["rub"] < cap:
             sample = sorted(todo.items(), key=lambda kv: -kv[1]["n"])[:PROPOSE_SAMPLE]
-            d = await ask(rdr(SYSTEM_PROPOSE.replace("{kind}", name).replace("{max}", str(MAX_FIRST))),
+            d = await ask(SYSTEM_PROPOSE.replace("{kind}", name).replace("{max}", str(MAX_FIRST)),
                           "Тип: " + name + "\nОписания (в скобках — сколько раз встретилось):\n" +
                           "\n".join(f"- {lb} ({x['n']})" for lb, x in sample))
             stats["proposed"] += add_motifs(kind, d.get("motifs"), MAX_FIRST)
         if not catalog(kind):                            # описаний мало — пока всё в «прочее»
             save_labels([{"kind": kind, "label": lb, "motif_id": other_id(kind), "at": now} for lb in todo])
             stats["other"] += len(todo)
-            continue
+            return
         # 2) каждое описание — к почерку каталога или в остаток
-        left = await assign(kind, list(todo.items()), rdr(SYSTEM_ASSIGN.replace("{kind}", name)))
+        left = await assign(kind, list(todo.items()), SYSTEM_ASSIGN.replace("{kind}", name))
         # 3) остаток: повторяется ли в нём новый приём
         room = min(MAX_MORE, MAX_MOTIFS - len(catalog(kind)))
         if len(left) >= PROPOSE_MIN and room > 0 and spent["rub"] < cap:
             sample = sorted(left, key=lambda kv: -kv[1]["n"])[:PROPOSE_SAMPLE]
-            d = await ask(rdr(SYSTEM_MORE.replace("{kind}", name).replace("{max}", str(room))),
+            d = await ask(SYSTEM_MORE.replace("{kind}", name).replace("{max}", str(room)),
                           "Перечень почерков:\n" + "\n".join(f"- {m['name']} — {m['description']}" for m in catalog(kind)) +
                           "\n\nОписания, которые не подошли (в скобках — сколько раз встретилось):\n" +
                           "\n".join(f"- {lb} ({x['n']})" for lb, x in sample))
             added = add_motifs(kind, d.get("motifs"), room)
             stats["new"] += added
             if added:
-                left = await assign(kind, left, rdr(SYSTEM_ASSIGN.replace("{kind}", name)))
+                left = await assign(kind, left, SYSTEM_ASSIGN.replace("{kind}", name))
         save_labels([{"kind": kind, "label": lb, "motif_id": other_id(kind), "at": utcnow()} for lb, _ in left])
         stats["other"] += len(left)
+
+    await asyncio.gather(*(do_kind(k) for k in sorted(pend)
+                           if pend[k] and k in KINDS and not (kinds and k not in kinds)))
     res = {"motifs": len([m for m in ms.values() if not m["motif_id"].endswith("00")]), "labels": len(labels),
            "rub": round(spent["rub"], 2), "calls": spent["calls"], **dict(stats)}
     log.info("почерки: %s", res)
