@@ -122,6 +122,7 @@ def report(viewer: str | None, days: int = 30, with_me: bool | None = None) -> d
 
     explicit = set(vsp_api.beta_users()) | vsp_api._env_users_vsp()
     units_open = set(vsp_api.beta_units())
+    unit_of: dict[str, str | None] = {}
     people, rest = [], []
     acc_by_unit: collections.Counter = collections.Counter()
     for uname, dname, seen in users:
@@ -129,6 +130,7 @@ def report(viewer: str | None, days: int = 30, with_me: bool | None = None) -> d
         working = bool(m) and m["status"] not in fired
         unit = (m["unit_code"] or "-") if working else None
         unit_name = org_reach.unit_label(m["unit_code"], m["unit_hint"]) if working else None
+        unit_of[uname] = unit
         if working:
             acc_by_unit[unit] += 1
         owner = telemetry.is_admin(uname)
@@ -193,7 +195,10 @@ def report(viewer: str | None, days: int = 30, with_me: bool | None = None) -> d
                                        {"name": u, "unit_name": None})}
                    for u in sorted(explicit)],
         "people": people, "rest": sorted(rest, key=lambda r: r["name"].lower()),
-        "summary": {"staff": staff, "no_account": max(0, staff - in_units),
+        # accounts — сколько людей открытых подразделений уже входили в AuditLens (вместе с владельцем);
+        # extra — кому раздел открыт по логину сверх этих подразделений
+        "summary": {"staff": staff, "accounts": in_units, "no_account": max(0, staff - in_units),
+                    "extra": sum(1 for u in explicit if unit_of.get(u) not in units_open),
                     "with_access": len(people), "opened": len(opened),
                     "opened_period": sum(1 for r in people if r["views"]),
                     "returned": sum(1 for r in people if r["days_all"] >= 2),

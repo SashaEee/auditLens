@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 6b0596c7d81385a3159475f72629ec0f51bd8776806c34e7e740ad0ba1cfcd18): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 b2350255fd287409b714d014c9aea17b6ad52fad6a2167cc6f658e9f74bd889b): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -33969,18 +33969,19 @@ function PuVspSec() {
   }, /*#__PURE__*/React.createElement(PuKpi, {
     label: "\u0420\u0430\u0437\u0434\u0435\u043B \u043E\u0442\u043A\u0440\u044B\u0442",
     icon: "user",
-    value: puNum(s.staff || s.with_access),
+    value: puNum((+s.staff || 0) + (+s.extra || 0)),
     unit: " \u0447\u0435\u043B.",
-    sub: openUnits.length ? `${openUnits.join(", ")}${(d.logins || []).length ? ` · по логину ещё ${puNum(d.logins.length)}` : ""}` : (d.logins || []).length ? `по логину — ${puNum(d.logins.length)}` : "пока только вам"
+    sub: openUnits.length ? `${openUnits.join(", ")}${s.extra ? ` · по логину ещё ${puNum(s.extra)}` : ""}` : s.extra ? `по логину — ${puNum(s.extra)}` : "пока только вам",
+    tip: "\u0412\u0441\u0435 \u0440\u0430\u0431\u043E\u0442\u0430\u044E\u0449\u0438\u0435 \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u0438 \u043E\u0442\u043A\u0440\u044B\u0442\u044B\u0445 \u043F\u043E\u0434\u0440\u0430\u0437\u0434\u0435\u043B\u0435\u043D\u0438\u0439 \u0438 \u0442\u0435, \u043A\u043E\u043C\u0443 \u0440\u0430\u0437\u0434\u0435\u043B \u043E\u0442\u043A\u0440\u044B\u0442 \u043F\u043E \u043B\u043E\u0433\u0438\u043D\u0443 \u0441\u0432\u0435\u0440\u0445 \u043D\u0438\u0445"
   }), /*#__PURE__*/React.createElement(PuKpi, {
     label: "\u0417\u0430\u0445\u043E\u0434\u0438\u043B\u0438 \u0432 AuditLens",
-    value: /*#__PURE__*/React.createElement(React.Fragment, null, puNum(s.with_access), s.staff ? /*#__PURE__*/React.createElement("small", null, " \u0438\u0437 ", puNum(s.staff)) : null),
+    value: /*#__PURE__*/React.createElement(React.Fragment, null, puNum((+s.accounts || 0) + (+s.extra || 0)), /*#__PURE__*/React.createElement("small", null, " \u0438\u0437 ", puNum((+s.staff || 0) + (+s.extra || 0)))),
     sub: s.no_account > 0 ? `${puNum(s.no_account)} ещё ни разу не входили` : "у всех есть учётная запись",
     tip: "\u0421\u043A\u043E\u043B\u044C\u043A\u043E \u043B\u044E\u0434\u0435\u0439 \u0441 \u0434\u043E\u0441\u0442\u0443\u043F\u043E\u043C \u0443\u0436\u0435 \u0432\u0445\u043E\u0434\u0438\u043B\u0438 \u0432 AuditLens: \u0440\u0430\u0437\u0434\u0435\u043B \u043F\u043E\u044F\u0432\u043B\u044F\u0435\u0442\u0441\u044F \u043F\u0440\u0438 \u043F\u0435\u0440\u0432\u043E\u043C \u0432\u0445\u043E\u0434\u0435"
   }), /*#__PURE__*/React.createElement(PuKpi, {
     label: "\u041E\u0442\u043A\u0440\u044B\u0432\u0430\u043B\u0438 \u0440\u0430\u0437\u0434\u0435\u043B",
     value: /*#__PURE__*/React.createElement(React.Fragment, null, puNum(s.opened), /*#__PURE__*/React.createElement("small", null, " \u0438\u0437 ", puNum(s.with_access))),
-    sub: `${perL} — ${puNum(s.opened_period)}`
+    sub: `${perL} — ${puNum(s.opened_period)}${c.meOn ? "" : " · без вас"}`
   }), /*#__PURE__*/React.createElement(PuKpi, {
     label: "\u0412\u0435\u0440\u043D\u0443\u043B\u0438\u0441\u044C",
     value: puNum(s.returned),

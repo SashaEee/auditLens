@@ -16281,14 +16281,15 @@ function PuVspSec(){
       :<span className="pu2-muted">{r.views?"только главная":"—"}</span>; };
   return <>{tools}
     <div className="pu2-grid">
-      <PuKpi label="Раздел открыт" icon="user" value={puNum(s.staff||s.with_access)} unit=" чел."
-        sub={openUnits.length?`${openUnits.join(", ")}${(d.logins||[]).length?` · по логину ещё ${puNum(d.logins.length)}`:""}`
-          :(d.logins||[]).length?`по логину — ${puNum(d.logins.length)}`:"пока только вам"}/>
-      <PuKpi label="Заходили в AuditLens" value={<>{puNum(s.with_access)}{s.staff?<small> из {puNum(s.staff)}</small>:null}</>}
+      <PuKpi label="Раздел открыт" icon="user" value={puNum((+s.staff||0)+(+s.extra||0))} unit=" чел."
+        sub={openUnits.length?`${openUnits.join(", ")}${s.extra?` · по логину ещё ${puNum(s.extra)}`:""}`
+          :s.extra?`по логину — ${puNum(s.extra)}`:"пока только вам"}
+        tip="Все работающие сотрудники открытых подразделений и те, кому раздел открыт по логину сверх них"/>
+      <PuKpi label="Заходили в AuditLens" value={<>{puNum((+s.accounts||0)+(+s.extra||0))}<small> из {puNum((+s.staff||0)+(+s.extra||0))}</small></>}
         sub={s.no_account>0?`${puNum(s.no_account)} ещё ни разу не входили`:"у всех есть учётная запись"}
         tip="Сколько людей с доступом уже входили в AuditLens: раздел появляется при первом входе"/>
       <PuKpi label="Открывали раздел" value={<>{puNum(s.opened)}<small> из {puNum(s.with_access)}</small></>}
-        sub={`${perL} — ${puNum(s.opened_period)}`}/>
+        sub={`${perL} — ${puNum(s.opened_period)}${c.meOn?"":" · без вас"}`}/>
       <PuKpi label="Вернулись" value={puNum(s.returned)}
         sub={`заходили в два и более дней · дошли до карточек — ${puNum(s.deep)}`}
         tip="«Дошли до карточек» — открыли досье отделения, карточку способа действия или очага, полный отзыв, сделали выгрузку или положили материал в дело"/>

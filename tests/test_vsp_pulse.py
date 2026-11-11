@@ -78,7 +78,8 @@ def test_who_has_the_section_and_who_opened_it(monkeypatch):
     r = _setup(monkeypatch)
     s = r["summary"]
     # в открытом подразделении работают трое, один из них в AuditLens ещё не входил; уволенный не в счёт
-    assert s["staff"] == 3 and s["no_account"] == 1
+    assert s["staff"] == 3 and s["accounts"] == 2 and s["no_account"] == 1
+    assert s["extra"] == 1          # по логину сверх открытого подразделения — один человек
     assert [p["login"] for p in r["people"]] == ["ivanov-100", "ext-999", "petrov-101"]   # кто заходил позже — выше; не открывавшие — в конце
     assert s["with_access"] == 3 and s["opened"] == 2 and s["opened_period"] == 2 and s["returned"] == 1 and s["deep"] == 2
     iv, ext, pet = r["people"]
