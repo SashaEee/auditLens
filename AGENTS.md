@@ -56,11 +56,12 @@ src/bank_audit/
 │   ├── app.py              #   все REST/SSE-эндпоинты (+/healthz, /readyz — строго ДО catch-all SPA)
 │   ├── pdf_export.py       #   серверный HTML→PDF через Playwright
 │   └── static/             #   ВЕСЬ фронт: index.html (разметка+все CSS), app.jsx (всё SPA)
-├── research/v2/            # Deep Research v2: conductor.py, base_agent.py, analyst.py,
-│   │                       #   critic.py, knowledge_bundle.py, numbers.py, chart_designer.py
-│   ├── agents/             #   researcher, regulatory, market, reviews, ranking
-│   └── tools/              #   tool_specs, web_tools, source_registry_helper
-├── research/               # legacy-пайплайн v1 (orchestrator, query_planner, gap_filler…)
+├── research/gptr/          # ОТЧЁТ ИИ-помощника: stream.py (шаги), own_data.py (данные AuditLens),
+│   │                       #   facts.py, critic.py, lead.py (добор), brief.py (замысел),
+│   │                       #   dossier.py (разделы), viz.py, gaps.py — см. docs/ARCHITECTURE.md §5
+├── research/v2/            # из прежней схемы живы conductor.py (план: задача и рамка) и tools/;
+│   │                       #   agents/, analyst.py, base_agent.py отчётом не вызываются
+├── research/               # прежний конвейер (orchestrator, query_planner, gap_filler…) — не вызывается
 ├── ai/                     # analyst.py (быстрый ответ), clarify.py, llm_utils.py (тиры, reasoning_effort)
 ├── rag/                    # embedder, indexer, retriever, crawler, trust.py, отзывы (reviews_dash, review_annotate, review_glossary и пр.)
 ├── digest/                 # «Новостные обзоры» — ежедневный брифинг (детерминированный SQL + 3 LLM-вызова/сутки)
