@@ -993,8 +993,22 @@ async def write_dossier(client, model: str, *, question: str, plan, registry,
             order = [k for k in order if k != "voice"]
     # Сравнения аудитор не просил и банк в вопросе один — раздела «против
     # рынка» нет, даже если бриф его выбрал (аудит 11.11: 39 % таких отчётов).
-    if task not in (None, "compare") and len(subjects) < 2:
+    # Исключение — просьба о лидерах рынка («топ-5 и позиция Сбера»): банк в плане
+    # один, потому что лидеров называют данные витрины, и раздел с их таблицей здесь
+    # и есть ответ. Прогон 12.11: без него отчёт рассказывал об условиях вклада Сбера.
+    from ..v2.conductor import _TOP_RX
+    top_asked = task == "market_data" and bool(_TOP_RX.search(question or ""))
+    if task not in (None, "compare") and len(subjects) < 2 and not top_asked:
         order = [k for k in order if k != "market"]
+    if top_asked and material.get("market"):
+        mk = material["market"]
+        vitrine = [f for f in mk if own.get(getattr(f, "url", ""), {}).get("kind") == "market"]
+        if vitrine:
+            # рейтинг строится по витрине — её факты первыми, условия банков — после
+            material["market"] = vitrine + [f for f in mk if f not in vitrine]
+            order = ["market"] + [k for k in order if k != "market"]
+            if not (brief and any(s_["key"] == "market" and s_["title"] for s_ in brief.sections)):
+                ttl["market"] = "Лидеры рынка и место Сбера"
     # Вопрос сравнивает несколько банков — раздел сравнения обязателен и первым:
     # замер 26.09, «сравни путь оформления карты у 4 банков» — бриф выбросил его,
     # и отчёт описал один Сбер.
