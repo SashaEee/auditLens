@@ -128,33 +128,70 @@ def plain(s: str | None) -> str:
     return " ".join(_PICT.sub(" ", s or "").split())
 
 
+def _head(t: str | None, n: int = 210) -> str:
+    """Первая фраза пересказа — заголовок случая. Длинную обрезаем по слову."""
+    t = plain(t)
+    m = re.match(r"(.{40,%d}?[.!?])(\s|$)" % n, t)
+    if m:
+        return m.group(1)
+    return t if len(t) <= n else t[:n - 1].rsplit(" ", 1)[0].rstrip(",;:—– ") + "…"
+
+
+def _quote(x: dict, n: int = 300) -> str | None:
+    """Слова клиента — только дословные (проверенные кодом), без пиктограмм."""
+    q = plain(x.get("quote")) if x.get("quote_ok", True) else ""
+    return T._clip(q.strip(" «»\""), n) if len(q) >= 20 else None
+
+
+def _example(xs: list[dict], pts: dict, now: datetime) -> dict | None:
+    """Пример к способу действия или очагу: самая важная за год история с дословными словами клиента."""
+    from ..vsp.signals.risk import case_score
+    year = now - timedelta(days=365)
+    best = None
+    for x in xs:
+        if x["_at"] < year or (x.get("severity") or 0) < 2 or x.get("copy_of") or x.get("dup_of") or not _quote(x, 240):
+            continue
+        key = (case_score({**x, "at": x["_at"]}, now)[0], x["_at"])
+        if best is None or key > best[0]:
+            best = (key, x)
+    if not best:
+        return None
+    x = best[1]
+    p = pts.get(x["point"]) or {}
+    return {"rid": x["rid"], "quote": _quote(x, 240), "city": p.get("city"), "date": x["_at"].date().isoformat()}
+
+
 def candidates(now: datetime) -> list[dict]:
-    """Свежее, что может войти в выпуск: тяжёлые истории, жалобы на ожидание, способы действия."""
+    """Свежее, что может войти в выпуск: тяжёлые истории, жалобы на ожидание, способы действия и очаги."""
     from ..vsp.signals.risk import case_score
     from . import vsp_wait
-    cut, first = now - timedelta(days=FRESH_D), now - timedelta(days=FIRST_D)
+    cut_, first = now - timedelta(days=FRESH_D), now - timedelta(days=FIRST_D)
     out: list[dict] = []
     run = V._run()
     pts = run["points"]
-    for x in V._stories(run):
-        if x["_at"] < cut:
+    stories = V._stories(run)
+    for x in stories:
+        if x["_at"] < cut_:
             break                                           # истории идут от свежих к старым
         if (x.get("severity") or 0) < 2 or x.get("copy_of") or x.get("dup_of") or x.get("elsewhere") or x.get("hq"):
             continue
         p = pts.get(x["point"]) or {}
         what = x.get("motif_name") or (x.get("kind_name") if x.get("kind_name") != "Другое" else None)
         money = x.get("money")
+        sc, why = case_score({**x, "at": x["_at"]}, now)
         out.append({"kind": "story", "rid": x["rid"], "recent": x["_at"] >= first,
                     "subject": x.get("subject") or p.get("subject"), "gosb": x.get("gosb") or p.get("gosb"),
                     "point": x["point"],
                     "payload": {**_place(p), "date": x["_at"].date().isoformat(), "severity": x.get("severity"),
-                                "episode": plain(x.get("episode")), "what": what, "inside": bool(x.get("inside")),
+                                "episode": plain(x.get("episode")), "head": _head(x.get("episode")),
+                                "quote": _quote(x), "what": what, "inside": bool(x.get("inside")),
                                 "vulnerable": bool(x.get("vulnerable")),
+                                "vuln": str((x.get("vuln_types") or [""])[0]).split("/")[0] or None,
+                                "systemic": bool(x.get("systemic")),
                                 "money": int(money) if isinstance(money, (int, float)) and 0 < money < V.MONEY_CAP
-                                else None,
-                                "score": case_score({**x, "at": x["_at"]}, now)[0]}})
+                                else None, "score": sc}})
     for h in vsp_wait.data()["hits"]:
-        if h["at"] < cut:
+        if h["at"] < cut_:
             break
         p = pts.get(h["point"]) or {}
         out.append({"kind": "wait", "rid": h["rid"], "recent": h["at"] >= first, "subject": p.get("subject"),
@@ -162,13 +199,24 @@ def candidates(now: datetime) -> list[dict]:
                     "payload": {**_place(p), "date": h["at"].date().isoformat(), "minutes": h["minutes"],
                                 "cause": h["cause"], "left": bool(h["left"]),
                                 "quote": T._clip(plain(h["excerpt"]), 220)}})
+    # способы действия и очаги: в первый выпуск — те, что идут сейчас; дальше — только новые
     for w in V._waves(run):
         if w["status"] not in ("new", "rising"):
             continue
         t = V._wave_text(w)
-        out.append({"kind": "wave", "rid": w["key"], "recent": False, "subject": None, "gosb": None, "point": None,
+        ex = _example([x for x in stories if w["key"] in x["_keys"]], pts, now)
+        out.append({"kind": "wave", "rid": w["key"], "recent": True, "subject": None, "gosb": None, "point": None,
                     "payload": {"id": w["id"], "name": w["name"], "status": w["status"], "text": t["text"],
-                                "accent": t["accent"]}})
+                                "accent": t["accent"], "example": ex}})
+    for h in V._hots(run):
+        if h["strength"] != "strong" or not h["recent"]:
+            continue
+        ex = _example([y for y in (V._story(run, r) for r in h["_rids"]) if y], pts, now)
+        out.append({"kind": "hot", "rid": h["id"], "recent": True, "subject": h.get("subject"), "gosb": None,
+                    "point": None,
+                    "payload": {"id": h["id"], "where": h["where"], "name": h["name"], "clients": h["clients"],
+                                "points_n": len(h["points"]), "period": h["period"], "expected": h["expected"],
+                                "ratio": h.get("ratio"), "example": ex}})
     return out
 
 
@@ -241,30 +289,45 @@ def _period(days: set, day: date) -> str:
     return f"за {gap} {T._plural(gap, 'день', 'дня', 'дней')}"
 
 
+# жалобы на ожидание для письма: сначала самые показательные — ушли, не дождавшись; ждали час и дольше;
+# причина, которую можно проверить (других без очереди, сотрудники заняты не клиентами, касса)
+_TELLING = {"без очереди", "заняты своим", "касса или проверка", "мало окон"}
+TOP_WAIT = 3
+
+
+def _telling(r: dict) -> tuple:
+    x = r["payload"]
+    q = x.get("quote") or ""
+    return (-(3 * bool(x.get("left")) + 2 * ((x.get("minutes") or 0) >= 60) + 2 * (x.get("cause") in _TELLING)
+              + (40 <= len(q) <= 240)), -_ord(x.get("date")))
+
+
 def compose(rows: list[dict], p: dict, after: date, day: date) -> dict:
     """Содержание письма одного подписчика из записей выпусков: его регионы и то, что он просил."""
     subs = set(p["subjects"])
     mine = [r for r in rows if r["kind"] == "wave" or not subs or r.get("subject") in subs]
     stories = sorted((r for r in mine if r["kind"] == "story" and p["heavy"]),
-                     key=lambda r: (-(r["payload"].get("score") or 0), -_ord(r["payload"].get("date"))))
-    wait = [r for r in mine if r["kind"] == "wait" and p["wait"]]
-    wait.sort(key=lambda r: (-int(bool(r["payload"].get("left"))), -(r["payload"].get("minutes") or 0),
-                             -_ord(r["payload"].get("date"))))
+                     key=lambda r: (-(r["payload"].get("score") or 0), -bool(r["payload"].get("quote")),
+                                    -_ord(r["payload"].get("date"))))
+    wait = sorted((r for r in mine if r["kind"] == "wait" and p["wait"]), key=_telling)
     waves = [r for r in mine if r["kind"] == "wave" and p["heavy"]]
+    hots = sorted((r for r in mine if r["kind"] == "hot" and p["heavy"]),
+                  key=lambda r: -(r["payload"].get("ratio") or 0))
     by_pt = Counter(r["point"] for r in wait if r.get("point"))
     place = {r["point"]: r["payload"] for r in wait if r.get("point")}
     repeat = [{"point": pt, "n": n, **{k: place[pt].get(k) for k in ("city", "address", "name", "gosb")}}
               for pt, n in by_pt.most_common(3) if n >= 2]
     used = [r for r in mine if (r["kind"] == "wait" and p["wait"]) or (r["kind"] != "wait" and p["heavy"])]
+    st = [{"rid": r["rid"], "point": r["point"], **r["payload"]} for r in stories[:TOP]]
     return {"day": day, "after": after, "period": _period({r.get("day") for r in used}, day),
             "scope": _scope(p["subjects"]),
-            "stories": [{"rid": r["rid"], "point": r["point"], **r["payload"]} for r in stories[:TOP]],
-            "n_stories": len(stories),
-            "wait": [{"rid": r["rid"], "point": r["point"], **r["payload"]} for r in wait[:TOP]],
+            "lead": st[0] if st else None, "stories": st[1:], "n_stories": len(stories),
+            "wait": [{"rid": r["rid"], "point": r["point"], **r["payload"]} for r in wait[:TOP_WAIT]],
             "n_wait": len(wait), "n_wait_long": sum(1 for r in wait if (r["payload"].get("minutes") or 0) >= 60),
             "n_wait_left": sum(1 for r in wait if r["payload"].get("left")), "wait_repeat": repeat,
-            "waves": [r["payload"] for r in waves[:3]], "n_waves": len(waves),
-            "total": len(stories) + len(wait) + len(waves)}
+            "waves": [r["payload"] for r in waves[:2]], "n_waves": len(waves),
+            "hots": [r["payload"] for r in hots[:2]], "n_hots": len(hots),
+            "total": len(stories) + len(wait) + len(waves) + len(hots)}
 
 
 def _ord(d: str | None) -> int:
@@ -331,18 +394,43 @@ def _day(d: str | None) -> str:
     return f"{x.day} {T._MON_FULL[x.month - 1]}"
 
 
-def _item(head: str, meta: str, text_: str, url: str, cta: str, quote: bool = False) -> str:
-    """Строка письма: место, что известно, слова или пересказ, ссылка."""
-    body = (f'<div style="margin:6px 0 0;padding:10px 14px;background:{T.SOFT};border-left:3px solid {T.HAIR};'
-            f'border-radius:0 10px 10px 0;{T._font(14, 21, T.INK)}">«{T._e(text_)}»</div>' if quote
-            else f'<div style="margin:5px 0 0;{T._font(15, 22, T.INK)}">{T._e(text_)}</div>') if text_ else ""
-    return (f'<tr><td style="padding:16px 0;border-top:1px solid {T.HAIR}">'
-            f'<div style="{T._font(13, 18, T.INK, 600)}">{T._e(head)}</div>'
-            + (f'<div style="margin:2px 0 0;{T._font(12, 17, T.INK3)}">{T._e(meta)}</div>' if meta else "")
-            + body
-            + f'<div style="margin:8px 0 0"><a href="{T._e(url)}" target="_blank" '
-              f'style="{T._font(13, 18, T.LINK, 500, "text-decoration:none")}">{T._e(cta)}&nbsp;&rarr;</a></div>'
-            + '</td></tr>')
+def _quote_html(q: str, size: int = 15, edge: str = T.HAIR, top: int = 8) -> str:
+    """Слова клиента: засечки, кавычки, полоса слева — так их не спутать с пересказом."""
+    return (f'<div style="margin:{top}px 0 0;padding:11px 16px;background:{T.SOFT};border-left:3px solid {edge};'
+            f'border-radius:0 10px 10px 0;font-family:{T.SERIF};font-size:{size}px;line-height:{round(size * 1.5)}px;'
+            f'color:{T.INK};mso-line-height-rule:exactly">«{T._e(q)}»</div>')
+
+
+def _link(label: str, url: str, top: int = 8) -> str:
+    return (f'<div style="margin:{top}px 0 0"><a href="{T._e(url)}" target="_blank" '
+            f'style="{T._font(13, 18, T.LINK, 500, "text-decoration:none")}">{T._e(label)}&nbsp;&rarr;</a></div>')
+
+
+def _row(inner: str, first: bool = False) -> str:
+    return T._tbl(f'<tr><td style="padding:18px 0;{"" if first else "border-top:1px solid " + T.HAIR}">{inner}</td></tr>')
+
+
+def _tags(x: dict, lead: bool = False) -> list[str]:
+    """Что делает историю важной — по словам клиента, без оценок."""
+    return [t for t in (
+        "очень тяжёлая" if (x.get("severity") or 0) >= 3 else ("тяжёлая" if lead else None),
+        None if lead else ((x.get("what") or "").lower() or None),      # у случая дня «что» уже в заголовке
+        "по словам клиента, выгода — сотруднику или третьим лицам" if x.get("inside") else None,
+        (x.get("vuln") or "пожилой или уязвимый клиент").lower() if x.get("vulnerable") else None,
+        f"{_n(x['money'])}\u00a0₽ — по словам клиента" if x.get("money") else None,
+        "клиент пишет, что случай не единичный" if x.get("systemic") else None) if t]
+
+
+def _example_html(ex: dict | None) -> str:
+    if not ex:
+        return ""
+    who = ", ".join(t for t in (ex.get("city"), _day(ex.get("date"))) if t)
+    return (_quote_html(ex["quote"], size=14, top=10)
+            + (f'<div style="margin:4px 0 0 19px;{T._font(12, 17, T.INK3)}">{T._e(who)}</div>' if who else ""))
+
+
+def _ratio(v) -> str:
+    return "" if not v else f"{v:.1f}".rstrip("0").rstrip(".").replace(".", ",")
 
 
 def _more(text_: str, url: str) -> str:
@@ -350,75 +438,129 @@ def _more(text_: str, url: str) -> str:
                 f'&nbsp;&rarr;</a>', size=14, top=12)
 
 
-def subject_line(d: dict, sample: bool = False) -> str:
-    parts = []
+def _counts(d: dict) -> list[str]:
+    out = []
     if d["n_stories"]:
-        parts.append(f"{d['n_stories']} {T._plural(d['n_stories'], 'тяжёлая история', 'тяжёлые истории', 'тяжёлых историй')}")
+        out.append(f"{d['n_stories']} {T._plural(d['n_stories'], 'тяжёлая история', 'тяжёлые истории', 'тяжёлых историй')}")
     if d["n_wait"]:
-        parts.append(f"{d['n_wait']} {T._plural(d['n_wait'], 'жалоба', 'жалобы', 'жалоб')} на ожидание")
-    if d["n_waves"] and not parts:
-        parts.append(f"{d['n_waves']} {T._plural(d['n_waves'], 'способ действия', 'способа действия', 'способов действия')} "
-                     f"{T._plural(d['n_waves'], 'растёт', 'растут', 'растут')}")
-    s = f"Сеть ВСП {d['period']}: " + (", ".join(parts) if parts else "нового нет")
-    return ("Пример письма · " if sample else "") + s
+        out.append(f"{d['n_wait']} {T._plural(d['n_wait'], 'жалоба', 'жалобы', 'жалоб')} на ожидание")
+    if d["n_hots"]:
+        out.append(f"{d['n_hots']} {T._plural(d['n_hots'], 'очаг', 'очага', 'очагов')}")
+    if d["n_waves"]:
+        out.append(f"{d['n_waves']} {T._plural(d['n_waves'], 'способ действия растёт', 'способа действия растут', 'способов действия растут')}")
+    return out
+
+
+def _title(x: dict) -> str:
+    """«Курск: деньги пропали со счёта или вклада» — город и что произошло, как в теме письма."""
+    what = x.get("what") or ("очень тяжёлая история" if (x.get("severity") or 0) >= 3 else "тяжёлая история")
+    return f"{x.get('city') or 'Отделение'}: {what[:1].lower() + what[1:]}"
+
+
+def subject_line(d: dict, sample: bool = False, private: bool = False) -> str:
+    """Тема — сам случай дня («Курск: деньги пропали со счёта или вклада»), а не «N историй за сутки»:
+    так письмо хочется открыть. На личную почту — только числа."""
+    pre = "Пример письма · " if sample else ""
+    lead = d.get("lead")
+    if lead and not private:
+        head = _title(lead)
+        rest = []
+        if d["n_stories"] > 1:
+            k = d["n_stories"] - 1
+            rest.append(f"ещё {k} {T._plural(k, 'история', 'истории', 'историй')}")
+        if d["n_wait"]:
+            rest.append(f"{d['n_wait']} {T._plural(d['n_wait'], 'жалоба', 'жалобы', 'жалоб')} на ожидание")
+        return pre + f"Сеть ВСП · {head}" + (f" — и {', '.join(rest)}" if rest else "")
+    if d.get("hots") and not private:
+        h = d["hots"][0]
+        return pre + f"Сеть ВСП · очаг: {h['where']} — {h['name'][:1].lower() + h['name'][1:]}"
+    c = _counts(d)
+    return pre + f"Сеть ВСП {d['period']}: " + (", ".join(c) if c else "нового нет")
 
 
 def render(d: dict, now: datetime | None = None, name: str = "", private: bool = False,
            sample: bool = False) -> dict:
-    """Письмо из собранного содержания. private — некорпоративный адрес: только числа и ссылка."""
+    """Письмо из собранного содержания. private — некорпоративный адрес: только числа и ссылка.
+
+    Корпоративный адрес получает письмо-выпуск: случай дня (слова клиента дословно), что меняется по сети
+    с живым примером, остальные истории цитатами и самые показательные жалобы на ожидание. Цифры — одной
+    строкой: письмо читают ради случаев, а не ради счётчиков."""
+    from ..vsp.signals.wait import CAUSES
     now = now or datetime.now(UTC)
     url = T.go_url("vsp", "vsp")
     off = T.go_url("vsp?mail=off", "vsp")
     setup = T.go_url("vsp?mail=1", "vsp")
     fn = T.first_name(name)
-    subject = subject_line(d, sample)
-    head = f"Что нового {d['period']}"
-    sub = f"{T._weekday_title(now)} · {d['scope']}"
-    kpis = []                                               # только то, что есть: «0 историй» в письме не нужно
-    if d["n_stories"]:
-        kpis.append((_n(d["n_stories"]), T._plural(d["n_stories"], "тяжёлая история", "тяжёлые истории",
-                                                   "тяжёлых историй")))
-    if d["n_wait"]:
-        kpis.append((_n(d["n_wait"]), T._plural(d["n_wait"], "жалоба на долгое ожидание", "жалобы на долгое ожидание",
-                                                "жалоб на долгое ожидание")))
-    if d["n_wait_long"]:
-        kpis.append((_n(d["n_wait_long"]), "ждали час и дольше, по словам клиентов"))
-    if d["n_waves"] and len(kpis) < 3:
-        kpis.append((_n(d["n_waves"]), T._plural(d["n_waves"], "способ действия появился или растёт",
-                                                 "способа действия появились или растут",
-                                                 "способов действия появились или растут")))
-    body = (T._eyebrow(("Пример письма · " if sample else "") + "Аудит сети ВСП · ежедневное письмо", T.BRAND)
-            + T._h1(head, sub))
-    hello = (f"{fn}, доброе утро." if fn else "Доброе утро.") + " Это новое в отзывах об отделениях с прошлого письма."
-    body += T._p(T._e(hello), color=T.INK3, size=14, top=12)
-    if kpis:
-        body += T._kpis(kpis)
-    lines = [hello, "", f"{d['scope'][:1].upper() + d['scope'][1:]}.",
-             *(f"{n} — {label}" for n, label in kpis), ""]
+    subject = subject_line(d, sample, private)
+    counts = _counts(d)
+    scope = d["scope"][:1].upper() + d["scope"][1:]
+    body = T._eyebrow(("Пример письма · " if sample else "") + f"Аудит сети ВСП · {T._weekday_title(now)}", T.BRAND)
+    hello = (f"{fn}, доброе утро." if fn else "Доброе утро.") + f" Новое в отзывах об отделениях {d['period']}" + \
+        (f" — {d['scope']}." if d["scope"] != "вся сеть" else ".")
+    lines = [hello, ""]
+    lead = d.get("lead") if not private else None
+    body += T._p(T._e(hello), color=T.INK3, size=14, top=8)
+    if lead:
+        story_url = T.go_url(f"vsp?story={lead['rid']}", "vsp")
+        body += (f'<div style="margin:22px 0 0;{T._font(11, 16, T.INK3, 600, "letter-spacing:.08em;text-transform:uppercase")}">'
+                 f'<span style="color:{T.BRIEF_RED};font-size:10px;letter-spacing:0">&#9679;</span>&nbsp;&nbsp;Случай дня</div>'
+                 f'<h1 class="al-h1" style="margin:8px 0 0;font-family:{T.SERIF};font-weight:400;font-size:27px;'
+                 f'line-height:33px;color:{T.INK};mso-line-height-rule:exactly">{T._e(_title(lead))}</h1>'
+                 f'<div style="margin:10px 0 0;{T._font(16, 24, T.INK)}">{T._e(lead.get("head") or "")}</div>'
+                 f'<div style="margin:10px 0 0;{T._font(13, 19, T.INK2, 600)}">{T._e(_where(lead))}</div>'
+                 f'<div style="margin:2px 0 0;{T._font(12, 18, T.INK3)}">'
+                 f'{T._e(" · ".join([_day(lead.get("date"))] + _tags(lead, lead=True)))}</div>')
+        if lead.get("quote"):
+            body += (f'<div style="margin:14px 0 0;{T._font(11, 16, T.INK3, 600, "letter-spacing:.06em;text-transform:uppercase")}">'
+                     f'Слова клиента</div>' + _quote_html(lead["quote"], size=17, edge=T.INK, top=6))
+        body += T._btn("Полный отзыв и проверка", story_url, top=18)
+        lines += ["СЛУЧАЙ ДНЯ", _title(lead), lead.get("head") or "", _where(lead) + " · " + _day(lead.get("date")),
+                  *([f"«{lead['quote']}»"] if lead.get("quote") else []), f"Полный отзыв: {story_url}", ""]
+    else:
+        body += T._h1(f"Что нового {d['period']}", scope)
+    if counts:
+        t = f"Всего {d['period']}: " + " · ".join(counts) + "."
+        body += T._p(T._e(t), color=T.INK3, size=13, top=22 if lead else 10)
+        lines += [t, ""]
     if not private:
-        if d["waves"]:
+        if d["hots"] or d["waves"]:
             body += T._rubric("Что идёт по сети")
+            first = True
+            for h in d["hots"]:
+                head = f"Очаг · {h['where']}: {h['name'][:1].lower() + h['name'][1:]}"
+                meta = (f"{h['clients']} {T._plural(h['clients'], 'клиент', 'клиента', 'клиентов')} в {h['points_n']} "
+                        f"{T._plural(h['points_n'], 'отделении', 'отделениях', 'отделениях')} {h['period']}, "
+                        f"по частоте остальной сети ожидалось {_ratio(h.get('expected')) or '—'}"
+                        + (f" — в {_ratio(h['ratio'])} раза больше" if h.get("ratio") else ""))
+                body += _row(f'<div style="{T._font(15, 21, T.INK, 600)}">{T._e(head)}</div>'
+                             f'<div style="margin:3px 0 0;{T._font(13, 19, T.INK2)}">{T._e(meta)}</div>'
+                             + _example_html(h.get("example"))
+                             + _link("Карточка очага", T.go_url(f"vsp?s=schemes&hot={h['id']}", "vsp")), first)
+                first = False
+                lines += [f"• {head}", f"  {meta}", *([f"  «{h['example']['quote']}»"] if h.get("example") else [])]
             for w in d["waves"]:
-                body += T._tbl(_item(w["text"], "", w["accent"][:1].upper() + w["accent"][1:],
-                                     T.go_url(f"vsp?s=schemes&scheme={w['id']}", "vsp"), "Карточка способа действия")
-                               ).replace("border-top:1px solid " + T.HAIR, "border-top:0", 1)
-                lines += [f"• {w['text']} — {w['accent']}"]
+                body += _row(f'<div style="{T._font(15, 21, T.INK, 600)}">{T._e(w["text"])}</div>'
+                             f'<div style="margin:3px 0 0;{T._font(13, 19, T.INK2)}">{T._e(w["accent"][:1].upper() + w["accent"][1:])}</div>'
+                             + _example_html(w.get("example"))
+                             + _link("Карточка способа действия", T.go_url(f"vsp?s=schemes&scheme={w['id']}", "vsp")), first)
+                first = False
+                lines += [f"• {w['text']} — {w['accent']}", *([f"  «{w['example']['quote']}»"] if w.get("example") else [])]
+            more = d["n_hots"] + d["n_waves"] - len(d["hots"]) - len(d["waves"])
+            if more > 0:
+                body += _more(f"Ещё {more} — в разделе «Схемы»", T.go_url("vsp?s=schemes", "vsp"))
             lines.append("")
         if d["stories"]:
-            body += T._rubric(f"Тяжёлые истории · {d['n_stories']}")
-            rows = ""
-            for x in d["stories"]:
-                tags = [t for t in (("очень тяжёлая" if (x.get("severity") or 0) >= 3 else "тяжёлая"),
-                                    (x.get("what") or "").lower() or None,
-                                    "по словам клиента, выгода — сотруднику или третьим лицам" if x.get("inside") else None,
-                                    "пожилой или уязвимый клиент" if x.get("vulnerable") else None,
-                                    f"{_n(x['money'])} ₽ — по словам клиента" if x.get("money") else None) if t]
-                rows += _item(_where(x), " · ".join([_day(x.get("date"))] + tags), T._clip(x.get("episode"), 320),
-                              T.go_url(f"vsp?story={x['rid']}", "vsp"), "Полный отзыв и проверка")
-                lines += [f"• {_where(x)} — {_day(x.get('date'))}", f"  {T._clip(x.get('episode'), 320)}"]
-            body += T._tbl(rows, "margin:0").replace("border-top:1px solid " + T.HAIR, "border-top:0", 1)
-            if d["n_stories"] > len(d["stories"]):
-                rest = d["n_stories"] - len(d["stories"])
+            body += T._rubric("Ещё истории" if lead else "Тяжёлые истории")
+            for k, x in enumerate(d["stories"]):
+                meta = " · ".join([_day(x.get("date"))] + _tags(x))
+                body += _row(f'<div style="{T._font(15, 21, T.INK, 600)}">{T._e(x.get("head") or x.get("episode") or "")}</div>'
+                             f'<div style="margin:4px 0 0;{T._font(12, 17, T.INK3)}">{T._e(_where(x))}<br>{T._e(meta)}</div>'
+                             + (_quote_html(x["quote"], size=14, top=10) if x.get("quote") else "")
+                             + _link("Полный отзыв и проверка", T.go_url(f"vsp?story={x['rid']}", "vsp")), k == 0)
+                lines += [f"• {x.get('head') or ''}", f"  {_where(x)} · {meta}", *([f"  «{x['quote']}»"] if x.get("quote") else [])]
+            shown = len(d["stories"]) + (1 if lead else 0)
+            if d["n_stories"] > shown:
+                rest = d["n_stories"] - shown
                 body += _more(f"Ещё {rest} {T._plural(rest, 'история', 'истории', 'историй')} — в разделе «Истории»",
                               T.go_url("vsp?s=stories&per=90", "vsp"))
             lines.append("")
@@ -427,23 +569,23 @@ def render(d: dict, now: datetime | None = None, name: str = "", private: bool =
             facts = [t for t in (
                 f"час и дольше ждали {d['n_wait_long']}" if d["n_wait_long"] else "",
                 f"ушли, не дождавшись, — {d['n_wait_left']}" if d["n_wait_left"] else "") if t]
-            if facts:
-                t = "По словам клиентов: " + "; ".join(facts) + "."
-                body += T._p(T._e(t), size=14, top=12)
-                lines.append(t)
-            rows = ""
-            for x in d["wait"]:
-                from ..vsp.signals.wait import CAUSES
-                meta = [_day(x.get("date")),
-                        f"ждал {_minutes(x.get('minutes'))}, по словам клиента" if x.get("minutes") else None,
+            t = (f"{d['n_wait']} {T._plural(d['n_wait'], 'жалоба', 'жалобы', 'жалоб')} {d['period']}"
+                 + (". По словам клиентов: " + "; ".join(facts) if facts else "") + ". Самые показательные:")
+            body += T._p(T._e(t), size=14, top=12)
+            lines.append(t)
+            for k, x in enumerate(d["wait"]):
+                meta = [f"ждал {_minutes(x.get('minutes'))}" if x.get("minutes") else None,
+                        "ушёл, не дождавшись" if x.get("left") else None,
                         CAUSES.get(x.get("cause") or "", "").lower() if x.get("cause") != "не сказано" else None,
-                        "ушёл, не дождавшись" if x.get("left") else None]
-                rows += _item(_where(x), " · ".join(t for t in meta if t), x.get("quote") or "",
-                              T.go_url(f"vsp?s=wait&point={x['point']}", "vsp"), "Досье отделения", quote=True)
-                lines += [f"• {_where(x)} — {' · '.join(t for t in meta if t)}", f"  «{x.get('quote') or ''}»"]
-            body += T._tbl(rows, "margin:0").replace("border-top:1px solid " + T.HAIR, "border-top:0", 1)
+                        _day(x.get("date"))]
+                meta_t = " · ".join(t for t in meta if t)
+                body += _row(f'<div style="{T._font(13, 19, T.INK, 600)}">{T._e(_where(x))}</div>'
+                             f'<div style="margin:2px 0 0;{T._font(12, 17, T.INK3)}">{T._e(meta_t)}</div>'
+                             + (_quote_html(x["quote"], size=14) if x.get("quote") else "")
+                             + _link("Досье отделения", T.go_url(f"vsp?s=wait&point={x['point']}", "vsp")), k == 0)
+                lines += [f"• {_where(x)} — {meta_t}", f"  «{x.get('quote') or ''}»"]
             for r in d["wait_repeat"]:
-                t = f"{_where(r)}: {r['n']} {T._plural(r['n'], 'жалоба', 'жалобы', 'жалоб')} на ожидание {d['period']}"
+                t = f"Несколько жалоб {d['period']}: {_where(r)} — {r['n']}"
                 body += T._p(T._e(t), color=T.INK2, size=13, top=10)
                 lines.append(t)
             if d["n_wait"] > len(d["wait"]):
@@ -460,12 +602,13 @@ def render(d: dict, now: datetime | None = None, name: str = "", private: bool =
     reason = ("Вы получили это письмо, потому что запросили пример в разделе «Аудит сети ВСП»." if sample else
               f"Вы подписаны на ежедневное письмо раздела «Аудит сети ВСП». Оно приходит по будням после {HOUR}:00 "
               f"по Москве, только если есть новое.")
-    pre = (T._clip(d["stories"][0]["episode"], 140) if d["stories"] and not private
-           else f"{d['scope'][:1].upper() + d['scope'][1:]}: подробности в AuditLens")
+    pre = ((f"«{T._clip(lead['quote'], 130)}»" if lead.get("quote") else T._clip(lead.get("head"), 140)) if lead
+           else f"{scope}: подробности в AuditLens")
     return {"subject": subject, "preheader": pre, "url": url,
             "html": T.layout(preheader=pre, title=subject, body=body, reason=reason, section="Аудит сети ВСП",
                              links=[("Настроить письмо", setup), ("Отписаться", off)]),
-            "text": T._text("Аудит сети ВСП", head, lines, "Открыть раздел", url, reason)
+            "text": T._text("Аудит сети ВСП", lead.get("head") if lead else f"Что нового {d['period']}", lines,
+                            "Открыть раздел", url, reason)
             + f"Отписаться от этого письма: {off}\n",
             "thread": None}
 
@@ -538,7 +681,7 @@ def sample_data(p: dict, now: datetime) -> dict:
         rows = []
     d = compose(rows, p, after, day)
     if not d["total"]:
-        rows = [{**c, "day": day} for c in candidates(now) if c["recent"] or c["kind"] == "wave"]
+        rows = [{**c, "day": day} for c in candidates(now) if c["recent"]]
         d = compose(rows, p, day - timedelta(days=FIRST_D), day)
     return d
 
