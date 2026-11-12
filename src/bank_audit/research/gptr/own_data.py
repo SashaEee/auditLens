@@ -877,6 +877,13 @@ def collect_market(od: OwnData, plan, scope: dict) -> None:
                     value=txt.split(": ", 1)[-1][:120], verbatim=txt, url=url,
                     stance="declared", date=str(mp.get("as_of") or "")[:10])
             od.market += 1
+        elif txt.startswith("Оговорка методики"):
+            # Как посчитано место — тоже факт: без него отчёт сам додумывал, почему Сбер
+            # на 15-м месте («верх списка заняли льготные ставки»), хотя льготные
+            # программы из расчёта места исключены (прогон набора 12.11).
+            od.fact(subject=anchor, attribute="Как посчитано место на рынке (витрина «Рынок»)",
+                    value=txt.split(": ", 1)[-1][:200], verbatim=txt, url=url,
+                    stance="declared", date=str(mp.get("as_of") or "")[:10])
 
 
 # ── база знаний ──────────────────────────────────────────────────────────────
