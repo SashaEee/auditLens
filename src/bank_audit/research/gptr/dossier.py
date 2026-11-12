@@ -671,6 +671,8 @@ def section_prompt(section: str, plan, question: str, labels: dict[str, str],
     elif section == "summary" and mode == "none":
         rules = "summary_plain"
     parts += ["", _SECTION_RULES[rules]]
+    if section == "voice" and not complaints_asked(plan, question):
+        parts += ["", _VOICE_SUPPORTING]
     if section == "checks" and mode == "full":
         parts += ["", _CHECKS_LOOPHOLES if "loopholes" in (order or ()) else _CHECKS_NO_LOOPHOLES]
     if section in LEAD:
@@ -688,6 +690,27 @@ def section_prompt(section: str, plan, question: str, labels: dict[str, str],
     else:
         parts += ["", "ФАКТЫ РАЗДЕЛА:", facts_text]
     return "\n".join(parts)
+
+
+# Жалобы — дополнение, когда спрашивали не о них. Прогон набора 12.11: на «сравни
+# ипотечные ставки Сбера и рынка» шесть из четырнадцати заголовков отчёта были о
+# жалобах, на «топ-5 вкладов» — пять из тринадцати; судья: «ответ уходит в сторону
+# жалоб, хотя вопрос был про ставки».
+_VOICE_SUPPORTING = (
+    "ВОПРОС АУДИТОРА НЕ О ЖАЛОБАХ: этот раздел — дополнение к ответу, а не второй отчёт. "
+    "Возьми только то, что прямо связано с предметом вопроса (в вопросе о ставках — жалобы "
+    "на ставку и её изменение; в вопросе об условиях — на эти условия). Не больше трёх "
+    "сюжетов, по каждому — один абзац и одна цитата; подзаголовков ### не ставь. Масштаб и "
+    "динамику дай одной-двумя фразами с числами. Конкурентов — одной фразой, если по ним "
+    "есть жалобы по тому же предмету. Блок «Болит у других» не пиши. Весь раздел — не "
+    "длиннее трети основного раздела отчёта.")
+_ASKED_VOICE = re.compile(r"жалоб|отзыв|претензи|недовольств|на что жалу|клиентск\w+ (опыт|бол)", re.I)
+
+
+def complaints_asked(plan, question: str) -> bool:
+    """Аудитор спрашивал о жалобах: задача «жалобы» или они названы в вопросе."""
+    return (getattr(plan, "task", None) in (None, "complaints")
+            or bool(_ASKED_VOICE.search(question or "")))
 
 
 _CHECKS_NO_LOOPHOLES = (

@@ -713,3 +713,20 @@ def test_top_n_with_named_banks_stays_a_comparison():
         "topics": ["ставка"], "queries": [{"q": "вклады ВТБ ставка"}]}, q)
     C.enforce_scope(p, q, ["sberbank", "vtb"])
     assert p.task == "compare" and p.subjects == ["sberbank", "vtb"]
+
+
+# ── Жалобы — дополнение, когда спрашивали не о них ──────────────────────────
+def test_voice_section_is_supporting_unless_complaints_were_asked():
+    from types import SimpleNamespace
+
+    from bank_audit.research.gptr import dossier as D
+    plan = SimpleNamespace(task="compare", scope="market", checks="short", subjects=["sberbank"],
+                           subject_labels={"sberbank": "Сбербанк"}, anchor="sberbank", topics=[],
+                           intent_summary="", product="ипотека", client_segment="retail",
+                           subsidiaries=[], observed="", regulatory="", question_nature="")
+    q = "Сравни ипотечные ставки между Сбером и рынком, выдели программы с господдержкой."
+    assert not D.complaints_asked(plan, q)
+    assert D.complaints_asked(plan, "Сравни ставки и покажи, на что жалуются клиенты")
+    assert D.complaints_asked(SimpleNamespace(task="complaints"), "ипотека Сбера")
+    assert D.complaints_asked(SimpleNamespace(task=None), "что угодно")        # прежний формат плана — как раньше
+    assert "НЕ О ЖАЛОБАХ" in D._VOICE_SUPPORTING and "Не больше трёх" in D._VOICE_SUPPORTING
