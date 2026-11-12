@@ -500,6 +500,13 @@ def test_loophole_summary_gives_each_number_its_period_and_status_by_record(fake
     page2 = od2.pages["#loophole"].replace("\xa0", " ")
     assert "из них за последние 30 дней — 7" in page2
     assert "Из 2 записей ниже экспертом ЦК КС проверены 1" in page2
+    assert "действует ли она в банке сейчас, устанавливает проверка" in page2
+    assert "устанавливает проверка" in dossier._SECTION_RULES["loopholes"]
+    # предварительная запись так и названа, даже если эксперт её смотрел
+    lh["records"] = [dict(recs[0], status="preliminary")]
+    od3 = own_data.OwnData()
+    own_data.collect_loopholes(od3, plan, "лазейки по кредитным картам")
+    assert any("проверено экспертом ЦК КС, запись предварительная" in f["verbatim"] for f in od3.facts)
     assert "Все оценки предварительные" not in page2
     assert any("проверено экспертом ЦК КС" in f["verbatim"] for f in od2.facts)
 

@@ -57,6 +57,9 @@ class OwnData:
     news: int = 0
     # Что искали в собственных данных и не нашли — строками для «Честных пробелов»
     notes: list[str] = field(default_factory=list)
+    # Доли тем жалоб по банкам (slug → сводка): из них считается, какие темы у
+    # конкурента выражены сильнее, чем у своего банка
+    themes: dict[str, dict] = field(default_factory=dict)
 
     def page(self, url: str, title: str, lines: list[str], kind: str) -> str:
         text = "\n".join([title, *lines])
@@ -323,6 +326,11 @@ def _complaints_for_bank(od: OwnData, slug: str, bank: str, scope: dict, anchor:
                          + (f", к прошлому периоду {_pct(ch)}"
                             + (" (значимо)" if t.get("change_significant") else "")
                             if ch is not None else "") + "."))
+    od.themes[slug] = {"bank": bank, "product": product, "days": base_days,
+                       "total": ov.get("complaints"), "as_of": ov.get("as_of"),
+                       "tail": themes_all[-1].get("n") if themes_all else None,
+                       "themes": {t["label"]: (t.get("n"), t.get("pct")) for t in themes_all
+                                  if t.get("label")}}
     if themes_all:
         tail = themes_all[-1].get("n")
         rows.append(line("Жалобы: темы вне списка", _n(tail),
@@ -650,6 +658,76 @@ def collect_complaints(od: OwnData, plan, scope: dict, question: str) -> None:
         od.facts.extend(part.facts)
         od.notes.extend(part.notes)
         od.complaints += part.complaints
+        od.themes.update(part.themes)
+    if len(subjects) > 1:
+        try:
+            _themes_vs_anchor(od, anchor, labels)
+        except Exception as e:  # noqa: BLE001 — сравнение — дополнение к сводкам
+            log.info("сравнение тем с точкой отсчёта: %s", type(e).__name__)
+
+
+# Тема «выражена сильнее»: доля у банка выше в полтора раза и не меньше чем на
+# два пункта. Пороги — чтобы пара жалоб не объявлялась отличием банка.
+_VS_RATIO, _VS_POINTS, _VS_MIN_N = 1.5, 2.0, 5
+
+
+def _themes_vs_anchor(od: OwnData, anchor: str, labels: dict[str, str]) -> None:
+    """Какие темы жалоб у банка выражены сильнее, чем у своего, — считает код.
+
+    На «покажи жалобы ВТБ, Альфы и Т-Банка, которых нет у Сбера» отчёт получал
+    сводки четырёх банков и сам выбирал «уникальное»: брал отдельные истории, а
+    темы с долей втрое выше, чем у Сбера, пропускал (набор вопросов, 12.11)."""
+    base = od.themes.get(anchor)
+    if not base or not base.get("themes"):
+        return
+    a_name = base["bank"]
+    for slug, cur in od.themes.items():
+        if slug == anchor or not cur.get("themes"):
+            continue
+        bank = cur["bank"]
+        rows: list[tuple[float, str, str]] = []
+        for label, (n, pct) in cur["themes"].items():
+            try:
+                n, pct = int(n), float(pct)
+            except (TypeError, ValueError):
+                continue
+            if n < _VS_MIN_N:
+                continue
+            an, apct = base["themes"].get(label, (None, None))
+            if apct is None:
+                rows.append((pct, _f(pct), (
+                    f"Тема «{label}»: {bank} — {_f(pct)}% жалоб ({_n(n)}); {a_name} — нет среди "
+                    f"главных тем (у тем вне списка там не больше {_n(base.get('tail'))} жалоб "
+                    f"каждая).")))
+                continue
+            try:
+                apct = float(apct)
+            except (TypeError, ValueError):
+                continue
+            if pct - apct >= _VS_POINTS and pct >= apct * _VS_RATIO:
+                times = f" в {_f(pct / apct)} раза" if apct > 0 else ""
+                rows.append((pct - apct, _f(pct), (
+                    f"Тема «{label}»: {bank} — {_f(pct)}% жалоб ({_n(n)}), {a_name} — "
+                    f"{_f(apct)}% ({_n(an)}); у первого доля выше{times}.")))
+        who = bank + (f" · {cur['product']}" if cur.get("product") else "")
+        url = T.link_reviews(bank, cur.get("product"), days=cur["days"]) + f"&vs={anchor}"
+        head = (f"Сравнение долей тем жалоб: {who} против {a_name}, {cur['days']} дней "
+                f"(по {_dm(cur.get('as_of'))}). Доля — процент жалоб банка на эту тему, от "
+                f"размера банка она не зависит. Тема выражена сильнее, если её доля выше в "
+                f"полтора раза и больше и не меньше чем на 2 п.п.; темы с числом жалоб "
+                f"меньше {_VS_MIN_N} не сравниваются.")
+        rows.sort(key=lambda r: -r[0])
+        if not rows:
+            od.page(url, f"AuditLens · Отзывы: {who} против {a_name} — доли тем",
+                    [head, f"Тем, выраженных заметно сильнее ({bank} против {a_name}), по этому "
+                           f"правилу нет: структура жалоб близка."], "complaints")
+            continue
+        od.page(url, f"AuditLens · Отзывы: {who} против {a_name} — доли тем",
+                [head] + [r[2] for r in rows], "complaints")
+        for _, value, txt in rows:
+            od.fact(subject=slug, attribute=f"Жалобы: тема выражена сильнее (сравнение: {a_name})",
+                    value=value, unit="%", verbatim=txt, url=url,
+                    date=str(cur.get("as_of") or "")[:10])
 
 
 def _on_topic(od: OwnData, slug: str, bank: str, plan, scope: dict, question: str,
@@ -733,6 +811,10 @@ def collect_loopholes(od: OwnData, plan, question: str) -> None:
         status = (f"Из {len(shown)} записей ниже экспертом ЦК КС проверены {checked}; остальные — "
                   f"оценка модели: возможные уязвимости, а не зафиксированные схемы. Статус "
                   f"указан у каждой записи.")
+    # Оговорка — для любой записи: проверка эксперта подтверждает, что описанное —
+    # лазейка, а не то, что схемой пользуются в банке сейчас.
+    status += (" Запись раздела — схема, описанная в открытых источниках или отзывах: "
+               "действует ли она в банке сейчас, устанавливает проверка.")
     bank_30 = st.get("this_bank_tagged_last_30d")
     txt = (f"Раздел «Аудит уязвимостей»: за всё время сбора (с {_dm(st.get('collected_since'))}) "
            f"лазеек по всем банкам — {_n(st.get('all_banks_total'))}, из них найдено за "
@@ -751,6 +833,8 @@ def collect_loopholes(od: OwnData, plan, question: str) -> None:
                 else "Возможная уязвимость")
         state = ("проверено экспертом ЦК КС" if r.get("expert_checked")
                  else "оценка модели, экспертом не проверена")
+        if r.get("status") == "preliminary":
+            state += ", запись предварительная"
         lines = [x for x in (
             f"{kind} ({state}): {title}" if title else "",
             f"Суть: {r['summary']}" if r.get("summary") else "",

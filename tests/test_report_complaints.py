@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from bank_audit.ai import agent_tools as T
-from bank_audit.research.gptr import own_data, runstate
+from bank_audit.research.gptr import dossier, own_data, runstate
 from bank_audit.research.v2 import conductor as C
 
 
@@ -256,3 +256,48 @@ def test_news_fall_back_to_words_when_the_model_is_silent(monkeypatch):
     O2, plan2, _s, _ = _news_env(monkeypatch, "не JSON")
     assert asyncio.run(O2.pick_news(None, "m", "вопрос", plan2, cands)) is None
     assert asyncio.run(O.pick_news(None, "m", "вопрос", plan, [])) == []
+
+
+def test_themes_stronger_than_at_own_bank_are_computed_by_code():
+    """Чем жалобы на другой банк отличаются от жалоб на свой — считает код по долям тем.
+
+    12.11 на «жалобы ВТБ, Альфы и Т-Банка, которых нет у Сбера» отчёт сам выбирал
+    «уникальное» по отдельным историям и пропускал темы с долей втрое выше."""
+    od = own_data.OwnData()
+    common = {"product": "Кредитная карта", "days": 365, "as_of": "2026-11-10"}
+    od.themes = {
+        "sberbank": {**common, "bank": "Сбербанк", "total": 1000, "tail": 12, "themes": {
+            "Спорные комиссии и платы": (92, 9.2), "Блокировки": (200, 20.0),
+            "Кэшбэк, бонусы, акции": (11, 1.1)}},
+        "alfabank": {**common, "bank": "Альфа-Банк", "total": 2501, "tail": 30, "themes": {
+            "Спорные комиссии и платы": (715, 28.6), "Блокировки": (525, 21.0),
+            "Кэшбэк, бонусы, акции": (130, 5.2), "Звонки третьим лицам": (80, 3.2),
+            "Единичная тема": (3, 9.0)}},
+        "vtb": {**common, "bank": "ВТБ", "total": 500, "tail": 9, "themes": {
+            "Спорные комиссии и платы": (50, 10.0), "Блокировки": (95, 19.0)}}}
+    own_data._themes_vs_anchor(od, "sberbank", {})
+    alfa = next(t for u, t in od.pages.items() if "vs=sberbank" in u and "Альфа" in t).replace("\xa0", " ")
+    assert "Альфа-Банк — 28,6% жалоб (715), Сбербанк — 9,2% (92); у первого доля выше в 3,1 раза" in alfa
+    assert "Кэшбэк, бонусы, акции»: Альфа-Банк — 5,2% жалоб (130), Сбербанк — 1,1% (11)" in alfa
+    assert "Звонки третьим лицам»: Альфа-Банк — 3,2% жалоб (80); Сбербанк — нет среди главных тем" in alfa
+    assert "Блокировки" not in alfa            # 21% против 20% — не отличие
+    assert "Единичная тема" not in alfa        # три жалобы не сравниваются
+    assert "от размера банка она не зависит" in alfa
+    facts = [f for f in od.facts if f["subject"] == "alfabank"]
+    assert len(facts) == 3 and all("выражена сильнее" in f["attribute"] for f in facts)
+    assert facts[0]["value"] == "28,6"          # самая большая разница — первой
+    assert all(f["verbatim"] in od.pages[f["url"]] for f in od.facts)
+    vtb = next(t for u, t in od.pages.items() if "vs=sberbank" in u and "ВТБ" in t)
+    assert "структура жалоб близка" in vtb and not [f for f in od.facts if f["subject"] == "vtb"]
+    assert "тема выражена сильнее" in dossier._SECTION_RULES["voice"]
+
+
+def test_theme_shares_are_remembered_for_every_bank(tools):
+    p = plan(task="complaints", anchor="sberbank")
+    od = own_data.OwnData()
+    scope = {"product": "Потребительский кредит", "themes": [], "search": [], "days": 90, "rivals": True}
+    own_data.collect_complaints(od, p, scope, "жалобы на потребкредиты Сбера и ВТБ")
+    assert set(od.themes) == {"sberbank", "vtb"}
+    assert od.themes["vtb"]["themes"] == {"Ошибки в кредите: расчёт, погашение": (34, 21.0)}
+    # одинаковая структура у обоих банков — страница сравнения говорит, что отличий нет
+    assert any("структура жалоб близка" in t for u, t in od.pages.items() if "vs=sberbank" in u)
