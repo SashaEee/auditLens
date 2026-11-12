@@ -138,7 +138,7 @@ def test_loopholes_section_facts(fake_tools):
     own_data.collect_loopholes(od, PLAN, "лазейки по кредитным картам")
     assert all(f["stance"] == "loophole" for f in od.facts)
     assert any("Продление грейс-периода" in f["value"] for f in od.facts)
-    assert "Все оценки предварительные" in od.pages["#loophole"]
+    assert "экспертом не проверены" in od.pages["#loophole"]      # в заглушке проверенных записей нет
     for f in od.facts:
         assert f["verbatim"] in od.pages[f["url"]]
 
@@ -473,6 +473,35 @@ def test_market_always_has_leaders_and_themes_have_list_boundary(fake_tools):
     own_data.collect_complaints(od2, PLAN, {"product": None, "themes": [], "days": 90}, "жалобы")
     text = "\n".join(od2.pages.values())
     assert "у тем вне списка — не больше 60 жалоб каждая" in text
+
+
+def test_loophole_summary_gives_each_number_its_period_and_status_by_record(fake_tools, monkeypatch):
+    """Сводка раздела уязвимостей не даёт спутать периоды и статус записей.
+
+    12.11 отчёт прочёл «найдено за 30 дней — 217; с меткой „Сбербанк“ — 36» как «36 за
+    30 дней» и назвал проверенные экспертом записи непроверенными."""
+    plan = SimpleNamespace(subjects=["sberbank"], subject_labels={"sberbank": "Сбербанк"},
+                           anchor="sberbank", product="кредитная карта")
+    od = own_data.OwnData()
+    own_data.collect_loopholes(od, plan, "лазейки по кредитным картам")
+    page = od.pages["#loophole"].replace("\xa0", " ")
+    assert "за всё время сбора (с 01.07.2026) лазеек по всем банкам — 289" in page
+    assert "из них найдено за последние 30 дней — 217" in page
+    assert "С меткой «Сбербанк» за всё время сбора — 90" in page
+    assert "экспертом не проверены" in page                      # в заглушке проверенных нет
+    # часть записей проверена экспертом — сводка этого не отрицает
+    recs = [dict(LOOPHOLES["records"][0], record_id=i, expert_checked=i == 1,
+                 url=f"https://example.org/{i}") for i in (1, 2)]
+    lh = {**LOOPHOLES, "stats": {**LOOPHOLES["stats"], "this_bank_tagged_last_30d": 7},
+          "records": recs}
+    monkeypatch.setattr(own_data, "_j", lambda tool, **kw: lh)
+    od2 = own_data.OwnData()
+    own_data.collect_loopholes(od2, plan, "лазейки по кредитным картам")
+    page2 = od2.pages["#loophole"].replace("\xa0", " ")
+    assert "из них за последние 30 дней — 7" in page2
+    assert "Из 2 записей ниже экспертом ЦК КС проверены 1" in page2
+    assert "Все оценки предварительные" not in page2
+    assert any("проверено экспертом ЦК КС" in f["verbatim"] for f in od2.facts)
 
 
 def test_market_leaders_carry_places_counted_by_code(fake_tools, monkeypatch):

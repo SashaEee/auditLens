@@ -718,11 +718,28 @@ def collect_loopholes(od: OwnData, plan, question: str) -> None:
         return
     st = lh.get("stats") or {}
     s_url = "#loophole"
-    txt = (f"Раздел «Аудит уязвимостей»: всего лазеек по всем банкам — {_n(st.get('all_banks_total'))} "
-           f"(с {_dm(st.get('collected_since'))}), найдено за 30 дней — "
-           f"{_n(st.get('all_banks_found_last_30d'))}; с меткой «{bank}» — "
-           f"{_n(st.get('this_bank_tagged_total'))}. Все оценки предварительные: "
-           f"экспертом не проверены — это возможные уязвимости, а не зафиксированные схемы.")
+    # Каждое число — со своим периодом, статус — по записям, а не одной фразой на всех.
+    # 12.11 отчёт прочёл «найдено за 30 дней — 217; с меткой „Сбербанк“ — 36» как
+    # «36 за 30 дней», а записи, проверенные экспертом, назвал непроверенными: так
+    # было сказано в сводке сразу про все.
+    shown = own + other
+    checked = sum(1 for r in shown if r.get("expert_checked"))
+    if not checked:
+        status = ("Записи ниже — оценка модели, экспертом не проверены: это возможные "
+                  "уязвимости, а не зафиксированные схемы.")
+    elif checked == len(shown):
+        status = "Записи ниже проверены экспертом ЦК КС."
+    else:
+        status = (f"Из {len(shown)} записей ниже экспертом ЦК КС проверены {checked}; остальные — "
+                  f"оценка модели: возможные уязвимости, а не зафиксированные схемы. Статус "
+                  f"указан у каждой записи.")
+    bank_30 = st.get("this_bank_tagged_last_30d")
+    txt = (f"Раздел «Аудит уязвимостей»: за всё время сбора (с {_dm(st.get('collected_since'))}) "
+           f"лазеек по всем банкам — {_n(st.get('all_banks_total'))}, из них найдено за "
+           f"последние 30 дней — {_n(st.get('all_banks_found_last_30d'))}. С меткой «{bank}» "
+           f"за всё время сбора — {_n(st.get('this_bank_tagged_total'))}"
+           + (f", из них за последние 30 дней — {_n(bank_30)}" if bank_30 is not None else "")
+           + f". {status}")
     od.page(s_url, "AuditLens · Уязвимости: сводка раздела", [txt], "loopholes")
     od.fact(subject=anchor, attribute="Лазейки: сводка раздела",
             value=_n(st.get("all_banks_total")), verbatim=txt, url=s_url, stance=LOOPHOLE)
