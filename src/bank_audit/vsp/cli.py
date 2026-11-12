@@ -14,6 +14,7 @@
   daemon    --i-know-this-is-mass                            сбор и дописывание по расписанию (mass.py)
   status                                                     сводка: карточки, полнота, расписание, паузы
   llm-read  [--stage screen|card|detail|both|all] [--limit N] [--cap-rub N]   чтение отзывов моделью
+  wait      [--limit N] [--cap-rub N]         жалобы на долгое ожидание — отдельный этап чтения
   motifs    [--cap-rub N] [--kinds 5,15]                     почерки: разложить описания историй по каталогу
   signals                                                    расчёт сигналов вкладки (истории, волны, очаги, полки)
   branch-read [--limit N] [--cap-rub N]                      выводы по отделениям (после signals)
@@ -161,6 +162,9 @@ def main(argv: list[str] | None = None) -> int:
     lr.add_argument("--stage", choices=["screen", "card", "detail", "both", "all"], default="both")
     lr.add_argument("--cap-rub", type=float, default=None, help="потолок трат на этот запуск, ₽")
     lr.add_argument("--ids", default=None, help="файл со списком review_id (эталон)")
+    wt = sub.add_parser("wait")
+    wt.add_argument("--limit", type=int, default=2000)
+    wt.add_argument("--cap-rub", type=float, default=None, help="потолок трат на этот запуск, ₽")
     mo = sub.add_parser("motifs")
     mo.add_argument("--cap-rub", type=float, default=None, help="потолок трат на этот запуск, ₽")
     mo.add_argument("--kinds", default=None, help="только эти типы историй, через запятую (проба)")
@@ -196,6 +200,9 @@ def main(argv: list[str] | None = None) -> int:
         from .signals.llm_read import run as llm_run
         ids = [x.strip() for x in open(a.ids, encoding="utf-8") if x.strip()] if a.ids else None
         out = asyncio.run(llm_run(store, limit=a.limit, ids=ids, stage=a.stage, cap_rub=a.cap_rub))
+    elif a.cmd == "wait":
+        from .signals.wait import run as wait_run
+        out = asyncio.run(wait_run(store, limit=a.limit, cap_rub=a.cap_rub))
     elif a.cmd == "motifs":
         from .signals.motifs import build as motifs_build
         kinds = [int(x) for x in a.kinds.split(",") if x.strip().isdigit()] if a.kinds else None

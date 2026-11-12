@@ -461,6 +461,26 @@ def _brief(r: dict, now: datetime) -> int:
     return 1
 
 
+def _vsp_issue(now: datetime) -> bool:
+    """Ежедневное письмо раздела «Аудит сети ВСП» (vsp_mail.py): пора ли и собран ли выпуск дня.
+    Выпуск собирается каждый рабочий день, даже если подписчиков нет: иначе первый подписавшийся
+    получил бы всё накопленное разом. Сбой сборки (нет базы сборщика) остальную рассылку не держит."""
+    try:
+        from . import vsp_api, vsp_mail
+        if not vsp_mail.due(now) or not vsp_api.vsp_db_url():
+            return False
+        vsp_mail.build_issue(now)
+        return True
+    except Exception as e:  # noqa: BLE001
+        log.warning("[mail] выпуск ВСП не собран: %s", e)
+        return False
+
+
+def _vsp_daily(r: dict, now: datetime) -> int:
+    from . import vsp_mail
+    return vsp_mail.daily(r, now)
+
+
 def tick(now: datetime | None = None) -> dict:
     """Один проход рассылки по всем, кому можно писать."""
     out = {"users": 0, "instant": 0, "digest": 0, "brief": 0, "errors": 0}
@@ -478,16 +498,21 @@ def tick(now: datetime | None = None) -> dict:
     msk = now.astimezone(MSK)
     digest_due = _workday(msk.date()) and msk.hour >= DIGEST_HOUR
     brief_due = _workday(msk.date()) and msk.hour >= BRIEF_HOUR
+    vsp_due = _vsp_issue(now)
     for r in recipients():
         out["users"] += 1
         pm = (r.get("prefs") or {}).get("mail") or {}
+        vm = (r.get("prefs") or {}).get("vsp_mail") or {}
         for kind, on, fn in (("instant", pm.get("instant", True), _instant),
                              ("digest", digest_due and pm.get("digest", True), _digest),
-                             ("brief", brief_due and pm.get("brief", True), _brief)):
+                             ("brief", brief_due and pm.get("brief", True), _brief),
+                             ("vsp", vsp_due and isinstance(vm, dict) and vm.get("on"), _vsp_daily)):
             if not on:
                 continue
             try:
-                out[kind] += fn(r, now)
+                n = fn(r, now)
+                if n or kind in out:                      # «vsp» появляется в итоге, только когда письма ушли
+                    out[kind] = out.get(kind, 0) + n
             except Exception as e:  # noqa: BLE001 — один адрес не держит остальных
                 out["errors"] += 1
                 log.warning("[mail] %s → %s: %s", kind, r["username"], e)
@@ -500,7 +525,7 @@ async def mail_background_loop() -> None:
     while True:
         try:
             r = await asyncio.to_thread(tick)
-            if r.get("instant") or r.get("digest") or r.get("errors") or r.get("tickets"):
+            if r.get("instant") or r.get("digest") or r.get("errors") or r.get("tickets") or r.get("vsp"):
                 log.info("[mail] рассылка: %s", r)
         except Exception as e:  # noqa: BLE001
             log.warning("[mail] тик рассылки: %s", e)

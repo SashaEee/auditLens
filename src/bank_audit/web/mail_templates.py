@@ -539,9 +539,13 @@ def _feed(rows: list[str], top: int = 20) -> str:
 
 
 def layout(*, preheader: str, title: str, body: str, reason: str, note: str = NOTE_AUTO,
-           section: str = "") -> str:
-    """Каркас письма: карточка с логотипом и разделом, тело, подвал с причиной и настройками."""
+           section: str = "", links: list[tuple[str, str]] | None = None) -> str:
+    """Каркас письма: карточка с логотипом и разделом, тело, подвал с причиной и настройками.
+    links — свои ссылки подвала вместо «Настроить уведомления» (например, «Отписаться» у письма по подписке)."""
     pre = _e(preheader) + "&nbsp;&zwnj;" * 60
+    foot = "".join(f'&nbsp;&nbsp;·&nbsp;&nbsp;<a href="{_e(u)}" target="_blank" style="color:{INK2};'
+                   f'text-decoration:underline">{_e(label)}</a>'
+                   for label, u in (links or [("Настроить уведомления", settings_url())]))
     return f"""<!DOCTYPE html>
 <html lang="ru" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
@@ -591,7 +595,7 @@ def layout(*, preheader: str, title: str, body: str, reason: str, note: str = NO
     <tr><td class="al-pad" style="padding:22px 33px 0;{_font(12, 19, INK3)}">
       <p style="margin:0">{_e(reason)}</p>
       <p style="margin:4px 0 0">{_e(note)}</p>
-      <p style="margin:14px 0 0"><a href="{_e(app_base())}/" target="_blank" style="color:{INK2};text-decoration:underline">Открыть AuditLens</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="{_e(settings_url())}" target="_blank" style="color:{INK2};text-decoration:underline">Настроить уведомления</a></p>
+      <p style="margin:14px 0 0"><a href="{_e(app_base())}/" target="_blank" style="color:{INK2};text-decoration:underline">Открыть AuditLens</a>{foot}</p>
       <p style="margin:14px 0 0;color:{INK4}">AuditLens — инструмент внутреннего аудита</p>
     </td></tr>
   </table>

@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 062aac103fe2eb010ec52b1b627dfd5bdec9ae780d990fe710ce3780e75054b4): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 57d0b4a2b2cbb3833b09a98ff5d703bbe46ed9dfa4cfa1a61c5818f79608c04d): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -22204,12 +22204,14 @@ const vQS = o => {
 const vAddr = a => {
   if (!a) return "";
   const parts = a.split("#")[0].split(",").map(x => x.trim()).filter(x => x && !/^\d{6}$/.test(x));
-  const st = parts.findIndex(x => /^(УЛ|ПР-?Т|ПР-Д|ПРОСП|Ш|ПЕР|Б-Р|БУЛЬВАР|НАБ|ПЛ|МКР|МИКРОРАЙОН|КВ-Л|ТУПИК|ПРОЕЗД|ТРАКТ|АЛЛЕЯ|ЛИН|ТЕР)\b/i.test(x));
+  // после сокращения не должна идти буква. \b здесь не годится: для него кириллица — «не слово», и улица
+  // не находилась вовсе — в адресе оставались только дом и литера («Санкт-Петербург, д.1-3, Литер а»)
+  const st = parts.findIndex(x => /^(УЛ|ПР-?Т|ПР-Д|ПРОСП|Ш|ПЕР|Б-Р|БУЛЬВАР|НАБ|ПЛ|МКР|МИКРОРАЙОН|КВ-Л|ТУПИК|ПРОЕЗД|ТРАКТ|АЛЛЕЯ|ЛИН|ТЕР)(?![А-ЯЁа-яё])/i.test(x));
   const rest = st >= 0 ? parts.slice(st) : parts.slice(-2);
   const t = rest.join(", ");
   if (t !== t.toUpperCase()) return t;
   const ABBR = new Set(["пр-т", "пр-д", "б-р", "кв-л", "мкр", "стр", "корп", "лит", "пом", "влд", "зд"]);
-  return t.toLowerCase().split(" ").map(w => {
+  return t.replace(/\.(?=[А-ЯЁ])/g, ". ").toLowerCase().split(" ").map(w => {
     const m = w.match(/^([а-яё][а-яё-]*)(,?)$/);
     return m && m[1].length >= 3 && !ABBR.has(m[1]) ? w[0].toUpperCase() + w.slice(1) : w;
   }).join(" ");
@@ -22372,7 +22374,8 @@ const VCheck = () => /*#__PURE__*/React.createElement("svg", {
 }));
 
 // ── состояние в адресе: раздел, вид, фильтры и открытые слои ────────────────
-// #vsp?s=where&subject=TA&kind=5 · слои: point (досье), story (случай), scheme (способ действия), hot (очаг), method
+// #vsp?s=where&subject=TA&kind=5 · слои: point (досье), story (случай), scheme (способ действия), hot (очаг), method,
+// mail (подписка на письмо; mail=off — ссылка «Отписаться» из письма)
 const V_F0 = {
   subject: "",
   gosb: "",
@@ -22385,10 +22388,14 @@ const V_F0 = {
   fresh: false,
   money: false,
   fmt: "",
-  q: ""
-};
-const V_LAYERS = ["point", "story", "scheme", "hot", "method"];
-const V_SECS = ["main", "schemes", "where", "stories"];
+  q: "",
+  cause: "",
+  wper: "365",
+  long: false,
+  left: false
+}; // последние четыре — фильтры раздела «Ожидание»
+const V_LAYERS = ["point", "story", "scheme", "hot", "method", "mail"];
+const V_SECS = ["main", "schemes", "where", "stories", "wait"];
 function vReadHash() {
   const h = parseHash();
   if (h.p !== "vsp") return null;
@@ -22396,11 +22403,12 @@ function vReadHash() {
   const f = {
     ...V_F0
   };
-  ["subject", "gosb", "kind", "key", "per", "fmt", "q"].forEach(k => {
+  ["subject", "gosb", "kind", "key", "per", "fmt", "q", "cause"].forEach(k => {
     if (p[k] != null) f[k] = p[k];
   });
+  if (p.wper != null && V_WPER[p.wper]) f.wper = p.wper;
   if (p.sev != null && !isNaN(+p.sev)) f.sev = +p.sev;
-  ["vul", "named", "fresh", "money"].forEach(k => {
+  ["vul", "named", "fresh", "money", "long", "left"].forEach(k => {
     if (p[k] != null) f[k] = p[k] === "1";
   });
   const L = {};
@@ -23336,7 +23344,9 @@ function vHexLevel(r) {
 function VHexMap({
   regions,
   picked,
-  onPick
+  onPick,
+  hint: hintOf,
+  level: levelOf
 }) {
   const ref = useRef(null);
   const [w, setW] = useState(740);
@@ -23360,7 +23370,7 @@ function VHexMap({
     H = S * 1.15,
     dy = H * 0.76;
   const fs = Math.max(8.5, Math.min(11, S * 0.26));
-  const hint = r => !r.points ? `${r.name} — отделений нет` : r.few ? `${r.name} — мало прочитанных отзывов (${vN(r.read)} за 2 года)` : `${r.name}: ${vN(r.n)} ${vPl(r.n, "клиент", "клиента", "клиентов")} за 2 года, ожидалось ${vX(r.expected)}${r.ratio ? ` — ×${vX(r.ratio)}` : ""}${r.sig ? ", так много случайно не бывает" : ""}`;
+  const hint = hintOf || (r => !r.points ? `${r.name} — отделений нет` : r.few ? `${r.name} — мало прочитанных отзывов (${vN(r.read)} за 2 года)` : `${r.name}: ${vN(r.n)} ${vPl(r.n, "клиент", "клиента", "клиентов")} за 2 года, ожидалось ${vX(r.expected)}${r.ratio ? ` — ×${vX(r.ratio)}` : ""}${r.sig ? ", так много случайно не бывает" : ""}`);
   return /*#__PURE__*/React.createElement("div", {
     ref: ref,
     className: "vr-hexes",
@@ -23370,7 +23380,7 @@ function VHexMap({
   }, rs.map(r => {
     const x = r.col * S + r.row % 2 * S / 2,
       y = r.row * dy;
-    const lv = vHexLevel(r);
+    const lv = (levelOf || vHexLevel)(r);
     const on = picked === r.code;
     return /*#__PURE__*/React.createElement(React.Fragment, {
       key: r.code
@@ -23828,7 +23838,14 @@ function VMain({
       ...V_F0,
       subject: f.subject
     })
-  }, "\u041A\u0430\u0440\u0442\u0430 \u0438 \u0413\u041E\u0421\u0411 \u2192"), /*#__PURE__*/React.createElement("a", {
+  }, "\u041A\u0430\u0440\u0442\u0430 \u0438 \u0413\u041E\u0421\u0411 \u2192"), /*#__PURE__*/React.createElement("button", {
+    className: "vlink",
+    onClick: () => go("wait", {
+      ...V_F0,
+      subject: f.subject,
+      gosb: f.gosb
+    })
+  }, "\u0414\u043E\u043B\u0433\u043E\u0435 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 \u0432 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F\u0445 \u2192"), /*#__PURE__*/React.createElement("a", {
     className: "vlink",
     href: "/api/vsp/export/justification.xlsx" + (scope ? "?" + scope : ""),
     download: true
@@ -25365,6 +25382,14 @@ function VEvidenceBody({
     vuln_types: s.vuln_types || [],
     actions: s.actions || []
   }, true);
+  const W = d.wait; // жалоба на долгое ожидание (раздел «Ожидание»): отзыв может быть и историей, и жалобой на очередь
+  const wc = W ? {
+    ...W,
+    rid: d.rid,
+    place: d.place,
+    date: r.date,
+    src: r.source
+  } : null;
   return /*#__PURE__*/React.createElement("div", {
     className: "vr-ev",
     "data-tour": "evidence"
@@ -25380,7 +25405,13 @@ function VEvidenceBody({
     className: "vr-chead"
   }, vHead(s.episode || m && m.what)), facts.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "vr-facts"
-  }, facts.join(" · ")), /*#__PURE__*/React.createElement("div", {
+  }, facts.join(" · ")), W && !s.episode && /*#__PURE__*/React.createElement("h3", {
+    className: "vr-chead"
+  }, vWaitHead(W), W.minutes ? /*#__PURE__*/React.createElement("span", {
+    className: "vr-byword"
+  }, " \u2014 \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u0430") : null), W && /*#__PURE__*/React.createElement("div", {
+    className: "vr-facts"
+  }, ["долгое ожидание", s.episode && W.minutes ? `ждал ${W.minutes_label} — по словам клиента` : null, W.cause !== "не сказано" ? W.cause_label.toLowerCase() : null, s.episode && W.left ? "ушёл, не дождавшись" : null].filter(Boolean).join(" · ")), /*#__PURE__*/React.createElement("div", {
     className: "vr-full"
   }, /*#__PURE__*/React.createElement(VHighlight, {
     text: r.text || "",
@@ -25405,7 +25436,10 @@ function VEvidenceBody({
   }, "\u041E\u0440\u0438\u0433\u0438\u043D\u0430\u043B \u043D\u0430 ", vSrc(r.source), " \u2197"), r.url && /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost",
     onClick: copy
-  }, copied ? "Скопировано" : "Скопировать начало отзыва"), /*#__PURE__*/React.createElement(VCaseBtn, {
+  }, copied ? "Скопировано" : "Скопировать начало отзыва"), wc && !d.story ? /*#__PURE__*/React.createElement(VCaseBtn, {
+    item: vCaseWait(wc),
+    src: "vsp_wait"
+  }) : /*#__PURE__*/React.createElement(VCaseBtn, {
     item: vCaseStory({
       ...s,
       rid: s.rid || d.rid,
@@ -25434,13 +25468,19 @@ function VEvidenceBody({
     className: "eyebrow"
   }, "\u0427\u0442\u043E \u043F\u043E\u043D\u044F\u043B\u0430 \u043C\u043E\u0434\u0435\u043B\u044C \u2014 \u043F\u0435\u0440\u0435\u0441\u043A\u0430\u0437, \u0441\u0432\u0435\u0440\u044F\u0439\u0442\u0435 \u0441 \u043E\u0442\u0437\u044B\u0432\u043E\u043C"), /*#__PURE__*/React.createElement("dl", {
     className: "vdl"
-  }, m.what && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0427\u0442\u043E \u043F\u0440\u043E\u0438\u0437\u043E\u0448\u043B\u043E"), /*#__PURE__*/React.createElement("dd", null, m.what)), D && D.kind && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0422\u0438\u043F \u0438\u0441\u0442\u043E\u0440\u0438\u0438"), /*#__PURE__*/React.createElement("dd", null, D.kind, D.kind2 ? `; ещё: ${D.kind2.toLowerCase()}` : "")), D && (D.motif || D.label) && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0421\u043F\u043E\u0441\u043E\u0431 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F"), /*#__PURE__*/React.createElement("dd", null, D.motif || D.label)), (m.actions || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u0430"), /*#__PURE__*/React.createElement("dd", null, m.actions.join(", "))), (m.products || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u041F\u0440\u043E\u0434\u0443\u043A\u0442"), /*#__PURE__*/React.createElement("dd", null, m.products.join(", "))), m.fault && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0427\u044C\u044F \u0432\u0438\u043D\u0430, \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u0430"), /*#__PURE__*/React.createElement("dd", null, m.fault)), D && D.benefit && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u041A\u043E\u043C\u0443 \u0432\u044B\u0433\u043E\u0434\u0430, \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u0430"), /*#__PURE__*/React.createElement("dd", null, D.benefit)), D && D.intent && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0427\u0442\u043E \u0441\u0434\u0435\u043B\u0430\u043B \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A"), /*#__PURE__*/React.createElement("dd", null, D.intent)), D && (D.systemic || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u041A\u043B\u0438\u0435\u043D\u0442 \u043E \u0441\u0438\u0441\u0442\u0435\u043C\u043D\u043E\u0441\u0442\u0438"), /*#__PURE__*/React.createElement("dd", null, D.systemic.join("; "))), D && D.outcome && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0427\u0435\u043C \u0437\u0430\u043A\u043E\u043D\u0447\u0438\u043B\u043E\u0441\u044C"), /*#__PURE__*/React.createElement("dd", null, D.outcome)), D && (D.escalation || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u041A\u0443\u0434\u0430 \u043E\u0431\u0440\u0430\u0449\u0430\u043B\u0441\u044F \u043A\u043B\u0438\u0435\u043D\u0442"), /*#__PURE__*/React.createElement("dd", null, D.escalation.join(", "))), m.employee && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0421\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A"), /*#__PURE__*/React.createElement("dd", null, m.employee, D && D.window ? ` · ${D.window}` : "")), !m.employee && D && D.window && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u041E\u043A\u043D\u043E"), /*#__PURE__*/React.createElement("dd", null, D.window)), m.money ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0421\u0443\u043C\u043C\u0430"), /*#__PURE__*/React.createElement("dd", null, vN(m.money), " \u20BD \u2014 \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u0430", D && D.sum_kind ? ` (${D.sum_kind})` : "")) : null, D && D.event_date && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u041A\u043E\u0433\u0434\u0430 \u0441\u043B\u0443\u0447\u0438\u043B\u043E\u0441\u044C"), /*#__PURE__*/React.createElement("dd", null, D.event_date)), m.vulnerable && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u041A\u043B\u0438\u0435\u043D\u0442"), /*#__PURE__*/React.createElement("dd", null, "\u043F\u043E\u0436\u0438\u043B\u043E\u0439 \u0438\u043B\u0438 \u0443\u044F\u0437\u0432\u0438\u043C\u044B\u0439")), m.scheme && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0421\u0445\u0435\u043C\u0430 \u0441\u0432\u043E\u0438\u043C\u0438 \u0441\u043B\u043E\u0432\u0430\u043C\u0438"), /*#__PURE__*/React.createElement("dd", null, m.scheme)))) : d.screen ? /*#__PURE__*/React.createElement("section", {
+  }, m.what && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0427\u0442\u043E \u043F\u0440\u043E\u0438\u0437\u043E\u0448\u043B\u043E"), /*#__PURE__*/React.createElement("dd", null, m.what)), D && D.kind && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0422\u0438\u043F \u0438\u0441\u0442\u043E\u0440\u0438\u0438"), /*#__PURE__*/React.createElement("dd", null, D.kind, D.kind2 ? `; ещё: ${D.kind2.toLowerCase()}` : "")), D && (D.motif || D.label) && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0421\u043F\u043E\u0441\u043E\u0431 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F"), /*#__PURE__*/React.createElement("dd", null, D.motif || D.label)), (m.actions || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u0430"), /*#__PURE__*/React.createElement("dd", null, m.actions.join(", "))), (m.products || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u041F\u0440\u043E\u0434\u0443\u043A\u0442"), /*#__PURE__*/React.createElement("dd", null, m.products.join(", "))), m.fault && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0427\u044C\u044F \u0432\u0438\u043D\u0430, \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u0430"), /*#__PURE__*/React.createElement("dd", null, m.fault)), D && D.benefit && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u041A\u043E\u043C\u0443 \u0432\u044B\u0433\u043E\u0434\u0430, \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u0430"), /*#__PURE__*/React.createElement("dd", null, D.benefit)), D && D.intent && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0427\u0442\u043E \u0441\u0434\u0435\u043B\u0430\u043B \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A"), /*#__PURE__*/React.createElement("dd", null, D.intent)), D && (D.systemic || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u041A\u043B\u0438\u0435\u043D\u0442 \u043E \u0441\u0438\u0441\u0442\u0435\u043C\u043D\u043E\u0441\u0442\u0438"), /*#__PURE__*/React.createElement("dd", null, D.systemic.join("; "))), D && D.outcome && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0427\u0435\u043C \u0437\u0430\u043A\u043E\u043D\u0447\u0438\u043B\u043E\u0441\u044C"), /*#__PURE__*/React.createElement("dd", null, D.outcome)), D && (D.escalation || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u041A\u0443\u0434\u0430 \u043E\u0431\u0440\u0430\u0449\u0430\u043B\u0441\u044F \u043A\u043B\u0438\u0435\u043D\u0442"), /*#__PURE__*/React.createElement("dd", null, D.escalation.join(", "))), m.employee && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0421\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A"), /*#__PURE__*/React.createElement("dd", null, m.employee, D && D.window ? ` · ${D.window}` : "")), !m.employee && D && D.window && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u041E\u043A\u043D\u043E"), /*#__PURE__*/React.createElement("dd", null, D.window)), m.money ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0421\u0443\u043C\u043C\u0430"), /*#__PURE__*/React.createElement("dd", null, vN(m.money), " \u20BD \u2014 \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u0430", D && D.sum_kind ? ` (${D.sum_kind})` : "")) : null, D && D.event_date && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u041A\u043E\u0433\u0434\u0430 \u0441\u043B\u0443\u0447\u0438\u043B\u043E\u0441\u044C"), /*#__PURE__*/React.createElement("dd", null, D.event_date)), m.vulnerable && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u041A\u043B\u0438\u0435\u043D\u0442"), /*#__PURE__*/React.createElement("dd", null, "\u043F\u043E\u0436\u0438\u043B\u043E\u0439 \u0438\u043B\u0438 \u0443\u044F\u0437\u0432\u0438\u043C\u044B\u0439")), m.scheme && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u0421\u0445\u0435\u043C\u0430 \u0441\u0432\u043E\u0438\u043C\u0438 \u0441\u043B\u043E\u0432\u0430\u043C\u0438"), /*#__PURE__*/React.createElement("dd", null, m.scheme)))) : W ? null : d.screen ? /*#__PURE__*/React.createElement("section", {
     className: "vr-model"
   }, /*#__PURE__*/React.createElement("div", {
     className: "eyebrow"
   }, "\u0427\u0442\u043E \u043F\u043E\u043D\u044F\u043B\u0430 \u043C\u043E\u0434\u0435\u043B\u044C"), /*#__PURE__*/React.createElement("p", null, d.screen.relevant ? "На отборе: похоже на историю о нарушении" : "На отборе: не про нарушение в отделении", d.screen.why ? ` — ${d.screen.why}` : "")) : /*#__PURE__*/React.createElement("p", {
     className: "vr-fine"
-  }, "\u041C\u043E\u0434\u0435\u043B\u044C \u044D\u0442\u043E\u0442 \u043E\u0442\u0437\u044B\u0432 \u0435\u0449\u0451 \u043D\u0435 \u0447\u0438\u0442\u0430\u043B\u0430 \u2014 \u0438\u0441\u0442\u043E\u0440\u0438\u044F \u043D\u0430\u0439\u0434\u0435\u043D\u0430 \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C."));
+  }, "\u041C\u043E\u0434\u0435\u043B\u044C \u044D\u0442\u043E\u0442 \u043E\u0442\u0437\u044B\u0432 \u0435\u0449\u0451 \u043D\u0435 \u0447\u0438\u0442\u0430\u043B\u0430 \u2014 \u0438\u0441\u0442\u043E\u0440\u0438\u044F \u043D\u0430\u0439\u0434\u0435\u043D\u0430 \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C."), W && /*#__PURE__*/React.createElement("section", {
+    className: "vr-model"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "eyebrow"
+  }, "\u0427\u0442\u043E \u043F\u043E\u043D\u044F\u043B\u0430 \u043C\u043E\u0434\u0435\u043B\u044C \u043E\u0431 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0438 \u2014 \u0441\u0432\u0435\u0440\u044F\u0439\u0442\u0435 \u0441 \u043E\u0442\u0437\u044B\u0432\u043E\u043C"), /*#__PURE__*/React.createElement("dl", {
+    className: "vdl"
+  }, /*#__PURE__*/React.createElement("dt", null, "\u041E \u0447\u0451\u043C"), /*#__PURE__*/React.createElement("dd", null, "\u0436\u0430\u043B\u043E\u0431\u0430 \u043D\u0430 \u0434\u043E\u043B\u0433\u043E\u0435 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 \u0432 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0438"), /*#__PURE__*/React.createElement("dt", null, "\u0421\u043A\u043E\u043B\u044C\u043A\u043E \u0436\u0434\u0430\u043B"), /*#__PURE__*/React.createElement("dd", null, W.minutes ? `${W.minutes_label} — по словам клиента` : "время не названо"), /*#__PURE__*/React.createElement("dt", null, "\u041F\u0440\u0438\u0447\u0438\u043D\u0430, \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u0430"), /*#__PURE__*/React.createElement("dd", null, W.cause === "не сказано" ? "не названа" : W.cause_label.toLowerCase()), /*#__PURE__*/React.createElement("dt", null, "\u0427\u0435\u043C \u0437\u0430\u043A\u043E\u043D\u0447\u0438\u043B\u043E\u0441\u044C"), /*#__PURE__*/React.createElement("dd", null, W.left ? "ушёл, не дождавшись, или не обслужили" : "обслужили"))));
 }
 function VEvidenceLayer({
   rid,
@@ -25849,7 +25889,11 @@ function VDossierLayer({
       marginTop: 8
     },
     onClick: () => setLim(lim + 20)
-  }, "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0435\u0449\u0451 (\u043E\u0441\u0442\u0430\u043B\u043E\u0441\u044C ", shown.length - lim, ")")), ((d.request || []).length > 0 || con && (con.request || []).length > 0) && /*#__PURE__*/React.createElement("section", {
+  }, "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0435\u0449\u0451 (\u043E\u0441\u0442\u0430\u043B\u043E\u0441\u044C ", shown.length - lim, ")")), /*#__PURE__*/React.createElement(VWaitDossier, {
+    w: d.wait,
+    point: point,
+    openPoint: openPoint
+  }), ((d.request || []).length > 0 || con && (con.request || []).length > 0) && /*#__PURE__*/React.createElement("section", {
     className: "sec"
   }, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0442\u043E \u0437\u0430\u043F\u0440\u043E\u0441\u0438\u0442\u044C"), (d.request || []).map((r, i) => /*#__PURE__*/React.createElement(VRequest, {
     key: i,
@@ -25908,6 +25952,1087 @@ function VDossierLayer({
     onClick: () => send("ошибка данных")
   }, "\u041E\u0448\u0438\u0431\u043A\u0430 \u0434\u0430\u043D\u043D\u044B\u0445")))));
 }
+
+// ── раздел «Ожидание»: жалобы клиентов на очереди и долгое ожидание в отделениях ─────────────
+// Отдельно от тяжёлых историй: это не поступок сотрудника, а доступность обслуживания. Данные — свой этап
+// чтения модели (vsp/signals/wait.py), считаются вживую (web/vsp_wait.py). Красный — только «значимо чаще сети».
+const V_WPER = {
+  "90": "3 месяца",
+  "180": "полгода",
+  "365": "год",
+  "730": "2 года"
+};
+const V_WPER_IN = {
+  "90": "за 3 месяца",
+  "180": "за полгода",
+  "365": "за год",
+  "730": "за 2 года"
+};
+const vShare = x => x == null ? "—" : Math.round(x * 100) + "\u00a0%";
+const vWaitQS = (f, extra) => vQS({
+  subject: f.subject,
+  gosb: f.gosb,
+  per: f.wper,
+  cause: f.cause,
+  long: f.long,
+  left: f.left,
+  ...(extra || {})
+});
+// материал «В дело»: жалоба на ожидание открывается из дела тем же слоем «Случай»
+function vCaseWait(c) {
+  const P = c.place || {};
+  if (!c.rid) return null;
+  return {
+    kind: "vsp",
+    url: vCaseUrl("story", c.rid),
+    title: `Долгое ожидание: «${vCut(c.quote || "", 140)}»`,
+    meta: {
+      type: "story",
+      place: vPlace(P),
+      code: vCode(P),
+      gosb: P.gosb || "",
+      date: c.date || "",
+      source: c.src ? vSrc(c.src) : "",
+      summary: [c.minutes ? `ждал ${c.minutes_label} — по словам клиента` : null, c.cause && c.cause !== "не сказано" ? (c.cause_label || "").toLowerCase() : null, c.left ? "ушёл, не дождавшись" : null].filter(Boolean).join(" · "),
+      quote: c.quote || ""
+    }
+  };
+}
+// шкала карты: доля ожидания по регионам отличается мало (обычно в пределах ±40 % от сети), поэтому шаги мельче, чем у историй
+const vWaitLevel = r => {
+  if (!r.points || r.few) return "few";
+  if (r.sig) return "sig";
+  const k = r.ratio || 0;
+  return k >= 1.25 ? "hi" : k >= 1.1 ? "mid" : k >= 0.9 ? "avg" : "low";
+};
+const vWaitHead = c => c.minutes ? `Ждал ${c.minutes_label}${c.left ? " и ушёл, не дождавшись" : ""}` : c.left ? "Ушёл, не дождавшись" : "Долгое ожидание";
+function VWaitFilters({
+  f,
+  setF,
+  regions,
+  gosbs,
+  causes
+}) {
+  const [open, setOpen] = useState(false); // на телефоне фильтры — за кнопкой
+  const rname = c => (regions.find(r => r.code === c) || {}).name || c;
+  const cl = k => ((causes || []).find(c => c.key === k) || {}).label || k;
+  const gl = (gosbs || []).filter(g => !f.subject || g.subject === f.subject).slice().sort((a, b) => String(a.gosb).localeCompare(String(b.gosb), "ru", {
+    numeric: true
+  }));
+  const chips = [];
+  if (f.subject) chips.push([rname(f.subject), {
+    subject: "",
+    gosb: ""
+  }]);
+  if (f.gosb) chips.push([`ГОСБ ${f.gosb}`, {
+    gosb: ""
+  }]);
+  if (f.wper !== V_F0.wper) chips.push([V_WPER_IN[f.wper] || f.wper, {
+    wper: V_F0.wper
+  }]);
+  if (f.cause) chips.push([cl(f.cause).toLowerCase(), {
+    cause: ""
+  }]);
+  if (f.long) chips.push(["ждали час и дольше", {
+    long: false
+  }]);
+  if (f.left) chips.push(["ушли, не дождавшись", {
+    left: false
+  }]);
+  const tg = (k, l) => /*#__PURE__*/React.createElement("button", {
+    className: "vr-tg" + (f[k] ? " on" : ""),
+    "aria-pressed": f[k],
+    onClick: () => setF({
+      [k]: !f[k]
+    })
+  }, l);
+  return /*#__PURE__*/React.createElement("div", {
+    className: "vr-fbar" + (open ? " open" : "")
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "vr-tg vr-ftoggle",
+    "aria-expanded": open,
+    onClick: () => setOpen(!open)
+  }, "\u0424\u0438\u043B\u044C\u0442\u0440\u044B", chips.length ? ` · ${chips.length}` : ""), /*#__PURE__*/React.createElement("div", {
+    className: "vr-frow",
+    role: "group",
+    "aria-label": "\u0424\u0438\u043B\u044C\u0442\u0440\u044B"
+  }, /*#__PURE__*/React.createElement(VSelect, {
+    ariaLabel: "\u0420\u0435\u0433\u0438\u043E\u043D",
+    value: f.subject,
+    onChange: v => setF({
+      subject: v,
+      gosb: ""
+    }),
+    options: [{
+      v: "",
+      l: "Вся сеть"
+    }, ...regions.map(t => ({
+      v: t.code,
+      l: t.name
+    }))]
+  }), gl.length > 0 && /*#__PURE__*/React.createElement(VSelect, {
+    ariaLabel: "\u0413\u041E\u0421\u0411",
+    value: f.gosb,
+    onChange: v => setF({
+      gosb: v
+    }),
+    options: [{
+      v: "",
+      l: "Все ГОСБ"
+    }, ...gl.map(g => ({
+      v: g.gosb,
+      l: `ГОСБ ${g.gosb}${!f.subject && g.subject_name ? ` · ${vRegionShort(g.subject_name)}` : ""}`
+    }))]
+  }), /*#__PURE__*/React.createElement(VSelect, {
+    ariaLabel: "\u041F\u0435\u0440\u0438\u043E\u0434",
+    value: f.wper,
+    def: V_F0.wper,
+    onChange: v => setF({
+      wper: v
+    }),
+    options: Object.entries(V_WPER).map(([k, l]) => ({
+      v: k,
+      l: `За ${l}`
+    }))
+  }), /*#__PURE__*/React.createElement(VSelect, {
+    ariaLabel: "\u041F\u0440\u0438\u0447\u0438\u043D\u0430",
+    value: f.cause,
+    onChange: v => setF({
+      cause: v
+    }),
+    options: [{
+      v: "",
+      l: "Причина — любая"
+    }, ...(causes || []).map(c => ({
+      v: c.key,
+      l: c.label,
+      n: vN(c.n)
+    }))]
+  }), tg("long", "ждали час и дольше"), tg("left", "ушли, не дождавшись")), chips.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "vr-shown"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "note"
+  }, "\u041F\u043E\u043A\u0430\u0437\u0430\u043D\u043E:"), chips.map(([l, patch], i) => /*#__PURE__*/React.createElement("span", {
+    key: i,
+    className: "vr-fchip"
+  }, l, /*#__PURE__*/React.createElement("button", {
+    "aria-label": `Снять: ${l}`,
+    onClick: () => setF(patch)
+  }, "\u2715"))), /*#__PURE__*/React.createElement("button", {
+    className: "vmore",
+    onClick: () => setF({
+      subject: "",
+      gosb: "",
+      wper: V_F0.wper,
+      cause: "",
+      long: false,
+      left: false
+    })
+  }, "\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C \u0432\u0441\u0451")));
+}
+
+// жалобы по месяцам: столбец — месяц, число сверху — сколько жалоб; тёмные — выбранный период
+function VWaitMonths({
+  months,
+  since
+}) {
+  if (!months || !months.length) return /*#__PURE__*/React.createElement("div", {
+    className: "vempty"
+  }, "\u041D\u0435\u0442 \u0434\u0430\u043D\u043D\u044B\u0445");
+  const mx = Math.max(1, ...months.map(m => m.n));
+  return /*#__PURE__*/React.createElement("div", {
+    className: "vr-chart"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "vr-chart-b",
+    role: "img",
+    "aria-label": "\u0416\u0430\u043B\u043E\u0431\u044B \u043D\u0430 \u0434\u043E\u043B\u0433\u043E\u0435 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 \u043F\u043E \u043C\u0435\u0441\u044F\u0446\u0430\u043C"
+  }, months.map(m => /*#__PURE__*/React.createElement("div", {
+    key: m.month,
+    className: "vr-chart-c" + (since && m.month >= since ? " cur" : ""),
+    title: `${vMon(m.month)}: ${vN(m.n)} ${vPl(m.n, "жалоба", "жалобы", "жалоб")} на ожидание — ${vShare(m.share)} всех жалоб${m.part ? " · месяц ещё не закончился" : ""}`
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "vr-chart-n"
+  }, m.n || ""), /*#__PURE__*/React.createElement("i", {
+    className: m.part ? "part" : "",
+    style: {
+      height: `${Math.max(m.n ? 3 : 1, m.n / mx * 100)}%`
+    }
+  })))), /*#__PURE__*/React.createElement("div", {
+    className: "vr-chart-ax"
+  }, months.map((m, i) => /*#__PURE__*/React.createElement("span", {
+    key: m.month
+  }, m.month.slice(5) === "01" || i === 0 && months[1] && months[1].month.slice(5) !== "01" ? m.month.slice(0, 4) : ""))));
+}
+
+// жалоба на ожидание: что сказал клиент (дословно), сколько ждал, причина
+function VWaitCard({
+  c,
+  openPoint,
+  hidePlace
+}) {
+  const ev = useContext(VEv);
+  const P = c.place || {};
+  const open = () => ev.open(c.rid);
+  const tags = [c.cause && c.cause !== "не сказано" ? c.cause_label : null].filter(Boolean);
+  return /*#__PURE__*/React.createElement("article", {
+    className: "vr-case list",
+    "data-rid": c.rid
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "vr-meta"
+  }, !hidePlace && /*#__PURE__*/React.createElement("span", {
+    className: "vr-pl"
+  }, vPlace(P)), !hidePlace && /*#__PURE__*/React.createElement("span", null, vCode(P), P.gosb ? ` · ГОСБ ${P.gosb}` : ""), /*#__PURE__*/React.createElement("span", null, vDay(c.date))), /*#__PURE__*/React.createElement("h3", {
+    className: "vr-chead"
+  }, vWaitHead(c), c.minutes ? /*#__PURE__*/React.createElement("span", {
+    className: "vr-byword"
+  }, " \u2014 \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u0430") : null), tags.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "vr-tags"
+  }, tags.map((t, i) => /*#__PURE__*/React.createElement("span", {
+    key: i,
+    className: "vr-tag"
+  }, t))), c.quote && /*#__PURE__*/React.createElement("blockquote", {
+    className: "vr-q sm"
+  }, "\xAB", c.quote, "\xBB"), /*#__PURE__*/React.createElement("div", {
+    className: "vr-ok"
+  }, /*#__PURE__*/React.createElement(VCheck, null), "\u0434\u043E\u0441\u043B\u043E\u0432\u043D\u043E", c.src ? ` · ${vSrc(c.src)}` : "", c.date ? `, ${vDay(c.date)}` : "", c.url && /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 ", /*#__PURE__*/React.createElement("a", {
+    className: "vlink",
+    href: c.url,
+    target: "_blank",
+    rel: "noopener noreferrer",
+    title: `Страница отзывов отделения на ${vSrc(c.src)} — отзыв от ${c.date || ""}`
+  }, "\u043E\u0440\u0438\u0433\u0438\u043D\u0430\u043B \u2197"))), /*#__PURE__*/React.createElement("div", {
+    className: "vr-acts"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost vsm",
+    onClick: open
+  }, "\u041E\u0442\u0437\u044B\u0432 \u0446\u0435\u043B\u0438\u043A\u043E\u043C"), !hidePlace && c.point && /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost vsm",
+    onClick: () => openPoint(c.point)
+  }, "\u0414\u043E\u0441\u044C\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u2192"), /*#__PURE__*/React.createElement(VCaseBtn, {
+    item: vCaseWait(c),
+    src: "vsp_wait"
+  })));
+}
+
+// таблица отделений: сортировка по столбцам, отметка «значимо чаще сети»
+function VWaitBranches({
+  f,
+  openPoint,
+  net
+}) {
+  const [sort, setSort] = useState(() => vLS("vsp_wsort", "n"));
+  const [items, setItems] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const qs = vWaitQS(f, {
+    sort
+  });
+  const d = useVFetch("/api/vsp/wait/branches?" + qs + "&limit=40");
+  const gen = useRef(0);
+  useEffect(() => {
+    gen.current++;
+    setItems(d && !d.err ? d.items : []);
+  }, [d]);
+  const setS = k => {
+    setSort(k);
+    vLSset("vsp_wsort", k);
+  };
+  const more = () => {
+    if (busy) return;
+    const g = gen.current;
+    setBusy(true);
+    apiFetch(`/api/vsp/wait/branches?${qs}&limit=40&offset=${items.length}`).then(x => {
+      if (g === gen.current) setItems(a => [...a, ...x.items]);
+    }).catch(() => {}).finally(() => setBusy(false));
+  };
+  if (!d) return /*#__PURE__*/React.createElement(Skel, {
+    h: 320
+  });
+  if (d.err) return /*#__PURE__*/React.createElement(ErrState, {
+    msg: "\u0422\u0430\u0431\u043B\u0438\u0446\u0430 \u043D\u0435 \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u043B\u0430\u0441\u044C"
+  });
+  if (!d.total) return /*#__PURE__*/React.createElement("div", {
+    className: "vempty"
+  }, "\u041E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439 \u0441 \u0442\u0430\u043A\u0438\u043C\u0438 \u0436\u0430\u043B\u043E\u0431\u0430\u043C\u0438 \u043D\u0435\u0442.");
+  const th = (k, l, t) => /*#__PURE__*/React.createElement("th", {
+    className: "num",
+    "aria-sort": sort === k ? "descending" : "none",
+    title: t
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "vth" + (sort === k ? " on" : ""),
+    onClick: () => setS(k)
+  }, l, sort === k ? " ↓" : ""));
+  const filtered = f.cause || f.long || f.left;
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "tbl-wrap"
+  }, /*#__PURE__*/React.createElement("table", {
+    className: "vtbl vrank vr-wtbl"
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u041E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0435"), th("n", "Жалоб", filtered ? "Жалоб на ожидание с выбранными условиями" : "Жалоб на долгое ожидание за период"), th("share", "Доля", `Доля жалоб на ожидание среди всех жалоб отделения за период. По сети — ${vShare(net)}`), /*#__PURE__*/React.createElement("th", {
+    className: "num",
+    title: "\u0412\u043E \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u0440\u0430\u0437 \u0434\u043E\u043B\u044F \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u0432\u044B\u0448\u0435 \u0434\u043E\u043B\u0438 \u043F\u043E \u0441\u0435\u0442\u0438. \u041A\u0440\u0430\u0441\u043D\u044B\u043C \u2014 \u0442\u0430\u043A \u043C\u043D\u043E\u0433\u043E \u0441\u043B\u0443\u0447\u0430\u0439\u043D\u043E \u043D\u0435 \u0431\u044B\u0432\u0430\u0435\u0442 (\u0441 \u043F\u043E\u043F\u0440\u0430\u0432\u043A\u043E\u0439 \u043D\u0430 \u0447\u0438\u0441\u043B\u043E \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439)"
+  }, "\u041A \u0441\u0435\u0442\u0438"), th("long", "Час и дольше", "Сколько клиентов назвали время от часа"), th("left", "Ушли", "Ушли, не дождавшись, или их так и не обслужили"), /*#__PURE__*/React.createElement("th", {
+    className: "num",
+    title: "\u0421\u0435\u0440\u0435\u0434\u0438\u043D\u0430 \u043D\u0430\u0437\u0432\u0430\u043D\u043D\u044B\u0445 \u043A\u043B\u0438\u0435\u043D\u0442\u0430\u043C\u0438 \u0432\u0440\u0435\u043C\u0451\u043D \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u044F"
+  }, "\u041E\u0431\u044B\u0447\u043D\u043E \u0436\u0434\u0430\u043B\u0438"), /*#__PURE__*/React.createElement("th", null, "\u0427\u0430\u0449\u0435 \u0432\u0441\u0435\u0433\u043E"), th("last", "Последняя", "Дата последней жалобы на ожидание"), /*#__PURE__*/React.createElement("th", null))), /*#__PURE__*/React.createElement("tbody", null, items.map(r => /*#__PURE__*/React.createElement("tr", {
+    key: r.point,
+    className: "click",
+    tabIndex: 0,
+    onClick: () => openPoint(r.point),
+    onKeyDown: vEnter(() => openPoint(r.point))
+  }, /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("div", {
+    className: "vrow-h"
+  }, /*#__PURE__*/React.createElement("b", null, vPlace(r))), /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, vCode(r), r.gosb ? ` · ГОСБ ${r.gosb}` : "")), /*#__PURE__*/React.createElement("td", {
+    className: "num"
+  }, /*#__PURE__*/React.createElement("b", null, vN(r.n)), r.n_all != null && r.n_all !== r.n ? /*#__PURE__*/React.createElement("span", {
+    className: "note"
+  }, " \u0438\u0437 ", vN(r.n_all)) : null), /*#__PURE__*/React.createElement("td", {
+    className: "num",
+    title: `${vN(r.n_all != null ? r.n_all : r.n)} из ${vN(r.neg)} жалоб отделения`
+  }, vShare(r.share)), /*#__PURE__*/React.createElement("td", {
+    className: "num"
+  }, r.ratio == null ? "—" : /*#__PURE__*/React.createElement("span", {
+    className: r.sig ? "vr-acc" : "",
+    title: r.sig ? "Значимо чаще, чем по сети" : undefined
+  }, "\xD7", vX(r.ratio))), /*#__PURE__*/React.createElement("td", {
+    className: "num"
+  }, r.long || "—"), /*#__PURE__*/React.createElement("td", {
+    className: "num"
+  }, r.left || "—"), /*#__PURE__*/React.createElement("td", {
+    className: "num"
+  }, r.median_label || "—"), /*#__PURE__*/React.createElement("td", {
+    className: "vr-kindc"
+  }, r.cause && r.cause !== "не сказано" ? r.cause_label : /*#__PURE__*/React.createElement("span", {
+    className: "note"
+  }, "\u2014")), /*#__PURE__*/React.createElement("td", {
+    className: "num"
+  }, vDay(r.last)), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement(VCaseBtn, {
+    item: vCasePoint(r, `${vN(r.n_all != null ? r.n_all : r.n)} ${vPl(r.n_all != null ? r.n_all : r.n, "жалоба", "жалобы", "жалоб")} на долгое ожидание ${V_WPER_IN[f.wper] || ""} — ${vShare(r.share)} жалоб отделения, по сети ${vShare(net)}`),
+    src: "vsp_wait_point",
+    icon: true
+  }))))))), items.length < d.total && /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "center",
+      margin: "10px 0"
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost",
+    disabled: busy,
+    onClick: more
+  }, busy ? "Загружаю…" : `Показать ещё (показано ${vN(items.length)} из ${vN(d.total)})`)), /*#__PURE__*/React.createElement("p", {
+    className: "vr-fine",
+    style: {
+      marginTop: 10
+    }
+  }, "\u0423 \u043A\u0440\u0443\u043F\u043D\u043E\u0433\u043E \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u0436\u0430\u043B\u043E\u0431 \u0431\u043E\u043B\u044C\u0448\u0435 \u043F\u0440\u043E\u0441\u0442\u043E \u043F\u043E\u0442\u043E\u043C\u0443, \u0447\u0442\u043E \u0431\u043E\u043B\u044C\u0448\u0435 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432. \u041F\u043E\u044D\u0442\u043E\u043C\u0443 \u0440\u044F\u0434\u043E\u043C \u0441 \u0447\u0438\u0441\u043B\u043E\u043C \u2014 \u0434\u043E\u043B\u044F \u0436\u0430\u043B\u043E\u0431 \u043D\u0430 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 \u0441\u0440\u0435\u0434\u0438 \u0432\u0441\u0435\u0445 \u0436\u0430\u043B\u043E\u0431 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u0438 \u0435\u0451 \u043E\u0442\u043D\u043E\u0448\u0435\u043D\u0438\u0435 \u043A \u0434\u043E\u043B\u0435 \u043F\u043E \u0441\u0435\u0442\u0438. \u041A\u0440\u0430\u0441\u043D\u044B\u043C \u043E\u0442\u043C\u0435\u0447\u0435\u043D\u044B \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F, \u0433\u0434\u0435 \u0434\u043E\u043B\u044F \u0432\u044B\u0448\u0435 \u0441\u0435\u0442\u0438 \u043D\u0430\u0441\u0442\u043E\u043B\u044C\u043A\u043E, \u0447\u0442\u043E \u0441\u043B\u0443\u0447\u0430\u0439\u043D\u043E \u0442\u0430\u043A \u043D\u0435 \u0431\u044B\u0432\u0430\u0435\u0442", d.sig ? ` — их ${vN(d.sig)}` : "", "."));
+}
+function VWaitGosb({
+  gosbs,
+  f,
+  setF
+}) {
+  const [all, setAll] = useState(false);
+  if (!(gosbs || []).length) return /*#__PURE__*/React.createElement("div", {
+    className: "vempty"
+  }, "\u041D\u0435\u0442 \u0434\u0430\u043D\u043D\u044B\u0445 \u043F\u043E \u0413\u041E\u0421\u0411.");
+  const rows = all ? gosbs : gosbs.slice(0, 12);
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "tbl-wrap"
+  }, /*#__PURE__*/React.createElement("table", {
+    className: "vtbl vr-wtbl"
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\u0413\u041E\u0421\u0411"), /*#__PURE__*/React.createElement("th", null, "\u0420\u0435\u0433\u0438\u043E\u043D"), /*#__PURE__*/React.createElement("th", {
+    className: "num",
+    title: "\u0416\u0430\u043B\u043E\u0431 \u043D\u0430 \u0434\u043E\u043B\u0433\u043E\u0435 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 \u0437\u0430 \u043F\u0435\u0440\u0438\u043E\u0434"
+  }, "\u0416\u0430\u043B\u043E\u0431 \u043D\u0430 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435"), /*#__PURE__*/React.createElement("th", {
+    className: "num",
+    title: "\u0412\u0441\u0435 \u0436\u0430\u043B\u043E\u0431\u044B \u043D\u0430 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u0413\u041E\u0421\u0411 \u0437\u0430 \u043F\u0435\u0440\u0438\u043E\u0434"
+  }, "\u0416\u0430\u043B\u043E\u0431 \u0432\u0441\u0435\u0433\u043E"), /*#__PURE__*/React.createElement("th", {
+    className: "num"
+  }, "\u0414\u043E\u043B\u044F"), /*#__PURE__*/React.createElement("th", {
+    className: "num",
+    title: "\u0412\u043E \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u0440\u0430\u0437 \u0434\u043E\u043B\u044F \u0432\u044B\u0448\u0435 \u0434\u043E\u043B\u0438 \u043F\u043E \u0441\u0435\u0442\u0438. \u041A\u0440\u0430\u0441\u043D\u044B\u043C \u2014 \u0442\u0430\u043A \u043C\u043D\u043E\u0433\u043E \u0441\u043B\u0443\u0447\u0430\u0439\u043D\u043E \u043D\u0435 \u0431\u044B\u0432\u0430\u0435\u0442"
+  }, "\u041A \u0441\u0435\u0442\u0438"), /*#__PURE__*/React.createElement("th", {
+    className: "num"
+  }, "\u041E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439"))), /*#__PURE__*/React.createElement("tbody", null, rows.map(g => /*#__PURE__*/React.createElement("tr", {
+    key: g.gosb,
+    className: "click" + (f.gosb === g.gosb ? " on" : ""),
+    tabIndex: 0,
+    onClick: () => setF({
+      subject: g.subject || f.subject,
+      gosb: f.gosb === g.gosb ? "" : g.gosb
+    }),
+    onKeyDown: vEnter(() => setF({
+      subject: g.subject || f.subject,
+      gosb: f.gosb === g.gosb ? "" : g.gosb
+    }))
+  }, /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("b", null, g.gosb)), /*#__PURE__*/React.createElement("td", null, vRegionShort(g.subject_name) || "—"), /*#__PURE__*/React.createElement("td", {
+    className: "num"
+  }, /*#__PURE__*/React.createElement("b", null, vN(g.n))), /*#__PURE__*/React.createElement("td", {
+    className: "num"
+  }, vN(g.neg)), /*#__PURE__*/React.createElement("td", {
+    className: "num"
+  }, g.few ? "—" : vShare(g.share)), /*#__PURE__*/React.createElement("td", {
+    className: "num"
+  }, g.few ? /*#__PURE__*/React.createElement("span", {
+    className: "note"
+  }, "\u043C\u0430\u043B\u043E \u0436\u0430\u043B\u043E\u0431") : /*#__PURE__*/React.createElement("span", {
+    className: g.sig ? "vr-acc" : ""
+  }, "\xD7", vX(g.ratio))), /*#__PURE__*/React.createElement("td", {
+    className: "num"
+  }, vN(g.points))))))), gosbs.length > 12 && /*#__PURE__*/React.createElement("button", {
+    className: "vmore",
+    style: {
+      marginTop: 10
+    },
+    onClick: () => setAll(!all)
+  }, all ? "Свернуть" : `Все ГОСБ (${gosbs.length})`));
+}
+function VWaitList({
+  f,
+  openPoint,
+  point
+}) {
+  const [sort, setSort] = useState("new");
+  const [q, setQ] = useState("");
+  const [qd, setQd] = useState("");
+  const [items, setItems] = useState([]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setQd(q.trim()), 350);
+    return () => clearTimeout(t);
+  }, [q]);
+  const qs = point ? vQS({
+    point,
+    per: "all",
+    q: qd,
+    sort
+  }) : vWaitQS(f, {
+    q: qd,
+    sort
+  });
+  const d = useVFetch("/api/vsp/wait/list?" + qs + "&limit=20");
+  const gen = useRef(0);
+  useEffect(() => {
+    gen.current++;
+    setItems(d && !d.err ? d.items : []);
+  }, [d]);
+  const more = () => {
+    if (busy) return;
+    const g = gen.current;
+    setBusy(true);
+    apiFetch(`/api/vsp/wait/list?${qs}&limit=20&offset=${items.length}`).then(x => {
+      if (g === gen.current) setItems(a => [...a, ...x.items]);
+    }).catch(() => {}).finally(() => setBusy(false));
+  };
+  const S = [["new", "Сначала новые"], ["long", "Сначала долгие"]];
+  return /*#__PURE__*/React.createElement("div", {
+    className: "vr-stories"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "vr-tools"
+  }, /*#__PURE__*/React.createElement("label", {
+    className: "vin",
+    style: {
+      flex: "1 1 260px"
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    value: q,
+    onChange: e => setQ(e.target.value),
+    placeholder: "\u0421\u043B\u043E\u0432\u0430 \u043A\u043B\u0438\u0435\u043D\u0442\u0430: \u0442\u0430\u043B\u043E\u043D, \u043A\u0430\u0441\u0441\u0430, \u043E\u0434\u043D\u043E \u043E\u043A\u043D\u043E",
+    "aria-label": "\u041F\u043E\u0438\u0441\u043A \u043F\u043E \u0436\u0430\u043B\u043E\u0431\u0430\u043C \u043D\u0430 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "vr-seg2",
+    role: "group",
+    "aria-label": "\u041F\u043E\u0440\u044F\u0434\u043E\u043A"
+  }, S.map(([k, l]) => /*#__PURE__*/React.createElement("button", {
+    key: k,
+    className: sort === k ? "on" : "",
+    "aria-pressed": sort === k,
+    onClick: () => setSort(k)
+  }, l))), /*#__PURE__*/React.createElement("a", {
+    className: "btn btn-ghost vsm",
+    href: "/api/vsp/export/wait.xlsx?" + qs,
+    download: true
+  }, "\u0412\u044B\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u0432 Excel")), !d ? /*#__PURE__*/React.createElement(Skel, {
+    h: 320,
+    style: {
+      marginTop: 16
+    }
+  }) : d.err ? /*#__PURE__*/React.createElement(ErrState, {
+    msg: "\u0416\u0430\u043B\u043E\u0431\u044B \u043D\u0435 \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u043B\u0438\u0441\u044C"
+  }) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("p", {
+    className: "note",
+    style: {
+      margin: "14px 0 12px"
+    }
+  }, /*#__PURE__*/React.createElement("b", {
+    className: "vr-sum-n sm"
+  }, vN(d.total)), " ", vPl(d.total, "жалоба", "жалобы", "жалоб"), point ? " на ожидание в этом отделении за всё прочитанное время" : ` в ${vN(d.points)} ${vPl(d.points, "отделении", "отделениях", "отделениях")}`), items.length ? /*#__PURE__*/React.createElement("div", {
+    className: "vr-list"
+  }, items.map(c => /*#__PURE__*/React.createElement(VWaitCard, {
+    key: c.rid,
+    c: c,
+    openPoint: openPoint,
+    hidePlace: !!point
+  }))) : /*#__PURE__*/React.createElement("div", {
+    className: "vempty"
+  }, "\u0416\u0430\u043B\u043E\u0431 \u0441 \u0442\u0430\u043A\u0438\u043C\u0438 \u0443\u0441\u043B\u043E\u0432\u0438\u044F\u043C\u0438 \u043D\u0435\u0442."), items.length < d.total && /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "center",
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost",
+    disabled: busy,
+    onClick: more
+  }, busy ? "Загружаю…" : `Показать ещё (осталось ${vN(d.total - items.length)})`))));
+}
+function VWait({
+  f,
+  setF,
+  openPoint,
+  regions,
+  gosbs
+}) {
+  const [view, setView] = useState(() => vLS("vsp_waitview", "branches"));
+  const d = useVFetch("/api/vsp/wait?" + vWaitQS(f));
+  const [last, setLast] = useState(null); // при смене фильтра показываем прежние числа приглушённо, а не скелет
+  useEffect(() => {
+    if (d && !d.err) setLast(d);
+  }, [d]);
+  if (d && d.err && !last) return /*#__PURE__*/React.createElement(ErrState, {
+    msg: "\u0420\u0430\u0437\u0434\u0435\u043B \xAB\u041E\u0436\u0438\u0434\u0430\u043D\u0438\u0435\xBB \u043D\u0435 \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u043B\u0441\u044F"
+  });
+  const D = d && !d.err ? d : last;
+  if (!D) return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(Skel, {
+    h: 46
+  }), /*#__PURE__*/React.createElement(Skel, {
+    h: 22,
+    style: {
+      marginTop: 14,
+      width: "70%"
+    }
+  }), /*#__PURE__*/React.createElement(Skel, {
+    h: 320,
+    style: {
+      marginTop: 24
+    }
+  }));
+  const k = D.kpi,
+    H = D.headline || {},
+    pr = D.progress || {};
+  const setV = v => {
+    setView(v);
+    vLSset("vsp_waitview", v);
+  };
+  const per = V_WPER_IN[D.per] || "";
+  const empty = !pr.read;
+  const prevTxt = k.share_prev != null && k.share != null && !D.filtered ? Math.abs(k.share - k.share_prev) < 0.015 ? "как годом раньше" : `годом раньше — ${vShare(k.share_prev)}` : D.scoped && !D.filtered ? `по сети — ${vShare(k.net_share)}` : "";
+  const kpis = [[vN(k.n), `${vPl(k.n || 0, "жалоба", "жалобы", "жалоб")} на долгое ожидание`, per, null, false], [D.filtered ? "—" : vShare(k.share), "всех жалоб на отделения", D.filtered ? "считается без фильтров причины и времени" : prevTxt, null, false], [vN(k.points), vPl(k.points || 0, "отделение", "отделения", "отделений"), k.sig ? `в ${vN(k.sig)} — значимо чаще сети` : "с такими жалобами", () => {
+    setV("branches");
+    try {
+      document.getElementById("vr-wait-where").scrollIntoView({
+        behavior: vReduced() ? "auto" : "smooth"
+      });
+    } catch (e) {}
+  }, false], [vN(k.long), "ждали час и дольше", "по словам клиентов", () => setF({
+    long: !f.long
+  }), f.long], [vN(k.left), "ушли, не дождавшись", k.median_label ? `обычно ждут ${k.median_label}` : "", () => setF({
+    left: !f.left
+  }), f.left]];
+  const sigRegs = (D.regions || []).filter(r => r.sig).sort((a, b) => (b.ratio || 0) - (a.ratio || 0));
+  const hexHint = r => !r.neg ? `${r.name} — жалоб нет` : r.few ? `${r.name} — мало жалоб за период (${vN(r.neg)})` : `${r.name}: ${vN(r.n)} ${vPl(r.n, "жалоба", "жалобы", "жалоб")} на ожидание из ${vN(r.neg)} — ${vShare(r.share)}, по сети ${vShare(k.net_share)}${r.ratio ? ` (×${vX(r.ratio)})` : ""}${r.sig ? ", так много случайно не бывает" : ""}`;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "vr-waitp" + (d ? "" : " vr-stale"),
+    "aria-busy": !d
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "vr-wh"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "eyebrow"
+  }, "\u0414\u043E\u043B\u0433\u043E\u0435 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 \xB7 \u0436\u0430\u043B\u043E\u0431\u044B \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432 \u043D\u0430 \u043E\u0447\u0435\u0440\u0435\u0434\u0438 \u0432 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F\u0445"), /*#__PURE__*/React.createElement("h2", {
+    className: "vr-display"
+  }, H.text, H.accent ? /*#__PURE__*/React.createElement(React.Fragment, null, " \u2014 ", /*#__PURE__*/React.createElement("em", null, H.accent)) : null), /*#__PURE__*/React.createElement("p", {
+    className: "vr-lede"
+  }, "\u0417\u0434\u0435\u0441\u044C \u043D\u0435 \u043F\u043E\u0441\u0442\u0443\u043F\u043A\u0438 \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u043E\u0432, \u0430 \u0434\u043E\u0441\u0442\u0443\u043F\u043D\u043E\u0441\u0442\u044C \u043E\u0431\u0441\u043B\u0443\u0436\u0438\u0432\u0430\u043D\u0438\u044F: \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u043A\u043B\u0438\u0435\u043D\u0442\u044B \u0436\u0434\u0443\u0442, \u043F\u043E \u0438\u0445 \u0441\u043B\u043E\u0432\u0430\u043C, \u043F\u043E\u0447\u0435\u043C\u0443 \u0438 \u0443\u0448\u043B\u0438 \u043B\u0438 \u0431\u0435\u0437 \u0443\u0441\u043B\u0443\u0433\u0438. \u041A\u0430\u0436\u0434\u0443\u044E \u0436\u0430\u043B\u043E\u0431\u0443 \u0447\u0438\u0442\u0430\u0435\u0442 \u043C\u043E\u0434\u0435\u043B\u044C, \u0441\u043B\u043E\u0432\u0430 \u043A\u043B\u0438\u0435\u043D\u0442\u0430 \u2014 \u0434\u043E\u0441\u043B\u043E\u0432\u043D\u043E \u0438\u0437 \u043E\u0442\u0437\u044B\u0432\u0430.")), !empty && /*#__PURE__*/React.createElement("div", {
+    className: "vr-kpis solo",
+    role: "group",
+    "aria-label": `Показатели ${per}`
+  }, kpis.map(([v, l, sub, fn, on], i) => fn ? /*#__PURE__*/React.createElement("button", {
+    key: i,
+    className: "vr-kpi" + (on ? " on" : ""),
+    "aria-pressed": i > 2 ? on : undefined,
+    onClick: fn
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "vr-kpi-v"
+  }, v), /*#__PURE__*/React.createElement("span", {
+    className: "vr-kpi-l"
+  }, l), sub && /*#__PURE__*/React.createElement("span", {
+    className: "vr-kpi-d"
+  }, sub)) : /*#__PURE__*/React.createElement("div", {
+    key: i,
+    className: "vr-kpi"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "vr-kpi-v"
+  }, v), /*#__PURE__*/React.createElement("span", {
+    className: "vr-kpi-l"
+  }, l), sub && /*#__PURE__*/React.createElement("span", {
+    className: "vr-kpi-d"
+  }, sub)))), pr.backlog && /*#__PURE__*/React.createElement("div", {
+    className: "vr-benign",
+    role: "status"
+  }, /*#__PURE__*/React.createElement("b", null, "\u041C\u043E\u0434\u0435\u043B\u044C \u0434\u043E\u0447\u0438\u0442\u044B\u0432\u0430\u0435\u0442 \u0436\u0430\u043B\u043E\u0431\u044B \u0437\u0430 \u043F\u0440\u043E\u0448\u043B\u044B\u0435 \u0433\u043E\u0434\u044B."), " \u041E\u0441\u0442\u0430\u043B\u043E\u0441\u044C ", vN(pr.waiting), ": \u0447\u0438\u0442\u0430\u044E\u0442\u0441\u044F \u043E\u0442 \u0441\u0432\u0435\u0436\u0438\u0445 \u043A \u0441\u0442\u0430\u0440\u044B\u043C, \u043F\u043E\u044D\u0442\u043E\u043C\u0443 \u0447\u0438\u0441\u043B\u0430 \u0437\u0430 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0435 \u043C\u0435\u0441\u044F\u0446\u044B \u0443\u0436\u0435 \u043F\u043E\u043B\u043D\u044B\u0435, \u0430 \u0437\u0430 2024 \u0433\u043E\u0434 \u0435\u0449\u0451 \u0440\u0430\u0441\u0442\u0443\u0442."), empty ? /*#__PURE__*/React.createElement("div", {
+    className: "vempty",
+    style: {
+      marginTop: 24
+    }
+  }, "\u041C\u043E\u0434\u0435\u043B\u044C \u0435\u0449\u0451 \u043D\u0435 \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043B\u0430 \u0436\u0430\u043B\u043E\u0431\u044B \u043D\u0430 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 \u2014 \u0440\u0430\u0437\u0434\u0435\u043B \u0437\u0430\u043F\u043E\u043B\u043D\u0438\u0442\u0441\u044F \u0432 \u0442\u0435\u0447\u0435\u043D\u0438\u0435 \u043D\u0435\u0441\u043A\u043E\u043B\u044C\u043A\u0438\u0445 \u0447\u0430\u0441\u043E\u0432.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 26
+    }
+  }, /*#__PURE__*/React.createElement(VWaitFilters, {
+    f: f,
+    setF: setF,
+    regions: regions,
+    gosbs: gosbs,
+    causes: D.causes
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "vr-wait-grid"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "vr-card"
+  }, /*#__PURE__*/React.createElement("h4", {
+    className: "vr-h4"
+  }, "\u041F\u043E \u043C\u0435\u0441\u044F\u0446\u0430\u043C"), /*#__PURE__*/React.createElement(VWaitMonths, {
+    months: D.months,
+    since: D.since_month
+  }), /*#__PURE__*/React.createElement("p", {
+    className: "vr-fine",
+    style: {
+      marginTop: 8
+    }
+  }, "\u0421\u0442\u043E\u043B\u0431\u0435\u0446 \u2014 \u043C\u0435\u0441\u044F\u0446, \u0447\u0438\u0441\u043B\u043E \u0441\u0432\u0435\u0440\u0445\u0443 \u2014 \u0436\u0430\u043B\u043E\u0431\u044B \u043D\u0430 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435", D.scoped ? " в выбранной территории" : "", ". \u0422\u0451\u043C\u043D\u044B\u0435 \u2014 \u0432\u044B\u0431\u0440\u0430\u043D\u043D\u044B\u0439 \u043F\u0435\u0440\u0438\u043E\u0434; \u0437\u0430\u0448\u0442\u0440\u0438\u0445\u043E\u0432\u0430\u043D\u043D\u044B\u0439 \u2014 \u0442\u0435\u043A\u0443\u0449\u0438\u0439 \u043C\u0435\u0441\u044F\u0446, \u043E\u043D \u0435\u0449\u0451 \u043D\u0435 \u0437\u0430\u043A\u043E\u043D\u0447\u0438\u043B\u0441\u044F.")), /*#__PURE__*/React.createElement("div", {
+    className: "vr-card"
+  }, /*#__PURE__*/React.createElement("h4", {
+    className: "vr-h4"
+  }, "\u041F\u043E\u0447\u0435\u043C\u0443 \u0436\u0434\u0443\u0442, \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432"), /*#__PURE__*/React.createElement(VBarList, {
+    items: (D.causes || []).filter(c => c.key !== "не сказано").map(c => ({
+      label: c.label,
+      n: c.n,
+      key: c.key
+    })),
+    onPick: x => setF({
+      cause: f.cause === x.key ? "" : x.key
+    })
+  }), /*#__PURE__*/React.createElement("p", {
+    className: "vr-fine",
+    style: {
+      margin: "10px 0 18px"
+    }
+  }, "\u041D\u0430\u0436\u043C\u0438\u0442\u0435 \u043D\u0430 \u043F\u0440\u0438\u0447\u0438\u043D\u0443 \u2014 \u0440\u0430\u0437\u0434\u0435\u043B \u043F\u043E\u043A\u0430\u0436\u0435\u0442 \u0442\u043E\u043B\u044C\u043A\u043E \u0435\u0451.", (D.causes || []).some(c => c.key === "не сказано") ? ` Причину не назвали в ${vN((D.causes.find(c => c.key === "не сказано") || {}).n)} ${vPl((D.causes.find(c => c.key === "не сказано") || {}).n, "жалобе", "жалобах", "жалобах")}.` : ""), /*#__PURE__*/React.createElement("h4", {
+    className: "vr-h4"
+  }, "\u0421\u043A\u043E\u043B\u044C\u043A\u043E \u0436\u0434\u0430\u043B\u0438"), /*#__PURE__*/React.createElement(VBarList, {
+    items: (D.durations || []).map(b => ({
+      label: b.label[0].toUpperCase() + b.label.slice(1),
+      n: b.n
+    }))
+  }))), /*#__PURE__*/React.createElement("section", {
+    className: "vr-sec",
+    id: "vr-wait-where"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "vr-sech"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h3", null, "\u0413\u0434\u0435 \u0436\u0430\u043B\u0443\u044E\u0442\u0441\u044F \u0447\u0430\u0449\u0435"), /*#__PURE__*/React.createElement("p", {
+    className: "note"
+  }, sigRegs.length ? /*#__PURE__*/React.createElement(React.Fragment, null, "\u0417\u0430\u043C\u0435\u0442\u043D\u043E \u0447\u0430\u0449\u0435 \u0441\u0435\u0442\u0438: ", sigRegs.slice(0, 5).map(r => `${vRegionShort(r.name)} (×${vX(r.ratio)})`).join(", "), ". ") : null, "\u0421\u0440\u0430\u0432\u043D\u0438\u0432\u0430\u0435\u043C \u0434\u043E\u043B\u044E \u0436\u0430\u043B\u043E\u0431 \u043D\u0430 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 \u0441\u0440\u0435\u0434\u0438 \u0432\u0441\u0435\u0445 \u0436\u0430\u043B\u043E\u0431 \u2014 \u0442\u0430\u043A \u0440\u043E\u0441\u0442 \u0447\u0438\u0441\u043B\u0430 \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u0438 \u043A\u0440\u0443\u043F\u043D\u044B\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u043D\u0435 \u0438\u0441\u043A\u0430\u0436\u0430\u044E\u0442 \u043A\u0430\u0440\u0442\u0438\u043D\u0443.")), /*#__PURE__*/React.createElement("div", {
+    className: "vr-seg2",
+    role: "group",
+    "aria-label": "\u0412\u0438\u0434"
+  }, [["branches", "Отделения"], ["gosb", "ГОСБ"], ["map", "Карта"]].map(([v, l]) => /*#__PURE__*/React.createElement("button", {
+    key: v,
+    className: view === v ? "on" : "",
+    "aria-pressed": view === v,
+    onClick: () => setV(v)
+  }, l))), /*#__PURE__*/React.createElement("a", {
+    className: "btn btn-ghost vsm",
+    href: "/api/vsp/export/wait.xlsx?" + vWaitQS(f),
+    download: true,
+    title: "\u0416\u0430\u043B\u043E\u0431\u044B \u0438 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u0441 \u0443\u0447\u0451\u0442\u043E\u043C \u0444\u0438\u043B\u044C\u0442\u0440\u043E\u0432"
+  }, "\u0412\u044B\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u0432 Excel")), view === "map" ? /*#__PURE__*/React.createElement("div", {
+    className: "vr-card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "vr-maphead"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "note"
+  }, "\u0420\u043E\u0441\u0441\u0438\u044F", f.subject ? /*#__PURE__*/React.createElement(React.Fragment, null, " \u203A ", /*#__PURE__*/React.createElement("b", null, (regions.find(r => r.code === f.subject) || {}).name || f.subject), " ", /*#__PURE__*/React.createElement("button", {
+    className: "vr-x sm",
+    "aria-label": "\u0421\u043D\u044F\u0442\u044C \u0440\u0435\u0433\u0438\u043E\u043D",
+    onClick: () => setF({
+      subject: "",
+      gosb: ""
+    })
+  }, "\u2715")) : null)), /*#__PURE__*/React.createElement(VHexMap, {
+    regions: (D.regions || []).map(r => ({
+      ...r,
+      points: r.neg ? 1 : 0
+    })),
+    picked: f.subject,
+    onPick: c => setF({
+      subject: c,
+      gosb: ""
+    }),
+    hint: hexHint,
+    level: vWaitLevel
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "vr-legend"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "vr-ramp"
+  }, /*#__PURE__*/React.createElement("i", {
+    className: "low"
+  }), /*#__PURE__*/React.createElement("i", {
+    className: "avg"
+  }), /*#__PURE__*/React.createElement("i", {
+    className: "mid"
+  }), /*#__PURE__*/React.createElement("i", {
+    className: "hi"
+  }), "\u0440\u0435\u0436\u0435, \u0447\u0435\u043C \u043F\u043E \u0441\u0435\u0442\u0438 \u2192 \u043A\u0430\u043A \u043F\u043E \u0441\u0435\u0442\u0438 \u2192 \u043D\u0430 10\u201325 % \u0447\u0430\u0449\u0435 \u2192 \u043D\u0430 25 % \u0438 \u0431\u043E\u043B\u044C\u0448\u0435"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("i", {
+    className: "vr-sw sig"
+  }), "\u0447\u0430\u0449\u0435 \u0441\u0435\u0442\u0438 \u2014 \u0438 \u0442\u0430\u043A \u043C\u043D\u043E\u0433\u043E \u0441\u043B\u0443\u0447\u0430\u0439\u043D\u043E \u043D\u0435 \u0431\u044B\u0432\u0430\u0435\u0442"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("i", {
+    className: "vr-sw few"
+  }), "\u043C\u0435\u043D\u044C\u0448\u0435 ", D.few_below, " \u0436\u0430\u043B\u043E\u0431 \u0437\u0430 \u043F\u0435\u0440\u0438\u043E\u0434"))) : view === "gosb" ? /*#__PURE__*/React.createElement(VWaitGosb, {
+    gosbs: D.gosbs,
+    f: f,
+    setF: setF
+  }) : /*#__PURE__*/React.createElement(VWaitBranches, {
+    f: f,
+    openPoint: openPoint,
+    net: k.net_share
+  })), /*#__PURE__*/React.createElement("section", {
+    className: "vr-sec"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "vr-sech"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0442\u043E \u043F\u0438\u0448\u0443\u0442 \u043A\u043B\u0438\u0435\u043D\u0442\u044B"), /*#__PURE__*/React.createElement("p", {
+    className: "note"
+  }, "\u0416\u0430\u043B\u043E\u0431\u044B \u043D\u0430 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 \u0441 \u0443\u0447\u0451\u0442\u043E\u043C \u0444\u0438\u043B\u044C\u0442\u0440\u043E\u0432. \u0421\u043B\u043E\u0432\u0430 \u043A\u043B\u0438\u0435\u043D\u0442\u0430 \u2014 \u0444\u0440\u0430\u0433\u043C\u0435\u043D\u0442 \u043E\u0442\u0437\u044B\u0432\u0430 \u0431\u0443\u043A\u0432\u0430 \u0432 \u0431\u0443\u043A\u0432\u0443."))), /*#__PURE__*/React.createElement(VWaitList, {
+    f: f,
+    openPoint: openPoint
+  }))), /*#__PURE__*/React.createElement("p", {
+    className: "vr-fine",
+    style: {
+      marginTop: 36
+    }
+  }, "\u041A\u0430\u043A \u0441\u0447\u0438\u0442\u0430\u0435\u0442\u0441\u044F: \u0441\u0440\u0435\u0434\u0438 \u0436\u0430\u043B\u043E\u0431 (\u043E\u0446\u0435\u043D\u043A\u0430 1\u20133) \u0441 ", vDay(pr.since), " \u0441\u043B\u043E\u0432\u0430 \xAB\u043E\u0447\u0435\u0440\u0435\u0434\u044C\xBB, \xAB\u0436\u0434\u0430\u043B\xBB, \xAB\u0442\u0430\u043B\u043E\u043D\xBB, \xAB\u043E\u0434\u043D\u043E \u043E\u043A\u043D\u043E\xBB \u0438 \u043F\u043E\u0445\u043E\u0436\u0438\u0435 \u043D\u0430\u0445\u043E\u0434\u044F\u0442 \u043A\u0430\u043D\u0434\u0438\u0434\u0430\u0442\u043E\u0432, \u043A\u0430\u0436\u0434\u043E\u0433\u043E \u0447\u0438\u0442\u0430\u0435\u0442 \u043C\u043E\u0434\u0435\u043B\u044C \u0438 \u043E\u0442\u0432\u0435\u0447\u0430\u0435\u0442, \u0436\u0430\u043B\u043E\u0431\u0430 \u043B\u0438 \u044D\u0442\u043E \u043D\u0430 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 \u0432 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0438, \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u043A\u043B\u0438\u0435\u043D\u0442 \u0436\u0434\u0430\u043B, \u043F\u043E\u0447\u0435\u043C\u0443 \u0438 \u0443\u0448\u0451\u043B \u043B\u0438. \u041F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043E ", vN(pr.read), ". \u041F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043E \u0432\u0440\u0443\u0447\u043D\u0443\u044E \u043D\u0430 \u0434\u0432\u0443\u0445 \u0432\u044B\u0431\u043E\u0440\u043A\u0430\u0445 (280 \u0436\u0430\u043B\u043E\u0431): \u0438\u0437 \u043E\u0442\u043C\u0435\u0447\u0435\u043D\u043D\u044B\u0445 \u043C\u043E\u0434\u0435\u043B\u044C\u044E \u043F\u043E \u0434\u0435\u043B\u0443 96 %, \u0438\u0437 \u043D\u0430\u0441\u0442\u043E\u044F\u0449\u0438\u0445 \u0436\u0430\u043B\u043E\u0431 \u043D\u0430 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u043E \u043E\u043A\u043E\u043B\u043E 94 %. \u041E\u0447\u0435\u0440\u0435\u0434\u0438 \u043A \u0431\u0430\u043D\u043A\u043E\u043C\u0430\u0442\u0430\u043C, \u0441\u0440\u043E\u043A\u0438 \u043F\u043E \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0430\u043C \u0438 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 \u043D\u0430 \u043B\u0438\u043D\u0438\u0438 \u0441\u044E\u0434\u0430 \u043D\u0435 \u0432\u0445\u043E\u0434\u044F\u0442. \u0412\u0440\u0435\u043C\u044F \u2014 \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432, \u0430 \u043D\u0435 \u043F\u043E \u0434\u0430\u043D\u043D\u044B\u043C \u044D\u043B\u0435\u043A\u0442\u0440\u043E\u043D\u043D\u043E\u0439 \u043E\u0447\u0435\u0440\u0435\u0434\u0438."));
+}
+
+// блок досье: долгое ожидание в этом отделении
+function VWaitDossier({
+  w,
+  point,
+  openPoint
+}) {
+  const [all, setAll] = useState(false);
+  if (!w || !w.n_all) return null;
+  const facts = [w.long ? `час и дольше ждали ${vN(w.long)}` : null, w.left ? `ушли, не дождавшись, — ${vN(w.left)}` : null, w.median_label ? `обычно ждут ${w.median_label}` : null, w.cause_label && w.cause_label !== "Причина не названа" ? `чаще всего — ${w.cause_label.toLowerCase()}` : null].filter(Boolean);
+  return /*#__PURE__*/React.createElement("section", {
+    className: "sec",
+    "data-tour": "dwait"
+  }, /*#__PURE__*/React.createElement("h3", null, "\u0414\u043E\u043B\u0433\u043E\u0435 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435"), w.n ? /*#__PURE__*/React.createElement("p", {
+    style: {
+      maxWidth: "80ch"
+    }
+  }, "\u0417\u0430 \u0433\u043E\u0434 \u2014 ", /*#__PURE__*/React.createElement("b", null, vN(w.n), " ", vPl(w.n, "жалоба", "жалобы", "жалоб")), " \u043D\u0430 \u0434\u043E\u043B\u0433\u043E\u0435 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435", w.share != null ? /*#__PURE__*/React.createElement(React.Fragment, null, ": ", vShare(w.share), " \u0432\u0441\u0435\u0445 \u0436\u0430\u043B\u043E\u0431 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F, \u043F\u043E \u0441\u0435\u0442\u0438 \u2014 ", vShare(w.net_share)) : null, ".", w.sig ? /*#__PURE__*/React.createElement(React.Fragment, null, " ", /*#__PURE__*/React.createElement("span", {
+    className: "vr-acc"
+  }, "\u0417\u043D\u0430\u0447\u0438\u043C\u043E \u0447\u0430\u0449\u0435, \u0447\u0435\u043C \u043F\u043E \u0441\u0435\u0442\u0438.")) : w.ratio != null && w.ratio >= 1.5 ? " Выше сети, но при таком числе жалоб это может быть случайностью." : "") : /*#__PURE__*/React.createElement("p", {
+    className: "note"
+  }, "\u0417\u0430 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0433\u043E\u0434 \u0436\u0430\u043B\u043E\u0431 \u043D\u0430 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 \u043D\u0435\u0442; \u0440\u0430\u043D\u044C\u0448\u0435 \u2014 ", vN(w.n_all), "."), facts.length > 0 && /*#__PURE__*/React.createElement("p", {
+    className: "note",
+    style: {
+      marginTop: 6
+    }
+  }, "\u041F\u043E \u0441\u043B\u043E\u0432\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432: ", facts.join(" · "), "."), all ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement(VWaitList, {
+    f: {},
+    point: point,
+    openPoint: openPoint
+  })) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "vr-list",
+    style: {
+      marginTop: 12
+    }
+  }, (w.items || []).map(c => /*#__PURE__*/React.createElement(VWaitCard, {
+    key: c.rid,
+    c: c,
+    openPoint: openPoint,
+    hidePlace: true
+  }))), w.n_all > (w.items || []).length && /*#__PURE__*/React.createElement("button", {
+    className: "vmore",
+    style: {
+      marginTop: 10
+    },
+    onClick: () => setAll(true)
+  }, "\u0412\u0441\u0435 \u0436\u0430\u043B\u043E\u0431\u044B \u043D\u0430 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 \u044D\u0442\u043E\u0433\u043E \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F (", vN(w.n_all), ")")));
+}
+
+// ── подписка на ежедневное письмо по разделу (web/vsp_mail.py) ───────────────
+const VMailIc = () => /*#__PURE__*/React.createElement("svg", {
+  width: "15",
+  height: "15",
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: "1.7",
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+  "aria-hidden": "true"
+}, /*#__PURE__*/React.createElement("rect", {
+  x: "3",
+  y: "5",
+  width: "18",
+  height: "14",
+  rx: "2.5"
+}), /*#__PURE__*/React.createElement("path", {
+  d: "M3.5 7.5l8.5 6 8.5-6"
+}));
+function VMailLayer({
+  depth,
+  onClose,
+  regions,
+  off,
+  onState
+}) {
+  const [st, setSt] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState("");
+  const [unsub, setUnsub] = useState(false);
+  const [pick, setPick] = useState(false);
+  const trk = (step, x) => {
+    try {
+      trkEvent({
+        kind: "ui",
+        page: "vsp",
+        payload: {
+          action: "vsp_mail",
+          step,
+          ...(x || {})
+        }
+      });
+    } catch (e) {}
+  };
+  const apply = x => {
+    setSt(x);
+    setErr("");
+    onState && onState(!!x.on);
+  };
+  useEffect(() => {
+    let alive = true;
+    (off ? apiPut("/api/vsp/mail", {
+      on: false
+    }).then(x => {
+      if (alive) {
+        setUnsub(true);
+        trk("unsub_link");
+      }
+      return x;
+    }) : apiFetch("/api/vsp/mail")).then(x => {
+      if (alive) {
+        apply(x);
+        setPick((x.subjects || []).length > 0);
+      }
+    }).catch(() => {
+      if (alive) setErr("Настройка не загрузилась. Закройте окно и откройте снова.");
+    });
+    return () => {
+      alive = false;
+    };
+  }, []); // eslint-disable-line
+  const save = (patch, step) => {
+    const prev = st;
+    setSt({
+      ...st,
+      ...patch
+    });
+    setSent("");
+    apiPut("/api/vsp/mail", patch).then(x => {
+      apply(x);
+      if (step) trk(step);
+    }).catch(() => {
+      setSt(prev);
+      setErr("Не сохранилось — попробуйте ещё раз.");
+    });
+  };
+  const test = () => {
+    setBusy(true);
+    setErr("");
+    setSent("");
+    fetch("/api/vsp/mail/test", {
+      method: "POST"
+    }).then(r => r.json().then(j => ({
+      ok: r.ok,
+      j
+    }))).then(({
+      ok,
+      j
+    }) => {
+      if (ok) {
+        setSent(`Пример отправлен на ${j.to}. Письмо идёт 2–5 минут.`);
+        trk("test");
+      } else setErr(j.detail || "Письмо не ушло — попробуйте ещё раз через минуту.");
+    }).catch(() => setErr("Письмо не ушло — попробуйте ещё раз через минуту.")).finally(() => setBusy(false));
+  };
+  const openBell = () => {
+    try {
+      window.dispatchEvent(new Event("al-open-mail"));
+    } catch (e) {}
+  };
+  const subs = st ? st.subjects || [] : [];
+  const rname = c => (regions.find(r => r.code === c) || {}).name || c;
+  const rest = regions.filter(r => !subs.includes(r.code));
+  return /*#__PURE__*/React.createElement(VLayer, {
+    depth: depth,
+    onClose: onClose,
+    width: 620,
+    label: "\u041F\u043E\u0434\u043F\u0438\u0441\u043A\u0430",
+    title: "\u041F\u0438\u0441\u044C\u043C\u0430 \u043F\u043E \u0440\u0430\u0437\u0434\u0435\u043B\u0443"
+  }, !st && !err ? /*#__PURE__*/React.createElement(Skel, {
+    h: 320
+  }) : !st ? /*#__PURE__*/React.createElement(ErrState, {
+    msg: err
+  }) : /*#__PURE__*/React.createElement("div", {
+    className: "vr-mail"
+  }, unsub && /*#__PURE__*/React.createElement("div", {
+    className: "vr-benign vr-mail-off",
+    role: "status"
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u041F\u0438\u0441\u044C\u043C\u0430 \u043F\u043E \u0440\u0430\u0437\u0434\u0435\u043B\u0443 \u043E\u0442\u043A\u043B\u044E\u0447\u0435\u043D\u044B."), " \u0411\u043E\u043B\u044C\u0448\u0435 \u043E\u043D\u0438 \u043F\u0440\u0438\u0445\u043E\u0434\u0438\u0442\u044C \u043D\u0435 \u0431\u0443\u0434\u0443\u0442."), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost vsm",
+    onClick: () => {
+      setUnsub(false);
+      save({
+        on: true
+      }, "resub");
+    }
+  }, "\u0412\u0435\u0440\u043D\u0443\u0442\u044C")), /*#__PURE__*/React.createElement("div", {
+    className: "vr-mail-main"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, "\u0415\u0436\u0435\u0434\u043D\u0435\u0432\u043D\u043E\u0435 \u043F\u0438\u0441\u044C\u043C\u043E"), /*#__PURE__*/React.createElement("p", {
+    className: "note"
+  }, "\u041F\u043E \u0431\u0443\u0434\u043D\u044F\u043C \u043F\u043E\u0441\u043B\u0435 ", st.hour, ":00 \u043F\u043E \u041C\u043E\u0441\u043A\u0432\u0435, \u0432 \u043F\u043E\u043D\u0435\u0434\u0435\u043B\u044C\u043D\u0438\u043A \u2014 \u0437\u0430 \u0432\u044B\u0445\u043E\u0434\u043D\u044B\u0435. \u041F\u0440\u0438\u0445\u043E\u0434\u0438\u0442, \u0442\u043E\u043B\u044C\u043A\u043E \u0435\u0441\u043B\u0438 \u0435\u0441\u0442\u044C \u043D\u043E\u0432\u043E\u0435.")), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    role: "switch",
+    "aria-checked": !!st.on,
+    "aria-label": "\u0415\u0436\u0435\u0434\u043D\u0435\u0432\u043D\u043E\u0435 \u043F\u0438\u0441\u044C\u043C\u043E \u043F\u043E \u0440\u0430\u0437\u0434\u0435\u043B\u0443",
+    className: "vr-switch",
+    disabled: !st.email,
+    onClick: () => {
+      setUnsub(false);
+      save({
+        on: !st.on
+      }, st.on ? "off" : "on");
+    }
+  })), !st.email ? /*#__PURE__*/React.createElement("div", {
+    className: "vr-benign"
+  }, /*#__PURE__*/React.createElement("b", null, "\u041F\u043E\u0447\u0442\u0430 \u043D\u0435 \u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u0430."), " \u0423\u043A\u0430\u0436\u0438\u0442\u0435 \u0430\u0434\u0440\u0435\u0441 \u0432 \u043A\u043E\u043B\u043E\u043A\u043E\u043B\u044C\u0447\u0438\u043A\u0435 (\xAB\u0427\u0442\u043E \u043F\u0440\u0438\u0441\u044B\u043B\u0430\u0442\u044C\xBB \u2192 \xAB\u041D\u0430 \u043F\u043E\u0447\u0442\u0443\xBB) \u0438 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u0442\u0435 \u0435\u0433\u043E \u043A\u043E\u0434\u043E\u043C \u2014 \u043F\u043E\u0441\u043B\u0435 \u044D\u0442\u043E\u0433\u043E \u043F\u0438\u0441\u044C\u043C\u043E \u043C\u043E\u0436\u043D\u043E \u0431\u0443\u0434\u0435\u0442 \u0432\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u0437\u0434\u0435\u0441\u044C.", /*#__PURE__*/React.createElement("div", {
+    className: "vr-acts",
+    style: {
+      marginTop: 10
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-primary vsm",
+    onClick: openBell
+  }, "\u041F\u043E\u0434\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u043F\u043E\u0447\u0442\u0443"))) : /*#__PURE__*/React.createElement("dl", {
+    className: "vdl vr-mail-dl"
+  }, /*#__PURE__*/React.createElement("dt", null, "\u041A\u0443\u0434\u0430"), /*#__PURE__*/React.createElement("dd", null, st.email, " ", /*#__PURE__*/React.createElement("span", {
+    className: "vr-flag"
+  }, st.corporate ? "Sigma — письмо целиком" : "не корпоративная — только числа"), " ", /*#__PURE__*/React.createElement("button", {
+    className: "vlink",
+    onClick: openBell
+  }, "\u0438\u0437\u043C\u0435\u043D\u0438\u0442\u044C"), !st.active && /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, "\u0420\u0430\u0441\u0441\u044B\u043B\u043A\u0430 \u043F\u0438\u0441\u0435\u043C \u0441\u0435\u0439\u0447\u0430\u0441 \u043F\u0440\u0438\u043E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u0430 \u2014 \u043F\u0438\u0441\u044C\u043C\u043E \u043D\u0430\u0447\u043D\u0451\u0442 \u043F\u0440\u0438\u0445\u043E\u0434\u0438\u0442\u044C, \u043A\u043E\u0433\u0434\u0430 \u0435\u0451 \u0432\u043A\u043B\u044E\u0447\u0430\u0442.")), st.last && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("dt", null, "\u041F\u043E\u0441\u043B\u0435\u0434\u043D\u0435\u0435 \u043F\u0438\u0441\u044C\u043C\u043E"), /*#__PURE__*/React.createElement("dd", null, vDay(st.last)))), /*#__PURE__*/React.createElement("section", null, /*#__PURE__*/React.createElement("h3", {
+    className: "vr-mail-h"
+  }, "\u0427\u0442\u043E \u043F\u0440\u0438\u0441\u044B\u043B\u0430\u0442\u044C"), /*#__PURE__*/React.createElement("label", {
+    className: "vr-mail-opt"
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: !!st.heavy,
+    onChange: e => save({
+      heavy: e.target.checked
+    }, "what")
+  }), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0422\u044F\u0436\u0451\u043B\u044B\u0435 \u0438\u0441\u0442\u043E\u0440\u0438\u0438"), /*#__PURE__*/React.createElement("span", {
+    className: "note"
+  }, "\u0414\u043E \u043F\u044F\u0442\u0438 \u0441\u0430\u043C\u044B\u0445 \u0432\u0430\u0436\u043D\u044B\u0445 \u0437\u0430 \u0441\u0443\u0442\u043A\u0438 \u0438 \u0441\u043F\u043E\u0441\u043E\u0431\u044B \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u043F\u043E\u044F\u0432\u0438\u043B\u0438\u0441\u044C \u0438\u043B\u0438 \u043D\u0430\u0447\u0430\u043B\u0438 \u0440\u0430\u0441\u0442\u0438"))), /*#__PURE__*/React.createElement("label", {
+    className: "vr-mail-opt"
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: !!st.wait,
+    onChange: e => save({
+      wait: e.target.checked
+    }, "what")
+  }), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0414\u043E\u043B\u0433\u043E\u0435 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435"), /*#__PURE__*/React.createElement("span", {
+    className: "note"
+  }, "\u0421\u043A\u043E\u043B\u044C\u043A\u043E \u043D\u043E\u0432\u044B\u0445 \u0436\u0430\u043B\u043E\u0431 \u043D\u0430 \u043E\u0447\u0435\u0440\u0435\u0434\u0438, \u043A\u0442\u043E \u0436\u0434\u0430\u043B \u0447\u0430\u0441 \u0438 \u0434\u043E\u043B\u044C\u0448\u0435, \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F, \u0433\u0434\u0435 \u0436\u0430\u043B\u043E\u0431 \u043D\u0435\u0441\u043A\u043E\u043B\u044C\u043A\u043E"))), !st.heavy && !st.wait && /*#__PURE__*/React.createElement("p", {
+    className: "note"
+  }, "\u041D\u0435 \u0432\u044B\u0431\u0440\u0430\u043D\u043E \u043D\u0438\u0447\u0435\u0433\u043E \u2014 \u043F\u0438\u0441\u044C\u043C\u043E \u043F\u0440\u0438\u0445\u043E\u0434\u0438\u0442\u044C \u043D\u0435 \u0431\u0443\u0434\u0435\u0442.")), /*#__PURE__*/React.createElement("section", null, /*#__PURE__*/React.createElement("h3", {
+    className: "vr-mail-h"
+  }, "\u041F\u043E \u043A\u0430\u043A\u0438\u043C \u0440\u0435\u0433\u0438\u043E\u043D\u0430\u043C"), /*#__PURE__*/React.createElement("div", {
+    className: "vr-seg2",
+    role: "group",
+    "aria-label": "\u0420\u0435\u0433\u0438\u043E\u043D\u044B \u043F\u0438\u0441\u044C\u043C\u0430"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: !pick ? "on" : "",
+    "aria-pressed": !pick,
+    onClick: () => {
+      setPick(false);
+      if (subs.length) save({
+        subjects: []
+      }, "scope");
+    }
+  }, "\u0412\u0441\u044F \u0441\u0435\u0442\u044C"), /*#__PURE__*/React.createElement("button", {
+    className: pick ? "on" : "",
+    "aria-pressed": pick,
+    onClick: () => setPick(true)
+  }, "\u0412\u044B\u0431\u0440\u0430\u043D\u043D\u044B\u0435 \u0440\u0435\u0433\u0438\u043E\u043D\u044B")), pick && /*#__PURE__*/React.createElement("div", {
+    className: "vr-mail-regs"
+  }, subs.map(c => /*#__PURE__*/React.createElement("span", {
+    key: c,
+    className: "vr-fchip"
+  }, rname(c), /*#__PURE__*/React.createElement("button", {
+    "aria-label": `Убрать: ${rname(c)}`,
+    onClick: () => save({
+      subjects: subs.filter(x => x !== c)
+    }, "scope")
+  }, "\u2715"))), /*#__PURE__*/React.createElement(VSelect, {
+    ariaLabel: "\u0414\u043E\u0431\u0430\u0432\u0438\u0442\u044C \u0440\u0435\u0433\u0438\u043E\u043D",
+    value: "",
+    onChange: v => v && save({
+      subjects: [...subs, v]
+    }, "scope"),
+    options: [{
+      v: "",
+      l: subs.length ? "Добавить регион" : "Выберите регион"
+    }, ...rest.map(r => ({
+      v: r.code,
+      l: r.name
+    }))]
+  }), !subs.length && /*#__PURE__*/React.createElement("p", {
+    className: "note",
+    style: {
+      flexBasis: "100%"
+    }
+  }, "\u041F\u043E\u043A\u0430 \u0440\u0435\u0433\u0438\u043E\u043D \u043D\u0435 \u0432\u044B\u0431\u0440\u0430\u043D, \u043F\u0438\u0441\u044C\u043C\u043E \u043F\u0440\u0438\u0445\u043E\u0434\u0438\u0442 \u043F\u043E \u0432\u0441\u0435\u0439 \u0441\u0435\u0442\u0438."))), /*#__PURE__*/React.createElement("div", {
+    className: "vr-acts"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost",
+    disabled: busy || !st.email,
+    onClick: test
+  }, busy ? "Отправляю…" : "Прислать пример сейчас"), sent && /*#__PURE__*/React.createElement("span", {
+    className: "note",
+    role: "status"
+  }, sent), err && /*#__PURE__*/React.createElement("span", {
+    className: "vr-mail-err",
+    role: "alert"
+  }, err)), /*#__PURE__*/React.createElement("p", {
+    className: "vr-fine"
+  }, "\u041F\u0438\u0441\u044C\u043C\u043E \u043F\u043E\u043B\u0443\u0447\u0430\u044E\u0442 \u0442\u043E\u043B\u044C\u043A\u043E \u0442\u0435, \u043A\u043E\u043C\u0443 \u043E\u0442\u043A\u0440\u044B\u0442 \u0440\u0430\u0437\u0434\u0435\u043B. \u041D\u0430 \u043D\u0435\u043A\u043E\u0440\u043F\u043E\u0440\u0430\u0442\u0438\u0432\u043D\u0443\u044E \u043F\u043E\u0447\u0442\u0443 \u043F\u0440\u0438\u0445\u043E\u0434\u044F\u0442 \u0447\u0438\u0441\u043B\u0430 \u0438 \u0441\u0441\u044B\u043B\u043A\u0430 \u2014 \u0431\u0435\u0437 \u0430\u0434\u0440\u0435\u0441\u043E\u0432 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439 \u0438 \u0441\u043B\u043E\u0432 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432. \u041E\u0442\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u043C\u043E\u0436\u043D\u043E \u0437\u0434\u0435\u0441\u044C, \u0432 \u043A\u043E\u043B\u043E\u043A\u043E\u043B\u044C\u0447\u0438\u043A\u0435 \u0438\u043B\u0438 \u0441\u0441\u044B\u043B\u043A\u043E\u0439 \xAB\u041E\u0442\u043F\u0438\u0441\u0430\u0442\u044C\u0441\u044F\xBB \u0432\u043D\u0438\u0437\u0443 \u043A\u0430\u0436\u0434\u043E\u0433\u043E \u043F\u0438\u0441\u044C\u043C\u0430.")));
+}
 function VspMethod2() {
   return /*#__PURE__*/React.createElement("div", {
     className: "vdos vr-dos"
@@ -25918,13 +27043,13 @@ function VspMethod2() {
     }
   }, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0442\u043E \u0433\u0434\u0435"), /*#__PURE__*/React.createElement("ul", {
     className: "facts"
-  }, /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0413\u043B\u0430\u0432\u043D\u043E\u0435"), " \u2014 \u0437\u0430 \u043F\u044F\u0442\u044C \u043C\u0438\u043D\u0443\u0442: \u0447\u0442\u043E \u0438\u0434\u0451\u0442 \u043F\u043E \u0441\u0435\u0442\u0438, \u0433\u0434\u0435 \u0441\u0433\u0443\u0449\u0430\u0435\u0442\u0441\u044F, \u043A\u043E\u0433\u043E \u0441\u043C\u043E\u0442\u0440\u0435\u0442\u044C \u0438 \u0447\u0442\u043E \u0437\u0430\u043F\u0440\u043E\u0441\u0438\u0442\u044C.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0421\u0445\u0435\u043C\u044B"), " \u2014 \u0441\u043F\u043E\u0441\u043E\u0431\u044B \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F: \u0447\u0442\u043E \u0440\u0430\u0441\u0442\u0451\u0442, \u0447\u0442\u043E \u043D\u043E\u0432\u043E\u0435, \u0447\u0442\u043E \u0443\u0448\u043B\u043E; \u043E\u0447\u0430\u0433\u0438 \u2014 \u0433\u043E\u0440\u043E\u0434\u0430 \u0438 \u0413\u041E\u0421\u0411, \u0433\u0434\u0435 \u043E\u0434\u0438\u043D \u0441\u043F\u043E\u0441\u043E\u0431 \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u0435\u0442\u0441\u044F \u0432 \u043D\u0435\u0441\u043A\u043E\u043B\u044C\u043A\u0438\u0445 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F\u0445.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0413\u0434\u0435 \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C"), " \u2014 \u043A\u0430\u0440\u0442\u0430 \xAB\u0431\u043E\u043B\u044C\u0448\u0435 \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u043E\u0433\u043E\xBB \u043F\u043E \u0432\u0441\u0435\u043C \u0438\u0441\u0442\u043E\u0440\u0438\u044F\u043C \u0438\u043B\u0438 \u043F\u043E \u043E\u0434\u043D\u043E\u043C\u0443 \u0441\u043F\u043E\u0441\u043E\u0431\u0443, \u0413\u041E\u0421\u0411 \u0438 \u0442\u0440\u0438 \u043F\u043E\u043B\u043A\u0438: \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u0432\u044B\u0434\u0435\u043B\u044F\u044E\u0442\u0441\u044F \u043D\u0430\u0432\u0435\u0440\u043D\u044F\u043A\u0430; \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F, \u0433\u0434\u0435 \u0432\u0438\u0434\u0435\u043D \u043E\u0434\u0438\u043D \u043F\u043E\u0447\u0435\u0440\u043A; \u043E\u0442\u0434\u0435\u043B\u044C\u043D\u044B\u0435 \u0442\u044F\u0436\u0451\u043B\u044B\u0435 \u0441\u043B\u0443\u0447\u0430\u0438.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0418\u0441\u0442\u043E\u0440\u0438\u0438"), " \u2014 \u0432\u0441\u0435 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432 \u0441 \u0444\u0438\u043B\u044C\u0442\u0440\u0430\u043C\u0438 \u0438 \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u043E\u0439; \u0432\u0438\u0434 \xAB\u0418\u0437\u043D\u0443\u0442\u0440\u0438\xBB \u2014 \u0433\u0434\u0435, \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u0430, \u0432\u044B\u0433\u043E\u0434\u0430 \u0434\u043E\u0441\u0442\u0430\u043B\u0430\u0441\u044C \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u0443 \u0438\u043B\u0438 \u0442\u0440\u0435\u0442\u044C\u0438\u043C \u043B\u0438\u0446\u0430\u043C.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0421\u043B\u043E\u0438"), " \u2014 \u0441\u043B\u0443\u0447\u0430\u0439, \u0434\u043E\u0441\u044C\u0435, \u0441\u043F\u043E\u0441\u043E\u0431 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u0438 \u043E\u0447\u0430\u0433 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u044E\u0442\u0441\u044F \u043F\u043E\u0432\u0435\u0440\u0445 \u0440\u0430\u0437\u0434\u0435\u043B\u0430, \u0443 \u043A\u0430\u0436\u0434\u043E\u0433\u043E \u0441\u0432\u043E\u044F \u0441\u0441\u044B\u043B\u043A\u0430. \xAB\u041D\u0430\u0437\u0430\u0434\xBB \u0438 Esc \u0437\u0430\u043A\u0440\u044B\u0432\u0430\u044E\u0442 \u0441\u043B\u043E\u0439.")))), /*#__PURE__*/React.createElement("section", {
+  }, /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0413\u043B\u0430\u0432\u043D\u043E\u0435"), " \u2014 \u0437\u0430 \u043F\u044F\u0442\u044C \u043C\u0438\u043D\u0443\u0442: \u0447\u0442\u043E \u0438\u0434\u0451\u0442 \u043F\u043E \u0441\u0435\u0442\u0438, \u0433\u0434\u0435 \u0441\u0433\u0443\u0449\u0430\u0435\u0442\u0441\u044F, \u043A\u043E\u0433\u043E \u0441\u043C\u043E\u0442\u0440\u0435\u0442\u044C \u0438 \u0447\u0442\u043E \u0437\u0430\u043F\u0440\u043E\u0441\u0438\u0442\u044C.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0421\u0445\u0435\u043C\u044B"), " \u2014 \u0441\u043F\u043E\u0441\u043E\u0431\u044B \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F: \u0447\u0442\u043E \u0440\u0430\u0441\u0442\u0451\u0442, \u0447\u0442\u043E \u043D\u043E\u0432\u043E\u0435, \u0447\u0442\u043E \u0443\u0448\u043B\u043E; \u043E\u0447\u0430\u0433\u0438 \u2014 \u0433\u043E\u0440\u043E\u0434\u0430 \u0438 \u0413\u041E\u0421\u0411, \u0433\u0434\u0435 \u043E\u0434\u0438\u043D \u0441\u043F\u043E\u0441\u043E\u0431 \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u0435\u0442\u0441\u044F \u0432 \u043D\u0435\u0441\u043A\u043E\u043B\u044C\u043A\u0438\u0445 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F\u0445.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0413\u0434\u0435 \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C"), " \u2014 \u043A\u0430\u0440\u0442\u0430 \xAB\u0431\u043E\u043B\u044C\u0448\u0435 \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u043E\u0433\u043E\xBB \u043F\u043E \u0432\u0441\u0435\u043C \u0438\u0441\u0442\u043E\u0440\u0438\u044F\u043C \u0438\u043B\u0438 \u043F\u043E \u043E\u0434\u043D\u043E\u043C\u0443 \u0441\u043F\u043E\u0441\u043E\u0431\u0443, \u0413\u041E\u0421\u0411 \u0438 \u0442\u0440\u0438 \u043F\u043E\u043B\u043A\u0438: \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u0432\u044B\u0434\u0435\u043B\u044F\u044E\u0442\u0441\u044F \u043D\u0430\u0432\u0435\u0440\u043D\u044F\u043A\u0430; \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F, \u0433\u0434\u0435 \u0432\u0438\u0434\u0435\u043D \u043E\u0434\u0438\u043D \u043F\u043E\u0447\u0435\u0440\u043A; \u043E\u0442\u0434\u0435\u043B\u044C\u043D\u044B\u0435 \u0442\u044F\u0436\u0451\u043B\u044B\u0435 \u0441\u043B\u0443\u0447\u0430\u0438.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0418\u0441\u0442\u043E\u0440\u0438\u0438"), " \u2014 \u0432\u0441\u0435 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432 \u0441 \u0444\u0438\u043B\u044C\u0442\u0440\u0430\u043C\u0438 \u0438 \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u043E\u0439; \u0432\u0438\u0434 \xAB\u0418\u0437\u043D\u0443\u0442\u0440\u0438\xBB \u2014 \u0433\u0434\u0435, \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u0430, \u0432\u044B\u0433\u043E\u0434\u0430 \u0434\u043E\u0441\u0442\u0430\u043B\u0430\u0441\u044C \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u0443 \u0438\u043B\u0438 \u0442\u0440\u0435\u0442\u044C\u0438\u043C \u043B\u0438\u0446\u0430\u043C.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u041E\u0436\u0438\u0434\u0430\u043D\u0438\u0435"), " \u2014 \u0436\u0430\u043B\u043E\u0431\u044B \u043D\u0430 \u043E\u0447\u0435\u0440\u0435\u0434\u0438 \u0438 \u0434\u043E\u043B\u0433\u043E\u0435 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435: \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u0438\u0445, \u0433\u0434\u0435 \u0436\u0430\u043B\u0443\u044E\u0442\u0441\u044F \u0447\u0430\u0449\u0435 \u0441\u0435\u0442\u0438, \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u0436\u0434\u0443\u0442 \u0438 \u043F\u043E\u0447\u0435\u043C\u0443 \u2014 \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u041F\u0438\u0441\u044C\u043C\u0430 \u043D\u0430 \u043F\u043E\u0447\u0442\u0443"), " \u2014 \u043A\u043D\u043E\u043F\u043A\u0430 \u0432\u0432\u0435\u0440\u0445\u0443 \u0441\u043F\u0440\u0430\u0432\u0430: \u0435\u0436\u0435\u0434\u043D\u0435\u0432\u043D\u043E\u0435 \u043F\u0438\u0441\u044C\u043C\u043E \u043E \u043D\u043E\u0432\u043E\u043C \u0437\u0430 \u0441\u0443\u0442\u043A\u0438, \u043F\u043E \u0432\u0441\u0435\u0439 \u0441\u0435\u0442\u0438 \u0438\u043B\u0438 \u043F\u043E \u0432\u044B\u0431\u0440\u0430\u043D\u043D\u044B\u043C \u0440\u0435\u0433\u0438\u043E\u043D\u0430\u043C.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0421\u043B\u043E\u0438"), " \u2014 \u0441\u043B\u0443\u0447\u0430\u0439, \u0434\u043E\u0441\u044C\u0435, \u0441\u043F\u043E\u0441\u043E\u0431 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u0438 \u043E\u0447\u0430\u0433 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u044E\u0442\u0441\u044F \u043F\u043E\u0432\u0435\u0440\u0445 \u0440\u0430\u0437\u0434\u0435\u043B\u0430, \u0443 \u043A\u0430\u0436\u0434\u043E\u0433\u043E \u0441\u0432\u043E\u044F \u0441\u0441\u044B\u043B\u043A\u0430. \xAB\u041D\u0430\u0437\u0430\u0434\xBB \u0438 Esc \u0437\u0430\u043A\u0440\u044B\u0432\u0430\u044E\u0442 \u0441\u043B\u043E\u0439.")))), /*#__PURE__*/React.createElement("section", {
     className: "sec"
   }, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0442\u043E \u0438\u0449\u0435\u043C"), /*#__PURE__*/React.createElement("p", {
     style: {
       maxWidth: "80ch"
     }
-  }, "\u041D\u0435 \u043E\u0442\u0434\u0435\u043B\u044C\u043D\u044B\u0435 \u0436\u0430\u043B\u043E\u0431\u044B \u043D\u0430 \u043D\u0430\u0432\u044F\u0437\u044B\u0432\u0430\u043D\u0438\u0435, \u0430 \u043C\u0430\u0441\u0441\u043E\u0432\u043E\u0435: \u043E\u0434\u0438\u043D \u0438 \u0442\u043E\u0442 \u0436\u0435 \u043F\u0440\u0438\u0451\u043C \u0443 \u043C\u043D\u043E\u0433\u0438\u0445 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432, \u0432 \u043D\u0435\u0441\u043A\u043E\u043B\u044C\u043A\u0438\u0445 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F\u0445 \u043E\u0434\u043D\u043E\u0433\u043E \u0433\u043E\u0440\u043E\u0434\u0430, \u0441 \u0432\u044B\u0433\u043E\u0434\u043E\u0439 \u0434\u043B\u044F \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u0430. \u0416\u0430\u043B\u043E\u0431\u044B \u043D\u0430 \u0431\u0430\u043D\u043A \u0432 \u0446\u0435\u043B\u043E\u043C, \u0442\u0430\u0440\u0438\u0444\u044B, \u043E\u0447\u0435\u0440\u0435\u0434\u0438 \u0438 \u043F\u0440\u0438\u043B\u043E\u0436\u0435\u043D\u0438\u0435 \u0441\u044E\u0434\u0430 \u043D\u0435 \u043F\u043E\u043F\u0430\u0434\u0430\u044E\u0442 \u2014 \u044D\u0442\u043E \xAB\u0410\u0443\u0434\u0438\u0442 \u043E\u0442\u0437\u044B\u0432\u043E\u0432\xBB.")), /*#__PURE__*/React.createElement("section", {
+  }, "\u041D\u0435 \u043E\u0442\u0434\u0435\u043B\u044C\u043D\u044B\u0435 \u0436\u0430\u043B\u043E\u0431\u044B \u043D\u0430 \u043D\u0430\u0432\u044F\u0437\u044B\u0432\u0430\u043D\u0438\u0435, \u0430 \u043C\u0430\u0441\u0441\u043E\u0432\u043E\u0435: \u043E\u0434\u0438\u043D \u0438 \u0442\u043E\u0442 \u0436\u0435 \u043F\u0440\u0438\u0451\u043C \u0443 \u043C\u043D\u043E\u0433\u0438\u0445 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432, \u0432 \u043D\u0435\u0441\u043A\u043E\u043B\u044C\u043A\u0438\u0445 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F\u0445 \u043E\u0434\u043D\u043E\u0433\u043E \u0433\u043E\u0440\u043E\u0434\u0430, \u0441 \u0432\u044B\u0433\u043E\u0434\u043E\u0439 \u0434\u043B\u044F \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u0430. \u0416\u0430\u043B\u043E\u0431\u044B \u043D\u0430 \u0431\u0430\u043D\u043A \u0432 \u0446\u0435\u043B\u043E\u043C, \u0442\u0430\u0440\u0438\u0444\u044B \u0438 \u043F\u0440\u0438\u043B\u043E\u0436\u0435\u043D\u0438\u0435 \u0441\u044E\u0434\u0430 \u043D\u0435 \u043F\u043E\u043F\u0430\u0434\u0430\u044E\u0442 \u2014 \u044D\u0442\u043E \xAB\u0410\u0443\u0434\u0438\u0442 \u043E\u0442\u0437\u044B\u0432\u043E\u0432\xBB. \u041E\u0447\u0435\u0440\u0435\u0434\u0438 \u2014 \u043E\u0442\u0434\u0435\u043B\u044C\u043D\u044B\u0439 \u0440\u0430\u0437\u0434\u0435\u043B \xAB\u041E\u0436\u0438\u0434\u0430\u043D\u0438\u0435\xBB: \u044D\u0442\u043E \u043D\u0435 \u043F\u043E\u0441\u0442\u0443\u043F\u043E\u043A \u0441\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A\u0430, \u0430 \u0434\u043E\u0441\u0442\u0443\u043F\u043D\u043E\u0441\u0442\u044C \u043E\u0431\u0441\u043B\u0443\u0436\u0438\u0432\u0430\u043D\u0438\u044F, \u0438 \u0432 \u0438\u0441\u0442\u043E\u0440\u0438\u0438, \u0441\u0445\u0435\u043C\u044B \u0438 \u043E\u0447\u0430\u0433\u0438 \u043E\u043D\u0438 \u043D\u0435 \u0432\u0445\u043E\u0434\u044F\u0442.")), /*#__PURE__*/React.createElement("section", {
     className: "sec"
   }, /*#__PURE__*/React.createElement("h3", null, "\u041A\u0442\u043E \u0447\u0438\u0442\u0430\u0435\u0442 \u0438 \u043A\u0430\u043A \u043F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C"), /*#__PURE__*/React.createElement("ul", {
     className: "facts"
@@ -25939,6 +27064,10 @@ function VspMethod2() {
   }, /*#__PURE__*/React.createElement("h3", null, "\u041A\u0430\u043A \u0441\u0447\u0438\u0442\u0430\u0435\u0442\u0441\u044F \xAB\u0431\u043E\u043B\u044C\u0448\u0435 \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u043E\u0433\u043E\xBB"), /*#__PURE__*/React.createElement("ul", {
     className: "facts"
   }, /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0417\u043D\u0430\u043C\u0435\u043D\u0430\u0442\u0435\u043B\u044C"), " \u2014 \u043E\u0442\u0437\u044B\u0432\u044B, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043B\u0430 \u043C\u043E\u0434\u0435\u043B\u044C (\u043A\u043E\u0440\u043E\u0442\u043A\u0438\u0435 \u043F\u044F\u0442\u0451\u0440\u043A\u0438 \u043E\u043D\u0430 \u043D\u0435 \u0447\u0438\u0442\u0430\u0435\u0442), \u043E\u0442\u0434\u0435\u043B\u044C\u043D\u043E \u043F\u043E \u043F\u043B\u043E\u0449\u0430\u0434\u043A\u0430\u043C \u0438 \u043F\u043E \u0436\u0430\u043B\u043E\u0431\u0430\u043C. \u0422\u0430\u043A \u0440\u043E\u0441\u0442 \u043D\u0435 \u043E\u0431\u044A\u044F\u0441\u043D\u044F\u0435\u0442\u0441\u044F \u0442\u0435\u043C, \u0447\u0442\u043E \u043E\u0442\u0437\u044B\u0432\u043E\u0432 \u0438\u043B\u0438 \u043F\u043E\u0445\u0432\u0430\u043B\u044B \u0441\u0442\u0430\u043B\u043E \u0431\u043E\u043B\u044C\u0448\u0435.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0420\u0430\u0441\u0442\u0451\u0442"), " \u2014 \u0437\u0430 \u0442\u0440\u0438 \u043C\u0435\u0441\u044F\u0446\u0430 \u0438\u043B\u0438 \u0437\u0430 \u0433\u043E\u0434 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432 \u0437\u043D\u0430\u0447\u0438\u043C\u043E \u0431\u043E\u043B\u044C\u0448\u0435, \u0447\u0435\u043C \u0431\u044B\u043B\u043E \u0431\u044B \u043F\u0440\u0438 \u043F\u0440\u0435\u0436\u043D\u0435\u0439 \u0447\u0430\u0441\u0442\u043E\u0442\u0435. ", /*#__PURE__*/React.createElement("b", null, "\u041D\u043E\u0432\u043E\u0435"), " \u2014 \u043F\u043E\u0447\u0442\u0438 \u0432\u0441\u0451 \u043F\u043E\u044F\u0432\u0438\u043B\u043E\u0441\u044C \u0437\u0430 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0433\u043E\u0434.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u041E\u0447\u0430\u0433"), " \u2014 \u0442\u0440\u0438 \u0438 \u0431\u043E\u043B\u044C\u0448\u0435 \u043A\u043B\u0438\u0435\u043D\u0442\u0430 \u0432 \u0434\u0432\u0443\u0445 \u0438 \u0431\u043E\u043B\u044C\u0448\u0435 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F\u0445 \u043E\u0434\u043D\u043E\u0433\u043E \u0433\u043E\u0440\u043E\u0434\u0430 \u0438\u043B\u0438 \u0413\u041E\u0421\u0411 \u0437\u0430 9 \u0438\u043B\u0438 18 \u043C\u0435\u0441\u044F\u0446\u0435\u0432 (\u043B\u0438\u0431\u043E \u0437\u0430 \u0432\u0441\u0451 \u0432\u0440\u0435\u043C\u044F) \u2014 \u0431\u043E\u043B\u044C\u0448\u0435, \u0447\u0435\u043C \u0434\u0430\u043B\u0430 \u0431\u044B \u0447\u0430\u0441\u0442\u043E\u0442\u0430 \u044D\u0442\u043E\u0433\u043E \u0441\u043F\u043E\u0441\u043E\u0431\u0430 \u043F\u043E \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u043E\u0439 \u0441\u0435\u0442\u0438 \u0437\u0430 \u0442\u043E \u0436\u0435 \u0432\u0440\u0435\u043C\u044F.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0412\u044B\u0434\u0435\u043B\u044F\u044E\u0442\u0441\u044F \u043D\u0430\u0432\u0435\u0440\u043D\u044F\u043A\u0430"), " \u2014 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432 \u0441 \u0442\u044F\u0436\u0451\u043B\u044B\u043C\u0438 \u0438\u0441\u0442\u043E\u0440\u0438\u044F\u043C\u0438 \u0437\u0430 2 \u0433\u043E\u0434\u0430 \u0438\u043B\u0438 5 \u043B\u0435\u0442 \u0437\u043D\u0430\u0447\u0438\u043C\u043E \u0431\u043E\u043B\u044C\u0448\u0435 \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u043E\u0433\u043E \u043F\u043E \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043D\u044B\u043C \u043E\u0442\u0437\u044B\u0432\u0430\u043C. ", /*#__PURE__*/React.createElement("b", null, "\u0412\u0438\u0434\u0435\u043D \u043E\u0434\u0438\u043D \u043F\u043E\u0447\u0435\u0440\u043A"), " \u2014 \u0442\u0440\u0438 \u0438 \u0431\u043E\u043B\u044C\u0448\u0435 \u043A\u043B\u0438\u0435\u043D\u0442\u0430 \u0437\u0430 \u0433\u043E\u0434 \u043E\u043F\u0438\u0441\u044B\u0432\u0430\u044E\u0442 \u043E\u0434\u0438\u043D \u043F\u0440\u0438\u0451\u043C, \u0438 \u0441\u0442\u043E\u043B\u044C\u043A\u043E \u043D\u0435 \u043C\u043E\u0433\u043B\u043E \u043D\u0430\u0431\u0440\u0430\u0442\u044C\u0441\u044F \u0441\u043B\u0443\u0447\u0430\u0439\u043D\u043E: \u0441\u0440\u0430\u0432\u043D\u0438\u0432\u0430\u0435\u043C \u0441 \u0447\u0430\u0441\u0442\u043E\u0442\u043E\u0439 \u043F\u0440\u0438\u0451\u043C\u0430 \u043F\u043E \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u043E\u0439 \u0441\u0435\u0442\u0438 \u0437\u0430 \u0442\u043E\u0442 \u0436\u0435 \u0433\u043E\u0434 \u0438 \u0434\u0435\u043B\u0430\u0435\u043C \u043F\u043E\u043F\u0440\u0430\u0432\u043A\u0443 \u043D\u0430 \u0432\u0441\u0435 \u043F\u0430\u0440\u044B \xAB\u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0435 \xD7 \u0441\u043F\u043E\u0441\u043E\u0431\xBB. \u0421\u044E\u0434\u0430 \u0436\u0435 \u2014 \u0432\u044B\u0432\u043E\u0434 \u043C\u043E\u0434\u0435\u043B\u0438, \u0435\u0441\u043B\u0438 \u043D\u0430\u0437\u0432\u0430\u043D\u043D\u044B\u0435 \u0435\u044E \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u043F\u0440\u043E\u0445\u043E\u0434\u044F\u0442 \u0442\u0443 \u0436\u0435 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0443. \u041F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043E \u043D\u0430 \u043F\u0435\u0440\u0435\u043C\u0435\u0448\u0430\u043D\u043D\u044B\u0445 \u0434\u0430\u043D\u043D\u044B\u0445: \u0435\u0441\u043B\u0438 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u0440\u0430\u0441\u043A\u0438\u0434\u0430\u0442\u044C \u043F\u043E \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F\u043C \u0441\u043B\u0443\u0447\u0430\u0439\u043D\u043E, \u043D\u0430 \u043F\u043E\u043B\u043A\u0443 \u043D\u0435 \u043F\u043E\u043F\u0430\u0434\u0430\u0435\u0442 \u043F\u043E\u0447\u0442\u0438 \u043D\u0438\u043A\u0442\u043E. \u041F\u043E\u043B\u043A\u0430 \u043A\u043E\u0440\u043E\u0442\u043A\u0430\u044F \u2014 \u044D\u0442\u043E \u0447\u0435\u0441\u0442\u043D\u044B\u0439 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442: \u043F\u043E \u043E\u0434\u043D\u043E\u043C\u0443 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044E \u0438\u0441\u0442\u043E\u0440\u0438\u0439 \u043E\u0431\u044B\u0447\u043D\u043E \u0441\u043B\u0438\u0448\u043A\u043E\u043C \u043C\u0430\u043B\u043E.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0412\u044B\u0432\u043E\u0434 \u043C\u043E\u0434\u0435\u043B\u0438 \u043F\u043E \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044E"), " \u2014 \u043C\u043E\u0434\u0435\u043B\u044C \u0447\u0438\u0442\u0430\u0435\u0442 \u0432\u0441\u0435 \u0442\u044F\u0436\u0451\u043B\u044B\u0435 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u0440\u0430\u0437\u043E\u043C \u0438 \u043F\u0438\u0448\u0435\u0442, \u0447\u0442\u043E \u0432 \u043D\u0438\u0445 \u043E\u0431\u0449\u0435\u0433\u043E, \u0447\u0442\u043E \u0438\u0437\u0432\u0435\u0441\u0442\u043D\u043E \u043E\u0431 \u0438\u0441\u043F\u043E\u043B\u043D\u0438\u0442\u0435\u043B\u044F\u0445 \u0438 \u0447\u0442\u043E \u0437\u0430\u043F\u0440\u043E\u0441\u0438\u0442\u044C. \u042D\u0442\u043E \u0447\u0442\u0435\u043D\u0438\u0435, \u0430 \u043D\u0435 \u043F\u0440\u0438\u0437\u043D\u0430\u043A \u043C\u0430\u0441\u0441\u043E\u0432\u043E\u0441\u0442\u0438: \u043C\u043E\u0434\u0435\u043B\u044C \u043F\u043E\u0447\u0442\u0438 \u0432\u0441\u0435\u0433\u0434\u0430 \u043D\u0430\u0445\u043E\u0434\u0438\u0442 \u043E\u0431\u0449\u0435\u0435, \u043F\u043E\u044D\u0442\u043E\u043C\u0443 \u0441\u0430\u043C \u043F\u043E \u0441\u0435\u0431\u0435 \u0435\u0451 \u0432\u044B\u0432\u043E\u0434 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0435 \u043D\u0430 \u043F\u043E\u043B\u043A\u0443 \u043D\u0435 \u0441\u0442\u0430\u0432\u0438\u0442.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, "\u0412\u0435\u0437\u0434\u0435 \u0443\u0447\u0442\u0435\u043D\u043E, \u0447\u0442\u043E \u0441\u0440\u0430\u0432\u043D\u0438\u0432\u0430\u0435\u043C \u0441\u0440\u0430\u0437\u0443 \u0442\u044B\u0441\u044F\u0447\u0438 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439 \u0438 \u0441\u043E\u0442\u043D\u0438 \u0442\u0435\u0440\u0440\u0438\u0442\u043E\u0440\u0438\u0439: \u0431\u0435\u0437 \u044D\u0442\u043E\u0439 \u043F\u043E\u043F\u0440\u0430\u0432\u043A\u0438 \xAB\u0437\u043D\u0430\u0447\u0438\u043C\u044B\u0445\xBB \u043D\u0430\u0445\u043E\u0434\u043E\u043A \u0431\u044B\u043B\u043E \u0431\u044B \u043C\u043D\u043E\u0433\u043E \u043F\u0440\u043E\u0441\u0442\u043E \u043F\u043E \u0441\u043B\u0443\u0447\u0430\u0439\u043D\u043E\u0441\u0442\u0438. \u041A\u0440\u0430\u0441\u043D\u044B\u043C \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u043E \u0442\u043E\u043B\u044C\u043A\u043E \u0442\u043E, \u0447\u0442\u043E \u043F\u0440\u043E\u0448\u043B\u043E \u043F\u043E\u043F\u0440\u0430\u0432\u043A\u0443.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, "\u0422\u0438\u043F \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u043C\u043E\u0434\u0435\u043B\u044C \u0441\u0442\u0430\u0432\u0438\u0442 \u043D\u0430\u0447\u0438\u043D\u0430\u044F \u0441 2021 \u0433\u043E\u0434\u0430, \u043F\u043E\u044D\u0442\u043E\u043C\u0443 \u0432\u043E\u043B\u043D\u044B \u0438 \u043E\u0447\u0430\u0433\u0438 \u0441\u0447\u0438\u0442\u0430\u044E\u0442\u0441\u044F \u0441 \u044D\u0442\u043E\u0439 \u0434\u0430\u0442\u044B. \u0423 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0439 \u0432 \u0441\u0447\u0451\u0442 \u0438\u0434\u0443\u0442 \u0432\u0441\u0435 \u0433\u043E\u0434\u044B.")))), /*#__PURE__*/React.createElement("section", {
+    className: "sec"
+  }, /*#__PURE__*/React.createElement("h3", null, "\u0414\u043E\u043B\u0433\u043E\u0435 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435: \u043A\u0430\u043A \u0441\u0447\u0438\u0442\u0430\u0435\u0442\u0441\u044F"), /*#__PURE__*/React.createElement("ul", {
+    className: "facts"
+  }, /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u041E\u0442\u0431\u043E\u0440."), " \u0421\u0440\u0435\u0434\u0438 \u0436\u0430\u043B\u043E\u0431 (\u043E\u0446\u0435\u043D\u043A\u0430 1\u20133) \u0441 2024 \u0433\u043E\u0434\u0430 \u0441\u043B\u043E\u0432\u0430 \xAB\u043E\u0447\u0435\u0440\u0435\u0434\u044C\xBB, \xAB\u0436\u0434\u0430\u043B\xBB, \xAB\u0442\u0430\u043B\u043E\u043D\xBB, \xAB\u043E\u0434\u043D\u043E \u043E\u043A\u043D\u043E\xBB \u0438 \u043F\u043E\u0445\u043E\u0436\u0438\u0435 \u043D\u0430\u0445\u043E\u0434\u044F\u0442 \u043A\u0430\u043D\u0434\u0438\u0434\u0430\u0442\u043E\u0432. \u041F\u043E \u043E\u0434\u043D\u0438\u043C \u0441\u043B\u043E\u0432\u0430\u043C \u0441\u0447\u0438\u0442\u0430\u0442\u044C \u043D\u0435\u043B\u044C\u0437\u044F \u2014 \xAB\u0432\u0437\u044F\u043B \u0442\u0430\u043B\u043E\u043D, \u0432 \u043E\u043A\u043D\u0435 \u043D\u0430\u0445\u0430\u043C\u0438\u043B\u0438\xBB \u043D\u0435 \u043F\u0440\u043E \u0432\u0440\u0435\u043C\u044F, \u2014 \u043F\u043E\u044D\u0442\u043E\u043C\u0443 \u043A\u0430\u0436\u0434\u043E\u0433\u043E \u043A\u0430\u043D\u0434\u0438\u0434\u0430\u0442\u0430 \u0447\u0438\u0442\u0430\u0435\u0442 \u043C\u043E\u0434\u0435\u043B\u044C: \u0436\u0430\u043B\u043E\u0431\u0430 \u043B\u0438 \u044D\u0442\u043E \u043D\u0430 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 \u0432 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u0438, \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u043A\u043B\u0438\u0435\u043D\u0442 \u0436\u0434\u0430\u043B, \u043F\u043E\u0447\u0435\u043C\u0443 \u0438 \u0443\u0448\u0451\u043B \u043B\u0438 \u0431\u0435\u0437 \u0443\u0441\u043B\u0443\u0433\u0438.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0430."), " \u041D\u0430 \u0434\u0432\u0443\u0445 \u0441\u043B\u0443\u0447\u0430\u0439\u043D\u044B\u0445 \u0432\u044B\u0431\u043E\u0440\u043A\u0430\u0445 (280 \u0436\u0430\u043B\u043E\u0431), \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043D\u044B\u0445 \u0432\u0440\u0443\u0447\u043D\u0443\u044E: \u0438\u0437 \u043E\u0442\u043C\u0435\u0447\u0435\u043D\u043D\u044B\u0445 \u043C\u043E\u0434\u0435\u043B\u044C\u044E \u043F\u043E \u0434\u0435\u043B\u0443 96 %, \u0438\u0437 \u043D\u0430\u0441\u0442\u043E\u044F\u0449\u0438\u0445 \u0436\u0430\u043B\u043E\u0431 \u043D\u0430 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u043E \u043E\u043A\u043E\u043B\u043E 94 %. \u0421\u043B\u043E\u0432\u0430 \u043A\u043B\u0438\u0435\u043D\u0442\u0430 \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u044E\u0442\u0441\u044F \u0444\u0440\u0430\u0433\u043C\u0435\u043D\u0442\u043E\u043C \u0441\u0430\u043C\u043E\u0433\u043E \u043E\u0442\u0437\u044B\u0432\u0430, \u0431\u0443\u043A\u0432\u0430 \u0432 \u0431\u0443\u043A\u0432\u0443.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0414\u043E\u043B\u044F, \u0430 \u043D\u0435 \u0447\u0438\u0441\u043B\u043E."), " \u0423 \u043A\u0440\u0443\u043F\u043D\u043E\u0433\u043E \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u0436\u0430\u043B\u043E\u0431 \u0431\u043E\u043B\u044C\u0448\u0435 \u043F\u0440\u043E\u0441\u0442\u043E \u0438\u0437-\u0437\u0430 \u043F\u043E\u0442\u043E\u043A\u0430 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432. \u041F\u043E\u044D\u0442\u043E\u043C\u0443 \u0441\u0440\u0430\u0432\u043D\u0438\u0432\u0430\u0435\u0442\u0441\u044F \u0434\u043E\u043B\u044F \u0436\u0430\u043B\u043E\u0431 \u043D\u0430 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 \u0441\u0440\u0435\u0434\u0438 \u0432\u0441\u0435\u0445 \u0436\u0430\u043B\u043E\u0431 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u0441 \u0434\u043E\u043B\u0435\u0439 \u043F\u043E \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u043E\u0439 \u0441\u0435\u0442\u0438. \u041A\u0440\u0430\u0441\u043D\u044B\u043C \u2014 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F, \u0413\u041E\u0421\u0411 \u0438 \u0440\u0435\u0433\u0438\u043E\u043D\u044B, \u0433\u0434\u0435 \u0434\u043E\u043B\u044F \u0432\u044B\u0448\u0435 \u043D\u0430\u0441\u0442\u043E\u043B\u044C\u043A\u043E, \u0447\u0442\u043E \u0441\u043B\u0443\u0447\u0430\u0439\u043D\u043E \u0442\u0430\u043A \u043D\u0435 \u0431\u044B\u0432\u0430\u0435\u0442, \u0441 \u043F\u043E\u043F\u0440\u0430\u0432\u043A\u043E\u0439 \u043D\u0430 \u0447\u0438\u0441\u043B\u043E \u0441\u0440\u0430\u0432\u043D\u0435\u043D\u0438\u0439. \u041F\u0440\u043E\u0432\u0435\u0440\u0435\u043D\u043E \u043D\u0430 \u043F\u0435\u0440\u0435\u043C\u0435\u0448\u0430\u043D\u043D\u044B\u0445 \u0434\u0430\u043D\u043D\u044B\u0445: \u043D\u0430 \u0440\u043E\u0432\u043D\u043E\u043C \u0444\u043E\u043D\u0435 \u043E\u0442\u043C\u0435\u0442\u043E\u043A \u043F\u043E\u0447\u0442\u0438 \u043D\u0435\u0442.")), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, "\u0427\u0435\u0433\u043E \u0437\u0434\u0435\u0441\u044C \u043D\u0435\u0442."), " \u041E\u0447\u0435\u0440\u0435\u0434\u0438 \u043A \u0431\u0430\u043D\u043A\u043E\u043C\u0430\u0442\u0430\u043C, \u0441\u0440\u043E\u043A\u0438 \u043F\u043E \u043F\u0440\u043E\u0434\u0443\u043A\u0442\u0430\u043C, \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 \u043D\u0430 \u0442\u0435\u043B\u0435\u0444\u043E\u043D\u043D\u043E\u0439 \u043B\u0438\u043D\u0438\u0438. \u0412\u0440\u0435\u043C\u044F \u2014 \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432, \u0430 \u043D\u0435 \u043F\u043E \u0434\u0430\u043D\u043D\u044B\u043C \u044D\u043B\u0435\u043A\u0442\u0440\u043E\u043D\u043D\u043E\u0439 \u043E\u0447\u0435\u0440\u0435\u0434\u0438: \u0440\u0430\u0437\u0434\u0435\u043B \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0435\u0442, \u0433\u0434\u0435 \u0441\u043F\u0440\u043E\u0441\u0438\u0442\u044C \u0436\u0443\u0440\u043D\u0430\u043B \u043E\u0447\u0435\u0440\u0435\u0434\u0438 \u0438 \u0447\u0438\u0441\u043B\u043E \u0440\u0430\u0431\u043E\u0442\u0430\u044E\u0449\u0438\u0445 \u043E\u043A\u043E\u043D.")))), /*#__PURE__*/React.createElement("section", {
     className: "sec"
   }, /*#__PURE__*/React.createElement("h3", null, "\u0427\u0435\u0433\u043E \u043D\u0435 \u0432\u0438\u0434\u043D\u043E"), /*#__PURE__*/React.createElement("ul", {
     className: "facts"
@@ -26755,6 +27884,8 @@ function VspPage() {
     L: {}
   });
   const [wview, setWview] = useState(() => vLS("vsp_wview", "queue"));
+  const [mailOn, setMailOn] = useState(null); // включено ли ежедневное письмо: до открытия окна — из профиля
+  const [waitSeen, setWaitSeen] = useState(() => vLS("vsp_wait_seen", false)); // точка «новый раздел» — пока не открыли
   const meta = useVFetch("/api/vsp/meta");
   const map = useVFetch("/api/vsp/map");
   const stRef = useRef(st);
@@ -27044,6 +28175,18 @@ function VspPage() {
       manual: 1
     });
   };
+  useEffect(() => {
+    if (st.s === "wait" && !waitSeen) {
+      setWaitSeen(true);
+      vLSset("vsp_wait_seen", true);
+    }
+    // на телефоне строка разделов листается по горизонтали: открытый раздел должен быть виден
+    try {
+      const el = document.querySelector(".vr-tabs button.on"),
+        box = el && el.parentElement;
+      if (box && box.scrollWidth > box.clientWidth) box.scrollLeft = Math.max(0, el.offsetLeft - box.offsetLeft - (box.clientWidth - el.offsetWidth) / 2);
+    } catch (e) {}
+  }, [st.s]); // eslint-disable-line
   // Esc закрывает верхний слой
   const openL = Object.keys(st.L).filter(k => V_LAYERS.includes(k) && st.L[k]);
   useEffect(() => {
@@ -27087,7 +28230,8 @@ function VspPage() {
   const goFilter = x => go("where", {
     ...x
   });
-  const S = [["main", "Главное"], ["schemes", "Схемы"], ["where", "Где проверить"], ["stories", "Истории"]];
+  const S = [["main", "Главное"], ["schemes", "Схемы"], ["where", "Где проверить"], ["stories", "Истории"], ["wait", "Ожидание"]];
+  const mailIsOn = mailOn != null ? mailOn : !!(me && me.prefs && me.prefs.vsp_mail && me.prefs.vsp_mail.on);
   const badge = {
     schemes: nav.up,
     where: nav.listed
@@ -27119,7 +28263,11 @@ function VspPage() {
     title: k === "schemes" && nav.up ? `${nav.up} ${vPl(nav.up, "способ действия растёт или появился", "способа действия растут или появились", "способов действия растут или появились")}` : k === "where" && nav.listed ? `${nav.listed} ${vPl(nav.listed, "отделение", "отделения", "отделений")} на полках` : undefined
   }, l, badge[k] ? /*#__PURE__*/React.createElement("span", {
     className: "vr-tabn"
-  }, vN(badge[k])) : null))), /*#__PURE__*/React.createElement("span", {
+  }, vN(badge[k])) : null, k === "wait" && !waitSeen && /*#__PURE__*/React.createElement("i", {
+    className: "vr-tabnew",
+    title: "\u041D\u043E\u0432\u044B\u0439 \u0440\u0430\u0437\u0434\u0435\u043B",
+    "aria-label": "\u043D\u043E\u0432\u044B\u0439 \u0440\u0430\u0437\u0434\u0435\u043B"
+  })))), /*#__PURE__*/React.createElement("span", {
     className: "sp"
   }), /*#__PURE__*/React.createElement("div", {
     className: "vr-htools",
@@ -27137,6 +28285,12 @@ function VspPage() {
   }), meta && meta.run ? `Данные на ${vDay(meta.run.finished_at)}` : "Загружаю данные"), map && !map.err && map.points_total ? /*#__PURE__*/React.createElement("span", null, "\u0432\u0441\u044F \u0441\u0435\u0442\u044C: ", vN(map.points_total), " ", vPl(map.points_total, "отделение", "отделения", "отделений")) : null, /*#__PURE__*/React.createElement("span", null, access), /*#__PURE__*/React.createElement("span", {
     className: "sp"
   }), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-ghost vsm vr-mailbtn" + (mailIsOn ? " on" : ""),
+    onClick: () => openLayer("mail", "1"),
+    title: mailIsOn ? "Ежедневное письмо по разделу включено — настроить или отключить" : "Получать новое по разделу письмом раз в день: тяжёлые истории и жалобы на ожидание"
+  }, /*#__PURE__*/React.createElement(VMailIc, null), mailIsOn ? "Письма включены" : "Письма на почту", mailIsOn && /*#__PURE__*/React.createElement("i", {
+    "aria-hidden": "true"
+  })), /*#__PURE__*/React.createElement("button", {
     className: "vlink",
     onClick: () => openLayer("method", "1")
   }, "\u041A\u0430\u043A \u044D\u0442\u043E \u0440\u0430\u0431\u043E\u0442\u0430\u0435\u0442"), /*#__PURE__*/React.createElement("button", {
@@ -27183,7 +28337,13 @@ function VspPage() {
       setWview(v);
       vLSset("vsp_wview", v);
     }
-  })) : /*#__PURE__*/React.createElement(VStoriesHub, {
+  })) : st.s === "wait" ? /*#__PURE__*/React.createElement(VWait, {
+    f: st.f,
+    setF: setF,
+    openPoint: openPoint,
+    regions: regions,
+    gosbs: gosbs
+  }) : /*#__PURE__*/React.createElement(VStoriesHub, {
     f: st.f,
     setF: setF,
     openPoint: openPoint,
@@ -27236,7 +28396,14 @@ function VspPage() {
   }, V_TOUR.length, " \u0448\u0430\u0433\u043E\u0432 \u043D\u0430 \u0436\u0438\u0432\u044B\u0445 \u0434\u0430\u043D\u043D\u044B\u0445, \u043E\u043A\u043E\u043B\u043E \u0441\u0435\u043C\u0438 \u043C\u0438\u043D\u0443\u0442")), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-primary vsm",
     onClick: () => startTour()
-  }, "\u041F\u0440\u043E\u0439\u0442\u0438 \u043E\u0431\u0443\u0447\u0435\u043D\u0438\u0435 \u2192")), /*#__PURE__*/React.createElement(VspMethod2, null)), st.L.story && /*#__PURE__*/React.createElement(VEvidenceLayer, {
+  }, "\u041F\u0440\u043E\u0439\u0442\u0438 \u043E\u0431\u0443\u0447\u0435\u043D\u0438\u0435 \u2192")), /*#__PURE__*/React.createElement(VspMethod2, null)), st.L.mail && /*#__PURE__*/React.createElement(VMailLayer, {
+    key: "ml" + st.L.mail,
+    depth: depth("mail"),
+    onClose: () => closeLayer("mail"),
+    regions: regions,
+    off: st.L.mail === "off",
+    onState: setMailOn
+  }), st.L.story && /*#__PURE__*/React.createElement(VEvidenceLayer, {
     key: "e" + st.L.story,
     rid: st.L.story,
     depth: depth("story"),
@@ -37730,6 +38897,18 @@ function BxMail({
   const [, setTick] = useState(0);
   const gotAt = useRef(Date.now());
   const autoDone = useRef(null);
+  // ежедневное письмо раздела «Аудит сети ВСП» (web/vsp_mail.py): строка есть только у тех, кому раздел открыт
+  const [vsp, setVsp] = useState(null);
+  useEffect(() => {
+    if (!(me && me.can_vsp)) return;
+    let alive = true;
+    apiFetch("/api/vsp/mail").then(x => {
+      if (alive) setVsp(!!x.on);
+    }).catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [me && me.can_vsp]); // eslint-disable-line
   const apply = x => {
     setSt(x);
     gotAt.current = Date.now();
@@ -37806,6 +38985,26 @@ function BxMail({
     h: 34
   }));
   const prefs = me && me.prefs && me.prefs.mail || {};
+  const vspRow = me && me.can_vsp && vsp !== null && /*#__PURE__*/React.createElement("label", {
+    className: "bx-row bx-row-1",
+    title: "\u041D\u043E\u0432\u044B\u0435 \u0442\u044F\u0436\u0451\u043B\u044B\u0435 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u0438 \u0436\u0430\u043B\u043E\u0431\u044B \u043D\u0430 \u0434\u043E\u043B\u0433\u043E\u0435 \u043E\u0436\u0438\u0434\u0430\u043D\u0438\u0435 \u0432 \u043E\u0442\u0434\u0435\u043B\u0435\u043D\u0438\u044F\u0445 \u2014 \u0442\u043E\u043B\u044C\u043A\u043E \u0435\u0441\u043B\u0438 \u0435\u0441\u0442\u044C \u043D\u043E\u0432\u043E\u0435. \u0420\u0435\u0433\u0438\u043E\u043D\u044B \u0438 \u0441\u043E\u0441\u0442\u0430\u0432 \u043F\u0438\u0441\u044C\u043C\u0430 \u2014 \u0432 \u0440\u0430\u0437\u0434\u0435\u043B\u0435 \xAB\u0410\u0443\u0434\u0438\u0442 \u0441\u0435\u0442\u0438 \u0412\u0421\u041F\xBB, \u043A\u043D\u043E\u043F\u043A\u0430 \xAB\u041F\u0438\u0441\u044C\u043C\u0430\xBB"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "l"
+  }, /*#__PURE__*/React.createElement("b", null, "\u0410\u0443\u0434\u0438\u0442 \u0441\u0435\u0442\u0438 \u0412\u0421\u041F"), /*#__PURE__*/React.createElement("span", null, "\u0431\u0443\u0434\u043D\u0438, 9:00")), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    role: "switch",
+    "aria-checked": vsp,
+    className: "bx-sw",
+    "aria-label": "\u0410\u0443\u0434\u0438\u0442 \u0441\u0435\u0442\u0438 \u0412\u0421\u041F: \u0435\u0436\u0435\u0434\u043D\u0435\u0432\u043D\u043E\u0435 \u043F\u0438\u0441\u044C\u043C\u043E \u043E \u043D\u043E\u0432\u043E\u043C \u0437\u0430 \u0441\u0443\u0442\u043A\u0438",
+    onClick: e => {
+      e.preventDefault();
+      const on = !vsp;
+      setVsp(on);
+      apiPut("/api/vsp/mail", {
+        on
+      }).then(x => setVsp(!!x.on)).catch(() => setVsp(!on));
+    }
+  }));
   if (p && !editing) {
     const digits = code.replace(/\D/g, "");
     return /*#__PURE__*/React.createElement("div", {
@@ -37915,7 +39114,7 @@ function BxMail({
         }).catch(() => onPrefs && onPrefs(null, prefs));
       }
     }));
-  }), err && /*#__PURE__*/React.createElement("div", {
+  }), vspRow, err && /*#__PURE__*/React.createElement("div", {
     className: "bx-err",
     role: "alert"
   }, err));

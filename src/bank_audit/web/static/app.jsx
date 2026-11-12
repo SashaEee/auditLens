@@ -11266,11 +11266,13 @@ const vPl=(n,a,b,c)=>{const m=Math.abs(n)%100;return m>=11&&m<=14?c:m%10===1?a:m
 const vQS=o=>{const p=new URLSearchParams();Object.entries(o).forEach(([k,v])=>{if(v!==""&&v!=null&&v!==false)p.set(k,v);});return p.toString();};
 // адрес ЦБ «100000, КРАСНОДАРСКИЙ КРАЙ, Г. КРАСНОДАР, УЛ. ЛЕНИНА, Д. 5» → «ул. Ленина, д. 5»
 const vAddr=a=>{if(!a)return"";const parts=a.split("#")[0].split(",").map(x=>x.trim()).filter(x=>x&&!/^\d{6}$/.test(x));
-  const st=parts.findIndex(x=>/^(УЛ|ПР-?Т|ПР-Д|ПРОСП|Ш|ПЕР|Б-Р|БУЛЬВАР|НАБ|ПЛ|МКР|МИКРОРАЙОН|КВ-Л|ТУПИК|ПРОЕЗД|ТРАКТ|АЛЛЕЯ|ЛИН|ТЕР)\b/i.test(x));
+  // после сокращения не должна идти буква. \b здесь не годится: для него кириллица — «не слово», и улица
+  // не находилась вовсе — в адресе оставались только дом и литера («Санкт-Петербург, д.1-3, Литер а»)
+  const st=parts.findIndex(x=>/^(УЛ|ПР-?Т|ПР-Д|ПРОСП|Ш|ПЕР|Б-Р|БУЛЬВАР|НАБ|ПЛ|МКР|МИКРОРАЙОН|КВ-Л|ТУПИК|ПРОЕЗД|ТРАКТ|АЛЛЕЯ|ЛИН|ТЕР)(?![А-ЯЁа-яё])/i.test(x));
   const rest=st>=0?parts.slice(st):parts.slice(-2);const t=rest.join(", ");
   if(t!==t.toUpperCase())return t;
   const ABBR=new Set(["пр-т","пр-д","б-р","кв-л","мкр","стр","корп","лит","пом","влд","зд"]);
-  return t.toLowerCase().split(" ").map(w=>{const m=w.match(/^([а-яё][а-яё-]*)(,?)$/);
+  return t.replace(/\.(?=[А-ЯЁ])/g,". ").toLowerCase().split(" ").map(w=>{const m=w.match(/^([а-яё][а-яё-]*)(,?)$/);
     return m&&m[1].length>=3&&!ABBR.has(m[1])?w[0].toUpperCase()+w.slice(1):w;}).join(" ");};
 const vPlace=p=>p?[p.city,vAddr(p.address)].filter(Boolean).join(", ")||p.name||"Отделение":"Отделение";
 const vCode=p=>{ if(!p||!p.name) return ""; const nm=String(p.name).trim();
@@ -11346,16 +11348,19 @@ const vRegionShort=n=>(n||"").replace(/^Республика\s+/,"").replace(/\s
 const VCheck=()=><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--pos)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>;
 
 // ── состояние в адресе: раздел, вид, фильтры и открытые слои ────────────────
-// #vsp?s=where&subject=TA&kind=5 · слои: point (досье), story (случай), scheme (способ действия), hot (очаг), method
-const V_F0={subject:"",gosb:"",kind:"",key:"",sev:2,per:"730",vul:false,named:false,fresh:false,money:false,fmt:"",q:""};
-const V_LAYERS=["point","story","scheme","hot","method"];
-const V_SECS=["main","schemes","where","stories"];
+// #vsp?s=where&subject=TA&kind=5 · слои: point (досье), story (случай), scheme (способ действия), hot (очаг), method,
+// mail (подписка на письмо; mail=off — ссылка «Отписаться» из письма)
+const V_F0={subject:"",gosb:"",kind:"",key:"",sev:2,per:"730",vul:false,named:false,fresh:false,money:false,fmt:"",q:"",
+  cause:"",wper:"365",long:false,left:false};   // последние четыре — фильтры раздела «Ожидание»
+const V_LAYERS=["point","story","scheme","hot","method","mail"];
+const V_SECS=["main","schemes","where","stories","wait"];
 function vReadHash(){
   const h=parseHash();if(h.p!=="vsp")return null;const p=h.prm||{};
   const f={...V_F0};
-  ["subject","gosb","kind","key","per","fmt","q"].forEach(k=>{if(p[k]!=null)f[k]=p[k];});
+  ["subject","gosb","kind","key","per","fmt","q","cause"].forEach(k=>{if(p[k]!=null)f[k]=p[k];});
+  if(p.wper!=null&&V_WPER[p.wper])f.wper=p.wper;
   if(p.sev!=null&&!isNaN(+p.sev))f.sev=+p.sev;
-  ["vul","named","fresh","money"].forEach(k=>{if(p[k]!=null)f[k]=p[k]==="1";});
+  ["vul","named","fresh","money","long","left"].forEach(k=>{if(p[k]!=null)f[k]=p[k]==="1";});
   const L={};V_LAYERS.forEach(k=>{if(p[k])L[k]=p[k];});
   return {s:V_SECS.includes(p.s)?p.s:"main",v:["all","inside"].includes(p.v)?p.v:"all",f,L};
 }
@@ -11640,7 +11645,7 @@ function vHexLevel(r){
   if(!r.points||r.few)return "few";
   if(r.sig)return "sig";const k=r.ratio||0;return k>=2?"hi":k>=1.33?"mid":k>=0.75?"avg":"low";
 }
-function VHexMap({regions,picked,onPick}){
+function VHexMap({regions,picked,onPick,hint:hintOf,level:levelOf}){
   const ref=useRef(null);const[w,setW]=useState(740);
   useEffect(()=>{const el=ref.current;if(!el||!window.ResizeObserver)return;const ro=new ResizeObserver(es=>{const x=es[0].contentRect.width;if(x)setW(x);});ro.observe(el);return()=>ro.disconnect();},[]);
   const rs=(regions||[]).filter(r=>r.col!=null);
@@ -11648,10 +11653,10 @@ function VHexMap({regions,picked,onPick}){
   const cols=Math.max(...rs.map(r=>r.col))+1,rows=Math.max(...rs.map(r=>r.row))+1;
   const S=Math.max(14,Math.min(46,(w-4)/(cols+0.5))),H=S*1.15,dy=H*0.76;
   const fs=Math.max(8.5,Math.min(11,S*0.26));
-  const hint=r=>!r.points?`${r.name} — отделений нет`:r.few?`${r.name} — мало прочитанных отзывов (${vN(r.read)} за 2 года)`:
-    `${r.name}: ${vN(r.n)} ${vPl(r.n,"клиент","клиента","клиентов")} за 2 года, ожидалось ${vX(r.expected)}${r.ratio?` — ×${vX(r.ratio)}`:""}${r.sig?", так много случайно не бывает":""}`;
+  const hint=hintOf||(r=>!r.points?`${r.name} — отделений нет`:r.few?`${r.name} — мало прочитанных отзывов (${vN(r.read)} за 2 года)`:
+    `${r.name}: ${vN(r.n)} ${vPl(r.n,"клиент","клиента","клиентов")} за 2 года, ожидалось ${vX(r.expected)}${r.ratio?` — ×${vX(r.ratio)}`:""}${r.sig?", так много случайно не бывает":""}`);
   return <div ref={ref} className="vr-hexes" style={{height:rows*dy+H*0.24+6}}>
-    {rs.map(r=>{const x=r.col*S+(r.row%2)*S/2,y=r.row*dy;const lv=vHexLevel(r);const on=picked===r.code;
+    {rs.map(r=>{const x=r.col*S+(r.row%2)*S/2,y=r.row*dy;const lv=(levelOf||vHexLevel)(r);const on=picked===r.code;
       return <React.Fragment key={r.code}>
         {on&&<span className="vr-hex-sel" style={{left:x-3,top:y-3.5,width:S+4,height:H+5}}/>}
         {/* без onPick карта только показывает: плитку не отключаем, иначе пропадает подсказка при наведении */}
@@ -11795,6 +11800,7 @@ function VMain({f,setF,go,openPoint,openWave,openHot,regions,meta}){
       <button className="vlink" onClick={()=>toStories({})}>Все тяжёлые истории · {vN(k.clients_2y)} {vPl(k.clients_2y,"клиент","клиента","клиентов")} за 2 года →</button>
       <button className="vlink" onClick={()=>go("where",{...V_F0,subject:f.subject,gosb:f.gosb},null,"table")}>Все отделения с историями →</button>
       <button className="vlink" onClick={()=>go("where",{...V_F0,subject:f.subject})}>Карта и ГОСБ →</button>
+      <button className="vlink" onClick={()=>go("wait",{...V_F0,subject:f.subject,gosb:f.gosb})}>Долгое ожидание в отделениях →</button>
       <a className="vlink" href={"/api/vsp/export/justification.xlsx"+(scope?"?"+scope:"")} download>Обоснование «Где проверить» (Excel)</a>
     </section>
     {meta&&meta.progress&&<div className="vr-fine" style={{marginTop:14}}>Модель прочитала {vN(meta.progress.screened)} из {vN(meta.progress.with_text)} отзывов с текстом и нашла {vN(meta.progress.relevant)} {vPl(meta.progress.relevant,"историю","истории","историй")} о возможных нарушениях ·
@@ -12272,6 +12278,8 @@ function VEvidenceBody({d,openPoint,openWave}){
   const r=d.review||{};const m=d.model;const s=d.story||{};const D=d.detail;
   const copy=()=>{try{navigator.clipboard.writeText((r.text||"").slice(0,60));setCopied(true);}catch(e){}};
   const facts=vFacts({...s,vuln_types:s.vuln_types||[],actions:s.actions||[]},true);
+  const W=d.wait;   // жалоба на долгое ожидание (раздел «Ожидание»): отзыв может быть и историей, и жалобой на очередь
+  const wc=W?{...W,rid:d.rid,place:d.place,date:r.date,src:r.source}:null;
   return <div className="vr-ev" data-tour="evidence">
     <div className="vr-meta">{s.severity&&<VSev s={s.severity}/>}
       <span>{vDay(r.date)}</span><span>{vSrc(r.source)}</span>{r.rating!=null&&<span>оценка {r.rating}</span>}
@@ -12279,13 +12287,16 @@ function VEvidenceBody({d,openPoint,openWave}){
       {r.gone&&<span className="vr-flag">удалён с площадки</span>}{r.reply&&<span>банк ответил</span>}</div>
     {(s.episode||m&&m.what)&&<h3 className="vr-chead">{vHead(s.episode||(m&&m.what))}</h3>}
     {facts.length>0&&<div className="vr-facts">{facts.join(" · ")}</div>}
+    {W&&!s.episode&&<h3 className="vr-chead">{vWaitHead(W)}{W.minutes?<span className="vr-byword"> — по словам клиента</span>:null}</h3>}
+    {W&&<div className="vr-facts">{["долгое ожидание",s.episode&&W.minutes?`ждал ${W.minutes_label} — по словам клиента`:null,W.cause!=="не сказано"?W.cause_label.toLowerCase():null,s.episode&&W.left?"ушёл, не дождавшись":null].filter(Boolean).join(" · ")}</div>}
     <div className="vr-full"><VHighlight text={r.text||""} quote={d.quote}/></div>
     <ul className="vr-checks">{(d.checks||[]).map((c,i)=><li key={i} className={c.ok===true?"ok":c.ok===false?"bad":""}><span aria-hidden="true">{c.ok===true?"✓":c.ok===false?"✕":"•"}</span>{c.label}</li>)}</ul>
     <div className="vr-acts">
       {d.point&&<button className="btn btn-primary" onClick={()=>openPoint(d.point)}>Досье отделения →</button>}
       {r.url&&<a className="btn btn-ghost" href={r.url} target="_blank" rel="noopener noreferrer">Оригинал на {vSrc(r.source)} ↗</a>}
       {r.url&&<button className="btn btn-ghost" onClick={copy}>{copied?"Скопировано":"Скопировать начало отзыва"}</button>}
-      <VCaseBtn item={vCaseStory({...s,rid:s.rid||d.rid,place:d.place,date:r.date,src:r.source,quote:d.quote,vuln_types:s.vuln_types||[],actions:s.actions||[]})} src="vsp_story"/></div>
+      {wc&&!d.story?<VCaseBtn item={vCaseWait(wc)} src="vsp_wait"/>
+        :<VCaseBtn item={vCaseStory({...s,rid:s.rid||d.rid,place:d.place,date:r.date,src:r.source,quote:d.quote,vuln_types:s.vuln_types||[],actions:s.actions||[]})} src="vsp_story"/>}</div>
     {r.url&&<p className="vr-fine">У площадок нет ссылки на отдельный отзыв: откроется страница отзывов отделения. Ищите отзыв от {vD(r.date)} — по началу текста.</p>}
     {(d.waves||[]).length>0&&<div className="chips" style={{marginTop:4}}>{d.waves.map(w=><button key={w.id} className="chip" onClick={()=>openWave(w.id)}>{w.name} · по сети {w.status_label} →</button>)}</div>}
     {m?<section className="vr-model"><div className="eyebrow">Что поняла модель — пересказ, сверяйте с отзывом</div><dl className="vdl">
@@ -12307,8 +12318,14 @@ function VEvidenceBody({d,openPoint,openWave}){
       {m.vulnerable&&<><dt>Клиент</dt><dd>пожилой или уязвимый</dd></>}
       {m.scheme&&<><dt>Схема своими словами</dt><dd>{m.scheme}</dd></>}
     </dl></section>
+     :W?null
      :d.screen?<section className="vr-model"><div className="eyebrow">Что поняла модель</div><p>{d.screen.relevant?"На отборе: похоже на историю о нарушении":"На отборе: не про нарушение в отделении"}{d.screen.why?` — ${d.screen.why}`:""}</p></section>
      :<p className="vr-fine">Модель этот отзыв ещё не читала — история найдена по словам.</p>}
+    {W&&<section className="vr-model"><div className="eyebrow">Что поняла модель об ожидании — сверяйте с отзывом</div><dl className="vdl">
+      <dt>О чём</dt><dd>жалоба на долгое ожидание в отделении</dd>
+      <dt>Сколько ждал</dt><dd>{W.minutes?`${W.minutes_label} — по словам клиента`:"время не названо"}</dd>
+      <dt>Причина, по словам клиента</dt><dd>{W.cause==="не сказано"?"не названа":W.cause_label.toLowerCase()}</dd>
+      <dt>Чем закончилось</dt><dd>{W.left?"ушёл, не дождавшись, или не обслужили":"обслужили"}</dd></dl></section>}
   </div>;
 }
 function VEvidenceLayer({rid,depth,onClose,openPoint,openWave}){
@@ -12425,6 +12442,7 @@ function VDossierLayer({point,depth,onClose,openPoint,openHot,goFilter}){
         {!shown.length&&<p className="note">Историй с такими условиями нет.</p>}
         {shown.length>lim&&<button className="vmore" style={{marginTop:8}} onClick={()=>setLim(lim+20)}>Показать ещё (осталось {shown.length-lim})</button>}
       </section>
+      <VWaitDossier w={d.wait} point={point} openPoint={openPoint}/>
       {((d.request||[]).length>0||(con&&(con.request||[]).length>0))&&<section className="sec"><h3>Что запросить</h3>
         {(d.request||[]).map((r,i)=><VRequest key={i} r={r} docx={i===0?`/api/vsp/export/request.docx?point=${encodeURIComponent(point)}`:null}/>)}
         {con&&(con.request||[]).length>0&&<><p className="note" style={{marginTop:10}}>Модель, прочитав все истории, предлагает запросить:</p>
@@ -12446,6 +12464,318 @@ function VDossierLayer({point,depth,onClose,openPoint,openHot,goFilter}){
   </VLayer>;
 }
 
+// ── раздел «Ожидание»: жалобы клиентов на очереди и долгое ожидание в отделениях ─────────────
+// Отдельно от тяжёлых историй: это не поступок сотрудника, а доступность обслуживания. Данные — свой этап
+// чтения модели (vsp/signals/wait.py), считаются вживую (web/vsp_wait.py). Красный — только «значимо чаще сети».
+const V_WPER={"90":"3 месяца","180":"полгода","365":"год","730":"2 года"};
+const V_WPER_IN={"90":"за 3 месяца","180":"за полгода","365":"за год","730":"за 2 года"};
+const vShare=x=>x==null?"—":Math.round(x*100)+"\u00a0%";
+const vWaitQS=(f,extra)=>vQS({subject:f.subject,gosb:f.gosb,per:f.wper,cause:f.cause,long:f.long,left:f.left,...(extra||{})});
+// материал «В дело»: жалоба на ожидание открывается из дела тем же слоем «Случай»
+function vCaseWait(c){const P=c.place||{};if(!c.rid)return null;
+  return {kind:"vsp",url:vCaseUrl("story",c.rid),title:`Долгое ожидание: «${vCut(c.quote||"",140)}»`,
+    meta:{type:"story",place:vPlace(P),code:vCode(P),gosb:P.gosb||"",date:c.date||"",source:c.src?vSrc(c.src):"",
+      summary:[c.minutes?`ждал ${c.minutes_label} — по словам клиента`:null,c.cause&&c.cause!=="не сказано"?(c.cause_label||"").toLowerCase():null,c.left?"ушёл, не дождавшись":null].filter(Boolean).join(" · "),
+      quote:c.quote||""}};}
+// шкала карты: доля ожидания по регионам отличается мало (обычно в пределах ±40 % от сети), поэтому шаги мельче, чем у историй
+const vWaitLevel=r=>{if(!r.points||r.few)return "few";if(r.sig)return "sig";const k=r.ratio||0;return k>=1.25?"hi":k>=1.1?"mid":k>=0.9?"avg":"low";};
+const vWaitHead=c=>c.minutes?`Ждал ${c.minutes_label}${c.left?" и ушёл, не дождавшись":""}`:c.left?"Ушёл, не дождавшись":"Долгое ожидание";
+
+function VWaitFilters({f,setF,regions,gosbs,causes}){
+  const[open,setOpen]=useState(false);   // на телефоне фильтры — за кнопкой
+  const rname=c=>(regions.find(r=>r.code===c)||{}).name||c;
+  const cl=k=>((causes||[]).find(c=>c.key===k)||{}).label||k;
+  const gl=(gosbs||[]).filter(g=>!f.subject||g.subject===f.subject).slice().sort((a,b)=>String(a.gosb).localeCompare(String(b.gosb),"ru",{numeric:true}));
+  const chips=[];
+  if(f.subject)chips.push([rname(f.subject),{subject:"",gosb:""}]);
+  if(f.gosb)chips.push([`ГОСБ ${f.gosb}`,{gosb:""}]);
+  if(f.wper!==V_F0.wper)chips.push([V_WPER_IN[f.wper]||f.wper,{wper:V_F0.wper}]);
+  if(f.cause)chips.push([cl(f.cause).toLowerCase(),{cause:""}]);
+  if(f.long)chips.push(["ждали час и дольше",{long:false}]);
+  if(f.left)chips.push(["ушли, не дождавшись",{left:false}]);
+  const tg=(k,l)=><button className={"vr-tg"+(f[k]?" on":"")} aria-pressed={f[k]} onClick={()=>setF({[k]:!f[k]})}>{l}</button>;
+  return <div className={"vr-fbar"+(open?" open":"")}>
+    <button className="vr-tg vr-ftoggle" aria-expanded={open} onClick={()=>setOpen(!open)}>Фильтры{chips.length?` · ${chips.length}`:""}</button>
+    <div className="vr-frow" role="group" aria-label="Фильтры">
+      <VSelect ariaLabel="Регион" value={f.subject} onChange={v=>setF({subject:v,gosb:""})}
+        options={[{v:"",l:"Вся сеть"},...regions.map(t=>({v:t.code,l:t.name}))]}/>
+      {gl.length>0&&<VSelect ariaLabel="ГОСБ" value={f.gosb} onChange={v=>setF({gosb:v})}
+        options={[{v:"",l:"Все ГОСБ"},...gl.map(g=>({v:g.gosb,l:`ГОСБ ${g.gosb}${!f.subject&&g.subject_name?` · ${vRegionShort(g.subject_name)}`:""}`}))]}/>}
+      <VSelect ariaLabel="Период" value={f.wper} def={V_F0.wper} onChange={v=>setF({wper:v})}
+        options={Object.entries(V_WPER).map(([k,l])=>({v:k,l:`За ${l}`}))}/>
+      <VSelect ariaLabel="Причина" value={f.cause} onChange={v=>setF({cause:v})}
+        options={[{v:"",l:"Причина — любая"},...(causes||[]).map(c=>({v:c.key,l:c.label,n:vN(c.n)}))]}/>
+      {tg("long","ждали час и дольше")}{tg("left","ушли, не дождавшись")}
+    </div>
+    {chips.length>0&&<div className="vr-shown"><span className="note">Показано:</span>
+      {chips.map(([l,patch],i)=><span key={i} className="vr-fchip">{l}<button aria-label={`Снять: ${l}`} onClick={()=>setF(patch)}>✕</button></span>)}
+      <button className="vmore" onClick={()=>setF({subject:"",gosb:"",wper:V_F0.wper,cause:"",long:false,left:false})}>Сбросить всё</button></div>}
+  </div>;
+}
+
+// жалобы по месяцам: столбец — месяц, число сверху — сколько жалоб; тёмные — выбранный период
+function VWaitMonths({months,since}){
+  if(!months||!months.length)return <div className="vempty">Нет данных</div>;
+  const mx=Math.max(1,...months.map(m=>m.n));
+  return <div className="vr-chart"><div className="vr-chart-b" role="img" aria-label="Жалобы на долгое ожидание по месяцам">
+      {months.map(m=><div key={m.month} className={"vr-chart-c"+(since&&m.month>=since?" cur":"")}
+        title={`${vMon(m.month)}: ${vN(m.n)} ${vPl(m.n,"жалоба","жалобы","жалоб")} на ожидание — ${vShare(m.share)} всех жалоб${m.part?" · месяц ещё не закончился":""}`}>
+        <span className="vr-chart-n">{m.n||""}</span><i className={m.part?"part":""} style={{height:`${Math.max(m.n?3:1,m.n/mx*100)}%`}}/></div>)}</div>
+    <div className="vr-chart-ax">{months.map((m,i)=><span key={m.month}>{m.month.slice(5)==="01"||(i===0&&months[1]&&months[1].month.slice(5)!=="01")?m.month.slice(0,4):""}</span>)}</div></div>;
+}
+
+// жалоба на ожидание: что сказал клиент (дословно), сколько ждал, причина
+function VWaitCard({c,openPoint,hidePlace}){
+  const ev=useContext(VEv);
+  const P=c.place||{};
+  const open=()=>ev.open(c.rid);
+  const tags=[c.cause&&c.cause!=="не сказано"?c.cause_label:null].filter(Boolean);
+  return <article className="vr-case list" data-rid={c.rid}>
+    <div className="vr-meta">{!hidePlace&&<span className="vr-pl">{vPlace(P)}</span>}
+      {!hidePlace&&<span>{vCode(P)}{P.gosb?` · ГОСБ ${P.gosb}`:""}</span>}<span>{vDay(c.date)}</span></div>
+    <h3 className="vr-chead">{vWaitHead(c)}{c.minutes?<span className="vr-byword"> — по словам клиента</span>:null}</h3>
+    {tags.length>0&&<div className="vr-tags">{tags.map((t,i)=><span key={i} className="vr-tag">{t}</span>)}</div>}
+    {c.quote&&<blockquote className="vr-q sm">«{c.quote}»</blockquote>}
+    <div className="vr-ok"><VCheck/>дословно{c.src?` · ${vSrc(c.src)}`:""}{c.date?`, ${vDay(c.date)}`:""}
+      {c.url&&<> · <a className="vlink" href={c.url} target="_blank" rel="noopener noreferrer" title={`Страница отзывов отделения на ${vSrc(c.src)} — отзыв от ${c.date||""}`}>оригинал ↗</a></>}</div>
+    <div className="vr-acts">
+      <button className="btn btn-ghost vsm" onClick={open}>Отзыв целиком</button>
+      {!hidePlace&&c.point&&<button className="btn btn-ghost vsm" onClick={()=>openPoint(c.point)}>Досье отделения →</button>}
+      <VCaseBtn item={vCaseWait(c)} src="vsp_wait"/>
+    </div>
+  </article>;
+}
+
+// таблица отделений: сортировка по столбцам, отметка «значимо чаще сети»
+function VWaitBranches({f,openPoint,net}){
+  const[sort,setSort]=useState(()=>vLS("vsp_wsort","n"));const[items,setItems]=useState([]);const[busy,setBusy]=useState(false);
+  const qs=vWaitQS(f,{sort});
+  const d=useVFetch("/api/vsp/wait/branches?"+qs+"&limit=40");
+  const gen=useRef(0);
+  useEffect(()=>{gen.current++;setItems(d&&!d.err?d.items:[]);},[d]);
+  const setS=k=>{setSort(k);vLSset("vsp_wsort",k);};
+  const more=()=>{if(busy)return;const g=gen.current;setBusy(true);
+    apiFetch(`/api/vsp/wait/branches?${qs}&limit=40&offset=${items.length}`).then(x=>{if(g===gen.current)setItems(a=>[...a,...x.items]);}).catch(()=>{}).finally(()=>setBusy(false));};
+  if(!d)return <Skel h={320}/>;
+  if(d.err)return <ErrState msg="Таблица не загрузилась"/>;
+  if(!d.total)return <div className="vempty">Отделений с такими жалобами нет.</div>;
+  const th=(k,l,t)=><th className="num" aria-sort={sort===k?"descending":"none"} title={t}>
+    <button className={"vth"+(sort===k?" on":"")} onClick={()=>setS(k)}>{l}{sort===k?" ↓":""}</button></th>;
+  const filtered=f.cause||f.long||f.left;
+  return <>
+    <div className="tbl-wrap"><table className="vtbl vrank vr-wtbl"><thead><tr><th>Отделение</th>
+      {th("n","Жалоб",filtered?"Жалоб на ожидание с выбранными условиями":"Жалоб на долгое ожидание за период")}
+      {th("share","Доля",`Доля жалоб на ожидание среди всех жалоб отделения за период. По сети — ${vShare(net)}`)}
+      <th className="num" title="Во сколько раз доля отделения выше доли по сети. Красным — так много случайно не бывает (с поправкой на число отделений)">К сети</th>
+      {th("long","Час и дольше","Сколько клиентов назвали время от часа")}{th("left","Ушли","Ушли, не дождавшись, или их так и не обслужили")}
+      <th className="num" title="Середина названных клиентами времён ожидания">Обычно ждали</th><th>Чаще всего</th>
+      {th("last","Последняя","Дата последней жалобы на ожидание")}<th/></tr></thead>
+      <tbody>{items.map(r=><tr key={r.point} className="click" tabIndex={0} onClick={()=>openPoint(r.point)} onKeyDown={vEnter(()=>openPoint(r.point))}>
+        <td><div className="vrow-h"><b>{vPlace(r)}</b></div>
+          <div className="note">{vCode(r)}{r.gosb?` · ГОСБ ${r.gosb}`:""}</div></td>
+        <td className="num"><b>{vN(r.n)}</b>{r.n_all!=null&&r.n_all!==r.n?<span className="note"> из {vN(r.n_all)}</span>:null}</td>
+        <td className="num" title={`${vN(r.n_all!=null?r.n_all:r.n)} из ${vN(r.neg)} жалоб отделения`}>{vShare(r.share)}</td>
+        <td className="num">{r.ratio==null?"—":<span className={r.sig?"vr-acc":""} title={r.sig?"Значимо чаще, чем по сети":undefined}>×{vX(r.ratio)}</span>}</td>
+        <td className="num">{r.long||"—"}</td><td className="num">{r.left||"—"}</td>
+        <td className="num">{r.median_label||"—"}</td>
+        <td className="vr-kindc">{r.cause&&r.cause!=="не сказано"?r.cause_label:<span className="note">—</span>}</td>
+        <td className="num">{vDay(r.last)}</td>
+        <td><VCaseBtn item={vCasePoint(r,`${vN(r.n_all!=null?r.n_all:r.n)} ${vPl(r.n_all!=null?r.n_all:r.n,"жалоба","жалобы","жалоб")} на долгое ожидание ${V_WPER_IN[f.wper]||""} — ${vShare(r.share)} жалоб отделения, по сети ${vShare(net)}`)} src="vsp_wait_point" icon/></td></tr>)}</tbody></table></div>
+    {items.length<d.total&&<div style={{textAlign:"center",margin:"10px 0"}}><button className="btn btn-ghost" disabled={busy} onClick={more}>
+      {busy?"Загружаю…":`Показать ещё (показано ${vN(items.length)} из ${vN(d.total)})`}</button></div>}
+    <p className="vr-fine" style={{marginTop:10}}>У крупного отделения жалоб больше просто потому, что больше клиентов. Поэтому рядом с числом — доля жалоб на ожидание среди всех жалоб отделения и её отношение к доле по сети.
+      Красным отмечены отделения, где доля выше сети настолько, что случайно так не бывает{d.sig?` — их ${vN(d.sig)}`:""}.</p>
+  </>;
+}
+
+function VWaitGosb({gosbs,f,setF}){
+  const[all,setAll]=useState(false);
+  if(!(gosbs||[]).length)return <div className="vempty">Нет данных по ГОСБ.</div>;
+  const rows=all?gosbs:gosbs.slice(0,12);
+  return <><div className="tbl-wrap"><table className="vtbl vr-wtbl"><thead><tr><th>ГОСБ</th><th>Регион</th>
+      <th className="num" title="Жалоб на долгое ожидание за период">Жалоб на ожидание</th><th className="num" title="Все жалобы на отделения ГОСБ за период">Жалоб всего</th>
+      <th className="num">Доля</th><th className="num" title="Во сколько раз доля выше доли по сети. Красным — так много случайно не бывает">К сети</th>
+      <th className="num">Отделений</th></tr></thead>
+    <tbody>{rows.map(g=><tr key={g.gosb} className={"click"+(f.gosb===g.gosb?" on":"")} tabIndex={0} onClick={()=>setF({subject:g.subject||f.subject,gosb:f.gosb===g.gosb?"":g.gosb})}
+      onKeyDown={vEnter(()=>setF({subject:g.subject||f.subject,gosb:f.gosb===g.gosb?"":g.gosb}))}>
+      <td><b>{g.gosb}</b></td><td>{vRegionShort(g.subject_name)||"—"}</td><td className="num"><b>{vN(g.n)}</b></td><td className="num">{vN(g.neg)}</td>
+      <td className="num">{g.few?"—":vShare(g.share)}</td>
+      <td className="num">{g.few?<span className="note">мало жалоб</span>:<span className={g.sig?"vr-acc":""}>×{vX(g.ratio)}</span>}</td>
+      <td className="num">{vN(g.points)}</td></tr>)}</tbody></table></div>
+    {gosbs.length>12&&<button className="vmore" style={{marginTop:10}} onClick={()=>setAll(!all)}>{all?"Свернуть":`Все ГОСБ (${gosbs.length})`}</button>}</>;
+}
+
+function VWaitList({f,openPoint,point}){
+  const[sort,setSort]=useState("new");const[q,setQ]=useState("");const[qd,setQd]=useState("");
+  const[items,setItems]=useState([]);const[busy,setBusy]=useState(false);
+  useEffect(()=>{const t=setTimeout(()=>setQd(q.trim()),350);return()=>clearTimeout(t);},[q]);
+  const qs=point?vQS({point,per:"all",q:qd,sort}):vWaitQS(f,{q:qd,sort});
+  const d=useVFetch("/api/vsp/wait/list?"+qs+"&limit=20");
+  const gen=useRef(0);
+  useEffect(()=>{gen.current++;setItems(d&&!d.err?d.items:[]);},[d]);
+  const more=()=>{if(busy)return;const g=gen.current;setBusy(true);
+    apiFetch(`/api/vsp/wait/list?${qs}&limit=20&offset=${items.length}`).then(x=>{if(g===gen.current)setItems(a=>[...a,...x.items]);}).catch(()=>{}).finally(()=>setBusy(false));};
+  const S=[["new","Сначала новые"],["long","Сначала долгие"]];
+  return <div className="vr-stories">
+    <div className="vr-tools">
+      <label className="vin" style={{flex:"1 1 260px"}}><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Слова клиента: талон, касса, одно окно" aria-label="Поиск по жалобам на ожидание"/></label>
+      <div className="vr-seg2" role="group" aria-label="Порядок">{S.map(([k,l])=><button key={k} className={sort===k?"on":""} aria-pressed={sort===k} onClick={()=>setSort(k)}>{l}</button>)}</div>
+      <a className="btn btn-ghost vsm" href={"/api/vsp/export/wait.xlsx?"+qs} download>Выгрузить в Excel</a></div>
+    {!d?<Skel h={320} style={{marginTop:16}}/>:d.err?<ErrState msg="Жалобы не загрузились"/>:<>
+      <p className="note" style={{margin:"14px 0 12px"}}><b className="vr-sum-n sm">{vN(d.total)}</b> {vPl(d.total,"жалоба","жалобы","жалоб")}{point?" на ожидание в этом отделении за всё прочитанное время":` в ${vN(d.points)} ${vPl(d.points,"отделении","отделениях","отделениях")}`}</p>
+      {items.length?<div className="vr-list">{items.map(c=><VWaitCard key={c.rid} c={c} openPoint={openPoint} hidePlace={!!point}/>)}</div>
+        :<div className="vempty">Жалоб с такими условиями нет.</div>}
+      {items.length<d.total&&<div style={{textAlign:"center",marginTop:12}}><button className="btn btn-ghost" disabled={busy} onClick={more}>{busy?"Загружаю…":`Показать ещё (осталось ${vN(d.total-items.length)})`}</button></div>}
+    </>}
+  </div>;
+}
+
+function VWait({f,setF,openPoint,regions,gosbs}){
+  const[view,setView]=useState(()=>vLS("vsp_waitview","branches"));
+  const d=useVFetch("/api/vsp/wait?"+vWaitQS(f));
+  const[last,setLast]=useState(null);   // при смене фильтра показываем прежние числа приглушённо, а не скелет
+  useEffect(()=>{if(d&&!d.err)setLast(d);},[d]);
+  if(d&&d.err&&!last)return <ErrState msg="Раздел «Ожидание» не загрузился"/>;
+  const D=d&&!d.err?d:last;
+  if(!D)return <div><Skel h={46}/><Skel h={22} style={{marginTop:14,width:"70%"}}/><Skel h={320} style={{marginTop:24}}/></div>;
+  const k=D.kpi,H=D.headline||{},pr=D.progress||{};
+  const setV=v=>{setView(v);vLSset("vsp_waitview",v);};
+  const per=V_WPER_IN[D.per]||"";
+  const empty=!pr.read;
+  const prevTxt=k.share_prev!=null&&k.share!=null&&!D.filtered?(Math.abs(k.share-k.share_prev)<0.015?"как годом раньше":`годом раньше — ${vShare(k.share_prev)}`):(D.scoped&&!D.filtered?`по сети — ${vShare(k.net_share)}`:"");
+  const kpis=[
+    [vN(k.n),`${vPl(k.n||0,"жалоба","жалобы","жалоб")} на долгое ожидание`,per,null,false],
+    [D.filtered?"—":vShare(k.share),"всех жалоб на отделения",D.filtered?"считается без фильтров причины и времени":prevTxt,null,false],
+    [vN(k.points),vPl(k.points||0,"отделение","отделения","отделений"),k.sig?`в ${vN(k.sig)} — значимо чаще сети`:"с такими жалобами",()=>{setV("branches");try{document.getElementById("vr-wait-where").scrollIntoView({behavior:vReduced()?"auto":"smooth"});}catch(e){}},false],
+    [vN(k.long),"ждали час и дольше","по словам клиентов",()=>setF({long:!f.long}),f.long],
+    [vN(k.left),"ушли, не дождавшись",k.median_label?`обычно ждут ${k.median_label}`:"",()=>setF({left:!f.left}),f.left]];
+  const sigRegs=(D.regions||[]).filter(r=>r.sig).sort((a,b)=>(b.ratio||0)-(a.ratio||0));
+  const hexHint=r=>!r.neg?`${r.name} — жалоб нет`:r.few?`${r.name} — мало жалоб за период (${vN(r.neg)})`:
+    `${r.name}: ${vN(r.n)} ${vPl(r.n,"жалоба","жалобы","жалоб")} на ожидание из ${vN(r.neg)} — ${vShare(r.share)}, по сети ${vShare(k.net_share)}${r.ratio?` (×${vX(r.ratio)})`:""}${r.sig?", так много случайно не бывает":""}`;
+  return <div className={"vr-waitp"+(d?"":" vr-stale")} aria-busy={!d}>
+    <div className="vr-wh">
+      <div className="eyebrow">Долгое ожидание · жалобы клиентов на очереди в отделениях</div>
+      <h2 className="vr-display">{H.text}{H.accent?<> — <em>{H.accent}</em></>:null}</h2>
+      <p className="vr-lede">Здесь не поступки сотрудников, а доступность обслуживания: сколько клиенты ждут, по их словам, почему и ушли ли без услуги. Каждую жалобу читает модель, слова клиента — дословно из отзыва.</p>
+    </div>
+    {!empty&&<div className="vr-kpis solo" role="group" aria-label={`Показатели ${per}`}>
+      {kpis.map(([v,l,sub,fn,on],i)=>fn?<button key={i} className={"vr-kpi"+(on?" on":"")} aria-pressed={i>2?on:undefined} onClick={fn}><span className="vr-kpi-v">{v}</span><span className="vr-kpi-l">{l}</span>{sub&&<span className="vr-kpi-d">{sub}</span>}</button>
+        :<div key={i} className="vr-kpi"><span className="vr-kpi-v">{v}</span><span className="vr-kpi-l">{l}</span>{sub&&<span className="vr-kpi-d">{sub}</span>}</div>)}</div>}
+    {pr.backlog&&<div className="vr-benign" role="status"><b>Модель дочитывает жалобы за прошлые годы.</b> Осталось {vN(pr.waiting)}: читаются от свежих к старым, поэтому числа за последние месяцы уже полные, а за 2024 год ещё растут.</div>}
+    {empty?<div className="vempty" style={{marginTop:24}}>Модель ещё не прочитала жалобы на ожидание — раздел заполнится в течение нескольких часов.</div>:<>
+    <div style={{marginTop:26}}><VWaitFilters f={f} setF={setF} regions={regions} gosbs={gosbs} causes={D.causes}/></div>
+    <div className="vr-wait-grid">
+      <div className="vr-card"><h4 className="vr-h4">По месяцам</h4>
+        <VWaitMonths months={D.months} since={D.since_month}/>
+        <p className="vr-fine" style={{marginTop:8}}>Столбец — месяц, число сверху — жалобы на ожидание{D.scoped?" в выбранной территории":""}. Тёмные — выбранный период; заштрихованный — текущий месяц, он ещё не закончился.</p></div>
+      <div className="vr-card"><h4 className="vr-h4">Почему ждут, по словам клиентов</h4>
+        <VBarList items={(D.causes||[]).filter(c=>c.key!=="не сказано").map(c=>({label:c.label,n:c.n,key:c.key}))} onPick={x=>setF({cause:f.cause===x.key?"":x.key})}/>
+        <p className="vr-fine" style={{margin:"10px 0 18px"}}>Нажмите на причину — раздел покажет только её.{(D.causes||[]).some(c=>c.key==="не сказано")?` Причину не назвали в ${vN((D.causes.find(c=>c.key==="не сказано")||{}).n)} ${vPl((D.causes.find(c=>c.key==="не сказано")||{}).n,"жалобе","жалобах","жалобах")}.`:""}</p>
+        <h4 className="vr-h4">Сколько ждали</h4>
+        <VBarList items={(D.durations||[]).map(b=>({label:b.label[0].toUpperCase()+b.label.slice(1),n:b.n}))}/></div>
+    </div>
+
+    <section className="vr-sec" id="vr-wait-where">
+      <div className="vr-sech"><div><h3>Где жалуются чаще</h3>
+        <p className="note">{sigRegs.length?<>Заметно чаще сети: {sigRegs.slice(0,5).map(r=>`${vRegionShort(r.name)} (×${vX(r.ratio)})`).join(", ")}. </>:null}Сравниваем долю жалоб на ожидание среди всех жалоб — так рост числа отзывов и крупные отделения не искажают картину.</p></div>
+        <div className="vr-seg2" role="group" aria-label="Вид">{[["branches","Отделения"],["gosb","ГОСБ"],["map","Карта"]].map(([v,l])=><button key={v} className={view===v?"on":""} aria-pressed={view===v} onClick={()=>setV(v)}>{l}</button>)}</div>
+        <a className="btn btn-ghost vsm" href={"/api/vsp/export/wait.xlsx?"+vWaitQS(f)} download title="Жалобы и отделения с учётом фильтров">Выгрузить в Excel</a></div>
+      {view==="map"?<div className="vr-card">
+          <div className="vr-maphead"><span className="note">Россия{f.subject?<> › <b>{(regions.find(r=>r.code===f.subject)||{}).name||f.subject}</b> <button className="vr-x sm" aria-label="Снять регион" onClick={()=>setF({subject:"",gosb:""})}>✕</button></>:null}</span></div>
+          <VHexMap regions={(D.regions||[]).map(r=>({...r,points:r.neg?1:0}))} picked={f.subject} onPick={c=>setF({subject:c,gosb:""})} hint={hexHint} level={vWaitLevel}/>
+          <div className="vr-legend">
+            <span className="vr-ramp"><i className="low"/><i className="avg"/><i className="mid"/><i className="hi"/>реже, чем по сети → как по сети → на 10–25 % чаще → на 25 % и больше</span>
+            <span><i className="vr-sw sig"/>чаще сети — и так много случайно не бывает</span>
+            <span><i className="vr-sw few"/>меньше {D.few_below} жалоб за период</span></div></div>
+        :view==="gosb"?<VWaitGosb gosbs={D.gosbs} f={f} setF={setF}/>
+        :<VWaitBranches f={f} openPoint={openPoint} net={k.net_share}/>}
+    </section>
+
+    <section className="vr-sec">
+      <div className="vr-sech"><div><h3>Что пишут клиенты</h3><p className="note">Жалобы на ожидание с учётом фильтров. Слова клиента — фрагмент отзыва буква в букву.</p></div></div>
+      <VWaitList f={f} openPoint={openPoint}/>
+    </section>
+    </>}
+    <p className="vr-fine" style={{marginTop:36}}>Как считается: среди жалоб (оценка 1–3) с {vDay(pr.since)} слова «очередь», «ждал», «талон», «одно окно» и похожие находят кандидатов, каждого читает модель и отвечает, жалоба ли это на ожидание в отделении, сколько клиент ждал, почему и ушёл ли. Прочитано {vN(pr.read)}.
+      Проверено вручную на двух выборках (280 жалоб): из отмеченных моделью по делу 96 %, из настоящих жалоб на ожидание найдено около 94 %. Очереди к банкоматам, сроки по продуктам и ожидание на линии сюда не входят. Время — по словам клиентов, а не по данным электронной очереди.</p>
+  </div>;
+}
+
+// блок досье: долгое ожидание в этом отделении
+function VWaitDossier({w,point,openPoint}){
+  const[all,setAll]=useState(false);
+  if(!w||!w.n_all)return null;
+  const facts=[w.long?`час и дольше ждали ${vN(w.long)}`:null,w.left?`ушли, не дождавшись, — ${vN(w.left)}`:null,w.median_label?`обычно ждут ${w.median_label}`:null,w.cause_label&&w.cause_label!=="Причина не названа"?`чаще всего — ${w.cause_label.toLowerCase()}`:null].filter(Boolean);
+  return <section className="sec" data-tour="dwait"><h3>Долгое ожидание</h3>
+    {w.n?<p style={{maxWidth:"80ch"}}>За год — <b>{vN(w.n)} {vPl(w.n,"жалоба","жалобы","жалоб")}</b> на долгое ожидание{w.share!=null?<>: {vShare(w.share)} всех жалоб отделения, по сети — {vShare(w.net_share)}</>:null}.
+        {w.sig?<> <span className="vr-acc">Значимо чаще, чем по сети.</span></>:w.ratio!=null&&w.ratio>=1.5?" Выше сети, но при таком числе жалоб это может быть случайностью.":""}</p>
+      :<p className="note">За последний год жалоб на ожидание нет; раньше — {vN(w.n_all)}.</p>}
+    {facts.length>0&&<p className="note" style={{marginTop:6}}>По словам клиентов: {facts.join(" · ")}.</p>}
+    {all?<div style={{marginTop:12}}><VWaitList f={{}} point={point} openPoint={openPoint}/></div>
+      :<><div className="vr-list" style={{marginTop:12}}>{(w.items||[]).map(c=><VWaitCard key={c.rid} c={c} openPoint={openPoint} hidePlace/>)}</div>
+        {w.n_all>(w.items||[]).length&&<button className="vmore" style={{marginTop:10}} onClick={()=>setAll(true)}>Все жалобы на ожидание этого отделения ({vN(w.n_all)})</button>}</>}
+  </section>;
+}
+
+// ── подписка на ежедневное письмо по разделу (web/vsp_mail.py) ───────────────
+const VMailIc=()=><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3.5 7.5l8.5 6 8.5-6"/></svg>;
+function VMailLayer({depth,onClose,regions,off,onState}){
+  const[st,setSt]=useState(null);const[err,setErr]=useState("");const[busy,setBusy]=useState(false);const[sent,setSent]=useState("");
+  const[unsub,setUnsub]=useState(false);const[pick,setPick]=useState(false);
+  const trk=(step,x)=>{try{trkEvent({kind:"ui",page:"vsp",payload:{action:"vsp_mail",step,...(x||{})}});}catch(e){}};
+  const apply=x=>{setSt(x);setErr("");onState&&onState(!!x.on);};
+  useEffect(()=>{let alive=true;
+    (off?apiPut("/api/vsp/mail",{on:false}).then(x=>{if(alive){setUnsub(true);trk("unsub_link");}return x;}):apiFetch("/api/vsp/mail"))
+      .then(x=>{if(alive){apply(x);setPick((x.subjects||[]).length>0);}}).catch(()=>{if(alive)setErr("Настройка не загрузилась. Закройте окно и откройте снова.");});
+    return()=>{alive=false;};},[]); // eslint-disable-line
+  const save=(patch,step)=>{const prev=st;setSt({...st,...patch});setSent("");
+    apiPut("/api/vsp/mail",patch).then(x=>{apply(x);if(step)trk(step);}).catch(()=>{setSt(prev);setErr("Не сохранилось — попробуйте ещё раз.");});};
+  const test=()=>{setBusy(true);setErr("");setSent("");
+    fetch("/api/vsp/mail/test",{method:"POST"}).then(r=>r.json().then(j=>({ok:r.ok,j}))).then(({ok,j})=>{
+      if(ok){setSent(`Пример отправлен на ${j.to}. Письмо идёт 2–5 минут.`);trk("test");}else setErr(j.detail||"Письмо не ушло — попробуйте ещё раз через минуту.");})
+      .catch(()=>setErr("Письмо не ушло — попробуйте ещё раз через минуту.")).finally(()=>setBusy(false));};
+  const openBell=()=>{try{window.dispatchEvent(new Event("al-open-mail"));}catch(e){}};
+  const subs=st?st.subjects||[]:[];
+  const rname=c=>(regions.find(r=>r.code===c)||{}).name||c;
+  const rest=regions.filter(r=>!subs.includes(r.code));
+  return <VLayer depth={depth} onClose={onClose} width={620} label="Подписка" title="Письма по разделу">
+    {!st&&!err?<Skel h={320}/>:!st?<ErrState msg={err}/>:<div className="vr-mail">
+      {unsub&&<div className="vr-benign vr-mail-off" role="status"><span><b>Письма по разделу отключены.</b> Больше они приходить не будут.</span>
+        <button className="btn btn-ghost vsm" onClick={()=>{setUnsub(false);save({on:true},"resub");}}>Вернуть</button></div>}
+      <div className="vr-mail-main">
+        <div><b>Ежедневное письмо</b>
+          <p className="note">По будням после {st.hour}:00 по Москве, в понедельник — за выходные. Приходит, только если есть новое.</p></div>
+        <button type="button" role="switch" aria-checked={!!st.on} aria-label="Ежедневное письмо по разделу" className="vr-switch" disabled={!st.email}
+          onClick={()=>{setUnsub(false);save({on:!st.on},st.on?"off":"on");}}/></div>
+      {!st.email?<div className="vr-benign"><b>Почта не подключена.</b> Укажите адрес в колокольчике («Что присылать» → «На почту») и подтвердите его кодом — после этого письмо можно будет включить здесь.
+          <div className="vr-acts" style={{marginTop:10}}><button className="btn btn-primary vsm" onClick={openBell}>Подключить почту</button></div></div>
+        :<dl className="vdl vr-mail-dl">
+          <dt>Куда</dt><dd>{st.email} <span className="vr-flag">{st.corporate?"Sigma — письмо целиком":"не корпоративная — только числа"}</span> <button className="vlink" onClick={openBell}>изменить</button>
+            {!st.active&&<div className="note">Рассылка писем сейчас приостановлена — письмо начнёт приходить, когда её включат.</div>}</dd>
+          {st.last&&<><dt>Последнее письмо</dt><dd>{vDay(st.last)}</dd></>}
+        </dl>}
+      <section><h3 className="vr-mail-h">Что присылать</h3>
+        <label className="vr-mail-opt"><input type="checkbox" checked={!!st.heavy} onChange={e=>save({heavy:e.target.checked},"what")}/>
+          <span><b>Тяжёлые истории</b><span className="note">До пяти самых важных за сутки и способы действия, которые появились или начали расти</span></span></label>
+        <label className="vr-mail-opt"><input type="checkbox" checked={!!st.wait} onChange={e=>save({wait:e.target.checked},"what")}/>
+          <span><b>Долгое ожидание</b><span className="note">Сколько новых жалоб на очереди, кто ждал час и дольше, отделения, где жалоб несколько</span></span></label>
+        {!st.heavy&&!st.wait&&<p className="note">Не выбрано ничего — письмо приходить не будет.</p>}</section>
+      <section><h3 className="vr-mail-h">По каким регионам</h3>
+        <div className="vr-seg2" role="group" aria-label="Регионы письма">
+          <button className={!pick?"on":""} aria-pressed={!pick} onClick={()=>{setPick(false);if(subs.length)save({subjects:[]},"scope");}}>Вся сеть</button>
+          <button className={pick?"on":""} aria-pressed={pick} onClick={()=>setPick(true)}>Выбранные регионы</button></div>
+        {pick&&<div className="vr-mail-regs">
+          {subs.map(c=><span key={c} className="vr-fchip">{rname(c)}<button aria-label={`Убрать: ${rname(c)}`} onClick={()=>save({subjects:subs.filter(x=>x!==c)},"scope")}>✕</button></span>)}
+          <VSelect ariaLabel="Добавить регион" value="" onChange={v=>v&&save({subjects:[...subs,v]},"scope")} options={[{v:"",l:subs.length?"Добавить регион":"Выберите регион"},...rest.map(r=>({v:r.code,l:r.name}))]}/>
+          {!subs.length&&<p className="note" style={{flexBasis:"100%"}}>Пока регион не выбран, письмо приходит по всей сети.</p>}</div>}</section>
+      <div className="vr-acts"><button className="btn btn-ghost" disabled={busy||!st.email} onClick={test}>{busy?"Отправляю…":"Прислать пример сейчас"}</button>
+        {sent&&<span className="note" role="status">{sent}</span>}{err&&<span className="vr-mail-err" role="alert">{err}</span>}</div>
+      <p className="vr-fine">Письмо получают только те, кому открыт раздел. На некорпоративную почту приходят числа и ссылка — без адресов отделений и слов клиентов.
+        Отключить можно здесь, в колокольчике или ссылкой «Отписаться» внизу каждого письма.</p>
+    </div>}
+  </VLayer>;
+}
+
 function VspMethod2(){
   return <div className="vdos vr-dos">
     <section className="sec" style={{marginTop:0}}><h3>Что где</h3><ul className="facts">
@@ -12453,9 +12783,11 @@ function VspMethod2(){
       <li><span><b>Схемы</b> — способы действия: что растёт, что новое, что ушло; очаги — города и ГОСБ, где один способ повторяется в нескольких отделениях.</span></li>
       <li><span><b>Где проверить</b> — карта «больше ожидаемого» по всем историям или по одному способу, ГОСБ и три полки: отделения, которые выделяются наверняка; отделения, где виден один почерк; отдельные тяжёлые случаи.</span></li>
       <li><span><b>Истории</b> — все истории клиентов с фильтрами и выгрузкой; вид «Изнутри» — где, по словам клиента, выгода досталась сотруднику или третьим лицам.</span></li>
+      <li><span><b>Ожидание</b> — жалобы на очереди и долгое ожидание: сколько их, где жалуются чаще сети, сколько ждут и почему — по словам клиентов.</span></li>
+      <li><span><b>Письма на почту</b> — кнопка вверху справа: ежедневное письмо о новом за сутки, по всей сети или по выбранным регионам.</span></li>
       <li><span><b>Слои</b> — случай, досье, способ действия и очаг открываются поверх раздела, у каждого своя ссылка. «Назад» и Esc закрывают слой.</span></li></ul></section>
     <section className="sec"><h3>Что ищем</h3><p style={{maxWidth:"80ch"}}>Не отдельные жалобы на навязывание, а массовое: один и тот же приём у многих клиентов, в нескольких отделениях одного города, с выгодой для сотрудника.
-      Жалобы на банк в целом, тарифы, очереди и приложение сюда не попадают — это «Аудит отзывов».</p></section>
+      Жалобы на банк в целом, тарифы и приложение сюда не попадают — это «Аудит отзывов». Очереди — отдельный раздел «Ожидание»: это не поступок сотрудника, а доступность обслуживания, и в истории, схемы и очаги они не входят.</p></section>
     <section className="sec"><h3>Кто читает и как проверить</h3><ul className="facts">
       <li><span>Каждый отзыв читает модель в три шага: отбирает истории; пишет карточку — что произошло, тяжесть, чья вина, дословная цитата; тяжёлые истории разбирает подробно — тип, кому выгода, что сделал сотрудник, пишет ли клиент, что случай не единичный, произошло ли это в этом отделении.</span></li>
       <li><span>Узкие «почерки» внутри типа модель находит сама по описаниям историй — закрытого списка нет. Вывод по отделению модель делает, прочитав все его тяжёлые истории разом.</span></li>
@@ -12472,6 +12804,11 @@ function VspMethod2(){
       <li><span><b>Вывод модели по отделению</b> — модель читает все тяжёлые истории отделения разом и пишет, что в них общего, что известно об исполнителях и что запросить. Это чтение, а не признак массовости: модель почти всегда находит общее, поэтому сам по себе её вывод отделение на полку не ставит.</span></li>
       <li><span>Везде учтено, что сравниваем сразу тысячи отделений и сотни территорий: без этой поправки «значимых» находок было бы много просто по случайности. Красным выделено только то, что прошло поправку.</span></li>
       <li><span>Тип истории модель ставит начиная с 2021 года, поэтому волны и очаги считаются с этой даты. У отделений в счёт идут все годы.</span></li></ul></section>
+    <section className="sec"><h3>Долгое ожидание: как считается</h3><ul className="facts">
+      <li><span><b>Отбор.</b> Среди жалоб (оценка 1–3) с 2024 года слова «очередь», «ждал», «талон», «одно окно» и похожие находят кандидатов. По одним словам считать нельзя — «взял талон, в окне нахамили» не про время, — поэтому каждого кандидата читает модель: жалоба ли это на ожидание в отделении, сколько клиент ждал, почему и ушёл ли без услуги.</span></li>
+      <li><span><b>Проверка.</b> На двух случайных выборках (280 жалоб), прочитанных вручную: из отмеченных моделью по делу 96 %, из настоящих жалоб на ожидание найдено около 94 %. Слова клиента показываются фрагментом самого отзыва, буква в букву.</span></li>
+      <li><span><b>Доля, а не число.</b> У крупного отделения жалоб больше просто из-за потока клиентов. Поэтому сравнивается доля жалоб на ожидание среди всех жалоб отделения с долей по остальной сети. Красным — отделения, ГОСБ и регионы, где доля выше настолько, что случайно так не бывает, с поправкой на число сравнений. Проверено на перемешанных данных: на ровном фоне отметок почти нет.</span></li>
+      <li><span><b>Чего здесь нет.</b> Очереди к банкоматам, сроки по продуктам, ожидание на телефонной линии. Время — по словам клиентов, а не по данным электронной очереди: раздел показывает, где спросить журнал очереди и число работающих окон.</span></li></ul></section>
     <section className="sec"><h3>Чего не видно</h3><ul className="facts">
       <li><span>Отзывы — слова клиентов, а не установленные факты. Суммы — по словам клиентов. Вкладка показывает, что запросить из данных банка, а не кто виноват.</span></li>
       <li><span>У большинства отделений отзывов мало — о них вкладка молчит. Пожилые пишут редко: за них часто пишут родственники.</span></li>
@@ -12728,6 +13065,8 @@ function VspPage(){
   const me=useMe();
   const[st,setSt]=useState(()=>vReadHash()||{s:"main",v:"all",f:{...V_F0},L:{}});
   const[wview,setWview]=useState(()=>vLS("vsp_wview","queue"));
+  const[mailOn,setMailOn]=useState(null);   // включено ли ежедневное письмо: до открытия окна — из профиля
+  const[waitSeen,setWaitSeen]=useState(()=>vLS("vsp_wait_seen",false));   // точка «новый раздел» — пока не открыли
   const meta=useVFetch("/api/vsp/meta");
   const map=useVFetch("/api/vsp/map");
   const stRef=useRef(st);stRef.current=st;
@@ -12766,6 +13105,10 @@ function VspPage(){
     close:()=>{setTour({phase:null,idx:0});const c=stRef.current;commit({...c,s:"main",L:{}},false);try{window.scrollTo({top:0,behavior:"smooth"});}catch(e){}},
     again:()=>{setTour({phase:"step",idx:0});tourTrk("again");}};
   const startTour=()=>{const c=stRef.current;if(Object.keys(c.L).length)commit({...c,L:{}},false);setTour({phase:"step",idx:0});tourTrk("start",{manual:1});};
+  useEffect(()=>{if(st.s==="wait"&&!waitSeen){setWaitSeen(true);vLSset("vsp_wait_seen",true);}
+    // на телефоне строка разделов листается по горизонтали: открытый раздел должен быть виден
+    try{const el=document.querySelector(".vr-tabs button.on"),box=el&&el.parentElement;
+      if(box&&box.scrollWidth>box.clientWidth)box.scrollLeft=Math.max(0,el.offsetLeft-box.offsetLeft-(box.clientWidth-el.offsetWidth)/2);}catch(e){}},[st.s]); // eslint-disable-line
   // Esc закрывает верхний слой
   const openL=Object.keys(st.L).filter(k=>V_LAYERS.includes(k)&&st.L[k]);
   useEffect(()=>{const k=e=>{if(e.key==="Escape"&&openL.length){e.preventDefault();closeLayer(openL[openL.length-1]);}};
@@ -12788,7 +13131,8 @@ function VspPage(){
   const openWave=id=>openLayer("scheme",id);
   const openHot=id=>openLayer("hot",id);
   const goFilter=x=>go("where",{...x});
-  const S=[["main","Главное"],["schemes","Схемы"],["where","Где проверить"],["stories","Истории"]];
+  const S=[["main","Главное"],["schemes","Схемы"],["where","Где проверить"],["stories","Истории"],["wait","Ожидание"]];
+  const mailIsOn=mailOn!=null?mailOn:!!(me&&me.prefs&&me.prefs.vsp_mail&&me.prefs.vsp_mail.on);
   const badge={schemes:nav.up,where:nav.listed};
   const depth=k=>openL.indexOf(k);
   const access=meta&&meta.access&&meta.access.owner?(meta.access.beta?`бета: вы и ещё ${meta.access.beta} ${vPl(meta.access.beta,"участник","участника","участников")}`:"раздел виден только вам"):"бета-версия раздела";
@@ -12797,7 +13141,7 @@ function VspPage(){
       <div className="vr-brand"><h1>Аудит сети ВСП</h1><span className="vr-beta" title={access}>бета</span></div>
       <div className="vr-tabs" role="tablist" aria-label="Разделы" data-tour="tabs">{S.map(([k,l])=><button key={k} role="tab" aria-selected={st.s===k} className={st.s===k?"on":""}
         onClick={()=>st.s!==k&&go(k)} title={k==="schemes"&&nav.up?`${nav.up} ${vPl(nav.up,"способ действия растёт или появился","способа действия растут или появились","способов действия растут или появились")}`:k==="where"&&nav.listed?`${nav.listed} ${vPl(nav.listed,"отделение","отделения","отделений")} на полках`:undefined}>
-        {l}{badge[k]?<span className="vr-tabn">{vN(badge[k])}</span>:null}</button>)}</div>
+        {l}{badge[k]?<span className="vr-tabn">{vN(badge[k])}</span>:null}{k==="wait"&&!waitSeen&&<i className="vr-tabnew" title="Новый раздел" aria-label="новый раздел"/>}</button>)}</div>
       <span className="sp"/>
       <div className="vr-htools" data-tour="tools"><VSearchBox openPoint={openPoint}/></div>
     </div>
@@ -12806,6 +13150,10 @@ function VspPage(){
         {meta&&meta.run?`Данные на ${vDay(meta.run.finished_at)}`:"Загружаю данные"}</span>
       {map&&!map.err&&map.points_total?<span>вся сеть: {vN(map.points_total)} {vPl(map.points_total,"отделение","отделения","отделений")}</span>:null}
       <span>{access}</span><span className="sp"/>
+      {/* подписка на ежедневное письмо: в строке под шапкой — в самой шапке с пятым разделом уже нет места на ноутбуке */}
+      <button className={"btn btn-ghost vsm vr-mailbtn"+(mailIsOn?" on":"")} onClick={()=>openLayer("mail","1")}
+        title={mailIsOn?"Ежедневное письмо по разделу включено — настроить или отключить":"Получать новое по разделу письмом раз в день: тяжёлые истории и жалобы на ожидание"}>
+        <VMailIc/>{mailIsOn?"Письма включены":"Письма на почту"}{mailIsOn&&<i aria-hidden="true"/>}</button>
       <button className="vlink" onClick={()=>openLayer("method","1")}>Как это работает</button>
       <button className="vlink" onClick={()=>startTour()}>Обучение</button></div>
     {meta&&!meta.err&&meta.source==="слова"&&<div className="vr-benign">Предварительно: истории найдены по словам, модель ещё читает отзывы.</div>}
@@ -12815,6 +13163,7 @@ function VspPage(){
         :st.s==="schemes"?<VSchemes f={st.f} regions={regions} openWave={openWave} openHot={openHot}/>
         :st.s==="where"?<><VFilterBar f={st.f} setF={setF} regions={regions} gosbs={gosbs} mode="where" kinds={kinds}/>
           <VWhere f={st.f} setF={setF} openPoint={openPoint} openHot={openHot} openWave={openWave} regions={regions} kinds={kinds} view={wview} setView={v=>{setWview(v);vLSset("vsp_wview",v);}}/></>
+        :st.s==="wait"?<VWait f={st.f} setF={setF} openPoint={openPoint} regions={regions} gosbs={gosbs}/>
         :<VStoriesHub f={st.f} setF={setF} openPoint={openPoint} regions={regions} gosbs={gosbs} kinds={kinds} view={st.v}
           setView={v=>commit({...stRef.current,v},false)}/>}
     </div>
@@ -12826,6 +13175,7 @@ function VspPage(){
     {st.L.method&&<VLayer depth={depth("method")} onClose={()=>closeLayer("method")} width={820} label="Справка" title="Как это работает">
       <div className="vt-again"><div><b>Обучение по вкладке</b><span className="note">{V_TOUR.length} шагов на живых данных, около семи минут</span></div>
         <button className="btn btn-primary vsm" onClick={()=>startTour()}>Пройти обучение →</button></div><VspMethod2/></VLayer>}
+    {st.L.mail&&<VMailLayer key={"ml"+st.L.mail} depth={depth("mail")} onClose={()=>closeLayer("mail")} regions={regions} off={st.L.mail==="off"} onState={setMailOn}/>}
     {st.L.story&&<VEvidenceLayer key={"e"+st.L.story} rid={st.L.story} depth={depth("story")} onClose={()=>closeLayer("story")} openPoint={openPoint} openWave={openWave}/>}
     <VTour ctl={tourCtl} ctx={{}} stats={meta&&!meta.err&&meta.progress?{read:meta.progress.screened,stories:meta.progress.relevant,points:map&&!map.err?map.points_total:null}:null}/>
   </div></VEv.Provider>;
@@ -18045,6 +18395,10 @@ function BxMail({me,onPrefs,onEmail,code0}){
   const[,setTick]=useState(0);
   const gotAt=useRef(Date.now());
   const autoDone=useRef(null);
+  // ежедневное письмо раздела «Аудит сети ВСП» (web/vsp_mail.py): строка есть только у тех, кому раздел открыт
+  const[vsp,setVsp]=useState(null);
+  useEffect(()=>{ if(!(me&&me.can_vsp)) return; let alive=true;
+    apiFetch("/api/vsp/mail").then(x=>{ if(alive) setVsp(!!x.on); }).catch(()=>{}); return ()=>{ alive=false; }; },[me&&me.can_vsp]); // eslint-disable-line
   const apply=(x)=>{ setSt(x); gotAt.current=Date.now(); setErr(""); onEmail&&onEmail(!!(x&&x.email&&x.active)); };
   const load=useCallback(()=>apiFetch("/api/me/email").then(x=>{ setLoadErr(false); apply(x); })
     .catch(()=>setLoadErr(true)),[]); // eslint-disable-line
@@ -18068,6 +18422,11 @@ function BxMail({me,onPrefs,onEmail,code0}){
   if(loadErr) return <div className="bx-mail"><div className="bx-err">Не загрузилось. <button className="bx-lnk" onClick={load}>Повторить</button></div></div>;
   if(!st) return <div className="bx-mail" style={{paddingTop:8}}><Skel h={34}/></div>;
   const prefs=(me&&me.prefs&&me.prefs.mail)||{};
+  const vspRow=me&&me.can_vsp&&vsp!==null&&<label className="bx-row bx-row-1" title="Новые тяжёлые истории и жалобы на долгое ожидание в отделениях — только если есть новое. Регионы и состав письма — в разделе «Аудит сети ВСП», кнопка «Письма»">
+    <span className="l"><b>Аудит сети ВСП</b><span>будни, 9:00</span></span>
+    <button type="button" role="switch" aria-checked={vsp} className="bx-sw" aria-label="Аудит сети ВСП: ежедневное письмо о новом за сутки"
+      onClick={e=>{ e.preventDefault(); const on=!vsp; setVsp(on); apiPut("/api/vsp/mail",{on}).then(x=>setVsp(!!x.on)).catch(()=>setVsp(!on)); }}/>
+  </label>;
   if(p&&!editing){
     const digits=code.replace(/\D/g,"");
     return <div className="bx-mail">
@@ -18106,6 +18465,7 @@ function BxMail({me,onPrefs,onEmail,code0}){
           onClick={e=>{ e.preventDefault(); const mail={...prefs,[k]:!on};
             onPrefs&&onPrefs(null,mail); apiPut("/api/me",{prefs:{mail}}).catch(()=>onPrefs&&onPrefs(null,prefs)); }}/>
       </label>; })}
+    {vspRow}
     {err&&<div className="bx-err" role="alert">{err}</div>}
   </div>;
   const a=addr.trim(), okA=BX_MAIL_RE.test(a), omega=okA&&bxCorp(a,st.blocked_domains);

@@ -23,6 +23,7 @@ WHAT: list[tuple[str, str, tuple[str, ...], tuple[str, ...]]] = [
     ("schemes", "Схемы", ("/api/vsp/waves", "/api/vsp/hotspots"), ()),
     ("where", "Где проверить", ("/api/vsp/home", "/api/vsp/table"), ()),
     ("stories", "Истории", ("/api/vsp/stories",), ()),
+    ("wait", "Ожидание", ("/api/vsp/wait", "/api/vsp/wait/list", "/api/vsp/wait/branches"), ()),
     ("dossier", "Досье отделения", (), ("/api/vsp/dossier/",)),
     ("wave", "Карточка способа действия", (), ("/api/vsp/waves/",)),
     ("hot", "Карточка очага", (), ("/api/vsp/hotspots/",)),

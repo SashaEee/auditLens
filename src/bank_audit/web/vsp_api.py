@@ -1858,6 +1858,16 @@ def _month_bars(point: str) -> list[dict]:
     return out
 
 
+def _wait_brief(point: str) -> dict | None:
+    """Блок «Долгое ожидание» досье (раздел «Ожидание», vsp_wait.py). Сбой блока досье не роняет."""
+    try:
+        from . import vsp_wait
+        return vsp_wait.point_brief(point)
+    except Exception:  # noqa: BLE001
+        log.warning("vsp: блок ожидания в досье не собран", exc_info=True)
+        return None
+
+
 @router.get("/dossier/{point}")
 def dossier(point: str, user: CurrentUser = Depends(get_current_user)):
     _need(user)
@@ -1895,7 +1905,7 @@ def dossier(point: str, user: CurrentUser = Depends(get_current_user)):
             "shelf_label": SHELF_LABEL.get(a.get("shelf")),
             "hot": [_hot_brief(h) for h in run["_hot_by_point"].get(point, [])],
             "stories": stories, "bars": bars, "kinds": _kind_facets(run, full),
-            "compare": compare, "peer_points": peer.get("points"),
+            "compare": compare, "peer_points": peer.get("points"), "wait": _wait_brief(point),
             "source": (run["network"].get("story_source")),
             "limits": ["Отзывы — слова клиентов, а не установленные факты",
                        "Пожилые клиенты пишут редко — за них часто пишут родственники",
@@ -2089,6 +2099,24 @@ INTENT_LABEL = {0: "ошибка или недоразумение", 1: "нея�
                 3: "действие за клиента или присвоение"}
 
 
+def _wait_of(cards_: dict, text: str) -> dict | None:
+    """Что модель ответила про ожидание в этом отзыве (этап «ожидание») — для слоя «Случай»."""
+    from ..vsp.signals import wait as W
+    card = cards_.get(W.VERSION)
+    if card is None or not card["relevant"]:
+        return None
+    try:
+        d = json.loads(card["data_json"] or "{}") or {}
+    except ValueError:
+        d = {}
+    m = W._minutes(d.get("minutes"))
+    cause = d.get("cause") if d.get("cause") in W.CAUSES else "не сказано"
+    return {"minutes": m, "minutes_label": (f"{m} мин" if m and m < 60 else
+                                           f"{m // 60} ч {m % 60} мин" if m and m % 60 else f"{m // 60} ч" if m else ""),
+            "cause": cause, "cause_label": W.CAUSES[cause], "left": bool(d.get("left")),
+            "quote": W.excerpt(text, d.get("quote")), "model": card["model"]}
+
+
 @router.get("/evidence/{rid:path}")
 def evidence(rid: str, user: CurrentUser = Depends(get_current_user)):
     _need(user)
@@ -2118,6 +2146,9 @@ def evidence(rid: str, user: CurrentUser = Depends(get_current_user)):
             data = {}
     quote = (story or {}).get("quote") or data.get("quote") or ""
     emp = (story or {}).get("employee") or (data.get("employee_name") or "").strip()
+    wait = _wait_of(cards_, text)
+    if wait and not quote:
+        quote = wait["quote"]                               # подсветить в отзыве место про ожидание
     low = text.lower().replace("ё", "е")
     pts = run["points"]
     checks = []
@@ -2131,6 +2162,9 @@ def evidence(rid: str, user: CurrentUser = Depends(get_current_user)):
         checks.append({"ok": True, "label": "Отбор и карточка — модель; цитату и имя проверяет код"})
     elif story:
         checks.append({"ok": None, "label": "Найдено по словам, модель этот отзыв ещё не разбирала"})
+    if wait:
+        checks.append({"ok": True, "label": "Жалоба на долгое ожидание: отзыв прочитала модель, слова клиента взяты "
+                                            "из текста отзыва"})
     if story and story.get("copy_of"):
         checks.append({"ok": None, "label": "Тот же клиент уже описал этот случай в другом отзыве об этом отделении — "
                                             "в подсчётах он один"})
@@ -2173,7 +2207,7 @@ def evidence(rid: str, user: CurrentUser = Depends(get_current_user)):
     waves_ = [{"id": _wave_id(k), "name": (_wave(run, k) or {}).get("name"),
                "status_label": (_wave(run, k) or {}).get("status_label")}
               for k in ((story or {}).get("_keys") or []) if _wave(run, k)]
-    return {"review": row, "quote": quote, "employee": emp or None,
+    return {"review": row, "quote": quote, "employee": emp or None, "wait": wait,
             "story": _story_out(story, pts) if story else None, "model": model, "detail": detail, "waves": waves_,
             "screen": {"relevant": bool(screen["relevant"]), "why": screen["summary"]} if screen is not None else None,
             "checks": checks, "place": _place(pts.get(pt)), "point": pt}
@@ -2736,3 +2770,7 @@ def export_reviews(point: Optional[str] = None, flag: Optional[str] = None, q: O
     xb = _xlsx("Аудит сети ВСП · отзывы", [("Отзывы", head, data, {"Текст"})])
     return _xlsx_response(xb, "ВСП_отзывы.xlsx")
 
+
+# разделы, которые живут в своих модулях и добавляют маршруты к маршрутам вкладки
+from . import vsp_wait  # noqa: E402,F401
+from . import vsp_mail  # noqa: E402,F401

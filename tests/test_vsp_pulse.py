@@ -18,6 +18,8 @@ def test_what_a_request_means():
     assert w("/api/vsp/dossier/b3203") == "dossier" and w("/api/vsp/evidence/yandex:abc") == "evidence"
     assert w("/api/vsp/export/stories.xlsx") == "export" and w("/api/vsp/stories") == "stories"
     assert w("/api/vsp/meta") is None and w("/api/vsp/dossier/") is None      # служебное и пустой адрес — не действие
+    assert w("/api/vsp/wait") == "wait" and w("/api/vsp/wait/list") == "wait" and w("/api/vsp/export/wait.xlsx") == "export"
+    assert w("/api/vsp/mail") is None       # настройку письма читает и колокольчик — это не «открыл раздел»
 
 
 def _setup(monkeypatch, with_owner=False):

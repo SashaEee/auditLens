@@ -415,6 +415,8 @@ COLLECTOR_MAX_AGE_S = 6 * 3600     # адаптер демона пересоз�
 # ── чтение моделью — шаг сборщика ──────────────────────────────────────────────
 LLM_EVERY_H = float(os.getenv("VSP_LLM_EVERY_H", "1"))            # как часто читать новые отзывы
 LLM_STEP_LIMIT = int(os.getenv("VSP_LLM_STEP_LIMIT", "3000"))     # отзывов на один шаг и этап
+WAIT_STEP_LIMIT = int(os.getenv("VSP_WAIT_STEP_LIMIT", "8000"))   # жалоб на ожидание за шаг: в день новых десятки,
+#                                                                   предел нужен только первому чтению накопленного
 
 
 def llm_enabled() -> bool:
@@ -451,6 +453,27 @@ async def _llm_read(store: Store) -> dict:
     if left > 0 and not any(waiting.values()):
         store.kv_set("llm:clean_at", done.isoformat())
     store.kv_set("llm:last", {"at": done.isoformat(), "result": res, "waiting": waiting})
+    res["wait"] = await _wait_read(store)
+    return res
+
+
+async def _wait_read(store: Store) -> dict:
+    """Жалобы на долгое ожидание: свой этап чтения для раздела «Ожидание». Отдельно от сторожа историй —
+    накопленное за прошлые годы читается не один час и не должно выглядеть как отставание чтения историй;
+    сбой этого этапа чтение историй не трогает."""
+    from .signals import wait
+    now = utcnow()
+    left = _llm_left(store, now)
+    try:
+        if left <= 0:
+            res: dict = {"skipped": "дневной потолок трат на модели исчерпан"}
+        else:
+            res = await wait.run(store, limit=WAIT_STEP_LIMIT, cap_rub=min(left, wait.CAP_RUB))
+            _llm_spend(store, now, res.get("rub") or 0)
+        store.kv_set("wait:last", {"at": utcnow().isoformat(), **res})
+    except Exception as e:  # noqa: BLE001
+        log.exception("ожидание: шаг чтения упал")
+        res = {"error": f"{type(e).__name__}: {e}"[:200]}
     return res
 
 
