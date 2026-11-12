@@ -46,6 +46,8 @@ def test_normalize_and_words():
                                                             "quote": None}
     assert w.normalize({"minutes": 30}) is None and w.normalize(None) is None
     assert w.normalize({"wait": True, "minutes": 100000})["minutes"] is None        # больше суток — не время ожидания
+    assert w.normalize({"wait": True, "minutes": 720})["minutes"] is None           # «полдня» — фигура речи
+    assert w.normalize({"wait": True, "minutes": 240})["minutes"] == 240            # «очередь по 4 часа» — буквально
     assert w.RX.search("Отвратительное невыносимо долгое ожидание") and w.RX.search("Простояли два часа")
     assert not w.RX.search("стоимость услуги высокая") and not w.RX.search(FRAUD)
     assert set(w.CAUSES) >= {"мало окон", "касса или проверка", "не сказано"}
