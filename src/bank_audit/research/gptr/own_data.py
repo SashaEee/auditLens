@@ -781,8 +781,10 @@ def _offer_line(r: dict, metric: str, unit: str) -> str:
     for key in ("rate_requires", "conditions"):
         if r.get(key):
             bits.append(f"условие: {str(r[key]).strip()[:220]}")
-    if r.get("valid_from"):
-        bits.append(f"данные на {_dm(r['valid_from'])}")
+    since = r.get("terms_since") or r.get("valid_from")
+    if since:
+        # не «данные на»: это день, с которого условия не менялись, а не день сбора
+        bits.append(f"условия действуют с {_dm(since)}")
     txt = f"{r.get('bank_name')}, «{(r.get('title') or '').strip()}»: " + "; ".join(bits) + "."
     if r.get("implausible_reason"):
         txt += f" Сомнение витрины: {r['implausible_reason']}."
@@ -802,6 +804,9 @@ def collect_market(od: OwnData, plan, scope: dict) -> None:
     mp = _j("market_position", category=cat)
     as_of = _dm(mp.get("as_of"))
     mo = _j("market_offers", category=cat, banks=others or None)
+    # дата факта — день витрины: предложение действует сегодня, даже если его
+    # условия не менялись с сентября (тот день остаётся в тексте строки)
+    data_day = str(mp.get("as_of") or mo.get("as_of") or "")[:10]
     # Лидеры рынка — всегда. Вопрос «выдели топ-5 и позицию Сбера» кондуктор
     # разворачивает в список банков (Альфа, ВТБ, ГПБ), и отчёт получал только их:
     # топ «по витрине» без Яндекс Банка с 16% (26.09).
@@ -822,7 +827,8 @@ def collect_market(od: OwnData, plan, scope: dict) -> None:
         if not offers:
             continue
         url = T.link_market(cat, name or None)
-        head = (f"Витрина «Рынок», категория «{label}», {name or 'лидеры рынка'}: "
+        head = (f"Витрина «Рынок»{f' на {as_of}' if as_of else ''}, категория «{label}», "
+                f"{name or 'лидеры рынка'}: "
                 f"предложений — {_n(d.get('offers_total'))}; ниже — {len(offers)} лучших по "
                 f"метрике «{metric}» "
                 f"({'меньше — лучше' if mo.get('lower_is_better') else 'больше — лучше'}), "
@@ -839,7 +845,7 @@ def collect_market(od: OwnData, plan, scope: dict) -> None:
             od.fact(subject=slug_for(r.get("bank_name") or name) or (r.get("bank_name") or name),
                     attribute=f"{metric} (витрина «Рынок»)",
                     value=_f(r.get("metric_value"), 2), unit=unit.strip(), verbatim=txt,
-                    url=url, stance="declared", date=str(r.get("valid_from") or "")[:10])
+                    url=url, stance="declared", date=data_day)
             od.market += 1
     cell = next((c for c in mp.get("cells") or [] if c.get("category") == cat), None)
     if not cell or not anchor:

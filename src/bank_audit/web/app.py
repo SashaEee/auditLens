@@ -2661,6 +2661,15 @@ _REQ_RU = {"payroll": "зарплатный проект", "insurance": "стр�
            "other": "особые условия"}
 
 
+def market_as_of():
+    """День, когда витрина «Рынок» обновлялась в последний раз.
+
+    У предложения своя дата — valid_from: с какого дня действуют его нынешние
+    условия. Это не дата сбора: вклад с неизменной ставкой носит её неделями.
+    Дата самой витрины — самая поздняя смена условий среди действующих строк."""
+    return scalar("SELECT max(valid_from) FROM product_terms WHERE valid_to IS NULL")
+
+
 @app.get("/api/market/verdict")
 def market_verdict(term: Optional[str] = None):
     """Ответ вкладки за НОЛЬ кликов: где мы отстаём и что с этим делать.
@@ -2833,7 +2842,7 @@ def market_verdict(term: Optional[str] = None):
     return {"term": term, "lead": lead, "cells": cells,
             "weak": [c["category"] for c in weak],
             "doubts": doubts,
-            "as_of": scalar("SELECT max(valid_from) FROM product_terms WHERE valid_to IS NULL")}
+            "as_of": market_as_of()}
 
 
 # Оффер с текущими условиями без фильтра is_active (досье и снимок для дела)

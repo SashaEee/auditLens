@@ -270,3 +270,28 @@ def test_loophole_query_noise_stripped():
     q = T._LH_NOISE.sub(" ", "какие лазейки и уязвимости есть в Сбере по кредитным картам")
     assert "лазейк" not in q and "уязвим" not in q and "Сбер" not in q
     assert "кредитным картам" in q
+
+
+def test_market_offers_name_the_two_dates(monkeypatch):
+    """Дата витрины и «условия действуют с» — разные даты и названы по смыслу.
+
+    12.11 помощник подписал «дата витрины 22.09.2026» день, с которого у вклада
+    не менялась ставка: аудитор прочёл бы это как «данным полтора месяца»."""
+    from types import SimpleNamespace
+    rows = [{"bank_name": "Сбербанк", "is_sber": True, "title": "Лучший %", "rate_pct": 13.5,
+             "term_months_min": 7, "term_months_max": 7, "valid_from": "2026-09-22 05:00:00",
+             "url": "https://www.sberbank.ru/x"}]
+    fake = SimpleNamespace(_market_rows=lambda *a: list(rows),
+                           market_as_of=lambda: "2026-11-12 05:40:00")
+    monkeypatch.setattr(T, "_web", lambda: fake)
+    res = json.loads(T.tool_market_offers("deposit", query="Лучший %"))
+    assert res["as_of"] == "2026-11-12"
+    assert "не дата сбора" in res["dates"] and "as_of" in res["dates"]
+    offer = res["top"][0]
+    assert offer["terms_since"] == "2026-09-22" and "valid_from" not in offer
+    assert res["sber_best"]["terms_since"] == "2026-09-22"
+    # дата витрины недоступна — предложения всё равно отдаются
+    fake.market_as_of = lambda: (_ for _ in ()).throw(RuntimeError("нет базы"))
+    res = json.loads(T.tool_market_offers("deposit", banks=["ВТБ"]))
+    assert "as_of" not in res or res["as_of"] is None
+    assert res["by_bank"]["Сбербанк"]["best"][0]["terms_since"] == "2026-09-22"

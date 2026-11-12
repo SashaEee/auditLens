@@ -412,6 +412,12 @@ def test_market_pages_are_facts_with_right_banks(fake_tools):
     by_subj = {f["subject"]: f for f in od.facts if "Ставка" in f["attribute"]}
     assert by_subj["vtb"]["value"] == "13,7" and by_subj["sberbank"]["value"] == "19"
     assert "срок 3 мес." in by_subj["sberbank"]["verbatim"]
+    # две даты не путаются: у строки — с какого дня действуют условия, у факта и
+    # страницы — день витрины (предложение действует сегодня, а не «на 05.09»)
+    assert "условия действуют с 05.09.2026" in by_subj["sberbank"]["verbatim"]
+    assert "данные на" not in by_subj["sberbank"]["verbatim"]
+    assert by_subj["sberbank"]["date"] == by_subj["vtb"]["date"] == "2026-09-25"
+    assert "Витрина «Рынок» на 25.09.2026" in od.pages[by_subj["vtb"]["url"]]
     assert all(f["stance"] == "declared" and f["verbatim"] in od.pages[f["url"]]
                for f in od.facts)
     place = od.pages["#market?cat=deposit&view=position"]

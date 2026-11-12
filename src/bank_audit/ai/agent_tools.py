@@ -567,7 +567,21 @@ _OFFER_KEYS = ("bank_name", "is_sber", "title", "segment", "sub_segment", "rate_
                "term_months_max", "amount_min", "amount_max", "fee_open", "fee_service",
                "grace_days", "cashback_pct", "capitalization", "replenishable", "early_withdraw",
                "conditions", "rate_requires", "attain", "free_kind", "implausible_reason",
-               "valid_from", "url")
+               "url")
+
+# Две даты, которые легко спутать. Помощник назвал «датой витрины 22.09» день,
+# с которого у вклада не менялась ставка, — аудитор прочёл это как «данным
+# полтора месяца» (12.11). Поэтому у предложения дата названа по смыслу, а дата
+# самой витрины отдаётся отдельным полем и объяснена словами.
+_OFFER_DATES = ("as_of — день последнего обновления витрины «Рынок»: предложения действуют "
+                "на эту дату, её и называй датой данных; terms_since у предложения — с "
+                "какого дня действуют его нынешние условия (числа с тех пор не менялись), "
+                "это не дата сбора данных")
+
+
+def _day(v) -> str | None:
+    s = str(v or "")[:10]
+    return s if len(s) == 10 else None
 
 
 def tool_market_offers(category: Category, banks: list[str] | None = None,
@@ -587,11 +601,18 @@ def tool_market_offers(category: Category, banks: list[str] | None = None,
         return rs
 
     def pack(r):
-        return {k: r.get(k) for k in _OFFER_KEYS} | {"metric_value": val(r)}
+        return {k: r.get(k) for k in _OFFER_KEYS} | {
+            "terms_since": _day(r.get("valid_from")), "metric_value": val(r)}
+
+    try:
+        as_of = _day(_web().market_as_of())
+    except Exception:  # noqa: BLE001 — дата справочная, предложения важнее
+        as_of = None
 
     res: dict = {"category": category, "label": meta["label"], "metric": meta["metric_label"],
                  "metric_unit": meta["metric_unit"].strip(), "lower_is_better": lower,
-                 "how_to_compare": meta.get("caveat"), "link": link_market(category, query)}
+                 "how_to_compare": meta.get("caveat"), "as_of": as_of, "dates": _OFFER_DATES,
+                 "link": link_market(category, query)}
     if banks:
         names = list(dict.fromkeys(
             ([SBER] if not any("сбер" in b.lower() for b in banks) else []) + banks))
@@ -1068,7 +1089,8 @@ TOOLS: list[ToolSpec] = [
     ToolSpec("market_offers", "Предложения банков", tool_market_offers,
              "Предложения банков в категории из витрины «Рынок», отсортированные по метрике "
              "категории: сравнение Сбера с названными банками (banks) или топ рынка; "
-             "query — название или вид продукта."),
+             "query — название или вид продукта. Дата данных — as_of; terms_since у "
+             "предложения — с какого дня действуют его условия."),
     ToolSpec("bank_profile", "Карточка банка", tool_bank_profile,
              "Карточка банка: народный рейтинг banki.ru (баллы, место, средняя оценка, "
              "отзывы, доля решённых), наш корпус отзывов, жалобы за 90 дней и их темы."),
