@@ -214,6 +214,28 @@ def test_complaints_and_loopholes_follow_the_task(task, question, complaints, lo
     assert (scope["complaints"], scope["loopholes"]) == (complaints, loopholes)
 
 
+def test_whole_bank_is_decided_by_the_scope_model_not_by_word_count():
+    """«Основные жалобы Сбера» — вопрос о банке в целом, как бы план ни назвал предмет.
+
+    12.11 предмет плана содержал лишнее слово, правило по словам сочло вопрос узким,
+    и отчёт вместо сводки (2 315 жалоб, темы с числами) дал 168 «по предмету»."""
+    q = "Какие основные жалобы у клиентов Сбербанка? Где подводные камни?"
+    p = plan(task="complaints", product="жалобы клиентов: подводные камни продуктов и сервисов")
+    whole = own_data.normalize_scope({"whole_bank": True}, q, p)
+    assert whole["whole_bank"] is True and own_data.bank_level(p, whole, q)
+    # узкий предмет — без общего фона, даже если слов в предмете нет
+    narrow = own_data.normalize_scope({"whole_bank": False}, "Жалобы на доставку карт", plan(task="complaints"))
+    assert narrow["whole_bank"] is False and not own_data.bank_level(plan(task="complaints"), narrow, "q")
+    # модель не сказала — прежнее правило по словам предмета
+    silent = own_data.normalize_scope({}, q, p)
+    assert silent["whole_bank"] is None and not own_data.bank_level(p, silent, q)
+    assert own_data.bank_level(plan(task="complaints"), silent, q)
+    # сводка по банку — только в задаче о жалобах и только без продукта и темы
+    assert not own_data.bank_level(plan(task="product"), whole, q)
+    assert not own_data.bank_level(p, {**whole, "themes": ["fees"]}, q)
+    assert "whole_bank" in own_data._SCOPE_SYSTEM
+
+
 OVERVIEW = {"bank": "Сбербанк", "as_of": "2026-11-05", "complaints": 2485, "prev_period": 2049,
             "change_pct": 21.3, "themes": [], "risk_flags": [], "cities": []}
 ON_TOPIC = {"date": "2026-10-27", "city": "Тюмень", "product": "Бизнес: счёт и РКО",
