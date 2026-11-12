@@ -95,6 +95,11 @@ def _is_skeleton(text: str) -> bool:
     headings = sum(1 for l in lines if l.startswith("#"))
     return prose == 0 and (headings >= 3 or len(lines) >= 6)
 
+# ── Один документ не съедает отчёт ──────────────────────────────────────────
+# Живому отчёту незачем минуту читать один PDF: что разобрано за это время
+# (первые страницы) — то и берём. База знаний читает документы без предела.
+_PDF_MAX_S = float(os.getenv("GPTR_PDF_MAX_S", "40") or 40)
+
 # ── Сайт не отвечает: не тратим на него весь отчёт ──────────────────────────
 # Ночь 12.11: banki.ru перестал отвечать с нашего адреса, и каждый отчёт, где в
 # выдаче были его страницы, ждал соединения и браузера по каждой ссылке —
@@ -180,7 +185,8 @@ class AuditLensScraper:
                        or self.link.split("?", 1)[0].lower().endswith(".pdf")
                        or content[:5] == b"%PDF-")
         try:
-            doc = (parse_pdf(content, url) if self.is_pdf else parse_html(content, url))
+            doc = (parse_pdf(content, url, max_seconds=_PDF_MAX_S) if self.is_pdf
+                   else parse_html(content, url))
         except Exception as e:
             log.info("parse %s: %s", self.link[:80], type(e).__name__)
             return "", ""
