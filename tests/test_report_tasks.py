@@ -214,6 +214,28 @@ def test_complaints_and_loopholes_follow_the_task(task, question, complaints, lo
     assert (scope["complaints"], scope["loopholes"]) == (complaints, loopholes)
 
 
+def test_bank_named_in_oblique_case_is_not_dropped_as_unrequested(monkeypatch):
+    """«ВТБ, Альфы и Т-Банка»: Альфа-Банк назван, и план его не убирает.
+
+    12.11 распознавание искало подстроку «альфа», в «Альфы» её нет: банк сочли
+    непрошеным конкурентом, и отчёт об уникальных жалобах трёх банков вышел по двум."""
+    from bank_audit.ai import llm_utils as U
+    monkeypatch.setattr(U, "_get_dynamic_bank_triggers",
+                        lambda: {k: list(v) for k, v in U.BANK_SLUG_TRIGGERS.items()})
+    q = ("Покажи жалобы клиентов на кредитные карты ВТБ, Альфы и Т-Банка за последние "
+         "12 месяцев, отдельно по каждому банку, и только те, которых нет у клиентов Сбера.")
+    assert U.detect_bank_slugs(q) == ["sberbank", "vtb", "alfabank", "tinkoff"]
+    assert U.detect_bank_slugs("Сравни тарифы Точки и Модульбанка") == ["tochka", "modulbank"]
+    assert U.detect_bank_slugs("в Альфе дешевле") == ["alfabank"]
+    assert U.detect_bank_slugs("альфред и точность расчёта") == []       # не всякое «альф…» — банк
+    assert C._named_in(q, "alfabank", "Альфа-Банк") and not C._named_in("что нового", "alfabank", "Альфа-Банк")
+    p = plan(task="complaints", anchor="sberbank", subjects=["sberbank", "vtb", "alfabank", "tinkoff"],
+             subject_labels={"sberbank": "Сбербанк", "vtb": "ВТБ", "alfabank": "Альфа-Банк",
+                             "tinkoff": "Т-Банк"})
+    C.enforce_scope(p, q, U.detect_bank_slugs(q))
+    assert p.subjects == ["sberbank", "vtb", "alfabank", "tinkoff"]
+
+
 def test_whole_bank_is_decided_by_the_scope_model_not_by_word_count():
     """«Основные жалобы Сбера» — вопрос о банке в целом, как бы план ни назвал предмет.
 

@@ -652,7 +652,11 @@ def _named_in(question: str, slug: str, label: str) -> bool:
     words = [w for w in re.findall(r"[a-zа-я0-9]{3,}", (label or "").lower().replace("ё", "е"))
              if w not in ("банк", "bank", "страхование", "россии")]
     stems = {w[:5] for w in words} | {slug.lower().replace("_", "")[:5]}
-    return any(st and st in low for st in stems)
+    if any(st and st in low for st in stems):
+        return True
+    # «Альфы», «Точки»: слово на «-а» в косвенном падеже основой из пяти букв не ловится
+    from ...ai.llm_utils import name_in_text
+    return any(name_in_text(w, low) for w in words)
 
 
 def enforce_scope(plan: ResearchPlan, question: str, named: list[str] | None = None) -> ResearchPlan:

@@ -566,6 +566,23 @@ def _get_dynamic_bank_triggers() -> dict[str, list[str]]:
     return out
 
 
+_DECLINED = re.compile(r"^[а-яё]{4,}а$")
+
+
+def name_in_text(name: str, low: str) -> bool:
+    """Название встречается в тексте — в любом падеже.
+
+    Подстрока ловит «Газпромбанка» и «Сбера», но не «Альфы» и «Точки»: у слов
+    на «-а» в косвенных падежах меняется последняя буква. 12.11 на «жалобы на
+    кредитные карты ВТБ, Альфы и Т-Банка» Альфа-Банк не был узнан, план счёл
+    его непрошеным конкурентом и убрал — отчёт вышел без одного из трёх банков."""
+    if name in low:
+        return True
+    if _DECLINED.match(name):
+        return bool(re.search(rf"(?<![а-яё]){re.escape(name[:-1])}(?:ы|и|е|у|ой|ою)(?![а-яё])", low))
+    return False
+
+
 def detect_bank_slugs(question: str) -> list[str]:
     """По вопросу извлекает банковские slug'и (словарь + динамика из БД)."""
     if not question:
@@ -575,7 +592,7 @@ def detect_bank_slugs(question: str) -> list[str]:
     seen = set()
     triggers = _get_dynamic_bank_triggers()
     for slug, kws in triggers.items():
-        if any(k in low for k in kws):
+        if any(name_in_text(k, low) for k in kws):
             if slug not in seen:
                 out.append(slug); seen.add(slug)
     return out
