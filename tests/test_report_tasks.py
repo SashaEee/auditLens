@@ -687,3 +687,29 @@ def test_hedge_survives_garbage_from_the_first_to_answer(monkeypatch):
     calls.clear()
     asyncio.run(C.plan_research(_plan_client({}, calls), "основная", "история кредитной карты"))
     assert calls == ["основная"]             # порог 0 — прежний порядок: запасная только после сбоя
+
+
+# ── Лидеров рынка называют данные, а не план ────────────────────────────────
+def test_top_n_question_does_not_get_preselected_rivals():
+    """«Топ-5 вкладов и позиция Сбера»: план выбрал «большую четвёрку» — код её снимает."""
+    p = C._build_plan_from_dict({
+        "intent": "top", "task": "compare", "scope": "market", "anchor": "sberbank",
+        "subjects": ["sberbank", "alfabank", "tinkoff", "vtb", "gazprombank"],
+        "subject_labels": {"sberbank": "Сбербанк", "alfabank": "Альфа-Банк", "tinkoff": "Т-Банк",
+                           "vtb": "ВТБ", "gazprombank": "Газпромбанк"},
+        "topics": ["ставка", "срок"], "queries": [{"q": "вклады ставки 2026"}]},
+        "Сравни предложения по вкладам, выдели топ-5 и позицию Сбера.")
+    C.enforce_scope(p, "Сравни предложения по вкладам, выдели топ-5 и позицию Сбера.", ["sberbank"])
+    assert p.task == "market_data" and p.subjects == ["sberbank"] and p.scope == "sber"
+    assert C.open_subjects(p)                       # лидеры из данных сохранят свои названия
+    assert p.checks == "none"
+
+
+def test_top_n_with_named_banks_stays_a_comparison():
+    q = "Сравни вклады Сбера и ВТБ: кто из них в топ-5 по ставке"
+    p = C._build_plan_from_dict({
+        "intent": "x", "task": "compare", "scope": "named", "anchor": "sberbank",
+        "subjects": ["sberbank", "vtb"], "subject_labels": {"sberbank": "Сбербанк", "vtb": "ВТБ"},
+        "topics": ["ставка"], "queries": [{"q": "вклады ВТБ ставка"}]}, q)
+    C.enforce_scope(p, q, ["sberbank", "vtb"])
+    assert p.task == "compare" and p.subjects == ["sberbank", "vtb"]

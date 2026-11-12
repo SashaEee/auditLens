@@ -163,6 +163,11 @@ SYSTEM_PROMPT = """Ты — планировщик исследований дл
     или сравнение идёт с ним).
   • "market" — аудитор просит сравнить с рынком или конкурентами, не называя их. Выбери 3–4
     самых значимых для ЭТОГО продукта конкурента и добавь Сбер.
+    ИСКЛЮЧЕНИЕ — лидеры рынка: «топ-5», «лидеры», «рейтинг», «у кого лучшая ставка на рынке»,
+    «позиция Сбера на рынке». Кто в лидерах, решают ДАННЫЕ (витрина «Рынок», рейтинги), а не
+    ты: task "market_data", в subjects — только Сбер, если о нём спрашивают, конкурентов заранее
+    не называй. Подставить вместо лидеров рынка известные крупные банки — ошибка: аудитор
+    получит «топ-5» из четырёх привычных имён, а настоящие лидеры по ставке в отчёт не попадут.
   • "none" — вопрос не про конкретные организации (справка, история, документ регулятора,
     цифры рынка в целом). subjects — пустой список.
   Спрашивают аудиторы Сбера. Вопрос о жалобах, продукте, сервисе, процессе или проверке, где
@@ -604,6 +609,9 @@ _COMPARE_RX = re.compile(
     r"с другими банк|относительно рынк|позици\w* .{0,25}рынк|место .{0,25}рынк|бенчмарк|"
     r"benchmark|лучше.{0,20}чем|выгодн\w* услови|топ[- ]?\d|рейтинг банк|в разрезе банк|"
     r"по банкам|среди банк", re.I)
+# Просьба о лидерах рынка: состав «топа» определяют данные, а не план.
+_TOP_RX = re.compile(r"топ[- ]?\d+|\bлидер\w*|\bрейтинг\w*|лучш\w+ (ставк|предложени|услови)\w* на рынке|"
+                     r"(позици|мест)\w* .{0,25}(на|в) рынк", re.I)
 _CHECK_RX = re.compile(
     r"что проверит|что проверять|план проверк|программ\w+ проверк|карт\w+ риск|"
     r"какие риски|риски для|для аудита|как аудитор|точки контрол|что запросить", re.I)
@@ -665,6 +673,13 @@ def enforce_scope(plan: ResearchPlan, question: str, named: list[str] | None = N
                  if s not in family and (s in named_set or _named_in(q, s, labels.get(s, "")))]
 
     task = plan.task if plan.task in TASKS else guess_task(q)
+    # Просят лидеров рынка, а конкурентов не называют: кто в лидерах, решают данные
+    # витрины «Рынок». Прогон 12.11: на «выдели топ-5 вкладов и позицию Сбера» план
+    # выбрал Альфу, Т-Банк, ВТБ и Газпромбанк, и отчёт назвал «пятёркой лидеров» их,
+    # а не банки с лучшей ставкой.
+    top_asked = bool(_TOP_RX.search(q)) and not outsiders
+    if top_asked:
+        task = "market_data"
     if task == "compare" and not asked_compare and not outsiders:
         task = guess_task(q)
         if task == "compare":
@@ -678,7 +693,7 @@ def enforce_scope(plan: ResearchPlan, question: str, named: list[str] | None = N
                   if s in named_set or _named_in(q, s, labels.get(s, "") or
                                                  ("Сбербанк" if s == "sberbank" else s))}
 
-    if task != "compare" and not asked_compare:
+    if (task != "compare" and not asked_compare) or top_asked:
         keep = family | set(outsiders) | {s for s in plan.subjects if s in named_set}
         dropped = [s for s in plan.subjects if s not in keep]
         if dropped:
