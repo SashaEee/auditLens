@@ -20,6 +20,7 @@ import hashlib, logging, os, time
 from dataclasses import dataclass
 from typing import Optional
 
+import threading
 import httpx
 
 from . import cache as rag_cache
@@ -177,7 +178,31 @@ def _fetch_http(url: str, *, direct: bool = False) -> FetchResult | None:
         return None
 
 
+# Сколько временных браузеров можно держать одновременно. Каждый — отдельный
+# Chromium на сотни мегабайт. Предела не было, и ночью 12.11, когда banki.ru
+# перестал отвечать, каждая его ссылка уходила в браузер: десятки процессов
+# съели всю память сервера (нагрузка 90, вход по SSH не отвечал). Теперь лишние
+# ждут своей очереди, а не дождавшись — страница считается непрочитанной.
+_BROWSER_MAX = max(1, int(os.getenv("FETCH_BROWSER_MAX", "6")))
+_BROWSER_WAIT_S = float(os.getenv("FETCH_BROWSER_WAIT_S", "45"))
+_browser_slots = threading.BoundedSemaphore(_BROWSER_MAX)
+
+
 def _fetch_browser(url: str, browser=None, *, direct: bool = False) -> FetchResult | None:
+    """Чтение браузером; для временного браузера — в пределах общего числа мест."""
+    if browser is not None:
+        return _fetch_browser_now(url, browser, direct=direct)
+    if not _browser_slots.acquire(timeout=_BROWSER_WAIT_S):
+        log.info("browser fetch %s: все %d браузеров заняты дольше %d с — пропускаю",
+                 url[:80], _BROWSER_MAX, int(_BROWSER_WAIT_S))
+        return None
+    try:
+        return _fetch_browser_now(url, None, direct=direct)
+    finally:
+        _browser_slots.release()
+
+
+def _fetch_browser_now(url: str, browser=None, *, direct: bool = False) -> FetchResult | None:
     """Через BrowserCollector (Playwright). Возвращает FetchResult или None.
     Если browser не передан — создаём временный.
 

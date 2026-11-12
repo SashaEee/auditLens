@@ -200,3 +200,34 @@ def test_dead_host_is_skipped_after_three_empty_answers(monkeypatch):
     assert text and "https://live.example/a" in st.pages
     S.note_host("https://dead.example/x", True)
     assert not S.host_down("https://dead.example/any")
+
+
+# ── Браузеров одновременно — не больше предела ──────────────────────────────
+def test_temporary_browsers_are_capped(monkeypatch):
+    """Лишние чтения ждут места, а не запускают ещё один браузер; не дождались — пропуск."""
+    import threading
+    import time
+
+    from bank_audit.rag import fetcher as F
+    monkeypatch.setattr(F, "_BROWSER_MAX", 2)
+    monkeypatch.setattr(F, "_BROWSER_WAIT_S", 0.15)
+    monkeypatch.setattr(F, "_browser_slots", threading.BoundedSemaphore(2))
+    live, peak, lock = [0], [0], threading.Lock()
+
+    def slow(url, browser=None, *, direct=False):
+        with lock:
+            live[0] += 1
+            peak[0] = max(peak[0], live[0])
+        time.sleep(0.4)
+        with lock:
+            live[0] -= 1
+        return "ok"
+    monkeypatch.setattr(F, "_fetch_browser_now", slow)
+    out: list = []
+    ts = [threading.Thread(target=lambda i=i: out.append(F._fetch_browser(f"https://x.example/{i}"))) for i in range(5)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert peak[0] == 2                              # одновременно — не больше двух
+    assert out.count("ok") == 2 and out.count(None) == 3   # остальные не дождались и пропущены
+    # свой браузер сборщика (переданный явно) предел не занимает
+    assert F._fetch_browser("https://x.example/own", browser=object()) == "ok"
