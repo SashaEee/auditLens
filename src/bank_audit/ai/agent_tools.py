@@ -584,6 +584,31 @@ def _day(v) -> str | None:
     return s if len(s) == 10 else None
 
 
+# Места считает код. Модель получала десять строк по убыванию ставки и сама
+# расставляла номера: в отчёте 12.11 вклады под 14,77% и 14,7% оказались третьим
+# и четвёртым, а шесть вкладов под 15% — «пятым местом, ничья».
+_OFFER_PLACES = ("place — место предложения среди предложений категории по метрике (не место "
+                 "банка: оно в market_position). Одинаковое значение делит места: «3–8» — "
+                 "ничья шести предложений. Топ-N — строки по порядку мест; если граница N "
+                 "попадает внутрь ничьей, называй всех равных. Список не обрезан внутри ничьей")
+_TOP_MAX = 40          # ничья на границе списка дотягивается целиком, но не бесконечно
+
+
+def _places(values: list) -> list[str | None]:
+    """Места по значениям, уже стоящим от лучшего к худшему; равные делят места."""
+    keys = [None if v is None else round(float(v), 4) for v in values]
+    res: list[str | None] = []
+    i = 0
+    while i < len(keys):
+        j = i
+        while j + 1 < len(keys) and keys[j + 1] == keys[i] and keys[i] is not None:
+            j += 1
+        label = None if keys[i] is None else (str(i + 1) if i == j else f"{i + 1}–{j + 1}")
+        res += [label] * (j - i + 1)
+        i = j + 1
+    return res
+
+
 def tool_market_offers(category: Category, banks: list[str] | None = None,
                        query: str | None = None, limit: int = 12) -> str:
     meta = _cm.CAT_META[category]
@@ -626,7 +651,16 @@ def tool_market_offers(category: Category, banks: list[str] | None = None,
     else:
         rs = rows(query, 200)
         res["offers_total"] = len(rs)
-        res["top"] = [pack(r) for r in rs[:max(1, min(int(limit or 12), 30))]]
+        n = max(1, min(int(limit or 12), 30))
+        # не режем внутри ничьей: половина равных на границе — это случайные имена
+        while n < min(len(rs), _TOP_MAX) and val(rs[n]) is not None and val(rs[n]) == val(rs[n - 1]):
+            n += 1
+        if query:           # отбор по словам — не рынок целиком, мест у него нет
+            res["top"] = [pack(r) for r in rs[:n]]
+        else:
+            places = _places([val(r) for r in rs])
+            res["top"] = [pack(r) | {"place": places[i]} for i, r in enumerate(rs[:n])]
+            res["places"] = _OFFER_PLACES
         sber = next((r for r in rs if r.get("is_sber")), None)
         res["sber_best"] = pack(sber) if sber else None
     return out(res)
@@ -1090,7 +1124,8 @@ TOOLS: list[ToolSpec] = [
              "Предложения банков в категории из витрины «Рынок», отсортированные по метрике "
              "категории: сравнение Сбера с названными банками (banks) или топ рынка; "
              "query — название или вид продукта. Дата данных — as_of; terms_since у "
-             "предложения — с какого дня действуют его условия."),
+             "предложения — с какого дня действуют его условия; place в топе рынка — "
+             "готовое место предложения с учётом ничьих."),
     ToolSpec("bank_profile", "Карточка банка", tool_bank_profile,
              "Карточка банка: народный рейтинг banki.ru (баллы, место, средняя оценка, "
              "отзывы, доля решённых), наш корпус отзывов, жалобы за 90 дней и их темы."),

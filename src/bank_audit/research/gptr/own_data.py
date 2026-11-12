@@ -791,6 +791,23 @@ def _offer_line(r: dict, metric: str, unit: str) -> str:
     return txt
 
 
+def _place_prefix(r: dict, offers: list[dict]) -> str:
+    """«Место 1: » или «Места 3–8 (ничья, 6 предложений): » — места считает код."""
+    place = str(r.get("place") or "")
+    if not place:
+        return ""
+    if "–" not in place:
+        return f"Место {place}: "
+    tied = sum(1 for x in offers if str(x.get("place") or "") == place)
+    a, _, b = place.partition("–")
+    try:
+        tied = max(tied, int(b) - int(a) + 1)
+    except ValueError:
+        pass
+    word = _plural(tied, "предложение", "предложения", "предложений")
+    return f"Места {place} (ничья, {tied} {word} с одинаковым значением): "
+
+
 def collect_market(od: OwnData, plan, scope: dict) -> None:
     cat = scope.get("category")
     if not (cat and scope.get("market")):
@@ -823,7 +840,8 @@ def collect_market(od: OwnData, plan, scope: dict) -> None:
     groups = [("", {"best": top.get("top") or [], "offers_total": top.get("offers_total")})]
     groups += list((mo.get("by_bank") or {}).items())
     for name, d in groups:
-        offers = (d.get("best") or [])[:_OFFERS_PER_BANK if name else 10]
+        # лидеров отдаём, сколько дал инструмент: он не режет список внутри ничьей
+        offers = (d.get("best") or [])[:_OFFERS_PER_BANK if name else 40]
         if not offers:
             continue
         url = T.link_market(cat, name or None)
@@ -835,7 +853,12 @@ def collect_market(od: OwnData, plan, scope: dict) -> None:
                 f"не все продукты: отсутствие срока или продукта в этом списке не значит, "
                 f"что у банка его нет. Витрина — сверочные цифры без подробностей "
                 f"условий.")
-        lines = [head] + [_offer_line(r, metric, unit) for r in offers]
+        if not name and any(r.get("place") for r in offers):
+            head += (" Места посчитаны по значению метрики среди предложений категории (это "
+                     "не место банка); одинаковое значение делит места — это ничья. Список "
+                     "не обрезан внутри ничьей.")
+        lines = [head] + [_place_prefix(r, offers) + _offer_line(r, metric, unit)
+                          for r in offers]
         if caveat:
             lines.append(f"Как сравнивать: {caveat}")
         od.page(url, f"AuditLens · Рынок: {label} — {name or 'лидеры'}", lines, MARKET)

@@ -475,6 +475,33 @@ def test_market_always_has_leaders_and_themes_have_list_boundary(fake_tools):
     assert "у тем вне списка — не больше 60 жалоб каждая" in text
 
 
+def test_market_leaders_carry_places_counted_by_code(fake_tools, monkeypatch):
+    """Места лидеров приходят из инструмента и попадают в материал отчёта дословно."""
+    top = {**MARKET_TOP, "top": [
+        {"bank_name": "Газпромбанк", "title": "Ключевой момент", "metric_value": 16.0, "place": "1"},
+        {"bank_name": "ХЛЫНОВ", "title": "Капитал", "metric_value": 15.0, "place": "2–3"},
+        {"bank_name": "Локо-Банк", "title": "Промо", "metric_value": 15.0, "place": "2–3"},
+        {"bank_name": "ТКБ Банк", "title": "Старт", "metric_value": 14.77, "place": "4"}]}
+    monkeypatch.setitem(globals(), "MARKET_TOP", top)
+    plan = SimpleNamespace(subjects=["sberbank"], subject_labels={"sberbank": "Сбербанк"},
+                           anchor="sberbank", product="вклады")
+    od = own_data.OwnData()
+    own_data.collect_market(od, plan, {"category": "deposit", "market": True})
+    page = od.pages["#market?cat=deposit"]
+    assert "Место 1: Газпромбанк" in page and "Место 4: ТКБ Банк" in page
+    assert page.count("Места 2–3 (ничья, 2 предложения с одинаковым значением): ") == 2
+    assert "это не место банка" in page and "не обрезан внутри ничьей" in page
+    # факт цитирует строку страницы дословно, вместе с местом
+    assert all(f["verbatim"] in od.pages[f["url"]] for f in od.facts)
+    assert any(f["verbatim"].startswith("Место 1: ") for f in od.facts)
+
+
+def test_market_rating_rule_tells_to_copy_places():
+    rule = dossier._SECTION_RULES["market"]
+    assert "уже посчитаны" in rule and "сам не пересчитывай" in rule
+    assert "назови всех равных" in rule
+
+
 def test_market_section_puts_bank_sources_before_vitrine():
     reg = FactRegistry()
     own = {"#market?cat=deposit": {"kind": "market"}}

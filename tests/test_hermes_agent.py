@@ -295,3 +295,26 @@ def test_market_offers_name_the_two_dates(monkeypatch):
     res = json.loads(T.tool_market_offers("deposit", banks=["ВТБ"]))
     assert "as_of" not in res or res["as_of"] is None
     assert res["by_bank"]["Сбербанк"]["best"][0]["terms_since"] == "2026-09-22"
+
+
+def test_market_top_places_are_counted_by_code_and_ties_are_not_cut(monkeypatch):
+    """Места в топе рынка считает код: модель расставляла их сама и ошиблась.
+
+    12.11 в отчёте вклады под 14,77% и 14,7% стояли третьим и четвёртым, а шесть
+    вкладов под 15% — «пятым местом»."""
+    from types import SimpleNamespace
+    assert T._places([16, 15.5, 15, 15, None]) == ["1", "2", "3–4", "3–4", None]
+    rates = [16, 15.5, 15, 15, 15, 15, 15, 15, 14.77, 14.7, 14.5]
+    rows = [{"bank_name": f"Банк {i}", "title": f"Вклад {i}", "rate_pct": r, "is_sber": False}
+            for i, r in enumerate(rates)]
+    fake = SimpleNamespace(_market_rows=lambda *a: list(rows), market_as_of=lambda: "2026-11-11")
+    monkeypatch.setattr(T, "_web", lambda: fake)
+    res = json.loads(T.tool_market_offers("deposit", limit=5))
+    # граница топ-5 попала внутрь ничьей — отдаём всех шестерых, место у них общее
+    assert [o["place"] for o in res["top"]] == ["1", "2"] + ["3–8"] * 6
+    assert "ничь" in res["places"] and "не место банка" in res["places"]
+    res = json.loads(T.tool_market_offers("deposit", limit=10))
+    assert [o["place"] for o in res["top"]][-2:] == ["9", "10"] and len(res["top"]) == 10
+    # отбор по словам — не рынок целиком: мест у него нет
+    res = json.loads(T.tool_market_offers("deposit", query="Вклад", limit=3))
+    assert all("place" not in o for o in res["top"]) and "places" not in res
