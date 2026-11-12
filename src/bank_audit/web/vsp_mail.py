@@ -506,7 +506,7 @@ def render(d: dict, now: datetime | None = None, name: str = "", private: bool =
                  f'<span style="color:{T.BRIEF_RED};font-size:10px;letter-spacing:0">&#9679;</span>&nbsp;&nbsp;Случай дня</div>'
                  f'<h1 class="al-h1" style="margin:8px 0 0;font-family:{T.SERIF};font-weight:400;font-size:27px;'
                  f'line-height:33px;color:{T.INK};mso-line-height-rule:exactly">{T._e(_title(lead))}</h1>'
-                 f'<div style="margin:10px 0 0;{T._font(16, 24, T.INK)}">{T._e(lead.get("head") or "")}</div>'
+                 f'<div style="margin:10px 0 0;{T._font(16, 24, T.INK)}">{T._e(_head(lead.get("episode"), 330) or lead.get("head") or "")}</div>'
                  f'<div style="margin:10px 0 0;{T._font(13, 19, T.INK2, 600)}">{T._e(_where(lead))}</div>'
                  f'<div style="margin:2px 0 0;{T._font(12, 18, T.INK3)}">'
                  f'{T._e(" · ".join([_day(lead.get("date"))] + _tags(lead, lead=True)))}</div>')
@@ -514,7 +514,7 @@ def render(d: dict, now: datetime | None = None, name: str = "", private: bool =
             body += (f'<div style="margin:14px 0 0;{T._font(11, 16, T.INK3, 600, "letter-spacing:.06em;text-transform:uppercase")}">'
                      f'Слова клиента</div>' + _quote_html(lead["quote"], size=17, edge=T.INK, top=6))
         body += T._btn("Полный отзыв и проверка", story_url, top=18)
-        lines += ["СЛУЧАЙ ДНЯ", _title(lead), lead.get("head") or "", _where(lead) + " · " + _day(lead.get("date")),
+        lines += ["СЛУЧАЙ ДНЯ", _title(lead), _head(lead.get("episode"), 330) or lead.get("head") or "", _where(lead) + " · " + _day(lead.get("date")),
                   *([f"«{lead['quote']}»"] if lead.get("quote") else []), f"Полный отзыв: {story_url}", ""]
     else:
         body += T._h1(f"Что нового {d['period']}", scope)
