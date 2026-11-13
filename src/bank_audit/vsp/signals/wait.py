@@ -26,7 +26,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import exists, func, select
 
 from ..models import utcnow
-from ..storage import Store, branches, meta, reviews, source_branches
+from ..storage import Store, branches, kv, meta, reviews, source_branches
 from . import llm_read as lr
 from .stats import bh, binom_tail
 
@@ -211,11 +211,16 @@ async def run(store: Store, *, limit: int = 2000, ids: list[str] | None = None, 
     t0 = time.monotonic()
     saved = hits = 0
 
+    # потолок проверяется, когда пачка получила место в очереди, а не при постановке: иначе все пачки шага
+    # проходили проверку сразу, пока ни одна ещё не потратила ни рубля (12.11: 359 ₽ при потолке 300)
+    gate = asyncio.Semaphore(lr.INFLIGHT)
+
     async def one(b):
         nonlocal saved, hits
-        if rd.rub >= cap:
-            return
-        got = await rd.read_batch(b, tail=TAIL, norm=normalize, fmt=card)
+        async with gate:
+            if rd.rub >= cap:
+                return
+            got = await rd.read_batch(b, tail=TAIL, norm=normalize, fmt=card)
         rows = []
         for x in b:
             v = got.get(x["review_id"])
@@ -368,7 +373,17 @@ def load(engine, since: datetime | None = None) -> dict:
         unread_q = [reviews.c.review_text.isnot(None), reviews.c.rating <= 3, reviews.c.review_date >= since,
                     ~exists().where(lr.review_llm.c.review_id == reviews.c.review_id,
                                     lr.review_llm.c.prompt_version == VERSION)]
-        if engine.dialect.name == "postgresql":
+        # сколько ждёт чтения — из итога последнего шага модели: по одним словам выходило больше (короткие
+        # жалобы и массовые аккаунты модель не читает), и плашка «дочитывает» висела бы всегда
+        last = None
+        try:
+            raw = c.execute(select(kv.c.value).where(kv.c.key == "wait:last")).scalar()
+            last = json.loads(raw) if raw else None
+        except Exception:  # noqa: BLE001 — нет служебной таблицы: посчитаем сами
+            c.rollback()
+        if isinstance(last, dict) and "waiting" in last:
+            waiting = int(last.get("waiting") or 0)
+        elif engine.dialect.name == "postgresql":
             waiting = c.execute(select(func.count()).select_from(reviews).where(
                 *unread_q, reviews.c.review_text.op("~*")(WORDS))).scalar() or 0
         else:                                               # без серверных шаблонов слова проверяем сами

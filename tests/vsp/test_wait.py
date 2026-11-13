@@ -166,3 +166,27 @@ def test_uniform_background_rarely_marks_branches():
             hits += [_hit(p, datetime(2026, 3, 5, tzinfo=UTC)) for _ in range(sum(rng.random() < 0.3 for _ in range(n)))]
         total += w.branch_table(hits, neg, m0="2026-01")["sig"]
     assert total <= 6                                         # в среднем не больше половины отметки на прогон
+
+
+def test_daily_cap_is_checked_before_each_call(db_url, monkeypatch):
+    """Потолок трат держится: пачки проверяют его, когда получили место в очереди, а не все разом при старте."""
+    st = Store(db_url)
+    st.save_reviews([Review("2gis", f"q{i}", "g1", 1, f"{QUEUE} случай номер {i}", D, author_ref=f"a{i}")
+                     for i in range(100)])
+    monkeypatch.setattr(lr, "Reader", FakeReader)
+    monkeypatch.setattr(lr, "INFLIGHT", 1)
+    res = asyncio.run(w.run(st, limit=100, cap_rub=0.3))        # пачка стоит 0,2 ₽ — успевают две из пяти
+    assert res["calls"] == 2 and res["saved"] == 40 and res["rub"] == 0.4
+
+
+def test_load_takes_waiting_from_the_last_reading_step(db_url, monkeypatch):
+    st = Store(db_url)
+    st.save_reviews([Review("2gis", "q0", "g1", 1, QUEUE, D, author_ref="a0"),
+                     Review("2gis", "q1", "g1", 1, "Очень долго, ужас", D, author_ref="a1")])   # коротко — модель не читает
+    monkeypatch.setattr(lr, "Reader", FakeReader)
+    asyncio.run(w.run(st, limit=100))
+    st.kv_set("wait:last", {"waiting": 0})
+    assert w.load(st.engine)["waiting"] == 0                    # по словам «ждёт» одна, но читать её модель не будет
+    st.kv_set("wait:last", {"waiting": 120})
+    assert w.load(st.engine)["waiting"] == 120
+
