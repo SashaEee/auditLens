@@ -156,3 +156,36 @@ def test_shared_report_opens_file_to_colleague(pg):
         c.execute(text("INSERT INTO report_share (report_id, owner, shared_with) VALUES (:r, 'anna', NULL)"),
                   {"r": rid})
     assert AF.get(f["id"], "olga") is not None                 # поделились со всеми
+
+
+def test_owner_downloads_colleague_file_from_pulse_and_it_is_logged(monkeypatch):
+    """Владелец инструмента скачивает чужую презентацию из «Пульса»: файл отдаётся,
+    скачивание пишется в журнал как служебный доступ. Свой файл — без записи."""
+    from bank_audit.web import app as A
+    from bank_audit.web.auth import CurrentUser
+    row = {"name": "Презентация · Вклады.html", "mime": AF.TYPES["html"], "data": b"<html></html>",
+           "username": "anna"}
+    seen, log = [], []
+    monkeypatch.setattr(AF, "get", lambda fid, u, admin=False: seen.append((u, admin)) or row)
+    monkeypatch.setattr(A.telemetry, "is_admin", lambda u: u == "boss")
+    monkeypatch.setattr(A.userdata, "log_event", lambda u, kind, p: log.append((u, kind, p)))
+    r = A.agent_file_download(ID, CurrentUser("boss", "Владелец", True))
+    assert r.body == b"<html></html>" and "attachment" in r.headers["content-disposition"]
+    assert seen[-1] == ("boss", True)
+    assert log == [("boss", "admin_file_download", {"file_id": ID, "owner": "anna", "ext": "html"})]
+    log.clear()
+    A.agent_file_download(ID, CurrentUser("anna", "Анна", True))     # своё — не служебный доступ
+    assert seen[-1] == ("anna", False) and log == []
+
+
+def test_pulse_lists_carry_files_and_filter():
+    """Списки «Пульса» отдают файлы отчёта, а фильтр «С файлами» доходит до запроса."""
+    import inspect
+    from bank_audit.web import app as A, telemetry as T
+    src = inspect.getsource(T.reports_all)
+    assert "with_files" in src and "r.payload->'files' @> CAST('[{}]' AS jsonb)" in src
+    assert "jsonb_array_length(r.payload" not in src      # на JSON null падает (прод, 13.11)
+    assert "r.payload->'files' AS files" in src
+    card = inspect.getsource(T.user_card)
+    assert "a.meta->'files'      AS files" in card and "payload->'files' AS files" in card
+    assert "with_files" in inspect.signature(A.admin_reports).parameters

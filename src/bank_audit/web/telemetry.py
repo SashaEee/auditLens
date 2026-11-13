@@ -1805,6 +1805,7 @@ def user_card(username: str, days: int = 30) -> dict:
                    m.content AS question,
                    a.meta->>'mode'      AS mode,
                    a.meta->>'report_id' AS report_id,
+                   a.meta->'files'      AS files,
                    length(COALESCE(a.content, '')) AS answer_len
               FROM chat_message m
               JOIN chat_session cs ON cs.session_id = m.session_id
@@ -1818,7 +1819,7 @@ def user_card(username: str, days: int = 30) -> dict:
              ORDER BY m.created_at DESC LIMIT 60""", p),
         "reports": _rows("""
             SELECT report_id, question, title, COALESCE(payload->>'mode', 'deep') AS mode,
-                   payload->>'status' AS status,
+                   payload->>'status' AS status, payload->'files' AS files,
                    CASE WHEN payload->>'elapsed_s' ~ '^[0-9]+$'
                         THEN (payload->>'elapsed_s')::int END AS elapsed_s,
                    to_char(created_at AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI') AS at,
@@ -1857,7 +1858,8 @@ def user_card(username: str, days: int = 30) -> dict:
 
 def reports_all(days: int = 30, limit: int = 200, q: str | None = None,
                 username: str | None = None, only_bad: bool = False,
-                mode: str | None = None, exclude: list[str] | None = None) -> dict:
+                mode: str | None = None, exclude: list[str] | None = None,
+                with_files: bool = False) -> dict:
     """Отчёты и сохранённые быстрые ответы. mode: deep — только отчёты,
     quick — только быстрые ответы. exclude — служебные учётки и владелец."""
     p = {"days": max(1, min(int(days or 30), 365)), "lim": max(1, min(int(limit or 200), 500)),
@@ -1875,13 +1877,17 @@ def reports_all(days: int = 30, limit: int = 200, q: str | None = None,
         p["u"] = username
     if only_bad:
         cond.append("fb.dislikes > 0")
+    if with_files:      # презентации и выгрузки: в отчёте есть файлы помощника
+        # «массив хоть с одним объектом»; у отчётов без файлов там JSON null, и
+        # jsonb_array_length на нём падает — Postgres не обязан проверять тип первым
+        cond.append("r.payload->'files' @> CAST('[{}]' AS jsonb)")
     rows = _rows(f"""
         SELECT r.report_id, r.username,
                COALESCE(au.display_name, r.username) AS name,
                r.question, r.title, r.banks,
                COALESCE(r.payload->>'mode', 'deep') AS mode,
                length(r.body) AS body_len,
-               r.payload->>'status' AS status,
+               r.payload->>'status' AS status, r.payload->'files' AS files,
                CASE WHEN r.payload->>'elapsed_s' ~ '^[0-9]+$'
                     THEN (r.payload->>'elapsed_s')::int END AS elapsed_s,
                to_char(r.created_at AT TIME ZONE 'Europe/Moscow', 'DD.MM HH24:MI') AS at,

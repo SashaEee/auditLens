@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 57d0b4a2b2cbb3833b09a98ff5d703bbe46ed9dfa4cfa1a61c5818f79608c04d): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 2abb6c85aef599b48389a0035eb35bcc61d4017ebad6fdfc58e252325c5dce2e): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -13509,7 +13509,8 @@ function stripFileMarks(text, files) {
   return t.replace(/\n{3,}/g, "\n\n").trimEnd();
 }
 function AgentFiles({
-  files
+  files,
+  page = "ai"
 }) {
   if (!files || !files.length) return null;
   const size = b => b >= 1048576 ? (b / 1048576).toFixed(1).replace(".", ",") + " МБ" : Math.max(1, Math.round((b || 0) / 1024)) + " КБ";
@@ -13524,7 +13525,7 @@ function AgentFiles({
       download: f.name,
       onClick: () => trkEvent({
         kind: "ui",
-        page: "ai",
+        page,
         payload: {
           action: "agent_file_download",
           ext
@@ -32463,13 +32464,14 @@ function PuQaReports() {
   const c = usePu();
   const [mode, setMode] = useState("all"),
     [bad, setBad] = useState(false),
+    [fil, setFil] = useState(false),
     [qq, setQq] = useState(""),
     [all, setAll] = useState(false);
   const {
     d,
     err,
     reload
-  } = usePuData(`/api/admin/reports?days=${c.days}&limit=300${bad ? "&only_bad=true" : ""}${puMe(c.withMe)}`);
+  } = usePuData(`/api/admin/reports?days=${c.days}&limit=300${bad ? "&only_bad=true" : ""}${fil ? "&with_files=true" : ""}${puMe(c.withMe)}`);
   const ql = qq.trim().toLowerCase().replace(/ё/g, "е");
   const rows = (d && d.reports || []).filter(r => (mode === "all" || mode === "quick" === (r.mode === "quick")) && (!ql || [r.question, r.title, r.name, r.username].some(s => String(s || "").toLowerCase().replace(/ё/g, "е").includes(ql))));
   const shown = all ? rows : rows.slice(0, 30);
@@ -32492,7 +32494,13 @@ function PuQaReports() {
     className: "chip" + (bad ? " on" : ""),
     "aria-pressed": bad,
     onClick: () => setBad(x => !x)
-  }, "\u0421 \u0436\u0430\u043B\u043E\u0431\u0430\u043C\u0438"), /*#__PURE__*/React.createElement("span", {
+  }, "\u0421 \u0436\u0430\u043B\u043E\u0431\u0430\u043C\u0438"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "chip" + (fil ? " on" : ""),
+    "aria-pressed": fil,
+    onClick: () => setFil(x => !x),
+    "data-tip": "\u041F\u0440\u0435\u0437\u0435\u043D\u0442\u0430\u0446\u0438\u0438 \u0438 \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u0438, \u043A\u043E\u0442\u043E\u0440\u044B\u0435 \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u043E\u0442\u0434\u0430\u043B \u0444\u0430\u0439\u043B\u043E\u043C"
+  }, "\u0421 \u0444\u0430\u0439\u043B\u0430\u043C\u0438"), /*#__PURE__*/React.createElement("span", {
     className: "pu2-sp"
   }), /*#__PURE__*/React.createElement("input", {
     className: "pu2-qa-in",
@@ -32515,7 +32523,7 @@ function PuQaReports() {
     style: {
       paddingTop: 14
     }
-  }, /*#__PURE__*/React.createElement(PuEmpty, null, ql || bad || mode !== "all" ? "Ничего не найдено." : "За период отчётов и ответов не было.")) : /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(PuEmpty, null, fil && !ql && !bad && mode === "all" ? "За период помощник не отдавал файлов." : ql || bad || fil || mode !== "all" ? "Ничего не найдено." : "За период отчётов и ответов не было.")) : /*#__PURE__*/React.createElement("div", {
     className: "pu2-tw"
   }, /*#__PURE__*/React.createElement("table", {
     className: "pu2-tbl"
@@ -32543,7 +32551,10 @@ function PuQaReports() {
     "aria-label": `Открыть: ${r.title || r.question || "отчёт"}`
   }, /*#__PURE__*/React.createElement("td", {
     className: "pu2-qa-qc"
-  }, r.title || r.question || "—", r.comment && /*#__PURE__*/React.createElement("em", null, "\xAB", r.comment, "\xBB")), /*#__PURE__*/React.createElement("td", {
+  }, r.title || r.question || "—", r.comment && /*#__PURE__*/React.createElement("em", null, "\xAB", r.comment, "\xBB"), /*#__PURE__*/React.createElement(PuFiles, {
+    files: r.files,
+    compact: true
+  })), /*#__PURE__*/React.createElement("td", {
     className: "pu2-l pu2-qa-nw"
   }, /*#__PURE__*/React.createElement(PuPerson, {
     login: r.username,
@@ -35148,6 +35159,15 @@ const PU2_CSS_LAYERS = `
 .pu2-ly-q{color:var(--ink)}
 .pu2-ly-m{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:12px;color:var(--ink-3)}
 .pu2-ly-m .pu2-ic{width:13px;height:13px}
+/* файлы помощника: в строке — «скачать» рядом с видом, в листе — карточки */
+.pu2-files{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px 10px}
+td .pu2-files{display:flex;margin-top:4px}
+.pu2-file{font-size:12px;white-space:nowrap}
+.pu2-file .pu2-ic{width:13px;height:13px}
+a.pu2-file:hover .pu2-ic{transform:translateY(1px)}
+.pu2-ly-files{margin:0 0 14px}
+.pu2-ly-files .agf-list{margin-top:0}
+.pu2-ly-msg .pu2-ly-files{margin:10px 0 0}
 .pu2-ly-row.bad .pu2-ly-q{color:var(--accent-ink)}
 .pu2-ly-cmt{font-style:italic;color:var(--ink-2)}
 .pu2-ly-vd{display:inline-flex;align-items:center;gap:4px}
@@ -35362,7 +35382,10 @@ function PuPersonSheet({
     }, x.mode && /*#__PURE__*/React.createElement("span", null, x.mode === "deep" ? "глубокий" : "быстрый"), +x.answer_len > 0 ? /*#__PURE__*/React.createElement("span", null, +x.answer_len < 1000 ? `${puNum(x.answer_len)} зн.` : `${puNum(Math.round(+x.answer_len / 1000))} тыс. зн.`) : /*#__PURE__*/React.createElement("span", {
       className: "pu2-neg",
       "data-tip": "\u041E\u0442\u0432\u0435\u0442\u0430 \u0432 \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u043D\u0435\u0442 \u2014 \u0432\u043E\u043F\u0440\u043E\u0441 \u043E\u0441\u0442\u0430\u043B\u0441\u044F \u0431\u0435\u0437 \u043E\u0442\u0432\u0435\u0442\u0430"
-    }, "\u0431\u0435\u0437 \u043E\u0442\u0432\u0435\u0442\u0430"), x.report_id && /*#__PURE__*/React.createElement("button", {
+    }, "\u0431\u0435\u0437 \u043E\u0442\u0432\u0435\u0442\u0430"), /*#__PURE__*/React.createElement(PuFiles, {
+      files: x.files,
+      compact: true
+    }), x.report_id && /*#__PURE__*/React.createElement("button", {
       type: "button",
       className: "pu2-lnk",
       onClick: () => c.openReport(x.report_id)
@@ -35375,7 +35398,10 @@ function PuPersonSheet({
       className: "pu2-ly-q"
     }, r.title || r.question), /*#__PURE__*/React.createElement("span", {
       className: "pu2-ly-m"
-    }, /*#__PURE__*/React.createElement("span", null, r.mode === "quick" ? "быстрый ответ" : "отчёт"), puLen(r), /*#__PURE__*/React.createElement("button", {
+    }, /*#__PURE__*/React.createElement("span", null, r.mode === "quick" ? "быстрый ответ" : "отчёт"), puLen(r), /*#__PURE__*/React.createElement(PuFiles, {
+      files: r.files,
+      compact: true
+    }), /*#__PURE__*/React.createElement("button", {
       type: "button",
       className: "pu2-lnk",
       onClick: () => c.openReport(r.report_id)
@@ -35435,6 +35461,55 @@ function PuPersonSheet({
     sub: sub,
     onClose: onClose
   }, body());
+}
+
+// Файлы, которые помощник выдал человеку (презентации, выгрузки). Скачивает владелец
+// инструмента — служебный доступ, каждое скачивание пишется в журнал; коллегам с
+// доступом к «Пульсу» видны только названия.
+const puFiles = f => Array.isArray(f) ? f.filter(x => x && x.id && x.name) : [];
+const puFileKind = f => /\.html?$/i.test(f.name || "") ? "презентация" : ((f.name || "").split(".").pop() || "файл").toUpperCase().slice(0, 4);
+function PuFiles({
+  files,
+  compact
+}) {
+  const c = usePu(),
+    fs = puFiles(files);
+  if (!fs.length) return null;
+  const own = !!(c.isOwner || c.m && c.m.is_owner);
+  if (compact) return /*#__PURE__*/React.createElement("span", {
+    className: "pu2-files"
+  }, fs.map(f => own ? /*#__PURE__*/React.createElement("a", {
+    key: f.id,
+    className: "pu2-lnk pu2-file",
+    href: `/api/agent-files/${f.id}`,
+    download: f.name,
+    title: `Скачать «${f.name}»`,
+    onClick: e => {
+      e.stopPropagation();
+      trkEvent({
+        kind: "ui",
+        page: "pulse",
+        payload: {
+          action: "agent_file_download",
+          ext: puFileKind(f)
+        }
+      });
+    }
+  }, /*#__PURE__*/React.createElement(PuIcon, {
+    n: "download"
+  }), puFileKind(f)) : /*#__PURE__*/React.createElement("span", {
+    key: f.id,
+    className: "pu2-file pu2-muted",
+    "data-tip": "\u0421\u043A\u0430\u0447\u0430\u0442\u044C \u0444\u0430\u0439\u043B \u043C\u043E\u0436\u0435\u0442 \u0432\u043B\u0430\u0434\u0435\u043B\u0435\u0446 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0430"
+  }, puFileKind(f))));
+  return /*#__PURE__*/React.createElement("div", {
+    className: "pu2-ly-files"
+  }, own ? /*#__PURE__*/React.createElement(AgentFiles, {
+    files: fs,
+    page: "pulse"
+  }) : /*#__PURE__*/React.createElement("p", {
+    className: "pu2-ly-p pu2-muted"
+  }, "\u0424\u0430\u0439\u043B\u044B: ", fs.map(f => `«${f.name}»`).join(", "), ". \u0421\u043A\u0430\u0447\u0430\u0442\u044C \u0438\u0445 \u043C\u043E\u0436\u0435\u0442 \u0432\u043B\u0430\u0434\u0435\u043B\u0435\u0446 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442\u0430."));
 }
 
 // «служебный доступ»: чужой отчёт или диалог открыт владельцем — это пишется в журнал
@@ -35498,9 +35573,11 @@ function PuReportSheet({
     className: "pu2-ly"
   }, r.question && r.title && r.question !== r.title && /*#__PURE__*/React.createElement("p", {
     className: "pu2-ly-p"
-  }, /*#__PURE__*/React.createElement("b", null, "\u0412\u043E\u043F\u0440\u043E\u0441:"), " ", r.question), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("b", null, "\u0412\u043E\u043F\u0440\u043E\u0441:"), " ", r.question), /*#__PURE__*/React.createElement(PuFiles, {
+    files: p.files
+  }), /*#__PURE__*/React.createElement("div", {
     className: "pu2-ly-md"
-  }, renderMD(r.body || "", undefined, undefined, p.viz) || /*#__PURE__*/React.createElement(PuEmpty, null, "\u041E\u0442\u0447\u0451\u0442 \u043F\u0443\u0441\u0442\u043E\u0439."))));
+  }, renderMD(stripFileMarks(r.body || "", puFiles(p.files)), undefined, undefined, p.viz) || /*#__PURE__*/React.createElement(PuEmpty, null, "\u041E\u0442\u0447\u0451\u0442 \u043F\u0443\u0441\u0442\u043E\u0439."))));
 }
 
 // ── лист диалога с ИИ-помощником ──
@@ -35566,9 +35643,11 @@ function PuSessionSheet({
       color: "var(--ink)",
       whiteSpace: "pre-line"
     }
-  }, x.content) : /*#__PURE__*/React.createElement("div", {
+  }, x.content) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "pu2-ly-md"
-  }, renderMD(x.content || "")))))));
+  }, renderMD(stripFileMarks(x.content || "", puFiles(x.meta && x.meta.files)))), /*#__PURE__*/React.createElement(PuFiles, {
+    files: x.meta && x.meta.files
+  })))))));
 }
 // ⟦pu2:layers⟧ конец
 

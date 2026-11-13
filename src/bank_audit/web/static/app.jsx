@@ -6687,13 +6687,13 @@ function stripFileMarks(text,files){
     t=t.replace(new RegExp("^[ \\t]*«"+esc+"»[ \\t]*\\n?","gm"),""); });
   return t.replace(/\n{3,}/g,"\n\n").trimEnd();
 }
-function AgentFiles({files}){
+function AgentFiles({files, page="ai"}){
   if(!files||!files.length) return null;
   const size=b=>b>=1048576?(b/1048576).toFixed(1).replace(".",",")+" МБ":Math.max(1,Math.round((b||0)/1024))+" КБ";
   return <div className="agf-list">{files.map(f=>{
     const ext=((f.name||"").split(".").pop()||"").toLowerCase().slice(0,4);
     return <a key={f.id} className="agf" href={`/api/agent-files/${f.id}`} download={f.name}
-              onClick={()=>trkEvent({kind:"ui",page:"ai",payload:{action:"agent_file_download",ext}})}>
+              onClick={()=>trkEvent({kind:"ui",page,payload:{action:"agent_file_download",ext}})}>
       <span className={"agf-ext agf-"+ext}>{ext.toUpperCase()}</span>
       <span className="agf-t"><span className="agf-n" title={f.name}>{f.name}</span>
         <span className="agf-s">{size(f.size)}</span></span>
@@ -15258,8 +15258,8 @@ function PuQaHopeless(){
 // «Отчёты и ответы»: строка — открыть отчёт; автор — лист человека
 function PuQaReports(){
   const c=usePu();
-  const[mode,setMode]=useState("all"), [bad,setBad]=useState(false), [qq,setQq]=useState(""), [all,setAll]=useState(false);
-  const {d,err,reload}=usePuData(`/api/admin/reports?days=${c.days}&limit=300${bad?"&only_bad=true":""}${puMe(c.withMe)}`);
+  const[mode,setMode]=useState("all"), [bad,setBad]=useState(false), [fil,setFil]=useState(false), [qq,setQq]=useState(""), [all,setAll]=useState(false);
+  const {d,err,reload}=usePuData(`/api/admin/reports?days=${c.days}&limit=300${bad?"&only_bad=true":""}${fil?"&with_files=true":""}${puMe(c.withMe)}`);
   const ql=qq.trim().toLowerCase().replace(/ё/g,"е");
   const rows=((d&&d.reports)||[]).filter(r=>(mode==="all"||(mode==="quick")===(r.mode==="quick"))
     &&(!ql||[r.question,r.title,r.name,r.username].some(s=>String(s||"").toLowerCase().replace(/ё/g,"е").includes(ql))));
@@ -15271,18 +15271,21 @@ function PuQaReports(){
     <div className="pu2-qa-fbar">
       <PuSeg value={mode} options={[["all","Все"],["deep","Только отчёты"],["quick","Быстрые ответы"]]} onChange={setMode} label="Что показывать"/>
       <button type="button" className={"chip"+(bad?" on":"")} aria-pressed={bad} onClick={()=>setBad(x=>!x)}>С жалобами</button>
+      <button type="button" className={"chip"+(fil?" on":"")} aria-pressed={fil} onClick={()=>setFil(x=>!x)}
+        data-tip="Презентации и выгрузки, которые помощник отдал файлом">С файлами</button>
       <span className="pu2-sp"/>
       <input className="pu2-qa-in" type="search" value={qq} onChange={e=>setQq(e.target.value)} placeholder="Поиск по вопросу или автору"
         aria-label="Поиск по отчётам и ответам"/>
     </div>
     {!d?<div className="pu2-pad" style={{paddingTop:14}}>{err?<PuLoadErr onRetry={reload}>Не удалось загрузить отчёты.</PuLoadErr>:<Skel h={160}/>}</div>
-      :!rows.length?<div className="pu2-pad" style={{paddingTop:14}}><PuEmpty>{ql||bad||mode!=="all"?"Ничего не найдено.":"За период отчётов и ответов не было."}</PuEmpty></div>
+      :!rows.length?<div className="pu2-pad" style={{paddingTop:14}}><PuEmpty>{fil&&!ql&&!bad&&mode==="all"?"За период помощник не отдавал файлов."
+        :ql||bad||fil||mode!=="all"?"Ничего не найдено.":"За период отчётов и ответов не было."}</PuEmpty></div>
       :<div className="pu2-tw"><table className="pu2-tbl">
         <thead><tr><th className="pu2-l">Вопрос</th><th className="pu2-l">Автор</th><th className="pu2-l pu2-hide-s">Вид</th><th className="pu2-l">Когда</th>
           <th data-tip="Объём текста; красным — сорвался или слишком короткий">Объём</th><th>Оценки</th><th>Открытий · пересылок</th></tr></thead>
         <tbody>{shown.map(r=><tr key={r.report_id} className="pu2-click" tabIndex={0} onClick={()=>open(r)}
             onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); open(r); } }} aria-label={`Открыть: ${r.title||r.question||"отчёт"}`}>
-          <td className="pu2-qa-qc">{r.title||r.question||"—"}{r.comment&&<em>«{r.comment}»</em>}</td>
+          <td className="pu2-qa-qc">{r.title||r.question||"—"}{r.comment&&<em>«{r.comment}»</em>}<PuFiles files={r.files} compact/></td>
           <td className="pu2-l pu2-qa-nw"><PuPerson login={r.username} name={r.name||r.username} noAv/></td>
           <td className="pu2-l pu2-hide-s pu2-muted pu2-qa-nw">{r.mode==="quick"?"ответ":"отчёт"}</td>
           <td className="pu2-l pu2-muted pu2-qa-nw">{r.at}</td>
@@ -16625,6 +16628,15 @@ const PU2_CSS_LAYERS=`
 .pu2-ly-q{color:var(--ink)}
 .pu2-ly-m{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:12px;color:var(--ink-3)}
 .pu2-ly-m .pu2-ic{width:13px;height:13px}
+/* файлы помощника: в строке — «скачать» рядом с видом, в листе — карточки */
+.pu2-files{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px 10px}
+td .pu2-files{display:flex;margin-top:4px}
+.pu2-file{font-size:12px;white-space:nowrap}
+.pu2-file .pu2-ic{width:13px;height:13px}
+a.pu2-file:hover .pu2-ic{transform:translateY(1px)}
+.pu2-ly-files{margin:0 0 14px}
+.pu2-ly-files .agf-list{margin-top:0}
+.pu2-ly-msg .pu2-ly-files{margin:10px 0 0}
 .pu2-ly-row.bad .pu2-ly-q{color:var(--accent-ink)}
 .pu2-ly-cmt{font-style:italic;color:var(--ink-2)}
 .pu2-ly-vd{display:inline-flex;align-items:center;gap:4px}
@@ -16753,10 +16765,12 @@ function PuPersonSheet({login,onClose}){
             <span className="pu2-ly-m">{x.mode&&<span>{x.mode==="deep"?"глубокий":"быстрый"}</span>}
               {+x.answer_len>0?<span>{+x.answer_len<1000?`${puNum(x.answer_len)} зн.`:`${puNum(Math.round(+x.answer_len/1000))} тыс. зн.`}</span>
                 :<span className="pu2-neg" data-tip="Ответа в истории нет — вопрос остался без ответа">без ответа</span>}
+              <PuFiles files={x.files} compact/>
               {x.report_id&&<button type="button" className="pu2-lnk" onClick={()=>c.openReport(x.report_id)}>Отчёт<PuIcon n="right"/></button>}</span></div></li>)}
         {tab==="r"&&lst(d.reports||[],"Отчётов не строил(а).",(r)=><li key={r.report_id} className="pu2-ly-row">
           <time>{r.at}</time><div><span className="pu2-ly-q">{r.title||r.question}</span>
             <span className="pu2-ly-m"><span>{r.mode==="quick"?"быстрый ответ":"отчёт"}</span>{puLen(r)}
+              <PuFiles files={r.files} compact/>
               <button type="button" className="pu2-lnk" onClick={()=>c.openReport(r.report_id)}>Открыть<PuIcon n="right"/></button></span></div></li>)}
         {tab==="fb"&&lst(d.ratings||[],"Ничего не оценивал(а).",(x,i)=><li key={i} className={"pu2-ly-row"+(x.verdict<0?" bad":"")}>
           <time>{x.at}</time><div><span className="pu2-ly-q">{x.question||x.title||x.item_key}</span>
@@ -16782,6 +16796,26 @@ function PuPersonSheet({login,onClose}){
   return <RvModal side="right" wide title={name||"Человек"} sub={sub} onClose={onClose}>{body()}</RvModal>;
 }
 
+// Файлы, которые помощник выдал человеку (презентации, выгрузки). Скачивает владелец
+// инструмента — служебный доступ, каждое скачивание пишется в журнал; коллегам с
+// доступом к «Пульсу» видны только названия.
+const puFiles=(f)=>Array.isArray(f)?f.filter(x=>x&&x.id&&x.name):[];
+const puFileKind=(f)=>/\.html?$/i.test(f.name||"")?"презентация":(((f.name||"").split(".").pop()||"файл").toUpperCase().slice(0,4));
+function PuFiles({files,compact}){
+  const c=usePu(), fs=puFiles(files);
+  if(!fs.length) return null;
+  const own=!!(c.isOwner||(c.m&&c.m.is_owner));
+  if(compact) return <span className="pu2-files">{fs.map(f=>own
+    ?<a key={f.id} className="pu2-lnk pu2-file" href={`/api/agent-files/${f.id}`} download={f.name} title={`Скачать «${f.name}»`}
+        onClick={e=>{ e.stopPropagation(); trkEvent({kind:"ui",page:"pulse",payload:{action:"agent_file_download",ext:puFileKind(f)}}); }}>
+        <PuIcon n="download"/>{puFileKind(f)}</a>
+    :<span key={f.id} className="pu2-file pu2-muted" data-tip="Скачать файл может владелец инструмента">{puFileKind(f)}</span>)}</span>;
+  return <div className="pu2-ly-files">
+    {own?<AgentFiles files={fs} page="pulse"/>
+      :<p className="pu2-ly-p pu2-muted">Файлы: {fs.map(f=>`«${f.name}»`).join(", ")}. Скачать их может владелец инструмента.</p>}
+  </div>;
+}
+
 // «служебный доступ»: чужой отчёт или диалог открыт владельцем — это пишется в журнал
 const PuLyAdm=()=><PuBadge lv="warn" tip="Открыто служебным доступом владельца инструмента; действие записано в журнал">служебный доступ</PuBadge>;
 
@@ -16804,7 +16838,8 @@ function PuReportSheet({id,onClose}){
       :r.error?(r.nf?<PuEmpty>Отчёт не найден или удалён.</PuEmpty>:<PuLoadErr onRetry={()=>setN(x=>x+1)}>Не удалось загрузить отчёт.</PuLoadErr>)
       :<div className="pu2-ly">
         {r.question&&r.title&&r.question!==r.title&&<p className="pu2-ly-p"><b>Вопрос:</b> {r.question}</p>}
-        <div className="pu2-ly-md">{renderMD(r.body||"",undefined,undefined,p.viz)||<PuEmpty>Отчёт пустой.</PuEmpty>}</div>
+        <PuFiles files={p.files}/>
+        <div className="pu2-ly-md">{renderMD(stripFileMarks(r.body||"",puFiles(p.files)),undefined,undefined,p.viz)||<PuEmpty>Отчёт пустой.</PuEmpty>}</div>
       </div>}
   </RvModal>;
 }
@@ -16828,7 +16863,8 @@ function PuSessionSheet({id,onClose}){
         {(d.messages||[]).map((x,i)=><div key={i} className={"pu2-ly-msg "+(x.role==="user"?"user":"assistant")}>
           <div>{x.role==="user"?"Вопрос":"Ответ"}{x.at?` · ${x.at}`:""}{x.meta&&x.meta.mode?` · ${x.meta.mode==="deep"?"глубокий":"быстрый"}`:""}</div>
           {x.role==="user"?<div className="pu2-ly-p" style={{margin:0,color:"var(--ink)",whiteSpace:"pre-line"}}>{x.content}</div>
-            :<div className="pu2-ly-md">{renderMD(x.content||"")}</div>}
+            :<><div className="pu2-ly-md">{renderMD(stripFileMarks(x.content||"",puFiles(x.meta&&x.meta.files)))}</div>
+              <PuFiles files={x.meta&&x.meta.files}/></>}
         </div>)}
       </div></div>}
   </RvModal>;

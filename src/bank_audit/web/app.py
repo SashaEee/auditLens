@@ -882,13 +882,16 @@ def admin_user_card(username: str, days: int = 30,
 def admin_reports(days: int = 30, limit: int = 200, q: Optional[str] = None,
                   username: Optional[str] = None, only_bad: bool = False,
                   mode: Optional[str] = None, me: Optional[bool] = None,
+                  with_files: bool = False,
                   user: CurrentUser = Depends(get_current_user)):
-    """Отчёты и сохранённые быстрые ответы ВСЕХ пользователей: недовольные — первыми."""
+    """Отчёты и сохранённые быстрые ответы ВСЕХ пользователей: недовольные — первыми.
+    with_files — только с файлами помощника (презентации, выгрузки)."""
     if not telemetry.can_pulse(user.username):
         raise HTTPException(403, "admin only")
     return telemetry.reports_all(days=days, limit=limit, q=q,
                                  username=username, only_bad=only_bad, mode=mode,
-                                 exclude=telemetry.excluded(user.username, with_me=me))
+                                 exclude=telemetry.excluded(user.username, with_me=me),
+                                 with_files=with_files)
 
 
 @app.get("/api/admin/session/{sid}")
@@ -5859,9 +5862,19 @@ def agent_file_download(file_id: str, user: CurrentUser = Depends(get_current_us
     """Скачать файл, который ИИ-помощник выдал этому пользователю."""
     from urllib.parse import quote as _quote
     from ..ai import agent_files
-    f = agent_files.get(file_id, user.username, telemetry.is_admin(user.username))
+    admin = telemetry.is_admin(user.username)
+    f = agent_files.get(file_id, user.username, admin)
     if not f:
         raise HTTPException(404, "файл не найден")
+    if admin and f.get("username") != user.username:
+        # Владелец скачивает чужой файл из «Пульса» — как и открытие чужого отчёта,
+        # это служебный доступ и пишется в журнал.
+        try:
+            userdata.log_event(user.username, "admin_file_download",
+                               {"file_id": file_id, "owner": f.get("username"),
+                                "ext": agent_files.ext_of(f["name"])})
+        except Exception:  # noqa: BLE001 — журнал не мешает скачиванию
+            pass
     ext = agent_files.ext_of(f["name"]) or "bin"
     return Response(content=bytes(f["data"]), media_type=f["mime"], headers={
         "Content-Disposition": f"attachment; filename=\"auditlens.{ext}\"; "
