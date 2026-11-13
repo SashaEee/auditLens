@@ -13232,11 +13232,13 @@ const PU_PERSONA_COL={desc:"описание",ratings:"оценки ленты",
   ai_ratings:"оценки ИИ",note:"нарратив"};
 // Объём отчёта: «1 тыс.» у сообщения об ошибке в 53 знака выдавало сорванный
 // отчёт за обычный (ПУЛ-02). Короткое тело и итог прогона — видны.
+const puFiles=(f)=>Array.isArray(f)?f.filter(x=>x&&x.id&&x.name):[];
 function puLen(r){
   const n=+r.body_len||0;
   const txt=n<1000?`${n} зн.`:`${Math.round(n/1000)} тыс. зн.`;
   const st=r.status==="stopped"?" · остановлен":r.status==="failed"?" · сорвался":"";
-  const bad=n<500||r.status==="failed";
+  // короткий текст при файле — норма: презентация или выгрузка и есть ответ
+  const bad=(n<500&&!puFiles(r.files).length)||r.status==="failed";
   return <span style={bad?{color:"var(--accent-ink)"}:undefined}
     data-tip={r.elapsed_s?`строился ${puDur(r.elapsed_s)}`:undefined}>{txt}{st}</span>;
 }
@@ -15282,7 +15284,7 @@ function PuQaReports(){
         :ql||bad||fil||mode!=="all"?"Ничего не найдено.":"За период отчётов и ответов не было."}</PuEmpty></div>
       :<div className="pu2-tw"><table className="pu2-tbl">
         <thead><tr><th className="pu2-l">Вопрос</th><th className="pu2-l">Автор</th><th className="pu2-l pu2-hide-s">Вид</th><th className="pu2-l">Когда</th>
-          <th data-tip="Объём текста; красным — сорвался или слишком короткий">Объём</th><th>Оценки</th><th>Открытий · пересылок</th></tr></thead>
+          <th data-tip="Объём текста; красным — сорвался или слишком короткий (если файла нет)">Объём</th><th>Оценки</th><th>Открытий · пересылок</th></tr></thead>
         <tbody>{shown.map(r=><tr key={r.report_id} className="pu2-click" tabIndex={0} onClick={()=>open(r)}
             onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); open(r); } }} aria-label={`Открыть: ${r.title||r.question||"отчёт"}`}>
           <td className="pu2-qa-qc">{r.title||r.question||"—"}{r.comment&&<em>«{r.comment}»</em>}<PuFiles files={r.files} compact/></td>
@@ -16799,7 +16801,6 @@ function PuPersonSheet({login,onClose}){
 // Файлы, которые помощник выдал человеку (презентации, выгрузки). Скачивает владелец
 // инструмента — служебный доступ, каждое скачивание пишется в журнал; коллегам с
 // доступом к «Пульсу» видны только названия.
-const puFiles=(f)=>Array.isArray(f)?f.filter(x=>x&&x.id&&x.name):[];
 const puFileKind=(f)=>/\.html?$/i.test(f.name||"")?"презентация":(((f.name||"").split(".").pop()||"файл").toUpperCase().slice(0,4));
 function PuFiles({files,compact}){
   const c=usePu(), fs=puFiles(files);

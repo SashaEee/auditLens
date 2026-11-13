@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 2abb6c85aef599b48389a0035eb35bcc61d4017ebad6fdfc58e252325c5dce2e): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 d2ec8099976c3ab382f1a0492e4552188efb859692a04d24f05aa46fe0007a7f): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -28552,11 +28552,13 @@ const PU_PERSONA_COL = {
 };
 // Объём отчёта: «1 тыс.» у сообщения об ошибке в 53 знака выдавало сорванный
 // отчёт за обычный (ПУЛ-02). Короткое тело и итог прогона — видны.
+const puFiles = f => Array.isArray(f) ? f.filter(x => x && x.id && x.name) : [];
 function puLen(r) {
   const n = +r.body_len || 0;
   const txt = n < 1000 ? `${n} зн.` : `${Math.round(n / 1000)} тыс. зн.`;
   const st = r.status === "stopped" ? " · остановлен" : r.status === "failed" ? " · сорвался" : "";
-  const bad = n < 500 || r.status === "failed";
+  // короткий текст при файле — норма: презентация или выгрузка и есть ответ
+  const bad = n < 500 && !puFiles(r.files).length || r.status === "failed";
   return /*#__PURE__*/React.createElement("span", {
     style: bad ? {
       color: "var(--accent-ink)"
@@ -32536,7 +32538,7 @@ function PuQaReports() {
   }, "\u0412\u0438\u0434"), /*#__PURE__*/React.createElement("th", {
     className: "pu2-l"
   }, "\u041A\u043E\u0433\u0434\u0430"), /*#__PURE__*/React.createElement("th", {
-    "data-tip": "\u041E\u0431\u044A\u0451\u043C \u0442\u0435\u043A\u0441\u0442\u0430; \u043A\u0440\u0430\u0441\u043D\u044B\u043C \u2014 \u0441\u043E\u0440\u0432\u0430\u043B\u0441\u044F \u0438\u043B\u0438 \u0441\u043B\u0438\u0448\u043A\u043E\u043C \u043A\u043E\u0440\u043E\u0442\u043A\u0438\u0439"
+    "data-tip": "\u041E\u0431\u044A\u0451\u043C \u0442\u0435\u043A\u0441\u0442\u0430; \u043A\u0440\u0430\u0441\u043D\u044B\u043C \u2014 \u0441\u043E\u0440\u0432\u0430\u043B\u0441\u044F \u0438\u043B\u0438 \u0441\u043B\u0438\u0448\u043A\u043E\u043C \u043A\u043E\u0440\u043E\u0442\u043A\u0438\u0439 (\u0435\u0441\u043B\u0438 \u0444\u0430\u0439\u043B\u0430 \u043D\u0435\u0442)"
   }, "\u041E\u0431\u044A\u0451\u043C"), /*#__PURE__*/React.createElement("th", null, "\u041E\u0446\u0435\u043D\u043A\u0438"), /*#__PURE__*/React.createElement("th", null, "\u041E\u0442\u043A\u0440\u044B\u0442\u0438\u0439 \xB7 \u043F\u0435\u0440\u0435\u0441\u044B\u043B\u043E\u043A"))), /*#__PURE__*/React.createElement("tbody", null, shown.map(r => /*#__PURE__*/React.createElement("tr", {
     key: r.report_id,
     className: "pu2-click",
@@ -35466,7 +35468,6 @@ function PuPersonSheet({
 // Файлы, которые помощник выдал человеку (презентации, выгрузки). Скачивает владелец
 // инструмента — служебный доступ, каждое скачивание пишется в журнал; коллегам с
 // доступом к «Пульсу» видны только названия.
-const puFiles = f => Array.isArray(f) ? f.filter(x => x && x.id && x.name) : [];
 const puFileKind = f => /\.html?$/i.test(f.name || "") ? "презентация" : ((f.name || "").split(".").pop() || "файл").toUpperCase().slice(0, 4);
 function PuFiles({
   files,
