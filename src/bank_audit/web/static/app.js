@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 d2ec8099976c3ab382f1a0492e4552188efb859692a04d24f05aa46fe0007a7f): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 593e65a8e7ee272aeb9d2f5c0df4dc6658fe0edc7e5c5a8131f084e8685b1f2a): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -33157,11 +33157,14 @@ function PuIbMail() {
     [err, setErr] = useState(null);
   const d = L.d;
   if (!d || L.err && L.err.status === 403) return null;
-  const secs = d.known_sections || [];
+  // ответ без полей (старый сервер, пустая заглушка) не должен ронять весь раздел «Обращения»
+  const secs = d.known_sections || [],
+    allTo = Array.isArray(d.all) ? d.all : [];
+  const bySec = d.sections && typeof d.sections === "object" ? d.sections : {};
   const secLabel = k => (secs.find(s => s.key === k) || {
     label: k
   }).label;
-  const who = xs => xs.length ? xs.map((r, i) => /*#__PURE__*/React.createElement(React.Fragment, {
+  const who = xs => Array.isArray(xs) && xs.length ? xs.map((r, i) => /*#__PURE__*/React.createElement(React.Fragment, {
     key: i
   }, i ? ", " : "", /*#__PURE__*/React.createElement("span", {
     className: r.ok ? "" : "pu2-ib-mbad",
@@ -33169,10 +33172,10 @@ function PuIbMail() {
   }, r.name || r.email || r.entry, r.ok ? "" : " — почта не подключена"))) : "никому";
   const split = v => v.split(/[,;\n]/).map(x => x.trim()).filter(Boolean);
   const start = () => {
-    setAll(d.all.map(r => r.entry).join(", "));
-    setRows(Object.entries(d.sections).map(([k, xs]) => ({
+    setAll(allTo.map(r => r.entry).join(", "));
+    setRows(Object.entries(bySec).map(([k, xs]) => ({
       k,
-      v: xs.map(r => r.entry).join(", ")
+      v: (Array.isArray(xs) ? xs : []).map(r => r.entry).join(", ")
     })));
     setErr(null);
     setEdit(true);
@@ -33196,7 +33199,7 @@ function PuIbMail() {
     className: "pu2-ib-mail"
   }, /*#__PURE__*/React.createElement("span", {
     className: "pu2-ib-mh"
-  }, "\u041F\u0438\u0441\u044C\u043C\u0430 \u043E\u0431 \u043E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u044F\u0445"), /*#__PURE__*/React.createElement("span", null, "\u0432\u0441\u0435 \u2014 ", who(d.all)), Object.entries(d.sections).map(([k, xs]) => /*#__PURE__*/React.createElement("span", {
+  }, "\u041F\u0438\u0441\u044C\u043C\u0430 \u043E\u0431 \u043E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u044F\u0445"), /*#__PURE__*/React.createElement("span", null, "\u0432\u0441\u0435 \u2014 ", who(allTo)), Object.entries(bySec).map(([k, xs]) => /*#__PURE__*/React.createElement("span", {
     key: k
   }, "\xB7 \xAB", secLabel(k), "\xBB \u2014 \u0435\u0449\u0451 ", who(xs))), /*#__PURE__*/React.createElement("button", {
     type: "button",
@@ -34425,6 +34428,13 @@ const PU2_CSS_RESULTS = `
 .pu2-res-reachf>*{min-width:0}
 .pu2-res-reachf .pu2-hbar{grid-template-columns:minmax(0,170px) minmax(0,1fr) auto}
 .pu2-res-act{display:flex;gap:8px 12px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.pu2-res-oth{margin-top:14px;font-size:13px}
+.pu2-res-oth summary{cursor:pointer;color:var(--ink-2);font-weight:500;border-radius:var(--r-sm)}
+.pu2-res-oth p{margin:8px 0 6px;color:var(--ink-3);font-size:12.5px}
+.pu2-res-oth ul{list-style:none;margin:0;padding:0;max-height:320px;overflow:auto;border-top:1px solid var(--hair)}
+.pu2-res-oth li{display:flex;align-items:baseline;gap:6px 12px;padding:6px 0;border-bottom:1px solid var(--hair);min-width:0}
+.pu2-res-oth li>:first-child{flex:1 1 auto;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pu2-res-oth li span{flex:none;color:var(--ink-3);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .pu2-res-cost{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:32px}
 .pu2-res-cost>*{min-width:0}
 .pu2-res-stats{display:flex;gap:12px 28px;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1px solid var(--hair)}
@@ -34582,6 +34592,9 @@ function PuResReach() {
     roles = d.roles || [],
     oth = d.other || {},
     mt = d.matched || {};
+  const since = d.first_day ? puDay(d.first_day) : "",
+    hSince = d.hours_since ? puDay(d.hours_since) : "";
+  const othP = Array.isArray(d.other_people) ? d.other_people : null;
   const sum = k => units.reduce((a, u) => a + (+u[k] || 0), 0);
   const maxH = Math.max(1, ...units.map(u => +u.head || 0)),
     k = Math.max(1, Math.ceil(maxH / 40));
@@ -34604,7 +34617,7 @@ function PuResReach() {
     id: "pu2-reach",
     title: title,
     flush: true,
-    meta: `кадровая выгрузка от ${puDay(d.loaded_at)} · всё время · ФИО не хранятся`
+    meta: `кадровая выгрузка от ${puDay(d.loaded_at)} · ${since ? "с " + since : "всё время"} · ФИО не хранятся`
   }, /*#__PURE__*/React.createElement("div", {
     className: "pu2-pad",
     style: {
@@ -34613,8 +34626,8 @@ function PuResReach() {
   }, /*#__PURE__*/React.createElement(PuStatRow, {
     items: [{
       v: `${puNum(d.users)} из ${puNum(d.head)}`,
-      l: `работающих пользуются · ${puPct(d.reach)}`,
-      s: "без уволенных и служебных учёток"
+      l: `из штата заходили · ${puPct(d.reach)}`,
+      s: `хотя бы раз${since ? " с " + since : ""}, без уволенных и служебных учёток`
     }, {
       v: puNum(d.active30),
       l: "активны за 30 дней",
@@ -34635,10 +34648,15 @@ function PuResReach() {
   }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
     className: "pu2-l"
   }, d.label || "Подразделение"), /*#__PURE__*/React.createElement("th", null, "\u0428\u0442\u0430\u0442"), /*#__PURE__*/React.createElement("th", {
-    className: "pu2-l"
-  }, "\u041F\u043E\u043B\u044C\u0437\u0443\u044E\u0442\u0441\u044F"), /*#__PURE__*/React.createElement("th", null, "\u041E\u0445\u0432\u0430\u0442"), /*#__PURE__*/React.createElement("th", null, "\u0410\u043A\u0442\u0438\u0432\u043D\u044B 30 \u0434\u043D\u0435\u0439"), /*#__PURE__*/React.createElement("th", null, "\u0412\u043E\u043F\u0440\u043E\u0441\u044B \u0418\u0418"), /*#__PURE__*/React.createElement("th", {
+    className: "pu2-l",
+    "data-tip": `Заходили хотя бы раз${since ? " с " + since : ""}`
+  }, "\u0417\u0430\u0445\u043E\u0434\u0438\u043B\u0438"), /*#__PURE__*/React.createElement("th", null, "\u041E\u0445\u0432\u0430\u0442"), /*#__PURE__*/React.createElement("th", null, "\u0410\u043A\u0442\u0438\u0432\u043D\u044B 30 \u0434\u043D\u0435\u0439"), /*#__PURE__*/React.createElement("th", {
+    "data-tip": "\u0422\u043E\u0442 \u0436\u0435 \u0432\u043E\u043F\u0440\u043E\u0441, \u043F\u043E\u0432\u0442\u043E\u0440\u0451\u043D\u043D\u044B\u0439 \u043F\u043E\u0434\u0440\u044F\u0434 \u0432 \u0434\u0438\u0430\u043B\u043E\u0433\u0435 (\u043F\u043E\u0441\u043B\u0435 \u0441\u0431\u043E\u044F, \u043F\u0440\u0438 \u0441\u043C\u0435\u043D\u0435 \u0433\u043B\u0443\u0431\u0438\u043D\u044B), \u2014 \u043E\u0434\u0438\u043D \u0432\u043E\u043F\u0440\u043E\u0441"
+  }, "\u0412\u043E\u043F\u0440\u043E\u0441\u044B \u0418\u0418"), /*#__PURE__*/React.createElement("th", {
     "data-tip": "\u0417\u0430\u0445\u043E\u0434\u0438\u043B\u0438 5 \u0438 \u0431\u043E\u043B\u044C\u0448\u0435 \u0440\u0430\u0437\u043D\u044B\u0445 \u0434\u043D\u0435\u0439"
-  }, "\u041F\u043E\u0441\u0442\u043E\u044F\u043D\u043D\u044B\u0435"), /*#__PURE__*/React.createElement("th", null, "\u0427\u0430\u0441\u044B"))), /*#__PURE__*/React.createElement("tbody", null, units.map(u => /*#__PURE__*/React.createElement("tr", {
+  }, "\u041F\u043E\u0441\u0442\u043E\u044F\u043D\u043D\u044B\u0435"), /*#__PURE__*/React.createElement("th", {
+    "data-tip": `Активное время${hSince ? " с " + hSince : ""}: до этого простой открытой вкладки тоже шёл в счёт`
+  }, "\u0427\u0430\u0441\u044B"))), /*#__PURE__*/React.createElement("tbody", null, units.map(u => /*#__PURE__*/React.createElement("tr", {
     key: u.code + ":" + u.name
   }, /*#__PURE__*/React.createElement("td", {
     className: "pu2-l pu2-res-nw",
@@ -34684,7 +34702,15 @@ function PuResReach() {
     style: {
       marginTop: 0
     }
-  }, "\u0421\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A \u043F\u043E\u0434\u0440\u0430\u0437\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u2014 \u0442\u0430\u0431\u0435\u043B\u044C\u043D\u044B\u0439 \u043D\u043E\u043C\u0435\u0440 \u0432 \u043B\u043E\u0433\u0438\u043D\u0435 \u0441\u043E\u0432\u043F\u0430\u043B \u0441\u043E \u0448\u0442\u0430\u0442\u043E\u043C (", puNum(mt.tab), ") \u0438\u043B\u0438 \u0441\u043E\u0432\u043F\u0430\u043B\u0438 \u0438\u043C\u044F \u0438 \u0444\u0430\u043C\u0438\u043B\u0438\u044F (", puNum(mt.name), "). \u041F\u043E\u0441\u0442\u043E\u044F\u043D\u043D\u044B\u0435 \u2014 \u0437\u0430\u0445\u043E\u0434\u0438\u043B\u0438 5 \u0438 \u0431\u043E\u043B\u044C\u0448\u0435 \u0440\u0430\u0437\u043D\u044B\u0445 \u0434\u043D\u0435\u0439.", " ", d.head_set ? `Численность штата ${d.head_set} ${plural(d.head_set, "подразделения", "подразделений", "подразделений")} задана отдельно ` + "(наведите на число — по выгрузке), остальных — по выгрузке без уволенных." : "Штат — без уволенных.", " ", "\u0421\u043B\u0443\u0436\u0435\u0431\u043D\u044B\u0435 \u0443\u0447\u0451\u0442\u043A\u0438 \u043D\u0435 \u0441\u0447\u0438\u0442\u0430\u044E\u0442\u0441\u044F. \u0428\u0442\u0430\u0442 \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D ", puDay(d.loaded_at), "."), act)));
+  }, "\u0421\u043E\u0442\u0440\u0443\u0434\u043D\u0438\u043A \u043F\u043E\u0434\u0440\u0430\u0437\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u2014 \u0442\u0430\u0431\u0435\u043B\u044C\u043D\u044B\u0439 \u043D\u043E\u043C\u0435\u0440 \u0432 \u043B\u043E\u0433\u0438\u043D\u0435 \u0441\u043E\u0432\u043F\u0430\u043B \u0441\u043E \u0448\u0442\u0430\u0442\u043E\u043C (", puNum(mt.tab), ") \u0438\u043B\u0438 \u0441\u043E\u0432\u043F\u0430\u043B\u0438 \u0438\u043C\u044F \u0438 \u0444\u0430\u043C\u0438\u043B\u0438\u044F (", puNum(mt.name), ").", d.dup_logins ? ` Две учётки одного человека считаются одним (таких ${puNum(d.dup_logins)}).` : "", " ", "\u041F\u043E\u0441\u0442\u043E\u044F\u043D\u043D\u044B\u0435 \u2014 \u0437\u0430\u0445\u043E\u0434\u0438\u043B\u0438 5 \u0438 \u0431\u043E\u043B\u044C\u0448\u0435 \u0440\u0430\u0437\u043D\u044B\u0445 \u0434\u043D\u0435\u0439. \u0412\u043E\u043F\u0440\u043E\u0441, \u043F\u043E\u0432\u0442\u043E\u0440\u0451\u043D\u043D\u044B\u0439 \u043F\u043E\u0434\u0440\u044F\u0434 \u0432 \u0442\u043E\u043C \u0436\u0435 \u0434\u0438\u0430\u043B\u043E\u0433\u0435, \u0441\u0447\u0438\u0442\u0430\u0435\u0442\u0441\u044F \u043E\u0434\u0438\u043D \u0440\u0430\u0437.", hSince ? ` Часы — активное время с ${hSince}: раньше простой открытой вкладки тоже шёл в счёт.` : "", " ", d.head_set ? `Численность штата ${d.head_set} ${plural(d.head_set, "подразделения", "подразделений", "подразделений")} задана отдельно ` + "(наведите на число — по выгрузке), остальных — по выгрузке без уволенных." : "Штат — без уволенных.", " ", "\u0421\u043B\u0443\u0436\u0435\u0431\u043D\u044B\u0435 \u0443\u0447\u0451\u0442\u043A\u0438 \u043D\u0435 \u0441\u0447\u0438\u0442\u0430\u044E\u0442\u0441\u044F. \u0428\u0442\u0430\u0442 \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D ", puDay(d.loaded_at), "."), othP && othP.length > 0 && /*#__PURE__*/React.createElement("details", {
+    className: "pu2-res-oth"
+  }, /*#__PURE__*/React.createElement("summary", null, "\u041D\u0435 \u043D\u0430\u0448\u043B\u0438\u0441\u044C \u0432 \u0448\u0442\u0430\u0442\u0435 \xB7 ", puNum(othP.length)), /*#__PURE__*/React.createElement("p", null, "\u041D\u0438 \u0442\u0430\u0431\u0435\u043B\u044C\u043D\u043E\u0433\u043E \u043D\u043E\u043C\u0435\u0440\u0430, \u043D\u0438 \u0438\u043C\u0435\u043D\u0438 \u0438 \u0444\u0430\u043C\u0438\u043B\u0438\u0438 \u043D\u0435\u0442 \u0432 \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u0435: \u0434\u0440\u0443\u0433\u0438\u0435 \u043F\u043E\u0434\u0440\u0430\u0437\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u0438\u043B\u0438 \u043B\u044E\u0434\u0438, \u043A\u043E\u0442\u043E\u0440\u044B\u0445 \u0432\u044B\u0433\u0440\u0443\u0437\u043A\u0430 \u043D\u0435 \u0437\u0430\u0441\u0442\u0430\u043B\u0430. \u0421\u043F\u0438\u0441\u043E\u043A \u0432\u0438\u0434\u0438\u0442\u0435 \u0442\u043E\u043B\u044C\u043A\u043E \u0432\u044B."), /*#__PURE__*/React.createElement("ul", null, othP.map(x => /*#__PURE__*/React.createElement("li", {
+    key: x.username
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "pu2-lnk",
+    onClick: () => c.openPerson && c.openPerson(x.username)
+  }, x.name), /*#__PURE__*/React.createElement("span", null, "\u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0437\u0430\u0445\u043E\u0434 ", puDay(x.last), x.ai ? ` · вопросов ${puNum(x.ai)}` : ""))))), act)));
 }
 
 // Траты на модели (учёт расходов облака)

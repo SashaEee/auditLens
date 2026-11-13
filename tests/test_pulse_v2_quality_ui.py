@@ -47,7 +47,9 @@ def test_quality_owner_blocks_and_actions(browser):
     try:
         ev = page.inner_text(f"{PANEL} #pu2-eval")
         assert "81,5" in ev and "из 100" in ev and "к прогону 26 октября" in ev
-        assert "из 303" in page.inner_text(f"{PANEL} .pu2-grid > section:nth-child(2)")
+        # карточка прогонов — по заголовку: с 11.11 перед ней «Отчёт: задачи и шаги»
+        runs = page.locator(f"{PANEL} .pu2-grid > section", has_text="Прогоны ИИ-помощника")
+        assert "из 303" in runs.inner_text()
         rt = page.inner_text(f"{PANEL} #pu2-ratings")
         assert "Хорошо" in rt and "21" in rt and "Плохо" in rt and "Доли не считаем" in rt
         # только непрошедшие вопросы, провал первым; строка раскрывает ответ агента

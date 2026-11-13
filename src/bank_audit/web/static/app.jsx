@@ -15615,13 +15615,15 @@ function PuIbMail(){
   const[busy,setBusy]=useState(false),[err,setErr]=useState(null);
   const d=L.d;
   if(!d||(L.err&&L.err.status===403)) return null;
-  const secs=d.known_sections||[];
+  // ответ без полей (старый сервер, пустая заглушка) не должен ронять весь раздел «Обращения»
+  const secs=d.known_sections||[], allTo=Array.isArray(d.all)?d.all:[];
+  const bySec=d.sections&&typeof d.sections==="object"?d.sections:{};
   const secLabel=k=>(secs.find(s=>s.key===k)||{label:k}).label;
-  const who=xs=>xs.length?xs.map((r,i)=><React.Fragment key={i}>{i?", ":""}<span className={r.ok?"":"pu2-ib-mbad"}
+  const who=xs=>Array.isArray(xs)&&xs.length?xs.map((r,i)=><React.Fragment key={i}>{i?", ":""}<span className={r.ok?"":"pu2-ib-mbad"}
       title={r.ok?r.email:r.why}>{r.name||r.email||r.entry}{r.ok?"":" — почта не подключена"}</span></React.Fragment>):"никому";
   const split=v=>v.split(/[,;\n]/).map(x=>x.trim()).filter(Boolean);
-  const start=()=>{ setAll(d.all.map(r=>r.entry).join(", "));
-    setRows(Object.entries(d.sections).map(([k,xs])=>({k,v:xs.map(r=>r.entry).join(", ")})));
+  const start=()=>{ setAll(allTo.map(r=>r.entry).join(", "));
+    setRows(Object.entries(bySec).map(([k,xs])=>({k,v:(Array.isArray(xs)?xs:[]).map(r=>r.entry).join(", ")})));
     setErr(null); setEdit(true); };
   const save=()=>{ const sections={}; rows.forEach(r=>{ if(r.k&&split(r.v).length) sections[r.k]=split(r.v); });
     setBusy(true); setErr(null);
@@ -15630,8 +15632,8 @@ function PuIbMail(){
       .catch(e=>setErr(e.message)).finally(()=>setBusy(false)); };
   if(!edit) return <div className="pu2-ib-mail">
     <span className="pu2-ib-mh">Письма об обращениях</span>
-    <span>все — {who(d.all)}</span>
-    {Object.entries(d.sections).map(([k,xs])=><span key={k}>· «{secLabel(k)}» — ещё {who(xs)}</span>)}
+    <span>все — {who(allTo)}</span>
+    {Object.entries(bySec).map(([k,xs])=><span key={k}>· «{secLabel(k)}» — ещё {who(xs)}</span>)}
     <button type="button" className="btn btn-sm" onClick={start}>Изменить</button></div>;
   return <div className="pu2-ib-mail edit">
     <span className="pu2-ib-mh">Письма об обращениях</span>
@@ -16273,6 +16275,13 @@ const PU2_CSS_RESULTS=`
 .pu2-res-reachf>*{min-width:0}
 .pu2-res-reachf .pu2-hbar{grid-template-columns:minmax(0,170px) minmax(0,1fr) auto}
 .pu2-res-act{display:flex;gap:8px 12px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.pu2-res-oth{margin-top:14px;font-size:13px}
+.pu2-res-oth summary{cursor:pointer;color:var(--ink-2);font-weight:500;border-radius:var(--r-sm)}
+.pu2-res-oth p{margin:8px 0 6px;color:var(--ink-3);font-size:12.5px}
+.pu2-res-oth ul{list-style:none;margin:0;padding:0;max-height:320px;overflow:auto;border-top:1px solid var(--hair)}
+.pu2-res-oth li{display:flex;align-items:baseline;gap:6px 12px;padding:6px 0;border-bottom:1px solid var(--hair);min-width:0}
+.pu2-res-oth li>:first-child{flex:1 1 auto;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pu2-res-oth li span{flex:none;color:var(--ink-3);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .pu2-res-cost{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:32px}
 .pu2-res-cost>*{min-width:0}
 .pu2-res-stats{display:flex;gap:12px 28px;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1px solid var(--hair)}
@@ -16345,6 +16354,8 @@ function PuResReach(){
       +"подразделения) — посчитаем, какая доля каждого подразделения пользуется AuditLens. ФИО не сохраняются."
       :"Его загружает владелец инструмента."}</PuEmpty>{act}</PuCard>;
   const units=d.units||[], roles=d.roles||[], oth=d.other||{}, mt=d.matched||{};
+  const since=d.first_day?puDay(d.first_day):"", hSince=d.hours_since?puDay(d.hours_since):"";
+  const othP=Array.isArray(d.other_people)?d.other_people:null;
   const sum=(k)=>units.reduce((a,u)=>a+(+u[k]||0),0);
   const maxH=Math.max(1,...units.map(u=>+u.head||0)), k=Math.max(1,Math.ceil(maxH/40));
   const dots=(u)=>{ const n=Math.ceil((+u.head||0)/k), on=Math.round((+u.users||0)/k);
@@ -16352,18 +16363,22 @@ function PuResReach(){
         data-tip={k>1?`Одна точка — ${k} ${plural(k,"человек","человека","человек")}`:undefined}>
       {Array.from({length:n},(_,i)=><i key={i} className={i<on?"on":undefined}/>)}</span>; };
   return <PuCard id="pu2-reach" title={title} flush
-      meta={`кадровая выгрузка от ${puDay(d.loaded_at)} · всё время · ФИО не хранятся`}>
+      meta={`кадровая выгрузка от ${puDay(d.loaded_at)} · ${since?"с "+since:"всё время"} · ФИО не хранятся`}>
     <div className="pu2-pad" style={{paddingTop:4}}>
       <PuStatRow items={[
-        {v:`${puNum(d.users)} из ${puNum(d.head)}`,l:`работающих пользуются · ${puPct(d.reach)}`,s:"без уволенных и служебных учёток"},
+        {v:`${puNum(d.users)} из ${puNum(d.head)}`,l:`из штата заходили · ${puPct(d.reach)}`,
+          s:`хотя бы раз${since?" с "+since:""}, без уволенных и служебных учёток`},
         {v:puNum(d.active30),l:"активны за 30 дней",s:"сотрудники из штата"},
         {v:puNum(oth.users),l:"не из штата",s:`другие подразделения · ${puNum(oth.active30)} за 30 дней`
           +(oth.ai!=null?` · вопросов ИИ — ${puNum(oth.ai)}`:"")},
         {v:puNum(sum("ai")),l:"вопросов ИИ от штата",s:`задавали ${puNum(sum("ai_users"))} чел.`}]}/>
     </div>
     <div className="pu2-tw"><table className="pu2-tbl">
-      <thead><tr><th className="pu2-l">{d.label||"Подразделение"}</th><th>Штат</th><th className="pu2-l">Пользуются</th><th>Охват</th>
-        <th>Активны 30 дней</th><th>Вопросы ИИ</th><th data-tip="Заходили 5 и больше разных дней">Постоянные</th><th>Часы</th></tr></thead>
+      <thead><tr><th className="pu2-l">{d.label||"Подразделение"}</th><th>Штат</th>
+        <th className="pu2-l" data-tip={`Заходили хотя бы раз${since?" с "+since:""}`}>Заходили</th><th>Охват</th>
+        <th>Активны 30 дней</th><th data-tip="Тот же вопрос, повторённый подряд в диалоге (после сбоя, при смене глубины), — один вопрос">Вопросы ИИ</th>
+        <th data-tip="Заходили 5 и больше разных дней">Постоянные</th>
+        <th data-tip={`Активное время${hSince?" с "+hSince:""}: до этого простой открытой вкладки тоже шёл в счёт`}>Часы</th></tr></thead>
       <tbody>{units.map(u=><tr key={u.code+":"+u.name}>
         <td className="pu2-l pu2-res-nw" style={{fontWeight:500}} data-tip={u.code&&u.code!=="-"?`номер ${u.code}`:"без номера"}>{u.name}</td>
         <td data-tip={u.head_set?`Задано отдельно; по выгрузке — ${puNum(u.head_roster)}`:undefined}>{puNum(u.head)}</td>
@@ -16379,10 +16394,21 @@ function PuResReach(){
         {roles.length?roles.map(r=><PuHBar key={r.role} label={r.role} value={r.users} max={r.head}
           right={<><b>{puNum(r.users)} из {puNum(r.head)}</b> · {puPct(r.reach)}</>}/>):<PuEmpty>Должностей в выгрузке нет.</PuEmpty>}</div>
       <div><p className="pu2-note" style={{marginTop:0}}>Сотрудник подразделения — табельный номер в логине совпал со штатом
-        ({puNum(mt.tab)}) или совпали имя и фамилия ({puNum(mt.name)}). Постоянные — заходили 5 и больше разных дней.{" "}
+        ({puNum(mt.tab)}) или совпали имя и фамилия ({puNum(mt.name)}).
+        {d.dup_logins?` Две учётки одного человека считаются одним (таких ${puNum(d.dup_logins)}).`:""}
+        {" "}Постоянные — заходили 5 и больше разных дней. Вопрос, повторённый подряд в том же диалоге, считается один раз.
+        {hSince?` Часы — активное время с ${hSince}: раньше простой открытой вкладки тоже шёл в счёт.`:""}{" "}
         {d.head_set?`Численность штата ${d.head_set} ${plural(d.head_set,"подразделения","подразделений","подразделений")} задана отдельно `
           +"(наведите на число — по выгрузке), остальных — по выгрузке без уволенных.":"Штат — без уволенных."}
         {" "}Служебные учётки не считаются. Штат загружен {puDay(d.loaded_at)}.</p>
+        {othP&&othP.length>0&&<details className="pu2-res-oth">
+          <summary>Не нашлись в штате · {puNum(othP.length)}</summary>
+          <p>Ни табельного номера, ни имени и фамилии нет в выгрузке: другие подразделения или люди, которых
+            выгрузка не застала. Список видите только вы.</p>
+          <ul>{othP.map(x=><li key={x.username}>
+            <button type="button" className="pu2-lnk" onClick={()=>c.openPerson&&c.openPerson(x.username)}>{x.name}</button>
+            <span>последний заход {puDay(x.last)}{x.ai?` · вопросов ${puNum(x.ai)}`:""}</span></li>)}</ul>
+        </details>}
         {act}</div>
     </div>
   </PuCard>;

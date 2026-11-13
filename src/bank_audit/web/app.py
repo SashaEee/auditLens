@@ -695,7 +695,9 @@ def admin_pulse_reach(me: Optional[bool] = None, user: CurrentUser = Depends(get
         raise HTTPException(403, "admin only")
     from . import org_reach
     wm = me if me is not None else telemetry.with_me_default(user.username)
-    return org_reach.report(user.username, wm)
+    # кто не нашёлся в штате — поимённо только владельцу: он грузит выгрузку и по списку видит,
+    # кого в ней не хватает
+    return org_reach.report(user.username, wm, people=telemetry.is_admin(user.username))
 
 
 class RosterIn(BaseModel):

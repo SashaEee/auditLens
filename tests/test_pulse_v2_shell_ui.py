@@ -368,6 +368,7 @@ def test_every_tab_renders_without_hscroll(browser, width, dark):
 
 # ── оболочка v2 (CONTRACT §1, §3, §4, §10) ───────────────────────────────────
 V2_TABS = ["Сводка", "Люди", "Качество ИИ", "Обращения", "Системы", "Итоги"]
+V2_OWNER_TABS = V2_TABS + ["Сеть ВСП"]        # «Сеть ВСП» (11.11) — только владельцу, последней
 
 
 def _selected(page) -> str:
@@ -396,10 +397,11 @@ def _menu_labels(pop) -> list[str]:
 
 
 def test_v2_shell_sections_and_aliases(browser):
-    """Шесть разделов в порядке макета; прежние ключи вкладок ведут в новые разделы."""
+    """Шесть разделов в порядке макета (у владельца седьмой — «Сеть ВСП»); прежние ключи
+    вкладок ведут в новые разделы."""
     page = open_pulse(browser)
     labels = [t.splitlines()[0].strip() for t in page.locator(TABS).all_inner_texts()]
-    assert labels == V2_TABS
+    assert labels == V2_OWNER_TABS
     assert [page.locator(TABS).nth(i).get_attribute("id") for i in range(6)] == \
         [f"pu2-tab-{k}" for k in H.PULSE_TABS_V2]
     assert _selected(page) == "pu2-tab-overview"
@@ -432,12 +434,12 @@ def test_v2_tabs_keyboard_and_address(browser):
     page.keyboard.press("ArrowRight")
     page.wait_for_function("() => document.activeElement && document.activeElement.id === 'pu2-tab-people'")
     assert _selected(page) == "pu2-tab-people"
-    page.keyboard.press("End")
-    page.wait_for_function("() => document.activeElement.id === 'pu2-tab-results'")
+    page.keyboard.press("End")                        # у владельца последняя — «Сеть ВСП»
+    page.wait_for_function("() => document.activeElement.id === 'pu2-tab-vsp'")
     page.keyboard.press("ArrowRight")                 # по кругу
     page.wait_for_function("() => document.activeElement.id === 'pu2-tab-overview'")
     page.keyboard.press("ArrowLeft")
-    page.wait_for_function("() => document.activeElement.id === 'pu2-tab-results'")
+    page.wait_for_function("() => document.activeElement.id === 'pu2-tab-vsp'")
     page.keyboard.press("Home")
     page.wait_for_function("() => document.activeElement.id === 'pu2-tab-overview'")
     page.locator("#pu2-tab-systems").click()
@@ -445,7 +447,7 @@ def test_v2_tabs_keyboard_and_address(browser):
     assert page.evaluate("localStorage.getItem('al-pulse-tab')") == "systems"
     # у выбранной вкладки tabIndex 0, у остальных −1 (одна точка табуляции)
     assert page.evaluate("""() => [...document.querySelectorAll('[data-page="pulse"] [role=tab]')]
-        .map(b => b.tabIndex).join(',')""") == "-1,-1,-1,-1,0,-1"
+        .map(b => b.tabIndex).join(',')""") == "-1,-1,-1,-1,0,-1,-1"
     assert_page_ok(page)
     page.context.close()
 

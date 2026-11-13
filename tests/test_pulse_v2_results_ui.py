@@ -59,6 +59,13 @@ def test_results_owner_period_and_blocks(browser):
         reach = page.inner_text(f"{PANEL} #pu2-reach")
         assert "ТБ" in reach and "СЗБ" in reach and "Итого" in reach and "Ведущий аудитор" in reach
         assert page.locator(f"{PANEL} #pu2-reach button", has_text="Обновить штат (.xlsx)").count() == 1
+        # 13.11: «Заходили» вместо «Пользуются», период и часы с 3 октября, список «не нашлись»
+        assert "Заходили" in reach and "Пользуются" not in reach and "с 22 июля" in reach
+        assert "Часы — активное время с 3 октября" in reach and "считаются одним (таких 1)" in reach
+        oth = page.locator(f"{PANEL} #pu2-reach .pu2-res-oth")
+        assert oth.locator("summary").inner_text() == "Не нашлись в штате · 2"
+        oth.locator("summary").click()
+        assert oth.locator("li").count() == 2 and "последний заход 4 ноября · вопросов 12" in oth.inner_text()
         fun = page.inner_text(f"{PANEL} #pu2-funnel")
         assert "Ответ получен" in fun and "Материалы в аудит-делах" in fun and "Выгрузки отзывов в Excel" in fun
         assert page.inner_text(f"{PANEL} #pu2-banks .pu2-res-sber") == "Сбербанк"
@@ -108,3 +115,14 @@ def test_results_load_error_has_retry(browser):
         assert_page_ok(page)
     finally:
         page.close()
+
+
+def test_results_reach_pulse_user_sees_no_unmatched_list(browser):
+    """Коллега с доступом к «Пульсу» видит свод, но не поимённый список «Не нашлись в штате»."""
+    page = open_pulse(browser, tab="results", me="pulse_user", wait="#pu2-reach table")
+    try:
+        assert "Заходили" in page.inner_text(f"{PANEL} #pu2-reach")
+        assert page.locator(f"{PANEL} #pu2-reach .pu2-res-oth").count() == 0
+        assert_page_ok(page)
+    finally:
+        page.context.close()

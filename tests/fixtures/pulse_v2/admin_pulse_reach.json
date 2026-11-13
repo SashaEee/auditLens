@@ -198,5 +198,26 @@
    "ai": 0,
    "reach": 0.0
   }
+ ],
+ "first_day": "2026-07-22",
+ "hours_since": "2026-10-03",
+ "dup_logins": 1,
+ "other_people": [
+  {
+   "username": "ivlasov-5550101",
+   "name": "Игорь Власов",
+   "days": 6,
+   "last": "2026-11-04",
+   "ai": 12,
+   "active30": true
+  },
+  {
+   "username": "tsemenova-5550102",
+   "name": "Татьяна Семенова",
+   "days": 1,
+   "last": "2026-08-14",
+   "ai": 0,
+   "active30": false
+  }
  ]
 }

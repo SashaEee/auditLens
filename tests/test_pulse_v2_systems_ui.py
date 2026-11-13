@@ -72,6 +72,8 @@ def test_systems_rows_and_details(browser):
         assert not api_calls(page, "/api/admin/pulse/slices")
         page.click(f"{PANEL} #pu2-sys-slices .pu2-sy-hd")
         page.wait_for_selector(f"{PANEL} #pu2-sd-slices table")
+        # таблица статуса появляется раньше списка срезов (свой запрос) — ждём сам список
+        page.wait_for_selector(f"{PANEL} #pu2-sd-slices >> text=Зарплатные проекты")
         sl = page.inner_text(f"{PANEL} #pu2-sd-slices")
         assert "Зарплатные проекты" in sl and "Канарейка" in sl and "Точность сигналов" in sl
         for k in ("web", "ingest", "rsearch"):

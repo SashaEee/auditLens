@@ -118,6 +118,14 @@ def index_html() -> tuple[str, str]:
 _CACHE: dict[str, Any] = {}
 
 
+def whats_new_id() -> str | None:
+    """id текущего окна «Что нового» (const WN в app.jsx). Стенд отдаёт его в
+    prefs.whats_new: иначе окно (с 12.11) всплывает поверх «Пульса» у тех, кто «застал
+    прежнюю версию», и перехватывает клики во всех проверках вида."""
+    m = re.search(r'const WN=\{\s*id:"([^"]+)"', (STATIC / "app.jsx").read_text(encoding="utf-8"))
+    return m.group(1) if m else None
+
+
 def load_fixture(name: str) -> Any:
     """Копия JSON-фикстуры (правки теста не портят общий кэш)."""
     if name not in _CACHE:
@@ -325,7 +333,9 @@ class _Stub:
 
     def _get(self, path: str, query: dict, owner: bool) -> tuple[int, Any]:
         if path == "/api/me":
-            return 200, load_fixture(f"me.{self.me}.json")
+            me = load_fixture(f"me.{self.me}.json")
+            me.setdefault("prefs", {}).setdefault("whats_new", whats_new_id())
+            return 200, me
         if path in ("/api/admin/pulse", "/api/admin/metrics"):
             return 200, _pulse(query, self.me)
         if path == "/api/admin/users":
@@ -349,7 +359,10 @@ class _Stub:
         if path == "/api/admin/pulse/slices":
             return 200, load_fixture("admin_pulse_slices.json")
         if path == "/api/admin/pulse/reach":
-            return 200, load_fixture("admin_pulse_reach.json")
+            d = load_fixture("admin_pulse_reach.json")
+            if not owner:                       # как сервер: кто не нашёлся в штате — только владельцу
+                d.pop("other_people", None)
+            return 200, d
         if path == "/api/admin/pulse/costs":
             return 200, load_fixture("admin_pulse_costs.json")
         if path == "/api/admin/pulse/outcomes":

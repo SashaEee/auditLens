@@ -113,3 +113,48 @@ def test_endpoints_rights(monkeypatch):
     r = c.post("/api/admin/pulse/reach", json=body, headers=h("owner-1"))
     assert r.status_code == 200 and r.json()["rows"] == 3 and seen["n"] > 0
     assert c.post("/api/admin/pulse/reach", json={"data": "не base64"}, headers=h("owner-1")).status_code == 400
+
+
+def test_reach_counts_people_not_logins_and_skips_fired():
+    """Свод охвата (13.11): человек — запись штата, а не логин; уволенный по выгрузке не
+    засчитывается в «заходили»; кто не нашёлся — в «не из штата», поимённо только по запросу."""
+    from datetime import date
+    d = [date(2026, 11, k) for k in range(1, 14)]
+    members = [
+        {"tab_no": "1000001", "status": "W", "unit_code": "52", "unit_hint": None, "position": "Эксперт",
+         "name_key": OR.name_key("анна", "петрова")},
+        {"tab_no": "1000002", "status": "F", "unit_code": "52", "unit_hint": None, "position": "Аудитор",
+         "name_key": OR.name_key("олег", "сидоров")},
+        {"tab_no": "4321", "status": "W", "unit_code": "-", "unit_hint": None, "position": "Менеджер",
+         "name_key": OR.name_key("елена", "ежикова")},
+    ]
+    logins = {
+        "petrova-1000001": {"name": "Анна Петрова", "days": {d[0], d[1]}, "ai": 3, "mins": 60},
+        "apetrova-7777777": {"name": "Петрова Анна", "days": {d[1], d[2], d[3], d[4]}, "ai": 2, "mins": 30},
+        "sidorov-1000002": {"name": "Олег Сидоров", "days": {d[12]}, "ai": 4, "mins": 5},
+        "novikov-9999999": {"name": "Иван Новиков", "days": {d[0]}, "ai": 0, "mins": 1},
+        "service-1": {"name": "Служебная", "days": {d[12]}, "ai": 9, "mins": 99},
+        "empty-4321": {"name": None, "days": set(), "ai": 0, "mins": 0},
+    }
+    r = OR._build(members, logins, {"service-1"}, {"F"}, {"52": 40}, d[12], people=True)
+    u = {x["code"]: x for x in r["units"]}
+    assert u["52"]["users"] == 1 and u["52"]["head"] == 40 and u["52"]["head_roster"] == 1
+    assert u["52"]["regular"] == 1                      # дни двух учёток объединены: 5 разных дней
+    assert u["52"]["ai"] == 5 and u["52"]["hours"] == 1.5
+    assert u["52"]["active30"] == 1 and u["-"]["users"] == 0
+    assert r["dup_logins"] == 1 and r["matched"] == {"tab": 1, "name": 0}
+    assert r["other"] == {"users": 2, "active30": 2, "ai": 4}   # уволенный и посторонний
+    assert [x["username"] for x in r["other_people"]] == ["sidorov-1000002", "novikov-9999999"]
+    assert r["first_day"] == "2026-11-01" and r["hours_since"] == OR.HOURS_SINCE
+    assert "other_people" not in OR._build(members, logins, set(), {"F"}, {}, d[12])
+
+
+def test_reach_sql_counts_question_once_and_active_hours():
+    """Вопрос, повторённый подряд в диалоге, — один; часы — с перехода на активное время;
+    учётки без строки app_user не теряются."""
+    import inspect
+    src = inspect.getsource(OR.report)
+    assert "lag(payload->>'question') OVER w IS NOT DISTINCT FROM payload->>'question'" in src
+    assert "PARTITION BY username, coalesce(payload->>'session_id', '')" in src
+    assert "created_at >= (CAST(:since AS timestamp) AT TIME ZONE 'Europe/Moscow')" in src
+    assert "for u, d in days" in src and "names.get(u)" in src
