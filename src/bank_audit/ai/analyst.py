@@ -1164,6 +1164,14 @@ async def _deck_from_report(question: str = "", report_id: int | None = None) ->
                        "Макет под этот отчёт рисуется заново: обычно две-три минуты.")})
     yield ev({"type": "mode", "value": "quick"})
     yield ev({"type": "engine", "value": "deck"})
+    # Ход работы: что делается и сколько это обычно занимает — макет рисуется
+    # одним долгим вызовом модели, других событий до файла не будет.
+    typ = await _typical_answer()
+    if typ.get("deck"):
+        yield ev({"type": "typical", "deck": typ["deck"]})
+    yield ev({"type": "stage_status", "stage": "deck", "label": "Рисую презентацию по отчёту",
+              "detail": "макет под этот отчёт рисуется заново",
+              "estimate_s": int((typ.get("deck") or {}).get("p50") or 150)})
     kwargs = dict(question=rep.get("question") or "", title=title, report=rep.get("body") or "",
                   sources=(rep.get("payload") or {}).get("sources") or [],
                   when=rep.get("created_at"))
@@ -1186,6 +1194,17 @@ async def _deck_from_report(question: str = "", report_id: int | None = None) ->
     yield ev({"type": "text", "chunk": text_})
     yield ev({"type": "files", "ids": [f["id"]]})
     yield ev({"type": "done"})
+
+
+async def _typical_answer() -> dict:
+    """Сколько обычно длится короткий ответ и презентация (ai/report_stats). Никогда
+    не бросает и не задерживает ответ дольше полутора секунд."""
+    try:
+        from . import report_stats
+        return await asyncio.wait_for(asyncio.to_thread(report_stats.typical_answer), timeout=1.5)
+    except Exception as e:  # noqa: BLE001 — оценка необязательна
+        log.info("обычная длительность ответа: %s", type(e).__name__)
+        return {}
 
 
 async def resolve_route(question: str, history: list[dict] | None,
@@ -1283,6 +1302,11 @@ async def stream_analysis(question: str, history: list[dict],
 
     # Quick path
     yield json.dumps({"type": "mode", "value": "quick"})
+    # Сколько обычно идёт короткий ответ — по недавним ответам: строка хода
+    # работы говорит «обычно около N с», а не немой счётчик.
+    typ = await _typical_answer()
+    if typ.get("answer"):
+        yield json.dumps({"type": "typical", "answer": typ["answer"]})
 
     # Движок Hermes (агент Nous Research поверх нашего MCP): умнее single-shot —
     # сам ищет в новостном пуле/вебе, ведёт память и скиллы, самообучается.

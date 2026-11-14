@@ -103,9 +103,13 @@ def test_deck_reply_builds_an_offline_html_from_the_last_report(monkeypatch):
     built: list = []
     _deck_env(monkeypatch, built)
     evs = _run("сделай презентацию", [{"role": "assistant", "content": "отчёт"}], force_deep=True)
-    assert [e["type"] for e in evs] == ["route", "notice", "mode", "engine", "text", "files", "done"]
+    assert [e["type"] for e in evs] == ["route", "notice", "mode", "engine", "typical", "stage_status",
+                                        "text", "files", "done"]
     assert evs[0]["value"] == "deck"
-    evs = evs[1:]
+    # ход работы: сколько обычно рисуется презентация и что делается сейчас — до долгого вызова модели
+    assert evs[4]["deck"]["p50"] > 0 and evs[5]["stage"] == "deck" and evs[5]["estimate_s"] == evs[4]["deck"]["p50"]
+    assert "Рисую презентацию" in evs[5]["label"]
+    evs = [e for e in evs[1:] if e["type"] not in ("typical", "stage_status")]
     assert built == [("html", "Потребкредиты", 1)]
     assert "без нового исследования" in evs[0]["text"] and evs[1]["value"] == "quick"
     assert "[[FILE:" in evs[3]["chunk"] and "без интернета" in evs[3]["chunk"] and "9 слайдов" in evs[3]["chunk"]
@@ -221,6 +225,9 @@ def test_route_from_the_request_wins_and_is_announced(monkeypatch):
                route="answer", route_by="user")
     assert evs[0] == {"type": "route", "value": "answer", "by": "user"}
     assert {"type": "mode", "value": "quick"} in evs and evs[-1]["type"] == "done"
+    # строка хода работы: сколько обычно идёт короткий ответ — сразу после режима, до шагов агента
+    typ = [e for e in evs if e["type"] == "typical"]
+    assert len(typ) == 1 and typ[0]["answer"]["p50"] > 0 and evs.index(typ[0]) == 2
     assert A is not None
 
 

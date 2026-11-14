@@ -6600,24 +6600,6 @@ function CitationTooltip({source, anchor}){
   </div>;
 }
 
-// ─── Process trace (collapsed by default) ─────────────────────────────────
-// Какой фазе принадлежит reasoning-стадия — панель «Ход мысли» активна ТОЛЬКО
-// пока её стадия == текущей фазе (иначе conductor «вечно размышляет», а analyst
-// не виден). Единый источник правды для ThinkingPanel.
-const STAGE_PHASE = {conductor:"planning", analyst:"writing",
-                     critic:"synthesizing", repair:"synthesizing"};
-// Фазы движка на фактах: план → сбор → извлечение → письмо → сверка.
-// Прежний набор описывал волновую оркестрацию, которой больше нет, и половина
-// шагов не загоралась никогда, а на этапе письма индикатор откатывался в начало.
-const PHASE_LABELS = {
-  planning:     "Разбор вопроса",
-  research:     "Поиск и чтение",
-  extraction:   "Извлечение фактов",
-  writing:      "Написание отчёта",
-  verification: "Сверка",
-  done:         "Готово",
-};
-
 // ─── PDF export button — premium A4 PDF через server-side Chromium.
 //     Показывается только когда отчёт готов (>500 chars). Использует
 //     меньшее визуальное вес чтобы не отвлекать от чтения, но всегда виден.
@@ -6820,34 +6802,96 @@ function PdfExportButton({question, report, sources, verification, claimCheck, s
   </button>;
 }
 
-// ─── Claim-check meta-row: «12 фактов верифицировано · 7 отфильтровано».
-//     Trust-сигнал — pipeline защитил аудитора от N галлюцинаций. ─────────
-// ─── Ход размышления — живой стрим reasoning_content модели. Заполняет тихие
-//     окна (planning/synthesizing/critic): reasoning приходит на 2-4с раньше
-//     ответа и течёт инкрементально. text — СЫРОЙ ход мысли (на англ.), выводим
-//     plain pre-wrap (НЕ markdown: XSS + мусорная разметка). Когда стадия
-//     «додумала» (active=false) — сворачиваем в «Ход мысли · Nс». ───────────
-function ThinkingPanel({text, stage, active}){
-  const [open,setOpen]=useState(true);
-  const ref=useRef(null), startRef=useRef(null), endRef=useRef(null);
-  if(text && startRef.current==null) startRef.current=Date.now();
-  useEffect(()=>{ const b=ref.current; if(b && (b.scrollHeight-b.scrollTop-b.clientHeight)<40) b.scrollTop=b.scrollHeight; },[text,open]);
-  useEffect(()=>{ if(!active){ if(startRef.current&&!endRef.current) endRef.current=Date.now(); setOpen(false); } },[active]);
-  if(!text) return null;
-  const secs=startRef.current?Math.max(1,Math.round(((endRef.current||Date.now())-startRef.current)/1000)):0;
-  const L={conductor:"Дирижёр размышляет",analyst:"Аналитик размышляет",critic:"Критик проверяет",repair:"Дорабатываю отчёт"};
-  const head=active?(L[stage]||"Размышляю"):("Ход мысли · "+secs+"с");
-  return (
-    <div className={"dr-think"+(active?" dr-think-active":"")}>
-      <div className="dr-think-head" onClick={()=>setOpen(o=>!o)}>
-        {active&&<span className="dr-stage-pulse"/>}
-        <span className="dr-think-label">{head}</span>
-        <span className="dr-think-badge">EN · технический ход мысли</span>
-        <span className="dr-think-toggle">{open?"▾":"▸"}</span>
-      </div>
-      {open&&<div className="dr-think-body" ref={ref}>{text}{active&&<span className="dr-think-caret"/>}</div>}
-    </div>
-  );
+// ─── Thinking Orbs — живой знак «помощник работает» ──────────────────────────
+//     Библиотека @yogesharc/thinking-orbs (MIT) лежит как есть в vendor/thinking-orbs
+//     и подключается модулем в index.html (window.ThinkingOrbs). Здесь — её обёртка
+//     для React (та, что в пакете, импортирует react/jsx-runtime, которого на странице
+//     нет) и подача в цветах интерфейса: сфера чернильная, а то, что библиотека
+//     «зажигает» — искру мысли, линзу поиска, кольцо, луч, — рисуем фирменным красным.
+//     Это её штатная точка расширения: свой способ рисования точек (OrbRender).
+const orbHotA=t=>(r,a)=>a>t;                                        // сфера приглушена: горит то, что ярче
+const orbHotR=(r,a,rs)=>a>0.35&&r>(0.5+1.4*(0.3+0.7*a))*rs*1.12;    // остальные: точка крупнее, чем ей положено по глубине
+const ORB_HOT={reasoning:orbHotA(.62),"reasoning-twins":orbHotA(.62),searching:orbHotA(.62),
+  "searching-lighthouse":orbHotA(.62),waiting:orbHotA(.62),working:orbHotR,"compacting-fuse":orbHotR};
+const _orbRenders={};
+function orbRender(look){
+  const hot=ORB_HOT[look];
+  if(!hot) return undefined;                 // «гореть» нечему — родной способ рисования
+  return _orbRenders[look]||(_orbRenders[look]={mount:({make,pts,radius})=>{
+    const els=pts.map(()=>make("circle")), hidden=new Uint8Array(pts.length), lit=new Uint8Array(pts.length);
+    return {dot(i,x,y,r,a){
+      const el=els[i], o=a.toFixed(2);
+      if(o==="0.00"&&hidden[i]) return;      // невидимая точка остаётся невидимой — не трогаем
+      hidden[i]=+(o==="0.00");
+      el.setAttribute("cx",x.toFixed(2)); el.setAttribute("cy",y.toFixed(2));
+      el.setAttribute("r",Math.max(0.45,r).toFixed(2)); el.setAttribute("fill-opacity",o);
+      const h=hot(r,a,radius)?1:0;
+      if(h!==lit[i]){ lit[i]=h; el.setAttribute("class",h?"orb-hot":""); }
+    }};
+  }});
+}
+// Кадры. Библиотека перерисовывает шар на каждый кадр экрана — 60 раз в секунду. Знаку
+// в 20–44 px столько не нужно, а на слабом ноутбуке и удалённом рабочем столе это
+// заметная нагрузка. Поэтому шаг кадра задаём сами её же штатными play() и pause():
+// 24 кадра в секунду (движения шара медленные — оборот за 6–13 с); если главный поток
+// занят и кадры опаздывают — 16, затем 12 (реже нельзя: библиотека считает разрыв
+// между кадрами не длиннее 100 мс). В скрытой вкладке не рисуем вовсе, вне экрана
+// шар не рисует сама библиотека. Замер 14.11 на процессоре, замедленном в 6 раз: до
+// ограничения шар занимал заметную долю потока, с ним — единицы процентов.
+const ORB_FPS=(navigator.hardwareConcurrency||8)<=2?16:24;
+const orbPace={set:new Set(),timer:0,fps:ORB_FPS,late:0,last:0,wait:false};
+function orbRetime(){
+  const p=orbPace;
+  clearInterval(p.timer);
+  if(p.set.size) p.timer=setInterval(orbTick,Math.round(1000/p.fps));
+  else { p.timer=0; p.last=0; p.late=0; p.fps=ORB_FPS; }
+}
+function orbTick(){
+  const p=orbPace;
+  if(document.hidden){ p.last=0; return; }
+  if(p.wait) return;
+  const now=performance.now();
+  if(p.last){
+    p.late=(now-p.last)>(1000/p.fps)*1.7?p.late+1:Math.max(0,p.late-0.25);
+    if(p.late>20&&p.fps>12){ p.fps=p.fps>16?16:12; p.late=0; p.last=0; orbRetime(); return; }
+  }
+  p.last=now;
+  p.set.forEach(o=>{ try{o.play();}catch{} });
+  p.wait=true;       // play() ставит кадр библиотеки, наш кадр идёт следом и снимает следующий
+  requestAnimationFrame(()=>{ p.wait=false; p.set.forEach(o=>{ try{o.pause();}catch{} }); });
+}
+function orbJoin(o){ orbPace.set.add(o); if(!orbPace.timer) orbRetime(); }
+function orbLeave(o){ orbPace.set.delete(o); if(!orbPace.set.size) orbRetime(); }
+const orbStill=()=>{ try{ return matchMedia("(prefers-reduced-motion: reduce)").matches; }catch{ return false; } };
+function useOrbLib(){
+  const[lib,setLib]=useState(()=>window.ThinkingOrbs||null);
+  useEffect(()=>{
+    if(lib) return;
+    const on=()=>setLib(window.ThinkingOrbs||null);
+    window.addEventListener("thinking-orbs",on); on();
+    return ()=>window.removeEventListener("thinking-orbs",on);
+  },[lib]);
+  return lib;
+}
+// state и variant — как в библиотеке; still — неподвижный шар (итог прогона);
+// tone: mute — серый (готово, остановлено), accent — красный целиком (сбой).
+function Orb({state="idle",variant,size=22,tone,still,label,className}){
+  const lib=useOrbLib(), ref=useRef(null);
+  const look=variant&&variant!=="default"?state+"-"+variant:state;
+  useEffect(()=>{
+    if(!lib||!ref.current) return;
+    let o=null;
+    try{ o=lib.mountOrb(ref.current,{state,variant,size,label,render:orbRender(look)}); o.pause(); }
+    catch{ return; }
+    const run=!still&&!orbStill();
+    if(run) orbJoin(o);
+    return ()=>{ if(run) orbLeave(o); try{o.destroy();}catch{} };
+  },[lib,look,size,still,label]);
+  const a11y=label?{role:"img","aria-label":label}:{"aria-hidden":true};
+  return <span className={"orb"+(tone?" orb-"+tone:"")+(lib?"":" orb-wait")+(className?" "+className:"")}
+               style={{width:size,height:size}}>
+    <svg key={look} ref={ref} width={size} height={size} viewBox={`0 0 ${size} ${size}`} fill="currentColor" {...a11y}/>
+  </span>;
 }
 
 // Сбой ответа: что случилось и что сделать — с повтором.
@@ -6859,21 +6903,57 @@ function AiError({text,onRetry}){
   </div>;
 }
 
-// ─── Премиальный индикатор ожидания: пульс + подпись стадии + бегущие точки.
-//     Закрывает «тихие окна» (генерация вопросов, сборка запроса, старт
-//     research) — пользователь всегда видит, что система жива. ──────────────
-function PendingDots({label}){
-  // Статичная строка одинаково выглядит и когда система работает, и когда она
-  // встала. После 8 с показываем счётчик: по нему видно, что процесс жив
-  // (04.09 воронка вопросов думала 4,5 минуты — со стороны «зависло»).
+// ─── Ход работы ──────────────────────────────────────────────────────────────
+//     Одна система на все виды ответа: шаг подготовки, короткая справка, отчёт и
+//     презентация. Слева — шар, состояние которого меняется по настоящим событиям
+//     потока; рядом — что помощник делает сейчас, сколько прошло и сколько осталось.
+//     Ничего не выдумывается: подписи шагов приходят с сервера (stage_status,
+//     tool_call), числа — из progress и facts_summary, оценка времени — из медиан
+//     недавних прогонов (событие typical). После ответа ход работы не исчезает:
+//     он сворачивается в строку «как получен ответ».
+const runClock=s=>{ s=Math.max(0,Math.round(s||0)); return `${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`; };
+const runDur=s=>{ s=Math.max(0,Math.round(s||0)); return s>=60?`${Math.floor(s/60)} мин${s%60>=5?` ${s%60} с`:""}`:`${s} с`; };
+
+// Лента шагов прогона: что произошло и на какой секунде. Собирается из событий потока;
+// сервер сохраняет такую же вместе с ответом — она видна и при открытии из истории.
+function traceAdd(trace,e){
+  const tr=trace||[], p=tr[tr.length-1];
+  if(p&&p.k===e.k&&p.label===e.label)
+    return e.k==="tool"?[...tr.slice(0,-1),{...p,n:(p.n||1)+1}]:tr;
+  // счётчик в подписи («Рисую карточки: осталось 3») — одна строка, а не десять
+  if(p&&p.k==="stage"&&e.k==="stage"&&/\d/.test(e.label)&&p.label.replace(/\d+/g,"#")===e.label.replace(/\d+/g,"#"))
+    return [...tr.slice(0,-1),{...p,label:e.label,detail:e.detail}];
+  return tr.length>=120?tr:[...tr,e];
+}
+
+// Строка хода работы: шар, что происходит, время; под ней — чем отвечает помощник,
+// где он уже посмотрел и как поменять решение.
+function RunLine({orb,title,detail,elapsed,note,trail,action}){
+  return <div className="run-line" role="status">
+    <Orb {...orb} size={22} className="run-line-orb"/>
+    <div className="run-line-b">
+      <div className="run-line-top">
+        <span className="run-line-h run-swap" key={title} aria-live="polite">{title}</span>
+        {detail&&<span className="run-line-d">{detail}</span>}
+        {elapsed!=null&&<span className="run-el" title="Прошло с начала">{runClock(elapsed)}</span>}
+      </div>
+      {(note||(trail&&trail.length>0)||action)&&<div className="run-line-sub">
+        {note&&<span className="run-line-note">{note}</span>}
+        {trail&&trail.length>0&&<span className="run-trail" aria-label="Где помощник уже посмотрел">
+          {trail.map(({lbl,n},ti)=><span key={ti} className="run-trail-i">{lbl}{n>1?<i> ×{n}</i>:null}</span>)}
+        </span>}
+        {action}
+      </div>}
+    </div>
+  </div>;
+}
+
+// Шаг подготовки: вопрос ещё разбирается, прогон не начат. Секунды показываем после
+// третьей — по ним видно, что процесс жив (04.09 разбор вопроса думал 4,5 минуты).
+function PrepLine({label,detail}){
   const [sec,setSec]=useState(0);
   useEffect(()=>{const t=setInterval(()=>setSec(s=>s+1),1000);return ()=>clearInterval(t);},[]);
-  return <div className="pending-row">
-    <span className="dr-stage-pulse"/>
-    <span className="pending-label">{label||"Думаю"}</span>
-    <span className="pending-dots"><i/><i/><i/></span>
-    {sec>=8 && <span className="pending-sec" aria-hidden="true">{sec} с</span>}
-  </div>;
+  return <RunLine orb={{state:"reasoning"}} title={label||"Разбираю вопрос"} detail={detail} elapsed={sec>=3?sec:null}/>;
 }
 
 // ─── Модуль «asking» — clarification-воронка. Кликабельные варианты (single/
@@ -6947,19 +7027,19 @@ function ClarifyCard({msg, onSubmit, onSkip}){
   </div>;
 }
 
-// ─── Консоль хода отчёта ─────────────────────────────────────────────────────
-//     Пять этапов, как их видит аудитор. Консоль отвечает на четыре вопроса:
+// ─── Ход отчёта ──────────────────────────────────────────────────────────────
+//     Пять этапов, как их видит аудитор. Карточка хода отвечает на четыре вопроса:
 //       • сколько ещё ждать — по обычной длительности этапов (событие typical);
 //       • что помощник понял из вопроса и что войдёт в отчёт;
 //       • куда он ходит — сайты и число прочитанных страниц, а не «идёт сбор»;
 //       • что уже написано — готовые разделы можно читать, пока пишутся остальные.
 //     Пройденные этапы сворачиваются в строку с итогом, раскрываются по нажатию.
 const DEEP_FLOW = [
-  {key:"parse",   label:"Разбор вопроса",             phases:["planning"]},
-  {key:"collect", label:"Поиск и чтение источников",   phases:["research"]},
-  {key:"facts",   label:"Выписка фактов с цитатами",   phases:["extraction"]},
-  {key:"synth",   label:"Написание отчёта",            phases:["writing"]},
-  {key:"verify",  label:"Сверка чисел с источниками",  phases:["verification"]},
+  {key:"parse",   label:"Разбор вопроса",             short:"Вопрос",    phases:["planning"]},
+  {key:"collect", label:"Поиск и чтение источников",   short:"Источники", phases:["research"]},
+  {key:"facts",   label:"Выписка фактов с цитатами",   short:"Факты",     phases:["extraction"]},
+  {key:"synth",   label:"Написание отчёта",            short:"Текст",     phases:["writing"]},
+  {key:"verify",  label:"Сверка чисел с источниками",  short:"Сверка",    phases:["verification"]},
 ];
 const DR_PHASES=["planning","research","extraction","writing","verification"];
 // запасные значения — замер живых отчётов; сервер присылает медиану недавних (typical)
@@ -7033,224 +7113,432 @@ const drScope=u=>{const n=(u.names||[]).filter(Boolean);
   if(u.scope==="sber")return "только "+n.join(" и ")+", без конкурентов";
   return n.slice(0,5).join(", ")+(n.length>5?` и ещё ${n.length-5}`:"");};
 
-function DeepConsole({m, loading, elapsed, onFresh, onShort, compact, onToggle}){
-  const phase=m.phase;
-  const curIdx = phase==="done" ? DEEP_FLOW.length
-    : Math.max(0, DEEP_FLOW.findIndex(d=>d.phases.includes(phase)));
+// Сколько занял каждый этап отчёта: по отметкам смены этапа в ленте шагов; у отчётов,
+// сохранённых раньше, — по времени шагов, которое сервер кладёт рядом с отчётом.
+function tracePhases(m){
+  const out={}; let cur=null, at=0;
+  for(const e of m.trace||[]){
+    if(e.k!=="phase") continue;
+    if(cur) out[cur]=(out[cur]||0)+Math.max(0,(e.t||0)-at);
+    cur=DR_PHASES.includes(e.label)?e.label:null; at=e.t||0;
+  }
+  if(cur&&m.phase!==cur){ const end=m.elapsedS||at; out[cur]=(out[cur]||0)+Math.max(0,end-at); }
+  if(!Object.keys(out).length&&m.timings){
+    const t=m.timings, sum=(...k)=>k.reduce((a,x)=>a+(+t[x]||0),0);
+    const o={planning:sum("plan"),research:sum("collect"),extraction:sum("facts","critic","lead"),
+             writing:sum("write"),verification:sum("verify")};
+    for(const k in o) if(o[k]>0) out[k]=Math.round(o[k]);
+  }
+  return out;
+}
+
+// Что помощник делает сейчас — для отчёта: состояние шара, заголовок и живая строка
+// под ним. Заголовок — подпись шага с сервера; строка — числа этого шага.
+function runNowReport(m){
+  const phase=m.phase, prog=m.progress||{};
+  let live=m.stageStatus&&m.stageStatus.label&&(!m.stageStatus.phase||m.stageStatus.phase===phase)?m.stageStatus:null;
+  const stage=(live&&live.stage)||"";
+  // длинная подпись с перечислением после двоеточия («Данные AuditLens: документов 8, жалоб 5…»):
+  // в заголовок — начало, перечисление — в строку под ним
+  let listed=false;
+  if(live&&live.label.length>60){ const i=live.label.indexOf(": ");
+    if(i>0){ listed=true; live={...live,label:live.label.slice(0,i),
+      detail:live.label.slice(i+2)+(live.detail?" · "+live.detail:"")}; } }
+  const pagesRead=prog.pages||0, hosts=prog.hosts||[];
+  if(phase==="research"){
+    const bits=[];
+    if(pagesRead) bits.push(`прочитано ${pagesRead} ${plural(pagesRead,"страница","страницы","страниц")}`
+      +(prog.sites>1?` на ${prog.sites} ${plural(prog.sites,"сайте","сайтах","сайтах")}`:""));
+    if(prog.last_host) bits.push("только что — "+prog.last_host);   // последний прочитанный сайт
+    else if(!pagesRead&&hosts.length) bits.push(hosts.slice(0,3).map(h=>h[0]).join(", "));
+    if(prog.blocked) bits.push(`${prog.blocked} не ${plural(prog.blocked,"открылась","открылись","открылось")}`);
+    return {orb:stage==="memory"?{state:"reasoning"}:{state:"searching"},
+            title:(live&&live.label)||"Ищу и читаю источники",
+            detail:(listed||stage==="memory"?live.detail:"")||bits.join(" · ")||(live&&live.detail)||""};
+  }
+  if(phase==="extraction"){
+    const bits=[];
+    if(prog.facts) bits.push(`выписано ${prog.facts} ${plural(prog.facts,"факт","факта","фактов")}`);
+    if(prog.pages_total) bits.push(`страниц в разборе ${prog.pages_total}`);
+    return {orb:stage==="lead"?{state:"searching",variant:"lighthouse"}:{state:"compacting",variant:"fuse"},
+            title:(live&&live.label)||"Выписываю факты с цитатами",
+            detail:stage==="lead"||stage==="critic"||stage==="facts_ready"?(live.detail||bits.join(" · ")):(bits.join(" · ")||(live&&live.detail)||"")};
+  }
+  if(phase==="writing"){
+    const secs=drSections(m), done=secs.filter(s=>s.state==="done").length;
+    return {orb:{state:"working"}, title:(live&&live.label)||"Пишу отчёт",
+            detail:secs.length?`готово ${done} из ${secs.length} ${plural(secs.length,"раздела","разделов","разделов")}`:(live&&live.detail)||""};
+  }
+  if(phase==="verification")
+    return {orb:stage==="deck"?{state:"working",variant:"gyro"}:{state:"searching",variant:"lighthouse"},
+            title:(live&&live.label)||"Сверяю числа с источниками", detail:(live&&live.detail)||""};
+  return {orb:{state:"reasoning"}, title:(live&&live.label)||"Разбираю вопрос", detail:(live&&live.detail)||""};
+}
+
+// То же для короткого ответа и презентации: шаги агента приходят подписями инструментов.
+const QUICK_STEP=[
+  [/^Навык(?::\s*(.+))?$/, x=>x[1]?`Открываю навык: ${x[1]}`:"Открываю навык", {state:"reasoning",variant:"twins"}],
+  [/^(Память|История диалогов)$/, ()=>"Сверяюсь с прошлыми разговорами", {state:"reasoning",variant:"twins"}],
+  [/^План$/, ()=>"Составляю план ответа", {state:"reasoning"}],
+  [/^Веб-поиск$/, ()=>"Ищу в интернете", {state:"searching"}],
+  [/^Чтение (страницы|документа)$/, x=>x[1]==="страницы"?"Читаю страницу":"Читаю документ", {state:"searching",variant:"lighthouse"}],
+  [/^(SQL к базе)$/, ()=>"Считаю по базе данных", {state:"working",variant:"gyro"}],
+  [/^(Код|Терминал)$/, ()=>"Выполняю расчёт", {state:"working",variant:"gyro"}],
+  [/^(Файл)$/, ()=>"Готовлю файл", {state:"working",variant:"gyro"}],
+];
+function runNowQuick(m){
+  if(m.engine==="deck"||m.route==="deck"){
+    const live=m.stageStatus&&m.stageStatus.label?m.stageStatus:null;
+    return {orb:{state:"working",variant:"gyro"}, title:(live&&live.label)||"Рисую презентацию по отчёту", detail:""};
+  }
+  if(m.text) return {orb:{state:"working"}, title:"Пишу ответ", detail:""};
+  const tools=m.tools||[], last=tools[tools.length-1];
+  if(!last) return {orb:{state:"reasoning"}, title:"Думаю над ответом", detail:""};
+  for(const [rx,say,orb] of QUICK_STEP){ const x=rx.exec(last); if(x) return {orb, title:say(x), detail:""}; }
+  return {orb:{state:"searching"}, title:"Смотрю: "+(TOOL_LABELS[last]||last), detail:""};
+}
+// Сколько обычно длится такой ответ — по недавним ответам (typical), без процентов.
+function runNoteQuick(m,elapsed){
+  const typ=m.typical||{};
+  if(m.engine==="deck"||m.route==="deck"){
+    const t=(typ.deck&&typ.deck.p50)||150, hi=(typ.deck&&typ.deck.p75)||210;
+    if(elapsed>hi*1.3+20) return "дольше обычного — работа продолжается";
+    const left=Math.max(t-elapsed,25);
+    return left<50?"осталось меньше минуты":`осталось примерно ${Math.max(1,Math.round(left/60))} мин`;
+  }
+  const kind=m.route==="reply"?"Отвечаю по уже собранному, без нового сбора":"Отвечаю короткой справкой";
+  const a=typ.answer;
+  if(a&&a.p75&&elapsed>a.p75*1.5+10) return kind+" — дольше обычного, работа продолжается";
+  return kind+(a&&a.p50?` — обычно около ${runDur(a.p50<60?Math.max(5,Math.round(a.p50/5)*5):a.p50)}`:" — обычно меньше минуты");
+}
+
+// Полоса этапов отчёта: пять отрезков шириной по обычной длительности этапа. Пройденные —
+// чернилами, идущий заполняется красным по времени, впереди — пустые.
+function RunStages({m,eta,labels}){
+  const typ={...DR_TYPICAL,...((m.typical&&m.typical.steps)||{})};
+  const idx=m.phase==="done"?DR_PHASES.length:DR_PHASES.indexOf(m.phase);
+  const inPhase=m.phaseAt?Math.max(0,(Date.now()-m.phaseAt)/1000):0;
+  return <div className={"run-stages"+(labels?"":" no-labels")} role="progressbar" aria-valuemin={0} aria-valuemax={100}
+              aria-valuenow={eta.pct} aria-label="Готовность отчёта">
+    {DEEP_FLOW.map((d,i)=>{
+      const ph=d.phases[0], st=i<idx?"done":i===idx?"now":"wait";
+      const fill=st==="done"?100:st==="now"?Math.min(96,Math.max(3,Math.round(inPhase/(typ[ph]||1)*100))):0;
+      return <div key={d.key} className={"run-stage is-"+st} style={{flexGrow:Math.max(8,typ[ph]||8)}}
+                  title={`${d.label} — обычно ${runDur(typ[ph]||0)}`}>
+        <div className="run-stage-bar"><i style={{width:fill+"%"}}/></div>
+        {labels&&<div className="run-stage-l">{d.short}</div>}
+      </div>;
+    })}
+  </div>;
+}
+
+// Как понят вопрос — главная опора доверия: рамку видно с первых секунд и после ответа.
+function RunUnderstood({m,onFresh}){
+  const u=m.understood;
+  if(!u||!u.task) return null;
+  return <div className="run-und">
+    <span className="run-und-k">Вопрос понят как</span>
+    <span className="run-und-v">{DR_TASK[u.task]||u.task}</span>
+    {!u.noScope&&<><span className="run-und-s">·</span><span>{drScope(u)}</span></>}
+    {u.period&&<><span className="run-und-s">·</span><span>{u.period}</span></>}
+    {DR_CHECKS[u.checks]&&<><span className="run-und-s">·</span><span>{DR_CHECKS[u.checks]}</span></>}
+    {u.continues&&u.prior&&<><span className="run-und-s">·</span>
+      <span className="run-und-c">продолжение прошлого отчёта{u.prior.date?` от ${u.prior.date}`:""}:
+        уже собрано {u.prior.facts} {plural(u.prior.facts,"факт","факта","фактов")}</span>
+      {onFresh&&<button type="button" className="run-und-redo" onClick={onFresh}
+        title="Не опираться на прошлый отчёт: собрать источники и факты заново">собрать заново</button>}</>}
+  </div>;
+}
+
+// Пять этапов отчёта с их содержанием: что войдёт в отчёт, какие сайты прочитаны, сколько
+// фактов и с какой стороны, оглавление, чего найти не удалось. Идущий этап раскрыт,
+// пройденный свёрнут в строку с итогом; человек может переключить сам.
+// ended — прогон окончен (готов, остановлен, оборван): этапы показываются как есть.
+function RunSteps({m,ended}){
+  const phase=ended?(m.stoppedPhase||m.phase):m.phase;
+  const curIdx=phase==="done"?DEEP_FLOW.length:Math.max(0,DEEP_FLOW.findIndex(d=>d.phases.includes(phase)));
   const [openRows,setOpenRows]=useState({});     // что человек раскрыл или свернул сам
-  const contract = m.contract||[];
-  const subq   = m.subqueries||[];
-  const prog   = m.progress||{};
-  const fs     = m.factStats||{};
-  const stance = fs.by_stance||{};
-  const gapsN  = (m.gapsList||[]).length;
+  const contract=m.contract||[];
+  const subq=Array.isArray(m.subqueries)?m.subqueries:[];
+  const subqN=subq.length||m.subqN||0;
+  const prog=m.progress||{};
+  const fs=m.factStats||{};
+  const stance=fs.by_stance||{};
+  const gapsN=(m.gapsList||[]).length;
   const verified=m.verification?.verified||m.claimCheck?.verified||0;
-  const checked =m.verification?.numeric_checked||0;
+  const checked=m.verification?.numeric_checked||0;
+  const factsN=fs.total||prog.facts||m.verification?.facts_total||0;
   const pagesRead=fs.pages||prog.pages_total||prog.pages||0;
-  const hosts  = prog.hosts||[];
-  const secs   = drSections(m);
-  const secDone= secs.filter(s=>s.state==="done").length;
-  const eta    = drEta(m);
-  const el = elapsed||0;
-  const elapsedDisplay = `${String(Math.floor(el/60)).padStart(2,"0")}:${String(el%60).padStart(2,"0")}`;
-  // Живая подпись этапа показывается только под тем этапом, к которому относится:
-  // раньше «Фактов: 863» висело под «Написанием отчёта».
-  const live = loading && m.stageStatus && m.stageStatus.label
-    && (!m.stageStatus.phase || m.stageStatus.phase===phase) ? m.stageStatus : null;
+  const hosts=prog.hosts||[];
+  const secs=drSections(m);
+  const secDone=secs.filter(s=>s.state==="done").length;
+  const took=tracePhases(m);
   const right=(key,status)=>{
     if(status==="pending") return "";
     const done=status==="done";
     switch(key){
-      case "parse":   return done?(contract.length?`${contract.length} ${plural(contract.length,"пункт","пункта","пунктов")} в отчёте`:"план готов")
-                                 :"составляю план";
+      case "parse":   return done?(contract.length?`${contract.length} ${plural(contract.length,"пункт","пункта","пунктов")} в отчёте`:"")
+                                 :(status==="running"?"составляю план":"");
       case "collect": return pagesRead?`${done?"":"прочитано "}${pagesRead} ${plural(pagesRead,"страница","страницы","страниц")}`
-                                        +(prog.blocked?` · ${prog.blocked} не открылось`:"")
-                                      :(subq.length?`${subq.length} ${plural(subq.length,"запрос","запроса","запросов")}`:"");
-      case "facts":   return done?`${fs.total||prog.facts||0} ${plural(fs.total||prog.facts||0,"факт","факта","фактов")}`
+                                        +(prog.blocked?` · ${prog.blocked} не ${plural(prog.blocked,"открылась","открылись","открылось")}`:"")
+                                      :(subqN?`${subqN} ${plural(subqN,"запрос","запроса","запросов")}`:"");
+      case "facts":   return done?(factsN?`${factsN} ${plural(factsN,"факт","факта","фактов")}`:"")
                                  :(prog.facts?`выписано ${prog.facts}`:"");
       case "synth":   return secs.length?`${secDone} из ${secs.length} ${plural(secs.length,"раздела","разделов","разделов")}`:"";
-      case "verify":  return done&&checked?`сошлось ${verified} из ${checked} чисел${gapsN?` · ${gapsN} ${plural(gapsN,"пробел","пробела","пробелов")}`:""}`:"";
+      case "verify":  return done&&checked?`сошлось ${verified} из ${checked} ${plural(checked,"числа","чисел","чисел")}${gapsN?` · ${gapsN} ${plural(gapsN,"пробел","пробела","пробелов")}`:""}`:"";
       default:        return "";
     }
   };
-  const dotStyle=(s)=> s==="done"
-    ? {background:"var(--ink)",borderColor:"var(--ink)"}
-    : s==="running"
-      ? {background:"var(--accent)",borderColor:"var(--accent)",boxShadow:"0 0 0 4px var(--accent-soft)"}
-      : {background:"transparent",borderColor:"var(--hair-2)"};
-  const titleStyle=(s)=> s==="pending" ? {color:"var(--ink-3)",fontWeight:450}
-                       : s==="running" ? {color:"var(--ink)",fontWeight:600}
-                       : {color:"var(--ink)",fontWeight:500};
-  const head=<div className="dr-con-head">
-    <span className="dr-con-pulse"/>
-    <span className="dr-con-title">Собираю отчёт</span>
-    {m.title && <span className="dr-con-sub dr-con-name" title={m.title}>{m.title}</span>}
-    <span className="dr-con-eta" aria-live="polite">{drLeftText(eta)}</span>
-    <span className="dr-con-el mono" title="Прошло с начала">{elapsedDisplay}</span>
-  </div>;
-  const bar=<div className="dr-con-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={eta.pct}
-    aria-label="Готовность отчёта"><div className="dr-con-bar-fill" style={{width:eta.pct+"%"}}/></div>;
-  // Свёрнутый вид: отчёт уже читается ниже, консоль не должна его заслонять.
-  if(compact){
-    const cur=DEEP_FLOW[Math.min(curIdx,DEEP_FLOW.length-1)];
-    return <div className="dr-con-wrap dr-con-compact">
-      <div className="dr-con">
-        {head}{bar}
-        <div className="dr-con-mini">
-          <span className="dr-con-mini-t">{(live&&live.label)||cur.label}</span>
-          {secs.length>0 && <span className="dr-con-mini-n mono">{secDone} из {secs.length} {plural(secs.length,"раздела","разделов","разделов")}</span>}
-          {onToggle && <button type="button" className="dr-con-link" onClick={onToggle}>Показать ход работы</button>}
+  return <div className="run-steps">
+    {DEEP_FLOW.map((d,idx)=>{
+      const status=idx<curIdx?"done":(idx===curIdx?(ended?"cut":"running"):"pending");
+      const sum=right(d.key,status), dur=status==="done"&&took[d.phases[0]];
+      const has=d.key==="parse"?contract.length>0
+        :d.key==="collect"?(hosts.length>0||subq.length>0)
+        :d.key==="facts"?((fs.total||0)>0)
+        :d.key==="synth"?secs.length>0
+        :gapsN>0;
+      const canOpen=status!=="pending"&&has;
+      // идущий этап раскрыт, пройденный свёрнут; человек может переключить сам
+      const open=canOpen&&(openRows[d.key]!==undefined?openRows[d.key]:status==="running");
+      const toggle=()=>canOpen&&setOpenRows(o=>({...o,[d.key]:!open}));
+      return <div key={d.key} className={"run-step is-"+status}>
+        <span className="run-step-m" aria-hidden="true">
+          {status==="done"&&<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>}
+        </span>
+        <div className="run-step-b">
+          <button type="button" className="run-step-h" onClick={toggle} disabled={!canOpen} aria-expanded={canOpen?open:undefined}>
+            <span className="run-step-l">{d.label}</span>
+            <span className="run-step-r">{sum}{sum&&dur?" · ":""}{dur?runDur(dur):""}
+              {status==="cut"&&<span className="run-step-cut">{sum?" · ":""}{m.lost?"связь прервалась здесь":"остановлено здесь"}</span>}</span>
+            {canOpen&&<svg className={"run-chev"+(open?" open":"")} width="12" height="12" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>}
+          </button>
+          {open&&<div className="run-step-x">
+            {d.key==="parse"&&contract.length>0&&<>
+              <div className="run-k">Что будет в отчёте</div>
+              <div className="run-chips">
+                {contract.map((a,ai)=>{
+                  const isObs=a===m.observedAttr, isReg=a===m.regulatoryAttr;
+                  return <span key={ai} className="run-chip"
+                    title={isObs?"взгляд со стороны: жалобы, отзывы, разборы":(isReg?"нормы: требования закона и регулятора":"")}>
+                    {a}{isObs&&<i>со стороны</i>}{isReg&&<i>нормы</i>}</span>;
+                })}
+              </div></>}
+            {/* Куда ходит: сайты с числом прочитанных страниц — живьём */}
+            {d.key==="collect"&&hosts.length>0&&
+              <div className="run-hosts" aria-label="Прочитанные сайты">
+                {hosts.map(([h,n])=><span key={h} className={"run-host"+(status==="running"&&h===prog.last_host?" now":"")}>{h}<b>{n}</b></span>)}
+              </div>}
+            {d.key==="collect"&&subq.length>0&&
+              <details className="run-queries">
+                <summary>Поисковые запросы · {subq.length}</summary>
+                {subq.map((q,qi)=>{
+                  const site=(q.match(/site:(\S+)/)||[])[1];
+                  return <div key={qi} className="run-query">
+                    <span>{q.replace(/\s*site:\S+/,"")}</span>
+                    {site&&<i>{site}</i>}
+                  </div>;
+                })}
+              </details>}
+            {/* Факты — по сторонам доказательства: это разные источники правды */}
+            {d.key==="facts"&&(fs.total||0)>0&&
+              <div className="run-stances">
+                {Object.entries(STANCE_UI).filter(([k])=>stance[k]).map(([k,v])=>(
+                  <div key={k} className="run-stance" title={v.hint}>
+                    <b>{stance[k]}</b><span>{v.label}</span>
+                  </div>))}
+              </div>}
+            {d.key==="facts"&&fs.critic&&fs.critic.checked>0&&
+              <div className="run-note">Каждая цитата сверена с текстом страницы: дословных {fs.critic.exact} из {fs.critic.checked}
+                {fs.critic.cut?`, снято без опоры на источник — ${fs.critic.cut}`:""}.</div>}
+            {/* Оглавление: что написано, что пишется, что впереди */}
+            {d.key==="synth"&&secs.length>0&&
+              <ol className="run-secs">
+                {secs.map((s,si)=><li key={si} className={"is-"+(ended&&s.state!=="done"?"wait":s.state)}>
+                  <span className="run-sec-m" aria-hidden="true">
+                    {s.state==="done"&&<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>}
+                  </span>
+                  <span className="run-sec-t">{s.title}</span>
+                  <span className="run-sec-s">{s.state==="done"?"готов":ended?"не написан":s.state==="writing"?"пишется":s.state==="last"?"в конце, по готовому тексту":""}</span>
+                </li>)}
+              </ol>}
+            {d.key==="verify"&&gapsN>0&&<>
+              <div className="run-k">Чего найти не удалось · {gapsN}</div>
+              <ul className="run-gaps">
+                {(m.gapsList||[]).slice(0,4).map((g,gi)=><li key={gi}>{g}</li>)}
+              </ul></>}
+          </div>}
         </div>
+      </div>;
+    })}
+  </div>;
+}
+
+// Все шаги по порядку, с минутой и секундой: лента, из которой видно, как получен ответ.
+function RunLog({m}){
+  const tr=(m.trace||[]).filter(e=>e.k!=="phase");
+  if(!tr.length) return null;
+  return <ol className="run-log">
+    {tr.map((e,i)=><li key={i} className={"is-"+e.k}>
+      <span className="run-log-t">{runClock(e.t||0)}</span>
+      <span className="run-log-l">{e.label}{e.n>1&&<i> ×{e.n}</i>}{e.detail&&<em>{e.detail}</em>}</span>
+    </li>)}
+  </ol>;
+}
+
+// Собственные данные готовы раньше сбора по сайтам: числа разделов видны уже через
+// полминуты, со ссылкой в раздел. Это не вывод — на этом он будет стоять.
+function RunOwn({m}){
+  if(!(m.ownPreview||[]).length) return null;
+  return <div className="run-own">
+    <div className="run-k">Уже нашлось в данных AuditLens</div>
+    <div className="run-own-g">
+      {m.ownPreview.map((b,bi)=><div key={bi} className="run-own-b">
+        <div className="run-own-t">{b.link
+          ?<a href={b.link.startsWith("#")?location.pathname+location.search+b.link:b.link} target="_blank" rel="noopener noreferrer"
+              title="Открыть в разделе — в новой вкладке, отчёт продолжит собираться">{b.title}<span aria-hidden="true"> ↗</span></a>
+          :b.title}</div>
+        {(b.rows||[]).map((r,ri)=><div key={ri} className="run-own-r">
+          {r.link?<a href={r.link} target="_blank" rel="noopener noreferrer">{r.label}</a>:<span>{r.label}</span>}
+          {r.value&&<b>{r.value}</b>}
+        </div>)}
+      </div>)}
+    </div>
+    <div className="run-note">Это числа из разделов AuditLens, а не вывод: отчёт сверит их с сайтами банков и нормами.</div>
+  </div>;
+}
+
+// Живая карточка отчёта. Пока читать нечего — развёрнута: шар, шаг, оценка времени,
+// полоса этапов, как понят вопрос, этапы с содержанием. Как только написан первый
+// раздел, сворачивается в полосу над черновиком и не заслоняет чтение.
+function RunCard({m,loading,elapsed,onFresh,onShort,compact,onToggle,turb}){
+  const now=runNowReport(m), eta=drEta(m);
+  const stepN=Math.min(DR_PHASES.length,Math.max(1,DR_PHASES.indexOf(m.phase)+1));
+  const secs=drSections(m), secDone=secs.filter(s=>s.state==="done").length;
+  const left=drLeftText(eta);
+  const [logOpen,setLogOpen]=useState(false);
+  const logN=(m.trace||[]).filter(e=>e.k!=="phase").length;
+  if(compact)
+    return <div className="run-wrap">
+      <div className="run-card is-compact">
+        <div className="run-hd">
+          <Orb {...now.orb} size={26} label="Помощник работает"/>
+          <div className="run-hd-t">
+            <div className="run-title run-swap" key={now.title} aria-live="polite">{now.title}</div>
+            {secs.length>0&&<div className="run-sub">готово {secDone} из {secs.length} {plural(secs.length,"раздела","разделов","разделов")}</div>}
+          </div>
+          <div className="run-hd-r">
+            <span className="run-el" title="Прошло с начала">{runClock(elapsed||0)}</span>
+            {left&&<span className="run-eta">{left}</span>}
+          </div>
+        </div>
+        <RunStages m={m} eta={eta} labels={false}/>
+        {onToggle&&<button type="button" className="run-more" onClick={onToggle}>Показать ход работы
+          <svg className="run-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>}
       </div>
     </div>;
-  }
-  return <div className="dr-con-wrap">
-    <div className="dr-con">
-      {head}{bar}
-      {/* Отчёт выбрал помощник, а не человек: пока идёт сбор, решение можно поменять */}
-      {onShort && loading && curIdx<3 &&
-        <div className="dr-con-route" role="status">
-          <span>Вопрос требует сбора и сверки источников — собираю отчёт.</span>
-          <button type="button" className="ai-route-btn" onClick={onShort}
-            title="Остановить отчёт и ответить короткой справкой — меньше минуты">Хватит короткого ответа</button>
-        </div>}
-      {m.degraded && <div className="dr-con-degraded">
+  return <div className="run-wrap">
+    <div className="run-card">
+      <div className="run-hd">
+        <Orb {...now.orb} size={44} label="Помощник работает"/>
+        <div className="run-hd-t">
+          <div className="run-eb"><span>Собираю отчёт</span><span>шаг {stepN} из {DR_PHASES.length}</span></div>
+          <div className="run-title run-swap" key={now.title} aria-live="polite">{now.title}</div>
+          {now.detail&&<div className="run-sub">{now.detail}</div>}
+        </div>
+        <div className="run-hd-r">
+          <span className="run-el" title="Прошло с начала">{runClock(elapsed||0)}</span>
+          {left&&<span className="run-eta">{left}</span>}
+        </div>
+      </div>
+      <RunStages m={m} eta={eta} labels/>
+      {turb&&<div className="run-turb" role="status">Сегодня модели отвечают с перебоями: этапы могут идти дольше, оценка времени — неточная.</div>}
+      {m.degraded&&<div className="run-warn" role="status">
         <b>План отчёта не построен</b> — модель недоступна ({m.degraded}).
         Отчёт выйдет заметно беднее: взгляда со стороны и норм в нём не будет.
       </div>}
-      <div className="dr-con-spine">
-        {DEEP_FLOW.map((d,idx)=>{
-          const status = idx<curIdx?"done":(idx===curIdx?"running":"pending");
-          const last = idx===DEEP_FLOW.length-1;
-          // идущий этап раскрыт, пройденный свёрнут; человек может переключить сам
-          const open = openRows[d.key]!==undefined ? openRows[d.key] : status==="running";
-          const canOpen = status!=="pending";
-          const toggle=()=>canOpen&&setOpenRows(o=>({...o,[d.key]:!open}));
-          return <div key={d.key} className={"dr-con-row is-"+status}>
-            <div className="dr-con-col">
-              <span className="dr-con-dot" style={dotStyle(status)}>
-                {status==="done" && <svg width="7" height="7" viewBox="0 0 24 24" fill="none"
-                  stroke="var(--paper)" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>}
-              </span>
-              {!last && <span className="dr-con-conn" style={{background:status==="done"?"var(--ink)":"var(--hair)"}}/>}
-            </div>
-            <div className="dr-con-body">
-              <button type="button" className="dr-con-line" onClick={toggle} disabled={!canOpen}
-                aria-expanded={canOpen?open:undefined}>
-                <span className="dr-con-label" style={titleStyle(status)}>{d.label}</span>
-                <span className="dr-con-right mono">{right(d.key,status)}</span>
-                {canOpen && <svg className={"dr-con-chev"+(open?" open":"")} width="12" height="12" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>}
-              </button>
-              {/* Что происходит прямо сейчас */}
-              {status==="running" && live &&
-                <div className="dr-con-now" aria-live="polite">
-                  <span className="dr-con-now-l">{live.label}</span>
-                  {live.detail && <span className="dr-con-now-d">{live.detail}</span>}
-                </div>}
-              {/* Как понят вопрос — главная опора доверия: рамку видно до первых фактов
-                  и на всём протяжении прогона, даже когда этап свёрнут */}
-              {d.key==="parse" && status!=="pending" && m.understood && m.understood.task &&
-                <div className="dr-con-understood">
-                  <span className="dr-con-u-k">Вопрос понят как</span>
-                  <span className="dr-con-u-v">{DR_TASK[m.understood.task]||m.understood.task}</span>
-                  <span className="dr-con-u-sep">·</span>
-                  <span>{drScope(m.understood)}</span>
-                  {m.understood.period && <><span className="dr-con-u-sep">·</span><span>{m.understood.period}</span></>}
-                  {DR_CHECKS[m.understood.checks] && <><span className="dr-con-u-sep">·</span><span>{DR_CHECKS[m.understood.checks]}</span></>}
-                  {m.understood.continues && m.understood.prior && <><span className="dr-con-u-sep">·</span>
-                    <span className="dr-con-u-cont">продолжение прошлого отчёта{m.understood.prior.date?` от ${m.understood.prior.date}`:""}:
-                      уже собрано {m.understood.prior.facts} {plural(m.understood.prior.facts,"факт","факта","фактов")}</span>
-                    {onFresh && <button type="button" className="dr-con-u-redo" onClick={onFresh}
-                      title="Не опираться на прошлый отчёт: собрать источники и факты заново">собрать заново</button>}</>}
-                </div>}
-              {open && <>
-              {d.key==="parse" && contract.length>0 &&
-                <div className="dr-con-contract">
-                  <div className="dr-con-sub-h">Что будет в отчёте</div>
-                  <div className="dr-con-chips">
-                    {contract.map((a,ai)=>{
-                      const isObs = a===m.observedAttr, isReg = a===m.regulatoryAttr;
-                      return <span key={ai} className="dr-con-chip"
-                        title={isObs?"взгляд со стороны: жалобы, отзывы, разборы":(isReg?"нормы: требования закона и регулятора":"")}>
-                        {a}{isObs&&<i>со стороны</i>}{isReg&&<i>нормы</i>}</span>;
-                    })}
-                  </div>
-                </div>}
-              {/* Куда ходит: сайты с числом прочитанных страниц — живьём */}
-              {d.key==="collect" && hosts.length>0 &&
-                <div className="dr-con-hosts" aria-label="Прочитанные сайты">
-                  {hosts.map(([h,n])=><span key={h} className="dr-con-host">{h}<b className="mono">{n}</b></span>)}
-                </div>}
-              {d.key==="collect" && subq.length>0 &&
-                <details className="dr-con-queries">
-                  <summary>Поисковые запросы · {subq.length}</summary>
-                  {subq.map((q,qi)=>{
-                    const site=(q.match(/site:(\S+)/)||[])[1];
-                    return <div key={qi} className="dr-con-query">
-                      <span className="dr-con-q-txt">{q.replace(/\s*site:\S+/,"")}</span>
-                      {site && <span className="dr-con-q-site mono">{site}</span>}
-                    </div>;
-                  })}
-                </details>}
-              {/* Факты — по сторонам доказательства */}
-              {d.key==="facts" && (fs.total||0)>0 &&
-                <div className="dr-con-stances">
-                  {Object.entries(STANCE_UI).filter(([k])=>stance[k]).map(([k,v])=>(
-                    <div key={k} className="dr-con-stance" title={v.hint}>
-                      <span className="dr-con-stance-n mono">{stance[k]}</span>
-                      <span className="dr-con-stance-l">{v.label}</span>
-                    </div>))}
-                </div>}
-              {d.key==="facts" && fs.critic && fs.critic.checked>0 &&
-                <div className="dr-con-note">Каждая цитата сверена с текстом страницы: дословных {fs.critic.exact} из {fs.critic.checked}
-                  {fs.critic.cut?`, снято без опоры на источник — ${fs.critic.cut}`:""}.</div>}
-              {/* Оглавление: что написано, что пишется, что впереди */}
-              {d.key==="synth" && secs.length>0 &&
-                <ol className="dr-con-secs">
-                  {secs.map((s,si)=><li key={si} className={"is-"+s.state}>
-                    <span className="dr-con-sec-m" aria-hidden="true">
-                      {s.state==="done" && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                        strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>}
-                    </span>
-                    <span className="dr-con-sec-t">{s.title}</span>
-                    <span className="dr-con-sec-s">{s.state==="done"?"готов":s.state==="writing"?"пишется":s.state==="last"?"в конце, по готовому тексту":""}</span>
-                  </li>)}
-                </ol>}
-              {d.key==="verify" && gapsN>0 &&
-                <div className="dr-con-gaps">
-                  <div className="dr-con-sub-h">Чего найти не удалось · {gapsN}</div>
-                  {(m.gapsList||[]).slice(0,4).map((g,gi)=>(
-                    <div key={gi} className="dr-con-gap">
-                      <span className="dr-con-gap-i mono">—</span>
-                      <span className="dr-con-gap-w">{g}</span>
-                    </div>))}
-                </div>}
-              </>}
-            </div>
-          </div>;
-        })}
-      </div>
-      {/* Собственные данные готовы раньше сбора по сайтам: числа разделов видны
-          уже через полминуты, со ссылкой в раздел. Это не вывод — на этом он будет стоять. */}
-      {(m.ownPreview||[]).length>0 &&
-        <div className="dr-con-own">
-          <div className="dr-con-sub-h">Уже нашлось в данных AuditLens</div>
-          <div className="dr-con-own-g">
-            {m.ownPreview.map((b,bi)=><div key={bi} className="dr-con-own-b">
-              <div className="dr-con-own-t">{b.link
-                ?<a href={b.link.startsWith("#")?location.pathname+location.search+b.link:b.link} target="_blank" rel="noopener noreferrer"
-                    title="Открыть в разделе — в новой вкладке, отчёт продолжит собираться">{b.title}<span aria-hidden="true"> ↗</span></a>
-                :b.title}</div>
-              {(b.rows||[]).map((r,ri)=><div key={ri} className="dr-con-own-r">
-                {r.link?<a href={r.link} target="_blank" rel="noopener noreferrer">{r.label}</a>:<span>{r.label}</span>}
-                {r.value&&<b className="mono">{r.value}</b>}
-              </div>)}
-            </div>)}
-          </div>
-          <div className="dr-con-note">Это числа из разделов AuditLens, а не вывод: отчёт сверит их с сайтами банков и нормами.</div>
+      <RunUnderstood m={m} onFresh={onFresh}/>
+      {/* Отчёт выбрал помощник, а не человек: пока идёт сбор, решение можно поменять */}
+      {onShort&&loading&&stepN<=3&&
+        <div className="run-route" role="status">
+          <span>Вопрос требует сбора и сверки источников, поэтому собираю отчёт.</span>
+          <button type="button" className="ai-route-btn" onClick={onShort}
+            title="Остановить отчёт и ответить короткой справкой — меньше минуты">Хватит короткого ответа</button>
         </div>}
+      <RunSteps m={m}/>
+      <RunOwn m={m}/>
+      {logN>0&&<div className="run-logbox">
+        <button type="button" className="run-more" onClick={()=>setLogOpen(o=>!o)} aria-expanded={logOpen}>
+          {logOpen?"Свернуть шаги":`Все шаги по порядку · ${logN}`}
+          <svg className={"run-chev"+(logOpen?" open":"")} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        {logOpen&&<RunLog m={m}/>}
+      </div>}
     </div>
+  </div>;
+}
+
+// Итог прогона и «как получен ответ». Строка под ответом: неподвижный шар, чем кончилось
+// и за сколько; раскрывается в этапы и ленту шагов. У сохранённого ответа — то же самое
+// из истории, насколько сервер это сохранил.
+function runEnded(m){ return m.lost?"lost":(m.stopped||m.status==="stopped")?"stopped":(m.status==="failed"||(m.err&&!m.text))?"failed":"ok"; }
+function runSummary(m,kind){
+  const sec=Math.round(m.elapsedS||0), took=sec?runDur(sec):"";
+  const at=m.stoppedPhase&&DEEP_FLOW.find(d=>d.phases.includes(m.stoppedPhase));
+  const where=at?` на шаге «${at.label}»`:"";
+  const end=runEnded(m);
+  if(end==="lost") return "Связь прервалась"+where+(took?` через ${took}`:"");
+  if(end==="stopped") return (kind==="report"?"Отчёт остановлен":kind==="deck"?"Презентация остановлена":"Ответ остановлен")
+    +(m.stopped?" вами":"")+where+(took?` через ${took}`:"");
+  if(end==="failed") return (kind==="report"?"Отчёт не собран":"Ответ не получен")+(took?` — сбой через ${took}`:"");
+  if(kind==="report") return "Как получен отчёт";
+  if(kind==="deck") return took?`Презентация собрана за ${took}`:"Презентация собрана";
+  return took?`Ответ за ${took}`:"";
+}
+function RunDone({m,kind}){
+  const [open,setOpen]=useState(false);
+  const end=runEnded(m), sum=runSummary(m,kind);
+  const steps=(m.trace||[]).filter(e=>e.k!=="phase");
+  const tools=kind!=="report"?collapseTools(m.tools):[];
+  const rich=kind==="report"&&!!(m.understood||(m.contract||[]).length||m.factStats||m.progress||m.timings||(m.outline||[]).length);
+  const can=steps.length>0||rich;
+  if((!sum&&!tools.length&&!can)||(end==="failed"&&!can)) return null;
+  const took=kind==="report"?tracePhases(m):{};
+  const head=<>
+    <Orb state="idle" size={16} still tone={end==="ok"||end==="stopped"?"mute":"accent"}/>
+    <span className="run-done-x">
+      <span className="run-done-t">{sum||"Где помощник смотрел"}</span>
+      {tools.length>0&&<span className="run-trail">
+        {tools.map(({lbl,n},ti)=><span key={ti} className="run-trail-i">{lbl}{n>1?<i> ×{n}</i>:null}</span>)}
+      </span>}
+    </span>
+  </>;
+  return <div className={"run-done is-"+end+(open?" open":"")}>
+    {can
+      ? <button type="button" className="run-done-h" onClick={()=>setOpen(o=>!o)} aria-expanded={open}
+                title={open?"Свернуть":"Показать шаги: что и когда делал помощник"}>
+          {head}
+          <svg className={"run-chev"+(open?" open":"")} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+      : <div className="run-done-h">{head}</div>}
+    {open&&can&&<div className="run-done-b">
+      {rich&&<>
+        <RunUnderstood m={m} onFresh={null}/>
+        {Object.keys(took).length>0&&<div className="run-took" aria-label="Время по этапам">
+          {DEEP_FLOW.filter(d=>took[d.phases[0]]).map(d=><div key={d.key} style={{flexGrow:Math.max(6,took[d.phases[0]])}}>
+            <i/><span>{d.short}</span><b>{runDur(took[d.phases[0]])}</b></div>)}
+        </div>}
+        <RunSteps m={m} ended/>
+        <RunOwn m={m}/>
+      </>}
+      {steps.length>0&&<>
+        {rich&&<div className="run-k run-k-log">Все шаги по порядку</div>}
+        <RunLog m={m}/>
+      </>}
+    </div>}
   </div>;
 }
 
@@ -8234,8 +8522,26 @@ function AIPage(){
   useEffect(()=>{apiFetch("/api/feedback?kind=ai_answer").then(d=>setAiFb(d.items||{})).catch(()=>setAiFb({}));},[]);
   // страница живёт в фоне (Shell держит смонтированной) — сообщаем Shell о ходе
   // прогона: точка в rail + тост «Отчёт готов», когда пользователь на другой вкладке
+  // и заголовок вкладки браузера: «Отчёт: ещё ~3 мин» видно, даже когда открыт другой сайт
+  const[runTitle,setRunTitle]=useState({kind:"answer",left:""});
   useEffect(()=>{ try{window.dispatchEvent(new CustomEvent("al-ai-state",
-    {detail:{running:loading}}));}catch{} },[loading]);
+    {detail:{running:loading,kind:runTitle.kind,left:runTitle.left}}));}catch{} },[loading,runTitle.kind,runTitle.left]);
+  // Перезагрузка посреди прогона обрывает его (ответ идёт одним соединением). Браузер
+  // переспросит, а если страницу всё же перезагрузили — на стартовой будет видно, что
+  // ответ прерван, и как к нему вернуться.
+  useEffect(()=>{
+    if(!loading) return;
+    const warn=e=>{ e.preventDefault(); e.returnValue=""; };
+    window.addEventListener("beforeunload",warn);
+    return ()=>window.removeEventListener("beforeunload",warn);
+  },[loading]);
+  const runMark=v=>{ try{ if(v) sessionStorage.setItem("al-ai-run",JSON.stringify({...v,at:Date.now()}));
+    else sessionStorage.removeItem("al-ai-run"); }catch{} };
+  const[cutRun,setCutRun]=useState(()=>{ try{
+    const v=JSON.parse(sessionStorage.getItem("al-ai-run")||"null");
+    sessionStorage.removeItem("al-ai-run");
+    return v&&v.q&&Date.now()-(v.at||0)<3600e3?v:null; }catch{ return null; } });
+  const turbOn=useTurbOn();
   const[histOpen,setHistOpen]=useState(false);           // command palette истории
   const[recent,setRecent]=useState([]);                  // недавние диалоги для welcome (без повторов)
   const[sessAll,setSessAll]=useState([]);                // вся история — для «вы уже спрашивали»
@@ -8299,6 +8605,10 @@ function AIPage(){
     // утаскиваем — человек остаётся там, где читает.
     const last=msgs[msgs.length-1];
     if(last&&last.mode==="deep"&&(last.text||"").length>400) return;
+    // Карточка хода отчёта растёт вниз и бывает выше экрана: держим в виду её шапку
+    // (шар, шаг, оценка времени), а не хвост. Дальше человек листает сам.
+    const card=last&&last.mode==="deep"&&loading?el.querySelector(".chat-msg:last-child .run-wrap"):null;
+    if(card){ if(stickRef.current) el.scrollTop+=card.getBoundingClientRect().top-el.getBoundingClientRect().top-10; return; }
     if(stickRef.current) el.scrollTop=el.scrollHeight;  // мгновенно, без рывка smooth
   },[msgs,loading]);
   useEffect(()=>{
@@ -8381,6 +8691,7 @@ function AIPage(){
     // Прогон длится минуты. Если вопрос задан неудачно, ждать его конца незачем —
     // об этом прямо написали в обратной связи. Держим отменяемый запрос.
     const ac=new AbortController(); abortRef.current=ac;
+    const runT=()=>Math.max(0,Math.round((Date.now()-runStartRef.current)/1000));
     try{
       const res=await fetch("/api/ai/analyze",{
         method:"POST",
@@ -8399,6 +8710,8 @@ function AIPage(){
       const dec=new TextDecoder();
       let buf="";
       const updateLast=(patch)=>setMsgs(m=>{const u=[...m],last=u[u.length-1];u[u.length-1]={...last,...patch(last)};return u;});
+      // лента шагов: что и на какой секунде прогона произошло
+      const tr=(last,e)=>({trace:traceAdd(last.trace,{t:runT(),...e})});
       outer: while(true){
         const{done,value}=await reader.read();
         if(done)break;
@@ -8411,9 +8724,11 @@ function AIPage(){
             try{
               const data=JSON.parse(line.slice(6));
               if(data.type==="session"){
-                if(data.session_id){ sessionRef.current=data.session_id; setSessionId(data.session_id); }
+                if(data.session_id){ sessionRef.current=data.session_id; setSessionId(data.session_id);
+                  runMark({q:question,sid:data.session_id}); }
               }else if(data.type==="text"&&data.chunk){
-                updateLast(last=>({text:(last.text||"")+data.chunk}));
+                updateLast(last=>({text:(last.text||"")+data.chunk,
+                  ...(!last.text&&last.mode!=="deep"&&last.route!=="deck"&&last.engine!=="deck"?tr(last,{k:"write",label:"Пишу ответ"}):{})}));
               }else if(data.type==="lead"&&data.chunk){
                 // Резюме и «что проверять» пишутся ПОСЛЕДНИМИ — по готовому
                 // телу, — а читаются первыми. Поэтому вставляем наверх, а не
@@ -8444,26 +8759,32 @@ function AIPage(){
               }else if(data.type==="engine"){
                 updateLast(()=>({engine:data.value}));
               }else if(data.type==="tool_call"){
-                updateLast(last=>({tools:[...(last.tools||[]),data.name]}));
+                updateLast(last=>({tools:[...(last.tools||[]),data.name],...tr(last,{k:"tool",label:TOOL_LABELS[data.name]||data.name})}));
               }else if(data.type==="sources"&&Array.isArray(data.sources)){
                 updateLast(()=>({sources:data.sources,sourcesFailed:data.failed||0}));
               }else if(data.type==="files"&&Array.isArray(data.files)){
                 updateLast(()=>({files:data.files}));
               }else if(data.type==="route"){
                 // чем помощник решил отвечать: справкой, отчётом или репликой к прошлому ответу
-                updateLast(()=>({route:data.value,routeBy:data.by,...(data.value==="report"?{mode:"deep"}:{})}));
+                updateLast(last=>({route:data.value,routeBy:data.by,...(data.value==="report"?{mode:"deep"}:{}),
+                  ...tr(last,{k:"route",label:data.value==="report"?"Вопрос требует сбора источников — собираю отчёт"
+                    :data.value==="reply"?"Отвечаю по уже собранному, без нового сбора"
+                    :data.value==="deck"?"Собираю презентацию по готовому отчёту":"Отвечаю короткой справкой"})}));
               }else if(data.type==="mode"){
                 updateLast(()=>({mode:data.value}));
               }else if(data.type==="notice"&&data.text){
                 updateLast(()=>({notice:data.text}));
               }else if(data.type==="phase"){
                 // phaseAt — когда начался этап: по нему считается «осталось примерно…»
-                updateLast(()=>({phase:data.value,phaseAt:Date.now()}));
+                updateLast(last=>({phase:data.value,phaseAt:Date.now(),...tr(last,{k:"phase",label:data.value})}));
               }else if(data.type==="own_preview"&&Array.isArray(data.blocks)){
                 // что уже нашлось в данных AuditLens — показываем, пока идёт сбор по сайтам
                 updateLast(()=>({ownPreview:data.blocks}));
-              }else if(data.type==="typical"&&data.steps){
-                updateLast(()=>({typical:{steps:data.steps,total:data.total}}));
+              }else if(data.type==="typical"){
+                // сколько обычно длится: этапы отчёта, короткий ответ, презентация
+                updateLast(last=>({typical:{...(last.typical||{}),
+                  ...(data.steps?{steps:data.steps,total:data.total}:{}),
+                  ...(data.answer?{answer:data.answer}:{}),...(data.deck?{deck:data.deck}:{})}}));
               }else if(data.type==="plan"&&Array.isArray(data.steps)){
                 // Контракт и подзапросы — то, по чему аудитор понимает рамку
                 // разбора ещё до появления первых фактов.
@@ -8519,8 +8840,10 @@ function AIPage(){
                 // показываем её отдельным prominent banner'ом чтобы пользователь
                 // видел что pipeline жив и сколько примерно ждать.
                 // phase — к какому этапу относится подпись: под чужим этапом её не показываем
+                // повтор подписи с секундами (progress_elapsed) — не новый шаг: в ленту не идёт
                 updateLast(last=>({stageStatus:{...data,phase:last.phase},
-                  ...(data.stage==="analyst"?{writingSection:data.section||null}:{})}));
+                  ...(data.stage==="analyst"?{writingSection:data.section||null}:{}),
+                  ...(data.progress_elapsed==null&&data.label?tr(last,{k:"stage",label:data.label,detail:data.detail||""}):{})}));
               }else if(data.type==="merge_progress"){
                 // Прогресс финальной сборки — счётчик символов, видимый юзеру
                 updateLast(last=>({stageStatus:{
@@ -8569,7 +8892,7 @@ function AIPage(){
                 // «Поделиться» сразу после прогона; название — из брифа или черновое
                 updateLast(m=>({report_id:data.report_id,title:m.title||data.title||undefined}));
               }else if(data.type==="done"){
-                if(data.elapsed_s) updateLast(()=>({elapsedS:data.elapsed_s}));
+                updateLast(last=>({elapsedS:data.elapsed_s||runT(),...tr(last,{k:"done",label:"Готово"})}));
                 break outer;
               }
             }catch{}
@@ -8590,14 +8913,22 @@ function AIPage(){
         // Человек остановил сам — это не ошибка. Оставляем то, что успело
         // прийти, и честно помечаем, что продолжения не будет.
         setMsgs(m=>{const u=[...m];const last=u[u.length-1]||{};
-          u[u.length-1]={...last,stopped:true,phase:"done"};
+          u[u.length-1]={...last,stopped:true,stoppedPhase:last.phase,phase:"done",elapsedS:runT(),
+            trace:traceAdd(last.trace,{t:runT(),k:"stop",label:"Остановлено вами"})};
           return u;});
       }else{
-        setMsgs(m=>{const u=[...m];u[u.length-1]={...u[u.length-1],phase:"done",
-          err:"Связь с сервером прервалась — ответ пришёл не полностью. Проверьте сеть и повторите вопрос."};return u;});
+        // Обрыв связи — не то же, что сбой помощника: показываем, на каком шаге оборвалось,
+        // и оставляем всё, что успело прийти.
+        setMsgs(m=>{const u=[...m];const last=u[u.length-1]||{};
+          u[u.length-1]={...last,lost:true,stoppedPhase:last.phase,phase:"done",elapsedS:runT(),
+            trace:traceAdd(last.trace,{t:runT(),k:"lost",label:"Связь с сервером прервалась"}),
+            err:(last.text||"").trim()
+              ?"Связь с сервером прервалась — ответ пришёл не полностью. Проверьте сеть и повторите вопрос."
+              :"Связь с сервером прервалась раньше, чем пришёл ответ. Проверьте сеть и повторите вопрос."};return u;});
       }
     }finally{
       abortRef.current=null;
+      runMark(null);                     // прогон кончился сам — отметка «прервано» не нужна
       const sw=switchRef.current; switchRef.current=null;
       if(sw){
         // лента обновится на следующем кадре — запускаем после него
@@ -8618,6 +8949,8 @@ function AIPage(){
     const history=talkHistory().filter((h,i,a)=>!(i===a.length-1&&h.role==="user"&&h.content===t));
     setLoading(true);
     runStartRef.current=Date.now(); setElapsed(0);     // старт таймера прогона
+    setRunOpen(false);
+    runMark({q:t,sid:sessionRef.current});
     // Маршрут уже известен — сразу показываем нужный вид: консоль отчёта или
     // короткий ответ, а не безликое «думаю» до первого события сервера.
     const r=extra&&extra.route;
@@ -8649,7 +8982,7 @@ function AIPage(){
     // туда, и он «залипал» (обратная связь трёх терробанков).
     const hist=talkHistory(3000);
     setMsgs(m=>[...m.filter(x=>x.role!=="clarify"),{role:"user",text:t},
-                {role:"pending",label:"Разбираю вопрос…"}]);
+                {role:"pending",label:"Разбираю вопрос",detail:"решаю, хватит ли короткой справки или нужен отчёт"}]);
     setLoading(true);
     let data=null;
     try{ data=await apiPost("/api/ai/clarify",{question:t,history:hist,auto:true}); }catch(e){ data=null; }
@@ -8670,7 +9003,7 @@ function AIPage(){
     setLoading(true);
     // Индикатор на время сборки обогащённого запроса (~5с rewrite) — без него
     // после ответа на воронку экран молчит ~15с до старта research.
-    setMsgs(m=>[...m.filter(x=>x.role!=="clarify"),{role:"pending",label:"Собираю уточнённый запрос…"}]);
+    setMsgs(m=>[...m.filter(x=>x.role!=="clarify"),{role:"pending",label:"Учитываю уточнения",detail:"собираю вопрос для отчёта"}]);
     let enriched=srcQuestion;
     if(answers&&answers.length){
       try{ const r=await apiPost("/api/ai/clarify",{question:srcQuestion,answers});
@@ -8686,11 +9019,12 @@ function AIPage(){
     runSend(srcQuestion,true,{route:"report",route_by:"model"});
   };
   // «Повторить» после сбоя: неудачный ответ убираем, тот же вопрос уходит заново.
-  const retryLast=(srcQ)=>{
+  const retryLast=(srcQ,route)=>{
     if(loading||!srcQ)return;
     trkEvent({kind:"ui",page:"ai",payload:{action:"retry_after_error"}});
     setMsgs(m=>(m.length&&m[m.length-1].role==="ai")?m.slice(0,-1):m);
-    setTimeout(()=>runSend(srcQ,null,{resend:true}),60);
+    setTimeout(()=>runSend(srcQ,route==="report"?true:null,
+      route?{resend:true,route,route_by:"user"}:{resend:true}),60);
   };
   // Человек поправил глубину ответа. Пока ответ идёт — останавливаем его и под
   // тем же вопросом запускаем другой; готовый короткий ответ остаётся в ленте,
@@ -8739,6 +9073,32 @@ function AIPage(){
     setTimeout(()=>inputRef.current?.focus(),0);
   };
 
+  // Ход работы сохранённого ответа — из того, что сервер положил рядом с ним: лента шагов,
+  // время, как понят вопрос, сколько прочитано и выписано. У ответов, сохранённых раньше,
+  // части этих сведений нет — тогда «как получен ответ» показывает то, что есть.
+  const savedRun=(meta,p)=>{
+    meta=meta||{}; p=p||{};
+    const plan=p.plan||null, run=p.run||{}, out={};
+    const trace=meta.trace||p.trace; if(Array.isArray(trace)&&trace.length) out.trace=trace;
+    const el=meta.elapsed_s||p.elapsed_s; if(el) out.elapsedS=el;
+    if(meta.tools) out.tools=meta.tools;
+    if(meta.route) out.route=meta.route;
+    if(meta.engine) out.engine=meta.engine;
+    if(p.timings) out.timings=p.timings;
+    if(plan&&plan.task){
+      const labels=plan.subject_labels||{}, subj=plan.subjects||[];
+      const names=subj.map(x=>labels[x]).filter(Boolean);
+      out.understood={task:plan.task,scope:plan.scope||"",checks:plan.checks||"",period:plan.period||"",
+        continues:false,prior:null,names,noScope:subj.length>0&&!names.length};
+    }
+    if(run.contract) out.contract=run.contract;
+    if(run.subqueries) out.subqN=run.subqueries;
+    if(run.pages||run.hosts) out.progress={pages:run.pages||0,blocked:run.blocked||0,hosts:run.hosts||[],sites:run.sites||0};
+    if(run.facts) out.factStats=run.facts;
+    if(run.outline) out.outline=run.outline;
+    if(run.stopped_phase) out.stoppedPhase=run.stopped_phase;
+    return out;
+  };
   // Загрузка сессии из истории → в ленту (продолжение возможно, sessionId сохранён).
   // Открыли сохранённое: отчёт показываем с начала (с названия), а не с последней
   // строки — раньше лента прокручивалась в самый низ, к источникам и сверке.
@@ -8756,7 +9116,7 @@ function AIPage(){
         const meta=m.meta||{};
         return {role:"ai",text:m.content,sources:meta.sources||[],report_id:meta.report_id||undefined,
                 mode:meta.mode||undefined,phase:meta.mode==="deep"?"done":undefined,
-                files:meta.files||undefined};
+                files:meta.files||undefined,status:meta.status||undefined,...savedRun(meta,null)};
       });
       // История хранит только текст и источники; визуализации, графики и
       // артефакты проверки живут в отчёте — дотягиваем их по report_id, иначе
@@ -8765,8 +9125,9 @@ function AIPage(){
         if(m.role!=="ai"||!m.report_id) return;
         try{
           const r=await apiFetch(`/api/reports/${m.report_id}`); const p=r.payload||{};
-          Object.assign(m,{charts:p.charts||[],viz:p.viz||[],verification:p.verification||null,
+          Object.assign(m,savedRun(null,p),{charts:p.charts||[],viz:p.viz||[],verification:p.verification||null,
                            gaps:p.gaps||null,ranking:p.ranking||null,insights:p.insights||null,
+                           gapsList:((p.gaps||{}).missing||[]).map(g=>g.attribute||g),
                            status:p.status||undefined,title:r.title||undefined,
                            created_at:r.created_at||undefined,elapsedS:p.elapsed_s||undefined,
                            report_owner:r.owner,owner_name:r.owner_name});
@@ -8792,7 +9153,8 @@ function AIPage(){
                 ranking:p.ranking||null,insights:p.insights||null,
                 report_id:r.report_id,report_owner:r.owner,owner_name:r.owner_name,
                 created_at:r.created_at||undefined,elapsedS:p.elapsed_s||undefined,
-                status:p.status||undefined,title:r.title||undefined,files:p.files||undefined}]);
+                status:p.status||undefined,title:r.title||undefined,files:p.files||undefined,
+                gapsList:((p.gaps||{}).missing||[]).map(g=>g.attribute||g),...savedRun(null,p)}]);
       setSessionId(r.session_id||null); setActiveCite(null); setHoverCite(null);
       landOnAnswer();
     }catch{}
@@ -8829,9 +9191,24 @@ function AIPage(){
   useEffect(()=>{
     if(!hasDraft) return;
     const el=feedRef.current; if(!el) return;
-    requestAnimationFrame(()=>{ const c=el.querySelector(".chat-msg:last-child .dr-con-wrap");
+    requestAnimationFrame(()=>{ const c=el.querySelector(".chat-msg:last-child .run-wrap");
       if(c){ stickRef.current=false; el.scrollTop+=c.getBoundingClientRect().top-el.getBoundingClientRect().top-10; } });
   },[hasDraft]);
+  // что идёт и сколько осталось — в заголовок вкладки браузера (через Shell)
+  const runKindNow=isRunning?"report":(lastMsg&&(lastMsg.route==="deck"||lastMsg.engine==="deck")?"deck":"answer");
+  const runLeftNow=isRunning?drLeftShort(drEta(lastDeep)):"";
+  useEffect(()=>{ setRunTitle(t=>t.kind===runKindNow&&t.left===runLeftNow?t:{kind:runKindNow,left:runLeftNow}); },[runKindNow,runLeftNow]);
+  // Живой шар на экране один: пока видна карточка хода со своим шаром, шар нижней полосы
+  // стоит; карточку пролистали — оживает он (анимация двух шаров — двойная нагрузка).
+  const[cardSeen,setCardSeen]=useState(true);
+  useEffect(()=>{
+    if(!isRunning) return;
+    const feed=feedRef.current, card=feed&&feed.querySelector(".chat-msg:last-child .run-card .orb");
+    if(!card||typeof IntersectionObserver==="undefined"){ setCardSeen(false); return; }
+    const io=new IntersectionObserver(es=>setCardSeen(es[es.length-1].isIntersecting),{root:feed});
+    io.observe(card);
+    return ()=>io.disconnect();
+  },[isRunning,hasDraft,runOpen]);
   const showThreadHead = !isEmpty && !isRunning && !isClarify;
   const showComposer   = !isRunning && !isClarify;
   const fmtEl = (s)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
@@ -8842,6 +9219,13 @@ function AIPage(){
     {dupHit&&<div className="aw-dup" role="status">Вы уже спрашивали это {fmtHistTime(dupHit.updated_at)} —
       <button type="button" onClick={()=>openSession(dupHit.session_id)}>открыть {dupHit.report_id?"отчёт":"ответ"}</button></div>}
     {slotHint && <div className="aw-dup aw-slot" role="alert">{slotHint}</div>}
+    {isEmpty&&cutRun&&<div className="aw-dup run-cut" role="status">
+      <span>Ответ на вопрос «{cutRun.q.length>90?cutRun.q.slice(0,90)+"…":cutRun.q}» прервался: страница была перезагружена.</span>
+      {cutRun.sid&&<button type="button" onClick={()=>{const sid=cutRun.sid; setCutRun(null); openSession(sid);}}>открыть, что успело прийти</button>}
+      <button type="button" onClick={()=>{const t=cutRun.q; setCutRun(null); send(t);}}>спросить заново</button>
+      <button type="button" className="run-cut-x" onClick={()=>setCutRun(null)} aria-label="Скрыть">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>}
     <div className="chat-input-wrap">
       <textarea ref={inputRef} className="chat-textarea" rows={isEmpty?2:1}
         aria-label="Вопрос ИИ-помощнику" autoFocus={isEmpty}
@@ -8891,8 +9275,9 @@ function AIPage(){
             </div>;
           }
           if(m.role==="pending"){
-            return <div key={i} className="chat-msg ai">
-              <PendingDots label={m.label}/>
+            return <div key={i} className="chat-msg ai quick-msg">
+              <div className="who">ИИ-помощник</div>
+              <PrepLine label={m.label} detail={m.detail}/>
             </div>;
           }
           if(m.mode==="deep"){
@@ -8907,21 +9292,34 @@ function AIPage(){
             // сворачивается в полоску, чтобы не заслонять чтение.
             const consoleMode = m.role==="ai" && loading && i===msgs.length-1 && m.phase!=="done";
             const draftMode = consoleMode && (m.text||"").length>400;
-            // Отчёт сорвался, не начавшись: шапку «Отчёт» с пустым документом не рисуем —
-            // только что случилось и «Повторить».
-            if(!consoleMode && m.err && !(m.text||"").trim())
+            const canRetry = userQ!=="Аудит-отчёт";
+            // Сервер ответил заглушкой сбоя («⚠ Не удалось построить план…») — это не отчёт.
+            const failNote = !consoleMode && /^\s*⚠\s*\*\*/.test(m.text||"") && (m.text||"").length<400
+              ? (m.text||"").replace(/[⚠*_]/g,"").replace(/\s+/g," ").trim() : "";
+            // Прогон кончился, не дав текста (остановлен, оборвалась связь, сбой): шапку «Отчёт»
+            // с пустым документом не рисуем — показываем, на каком шаге он кончился, что успело
+            // собраться и что делать дальше.
+            if(!consoleMode && (failNote || !(m.text||"").trim()) && (failNote||m.err||m.stopped||m.lost||m.status==="stopped"))
               return <div key={i} className="chat-msg ai quick-msg">
                 <div className="who">ИИ-помощник</div>
-                <AiError text={m.err} onRetry={userQ!=="Аудит-отчёт"?()=>retryLast(userQ):null}/>
+                <RunDone m={failNote?{...m,status:"failed"}:m} kind="report"/>
+                {(m.err||failNote)
+                  ? <AiError text={m.err||failNote} onRetry={canRetry?()=>retryLast(userQ,"report"):null}/>
+                  : <div className="run-next">
+                      <span>Текста отчёта ещё не было. Что успело собраться — в строке выше.</span>
+                      {canRetry&&<button type="button" className="btn-export" disabled={loading} onClick={()=>retryLast(userQ,"report")}>Собрать заново</button>}
+                      {canRetry&&<button type="button" className="btn-export" disabled={loading} onClick={()=>switchRoute(userQ,"answer")}>Ответить коротко</button>}
+                    </div>}
               </div>;
             return <div key={i} className={`chat-msg ${m.role}`}>
               {consoleMode &&
                 <div className="chat-bubble chat-bubble-deep">
-                  <DeepConsole m={m} loading={loading} elapsed={elapsed} onFresh={()=>redoFresh(userQ)}
+                  <RunCard m={m} loading={loading} elapsed={elapsed} onFresh={()=>redoFresh(userQ)} turb={turbOn}
                     onShort={i>0&&msgs[i-1]?.role==="user"?()=>switchRoute(userQ,"answer"):null}
                     compact={draftMode&&!runOpen} onToggle={()=>setRunOpen(true)}/>
-                  {draftMode&&runOpen&&<div className="dr-con-fold"><button type="button" className="dr-con-link"
-                    onClick={()=>setRunOpen(false)}>Свернуть ход работы</button></div>}
+                  {draftMode&&runOpen&&<div className="run-fold"><button type="button" className="run-more"
+                    onClick={()=>setRunOpen(false)}>Свернуть ход работы
+                    <svg className="run-chev open" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button></div>}
                 </div>}
               {draftMode && <div className="dr-draft-note" role="status">
                 <b>Отчёт пишется — можно читать.</b> Разделы появляются по мере готовности; резюме встанет в начало,
@@ -8934,12 +9332,13 @@ function AIPage(){
                   <div className="rp-eyebrow">
                     <span>{streaming?"Отчёт пишется":(m.stopped||m.status==="stopped")?"Отчёт остановлен":"Отчёт"}</span>
                     {!streaming&&(m.created_at||m.phase==="done")&&<span>{srcDay(m.created_at||localDay())}</span>}
-                    {!streaming&&rpTook(m)&&<span>собран за {rpTook(m)}</span>}
+                    {!streaming&&rpTook(m)&&!(m.stopped||m.lost||m.status==="stopped")&&<span>собран за {rpTook(m)}</span>}
                     {m.report_owner&&me&&m.report_owner!==me.username&&
                       <span className="shr-owner">поделился: {m.owner_name||m.report_owner}</span>}
                   </div>
                   <h1 className="rp-title">{m.title||userQ}</h1>
                   {!streaming&&<RpMeta m={m}/>}
+                  {!streaming&&<RunDone m={m} kind="report"/>}
                   {!streaming&&<div className="rp-bar">
                     <div className="rp-acts">
                       {showPdfBtn &&
@@ -8983,9 +9382,9 @@ function AIPage(){
                       })()}
                       {m.ranking && <div className="dr-fade-in"><RankingWidget ranking={m.ranking}/></div>}
                       {m.insights && m.insights.length>0 && <div className="dr-fade-in"><InsightsWidget insights={m.insights}/></div>}
-                      {(m.status==="stopped"||m.stopped)&&!streaming&&<div className="ai-stopped" role="status">
+                      {(m.status==="stopped"||m.stopped)&&!m.lost&&!streaming&&<div className="ai-stopped" role="status">
                         Отчёт остановлен до конца прогона — здесь то, что успело прийти.</div>}
-                      {m.err&&!streaming&&<AiError text={m.err} onRetry={userQ&&userQ!=="Аудит-отчёт"?()=>retryLast(userQ):null}/>}
+                      {m.err&&!streaming&&<AiError text={m.err} onRetry={userQ&&userQ!=="Аудит-отчёт"?()=>retryLast(userQ,"report"):null}/>}
                       {m.verification&&<VerificationBanner verification={m.verification}/>}
                       {showPdfBtn && !streaming &&
                         <div className="dr-doc-footer">
@@ -9021,33 +9420,25 @@ function AIPage(){
           }
           // Quick mode — ответ ИИ (редизайн: голый текст + tool-бокс + источники + апселл)
           const prevQ = (i>0 && msgs[i-1]?.role==="user") ? msgs[i-1].text : "";
-          const thinking = !m.text && loading && i===msgs.length-1;
+          const live = loading && i===msgs.length-1;
+          const isDeck = m.route==="deck"||m.engine==="deck";
           const qText = stripFileMarks(m.text, m.files);
+          const now = live ? runNowQuick(m) : null;
           return <div key={i} className="chat-msg ai quick-msg">
             <div className="who">ИИ-помощник</div>
             {m.notice && <div className="ai-notice" role="status">{m.notice}</div>}
-            {/* Чем помощник решил отвечать — и как это поменять, пока ответ идёт */}
-            {loading && i===msgs.length-1 && prevQ && (m.route==="answer"||m.route==="reply") &&
-              <div className="ai-route" role="status">
-                <span className="ai-route-t">{m.route==="reply"
-                  ?"Отвечаю по уже собранному, без нового сбора"
-                  :"Отвечаю короткой справкой — обычно меньше минуты"}</span>
-                <button type="button" className="ai-route-btn" onClick={()=>switchRoute(prevQ,"report")}
-                  title="Остановить короткий ответ и собрать отчёт с источниками (3–5 минут)">Нужен отчёт</button>
-              </div>}
-            {/* Где смотрел — строкой, а не рамкой: это пояснение к ответу, а не панель */}
-            {m.tools&&m.tools.length>0 &&
-              <div className="quick-tools" aria-label="Где помощник искал ответ">
-                <span className="quick-tools-k">{thinking?"Смотрю":"Смотрел"}</span>
-                {collapseTools(m.tools).map(({lbl,n},ti,arr)=>(
-                  <span key={ti} className={"quick-tool"+(ti===arr.length-1&&thinking?" now":"")}>
-                    {lbl}{n>1?<span className="quick-tool-n"> ×{n}</span>:null}
-                  </span>))}
-              </div>}
-            {thinking
-              ? <PendingDots label="Думаю над ответом…"/>
-              : qText && <div className="quick-answer chat-bubble">{renderMD(qText, m.sources)}</div>}
-            {m.stopped && <div className="ai-stopped" role="status">Остановлено{qText?". Показано то, что успело прийти.":" до ответа."}</div>}
+            {/* Пока ответ идёт: шар, что помощник делает сейчас и сколько прошло; ниже — чем он
+                решил отвечать, где уже посмотрел и как это решение поменять */}
+            {live && <RunLine orb={now.orb} title={now.title} detail={now.detail} elapsed={elapsed}
+              note={m.route||isDeck?runNoteQuick(m,elapsed):""}
+              trail={collapseTools(m.tools)}
+              action={prevQ&&(m.route==="answer"||m.route==="reply")
+                ?<button type="button" className="ai-route-btn" onClick={()=>switchRoute(prevQ,"report")}
+                    title="Остановить короткий ответ и собрать отчёт с источниками (3–5 минут)">Нужен отчёт</button>:null}/>}
+            {/* После ответа ход работы остаётся строкой: за сколько и где смотрел */}
+            {!live && <RunDone m={m} kind={isDeck?"deck":"answer"}/>}
+            {qText && <div className="quick-answer chat-bubble">{renderMD(qText, m.sources)}</div>}
+            {m.stopped && !live && <div className="ai-stopped" role="status">{qText?"Показано то, что успело прийти.":"Ответа ещё не было."}</div>}
             {m.err && <AiError text={m.err} onRetry={prevQ?()=>retryLast(prevQ):null}/>}
             <AgentFiles files={m.files}/>
             {m.sources&&m.sources.length>0 &&
@@ -9088,12 +9479,12 @@ function AIPage(){
       </div>
       {isRunning &&
         <div className="al-runbar">
-          <span className="al-runbar-dot"/>
+          <Orb {...runNowReport(lastDeep).orb} size={20} still={cardSeen}/>
           <span className="al-runbar-text">
             <span className="al-runbar-full">Собираю отчёт{lastDeep&&drLeftText(drEta(lastDeep))?" — "+drLeftText(drEta(lastDeep)):""}</span>
             <span className="al-runbar-short">{lastDeep&&drLeftShort(drEta(lastDeep))||"Собираю отчёт"}</span>
           </span>
-          <span className="al-runbar-el mono">{fmtEl(elapsed)}</span>
+          <span className="al-runbar-el">{fmtEl(elapsed)}</span>
           {/* кнопка появляется, когда читать уже есть что: первый раздел написан */}
           {lastDeep&&(lastDeep.text||"").length>400&&
             <button className="al-runbar-btn" onClick={()=>{const el=feedRef.current, d=el&&el.querySelector(".dr-draft-note");
@@ -18654,6 +19045,15 @@ function useTurbBanner(){
     return ()=>{ alive=false; clearInterval(t); }; },[]);
   return b;
 }
+// Включена ли плашка — для хода работы ИИ-помощника: оценка времени в такие дни неточная.
+// Плашку запрашивает Shell; сюда доходит только признак.
+function useTurbOn(){
+  const[on,setOn]=useState(()=>!!window.__alTurb);
+  useEffect(()=>{ const h=()=>setOn(!!window.__alTurb);
+    window.addEventListener("al-turb",h); h();
+    return ()=>window.removeEventListener("al-turb",h); },[]);
+  return on;
+}
 // контурная, как остальные иконки интерфейса: штрих 1,5, currentColor
 const TurbCloud=({s=22})=><svg className="turb-ic" viewBox="0 0 24 24" width={s} height={s} aria-hidden="true"
   fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -18694,6 +19094,9 @@ function Shell(){
   const[aiMounted,setAiMounted]=useState(()=>(parseHash().p||"overview")==="ai");
   const[aiBusy,setAiBusy]=useState(false);
   const[aiReady,setAiReady]=useState(false);
+  const[aiRun,setAiRun]=useState(null);              // что готовит помощник и сколько осталось
+  const[aiReadyKind,setAiReadyKind]=useState("answer");
+  const aiKindRef=useRef("answer");
   const aiPrevRun=useRef(false);
   const pageCurRef=useRef(null);
   const{theme,setTheme}=useTheme();
@@ -18701,6 +19104,7 @@ function Shell(){
   const reduceMotion=useReducedMotion();
   // плашка о перебоях: свёрнута сегодня (дата МСК в localStorage) → значок в шапке
   const turb=useTurbBanner();
+  useEffect(()=>{ window.__alTurb=!!turb; try{ window.dispatchEvent(new Event("al-turb")); }catch{} },[turb]);
   const turbKey=turb?"al-turb:"+(turb.v||""):null;
   const[turbAck,setTurbAck]=useState(null);
   useEffect(()=>{ if(!turbKey) return; try{ setTurbAck(localStorage.getItem(turbKey)); }catch{} },[turbKey]);
@@ -18968,9 +19372,11 @@ function Shell(){
     pageCurRef.current=page;},[page]);
   // сигналы от AIPage о ходе прогона (running true/false)
   useEffect(()=>{
-    const h=(e)=>{ const r=!!(e.detail&&e.detail.running);
+    const h=(e)=>{ const d=e.detail||{}, r=!!d.running;
       setAiBusy(r);
-      if(aiPrevRun.current&&!r&&pageCurRef.current!=="ai") setAiReady(true);
+      setAiRun(r?{kind:d.kind||"answer",left:d.left||""}:null);
+      if(aiPrevRun.current&&!r&&pageCurRef.current!=="ai"){ setAiReady(true); setAiReadyKind(aiKindRef.current); }
+      if(r) aiKindRef.current=d.kind||"answer";
       aiPrevRun.current=r; };
     window.addEventListener("al-ai-state",h);
     return ()=>window.removeEventListener("al-ai-state",h);
@@ -19037,7 +19443,13 @@ function Shell(){
   const section=SECTION_OF[page]||page;
   const label=PAGE_LABELS[page]||"Новостные обзоры";
   // заголовок вкладки браузера — по разделу: в истории и закладках видно, где был
-  useEffect(()=>{ document.title=`${label} · AuditLens`; },[label]);
+  // пока помощник работает — что готовится и сколько осталось: видно с другой вкладки браузера
+  const AI_KIND={report:"Отчёт",deck:"Презентация",answer:"Ответ"};
+  useEffect(()=>{
+    document.title=aiRun?`${AI_KIND[aiRun.kind]||"Ответ"}: ${aiRun.left||"готовится"} · AuditLens`
+      :(aiReady&&page!=="ai")?`${AI_KIND[aiReadyKind]||"Ответ"} готов · AuditLens`
+      :`${label} · AuditLens`;
+  },[label,aiRun&&aiRun.kind,aiRun&&aiRun.left,aiReady,aiReadyKind,page]);
   const navIdx=navOrder.indexOf(section);
   const idx=navIdx>=0?String(navIdx+1).padStart(2,"0"):null;
 
@@ -19312,7 +19724,7 @@ function Shell(){
           })}
           {aiReady&&page!=="ai"&&
             <div className="ai-ready" onClick={()=>{setAiReady(false);setPage("ai");}}>
-              <span className="sp">✦</span> Отчёт готов — открыть
+              <span className="sp">✦</span> {AI_KIND[aiReadyKind]||"Ответ"} готов — открыть
               <button className="x" onClick={(e)=>{e.stopPropagation();setAiReady(false);}}>✕</button>
             </div>}
         </div>

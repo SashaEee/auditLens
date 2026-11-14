@@ -1,4 +1,4 @@
-// Собрано из app.jsx (sha256 593e65a8e7ee272aeb9d2f5c0df4dc6658fe0edc7e5c5a8131f084e8685b1f2a): scripts/build_frontend.js. Правьте .jsx, не этот файл.
+// Собрано из app.jsx (sha256 970a844a419fc1fd36f70ac0c2f0cd42816e8ed91435d256632dd91802a5e3e6): scripts/build_frontend.js. Правьте .jsx, не этот файл.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /* global React, ReactDOM */
 const {
@@ -13388,28 +13388,6 @@ function CitationTooltip({
   }, source.bank_name && /*#__PURE__*/React.createElement("span", null, source.bank_name, " \xB7 "), /*#__PURE__*/React.createElement("span", null, domainOf(source.url)), source.headings_path && /*#__PURE__*/React.createElement("span", null, " \xB7 ", source.headings_path.split(" > ").slice(-2).join(" › "))));
 }
 
-// ─── Process trace (collapsed by default) ─────────────────────────────────
-// Какой фазе принадлежит reasoning-стадия — панель «Ход мысли» активна ТОЛЬКО
-// пока её стадия == текущей фазе (иначе conductor «вечно размышляет», а analyst
-// не виден). Единый источник правды для ThinkingPanel.
-const STAGE_PHASE = {
-  conductor: "planning",
-  analyst: "writing",
-  critic: "synthesizing",
-  repair: "synthesizing"
-};
-// Фазы движка на фактах: план → сбор → извлечение → письмо → сверка.
-// Прежний набор описывал волновую оркестрацию, которой больше нет, и половина
-// шагов не загоралась никогда, а на этапе письма индикатор откатывался в начало.
-const PHASE_LABELS = {
-  planning: "Разбор вопроса",
-  research: "Поиск и чтение",
-  extraction: "Извлечение фактов",
-  writing: "Написание отчёта",
-  verification: "Сверка",
-  done: "Готово"
-};
-
 // ─── PDF export button — premium A4 PDF через server-side Chromium.
 //     Показывается только когда отчёт готов (>500 chars). Использует
 //     меньшее визуальное вес чтобы не отвлекать от чтения, но всегда виден.
@@ -13726,61 +13704,202 @@ function PdfExportButton({
   })), /*#__PURE__*/React.createElement("span", null, "\u0421\u043A\u0430\u0447\u0430\u0442\u044C PDF")));
 }
 
-// ─── Claim-check meta-row: «12 фактов верифицировано · 7 отфильтровано».
-//     Trust-сигнал — pipeline защитил аудитора от N галлюцинаций. ─────────
-// ─── Ход размышления — живой стрим reasoning_content модели. Заполняет тихие
-//     окна (planning/synthesizing/critic): reasoning приходит на 2-4с раньше
-//     ответа и течёт инкрементально. text — СЫРОЙ ход мысли (на англ.), выводим
-//     plain pre-wrap (НЕ markdown: XSS + мусорная разметка). Когда стадия
-//     «додумала» (active=false) — сворачиваем в «Ход мысли · Nс». ───────────
-function ThinkingPanel({
-  text,
-  stage,
-  active
-}) {
-  const [open, setOpen] = useState(true);
-  const ref = useRef(null),
-    startRef = useRef(null),
-    endRef = useRef(null);
-  if (text && startRef.current == null) startRef.current = Date.now();
-  useEffect(() => {
-    const b = ref.current;
-    if (b && b.scrollHeight - b.scrollTop - b.clientHeight < 40) b.scrollTop = b.scrollHeight;
-  }, [text, open]);
-  useEffect(() => {
-    if (!active) {
-      if (startRef.current && !endRef.current) endRef.current = Date.now();
-      setOpen(false);
+// ─── Thinking Orbs — живой знак «помощник работает» ──────────────────────────
+//     Библиотека @yogesharc/thinking-orbs (MIT) лежит как есть в vendor/thinking-orbs
+//     и подключается модулем в index.html (window.ThinkingOrbs). Здесь — её обёртка
+//     для React (та, что в пакете, импортирует react/jsx-runtime, которого на странице
+//     нет) и подача в цветах интерфейса: сфера чернильная, а то, что библиотека
+//     «зажигает» — искру мысли, линзу поиска, кольцо, луч, — рисуем фирменным красным.
+//     Это её штатная точка расширения: свой способ рисования точек (OrbRender).
+const orbHotA = t => (r, a) => a > t; // сфера приглушена: горит то, что ярче
+const orbHotR = (r, a, rs) => a > 0.35 && r > (0.5 + 1.4 * (0.3 + 0.7 * a)) * rs * 1.12; // остальные: точка крупнее, чем ей положено по глубине
+const ORB_HOT = {
+  reasoning: orbHotA(.62),
+  "reasoning-twins": orbHotA(.62),
+  searching: orbHotA(.62),
+  "searching-lighthouse": orbHotA(.62),
+  waiting: orbHotA(.62),
+  working: orbHotR,
+  "compacting-fuse": orbHotR
+};
+const _orbRenders = {};
+function orbRender(look) {
+  const hot = ORB_HOT[look];
+  if (!hot) return undefined; // «гореть» нечему — родной способ рисования
+  return _orbRenders[look] || (_orbRenders[look] = {
+    mount: ({
+      make,
+      pts,
+      radius
+    }) => {
+      const els = pts.map(() => make("circle")),
+        hidden = new Uint8Array(pts.length),
+        lit = new Uint8Array(pts.length);
+      return {
+        dot(i, x, y, r, a) {
+          const el = els[i],
+            o = a.toFixed(2);
+          if (o === "0.00" && hidden[i]) return; // невидимая точка остаётся невидимой — не трогаем
+          hidden[i] = +(o === "0.00");
+          el.setAttribute("cx", x.toFixed(2));
+          el.setAttribute("cy", y.toFixed(2));
+          el.setAttribute("r", Math.max(0.45, r).toFixed(2));
+          el.setAttribute("fill-opacity", o);
+          const h = hot(r, a, radius) ? 1 : 0;
+          if (h !== lit[i]) {
+            lit[i] = h;
+            el.setAttribute("class", h ? "orb-hot" : "");
+          }
+        }
+      };
     }
-  }, [active]);
-  if (!text) return null;
-  const secs = startRef.current ? Math.max(1, Math.round(((endRef.current || Date.now()) - startRef.current) / 1000)) : 0;
-  const L = {
-    conductor: "Дирижёр размышляет",
-    analyst: "Аналитик размышляет",
-    critic: "Критик проверяет",
-    repair: "Дорабатываю отчёт"
+  });
+}
+// Кадры. Библиотека перерисовывает шар на каждый кадр экрана — 60 раз в секунду. Знаку
+// в 20–44 px столько не нужно, а на слабом ноутбуке и удалённом рабочем столе это
+// заметная нагрузка. Поэтому шаг кадра задаём сами её же штатными play() и pause():
+// 24 кадра в секунду (движения шара медленные — оборот за 6–13 с); если главный поток
+// занят и кадры опаздывают — 16, затем 12 (реже нельзя: библиотека считает разрыв
+// между кадрами не длиннее 100 мс). В скрытой вкладке не рисуем вовсе, вне экрана
+// шар не рисует сама библиотека. Замер 14.11 на процессоре, замедленном в 6 раз: до
+// ограничения шар занимал заметную долю потока, с ним — единицы процентов.
+const ORB_FPS = (navigator.hardwareConcurrency || 8) <= 2 ? 16 : 24;
+const orbPace = {
+  set: new Set(),
+  timer: 0,
+  fps: ORB_FPS,
+  late: 0,
+  last: 0,
+  wait: false
+};
+function orbRetime() {
+  const p = orbPace;
+  clearInterval(p.timer);
+  if (p.set.size) p.timer = setInterval(orbTick, Math.round(1000 / p.fps));else {
+    p.timer = 0;
+    p.last = 0;
+    p.late = 0;
+    p.fps = ORB_FPS;
+  }
+}
+function orbTick() {
+  const p = orbPace;
+  if (document.hidden) {
+    p.last = 0;
+    return;
+  }
+  if (p.wait) return;
+  const now = performance.now();
+  if (p.last) {
+    p.late = now - p.last > 1000 / p.fps * 1.7 ? p.late + 1 : Math.max(0, p.late - 0.25);
+    if (p.late > 20 && p.fps > 12) {
+      p.fps = p.fps > 16 ? 16 : 12;
+      p.late = 0;
+      p.last = 0;
+      orbRetime();
+      return;
+    }
+  }
+  p.last = now;
+  p.set.forEach(o => {
+    try {
+      o.play();
+    } catch {}
+  });
+  p.wait = true; // play() ставит кадр библиотеки, наш кадр идёт следом и снимает следующий
+  requestAnimationFrame(() => {
+    p.wait = false;
+    p.set.forEach(o => {
+      try {
+        o.pause();
+      } catch {}
+    });
+  });
+}
+function orbJoin(o) {
+  orbPace.set.add(o);
+  if (!orbPace.timer) orbRetime();
+}
+function orbLeave(o) {
+  orbPace.set.delete(o);
+  if (!orbPace.set.size) orbRetime();
+}
+const orbStill = () => {
+  try {
+    return matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    return false;
+  }
+};
+function useOrbLib() {
+  const [lib, setLib] = useState(() => window.ThinkingOrbs || null);
+  useEffect(() => {
+    if (lib) return;
+    const on = () => setLib(window.ThinkingOrbs || null);
+    window.addEventListener("thinking-orbs", on);
+    on();
+    return () => window.removeEventListener("thinking-orbs", on);
+  }, [lib]);
+  return lib;
+}
+// state и variant — как в библиотеке; still — неподвижный шар (итог прогона);
+// tone: mute — серый (готово, остановлено), accent — красный целиком (сбой).
+function Orb({
+  state = "idle",
+  variant,
+  size = 22,
+  tone,
+  still,
+  label,
+  className
+}) {
+  const lib = useOrbLib(),
+    ref = useRef(null);
+  const look = variant && variant !== "default" ? state + "-" + variant : state;
+  useEffect(() => {
+    if (!lib || !ref.current) return;
+    let o = null;
+    try {
+      o = lib.mountOrb(ref.current, {
+        state,
+        variant,
+        size,
+        label,
+        render: orbRender(look)
+      });
+      o.pause();
+    } catch {
+      return;
+    }
+    const run = !still && !orbStill();
+    if (run) orbJoin(o);
+    return () => {
+      if (run) orbLeave(o);
+      try {
+        o.destroy();
+      } catch {}
+    };
+  }, [lib, look, size, still, label]);
+  const a11y = label ? {
+    role: "img",
+    "aria-label": label
+  } : {
+    "aria-hidden": true
   };
-  const head = active ? L[stage] || "Размышляю" : "Ход мысли · " + secs + "с";
-  return /*#__PURE__*/React.createElement("div", {
-    className: "dr-think" + (active ? " dr-think-active" : "")
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "dr-think-head",
-    onClick: () => setOpen(o => !o)
-  }, active && /*#__PURE__*/React.createElement("span", {
-    className: "dr-stage-pulse"
-  }), /*#__PURE__*/React.createElement("span", {
-    className: "dr-think-label"
-  }, head), /*#__PURE__*/React.createElement("span", {
-    className: "dr-think-badge"
-  }, "EN \xB7 \u0442\u0435\u0445\u043D\u0438\u0447\u0435\u0441\u043A\u0438\u0439 \u0445\u043E\u0434 \u043C\u044B\u0441\u043B\u0438"), /*#__PURE__*/React.createElement("span", {
-    className: "dr-think-toggle"
-  }, open ? "▾" : "▸")), open && /*#__PURE__*/React.createElement("div", {
-    className: "dr-think-body",
-    ref: ref
-  }, text, active && /*#__PURE__*/React.createElement("span", {
-    className: "dr-think-caret"
-  })));
+  return /*#__PURE__*/React.createElement("span", {
+    className: "orb" + (tone ? " orb-" + tone : "") + (lib ? "" : " orb-wait") + (className ? " " + className : ""),
+    style: {
+      width: size,
+      height: size
+    }
+  }, /*#__PURE__*/React.createElement("svg", _extends({
+    key: look,
+    ref: ref,
+    width: size,
+    height: size,
+    viewBox: `0 0 ${size} ${size}`,
+    fill: "currentColor"
+  }, a11y)));
 }
 
 // Сбой ответа: что случилось и что сделать — с повтором.
@@ -13816,32 +13935,106 @@ function AiError({
   }, "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C"));
 }
 
-// ─── Премиальный индикатор ожидания: пульс + подпись стадии + бегущие точки.
-//     Закрывает «тихие окна» (генерация вопросов, сборка запроса, старт
-//     research) — пользователь всегда видит, что система жива. ──────────────
-function PendingDots({
-  label
+// ─── Ход работы ──────────────────────────────────────────────────────────────
+//     Одна система на все виды ответа: шаг подготовки, короткая справка, отчёт и
+//     презентация. Слева — шар, состояние которого меняется по настоящим событиям
+//     потока; рядом — что помощник делает сейчас, сколько прошло и сколько осталось.
+//     Ничего не выдумывается: подписи шагов приходят с сервера (stage_status,
+//     tool_call), числа — из progress и facts_summary, оценка времени — из медиан
+//     недавних прогонов (событие typical). После ответа ход работы не исчезает:
+//     он сворачивается в строку «как получен ответ».
+const runClock = s => {
+  s = Math.max(0, Math.round(s || 0));
+  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+};
+const runDur = s => {
+  s = Math.max(0, Math.round(s || 0));
+  return s >= 60 ? `${Math.floor(s / 60)} мин${s % 60 >= 5 ? ` ${s % 60} с` : ""}` : `${s} с`;
+};
+
+// Лента шагов прогона: что произошло и на какой секунде. Собирается из событий потока;
+// сервер сохраняет такую же вместе с ответом — она видна и при открытии из истории.
+function traceAdd(trace, e) {
+  const tr = trace || [],
+    p = tr[tr.length - 1];
+  if (p && p.k === e.k && p.label === e.label) return e.k === "tool" ? [...tr.slice(0, -1), {
+    ...p,
+    n: (p.n || 1) + 1
+  }] : tr;
+  // счётчик в подписи («Рисую карточки: осталось 3») — одна строка, а не десять
+  if (p && p.k === "stage" && e.k === "stage" && /\d/.test(e.label) && p.label.replace(/\d+/g, "#") === e.label.replace(/\d+/g, "#")) return [...tr.slice(0, -1), {
+    ...p,
+    label: e.label,
+    detail: e.detail
+  }];
+  return tr.length >= 120 ? tr : [...tr, e];
+}
+
+// Строка хода работы: шар, что происходит, время; под ней — чем отвечает помощник,
+// где он уже посмотрел и как поменять решение.
+function RunLine({
+  orb,
+  title,
+  detail,
+  elapsed,
+  note,
+  trail,
+  action
 }) {
-  // Статичная строка одинаково выглядит и когда система работает, и когда она
-  // встала. После 8 с показываем счётчик: по нему видно, что процесс жив
-  // (04.09 воронка вопросов думала 4,5 минуты — со стороны «зависло»).
+  return /*#__PURE__*/React.createElement("div", {
+    className: "run-line",
+    role: "status"
+  }, /*#__PURE__*/React.createElement(Orb, _extends({}, orb, {
+    size: 22,
+    className: "run-line-orb"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "run-line-b"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "run-line-top"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "run-line-h run-swap",
+    key: title,
+    "aria-live": "polite"
+  }, title), detail && /*#__PURE__*/React.createElement("span", {
+    className: "run-line-d"
+  }, detail), elapsed != null && /*#__PURE__*/React.createElement("span", {
+    className: "run-el",
+    title: "\u041F\u0440\u043E\u0448\u043B\u043E \u0441 \u043D\u0430\u0447\u0430\u043B\u0430"
+  }, runClock(elapsed))), (note || trail && trail.length > 0 || action) && /*#__PURE__*/React.createElement("div", {
+    className: "run-line-sub"
+  }, note && /*#__PURE__*/React.createElement("span", {
+    className: "run-line-note"
+  }, note), trail && trail.length > 0 && /*#__PURE__*/React.createElement("span", {
+    className: "run-trail",
+    "aria-label": "\u0413\u0434\u0435 \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u0443\u0436\u0435 \u043F\u043E\u0441\u043C\u043E\u0442\u0440\u0435\u043B"
+  }, trail.map(({
+    lbl,
+    n
+  }, ti) => /*#__PURE__*/React.createElement("span", {
+    key: ti,
+    className: "run-trail-i"
+  }, lbl, n > 1 ? /*#__PURE__*/React.createElement("i", null, " \xD7", n) : null))), action)));
+}
+
+// Шаг подготовки: вопрос ещё разбирается, прогон не начат. Секунды показываем после
+// третьей — по ним видно, что процесс жив (04.09 разбор вопроса думал 4,5 минуты).
+function PrepLine({
+  label,
+  detail
+}) {
   const [sec, setSec] = useState(0);
   useEffect(() => {
     const t = setInterval(() => setSec(s => s + 1), 1000);
     return () => clearInterval(t);
   }, []);
-  return /*#__PURE__*/React.createElement("div", {
-    className: "pending-row"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "dr-stage-pulse"
-  }), /*#__PURE__*/React.createElement("span", {
-    className: "pending-label"
-  }, label || "Думаю"), /*#__PURE__*/React.createElement("span", {
-    className: "pending-dots"
-  }, /*#__PURE__*/React.createElement("i", null), /*#__PURE__*/React.createElement("i", null), /*#__PURE__*/React.createElement("i", null)), sec >= 8 && /*#__PURE__*/React.createElement("span", {
-    className: "pending-sec",
-    "aria-hidden": "true"
-  }, sec, " \u0441"));
+  return /*#__PURE__*/React.createElement(RunLine, {
+    orb: {
+      state: "reasoning"
+    },
+    title: label || "Разбираю вопрос",
+    detail: detail,
+    elapsed: sec >= 3 ? sec : null
+  });
 }
 
 // ─── Модуль «asking» — clarification-воронка. Кликабельные варианты (single/
@@ -14036,8 +14229,8 @@ function ClarifyCard({
   })))));
 }
 
-// ─── Консоль хода отчёта ─────────────────────────────────────────────────────
-//     Пять этапов, как их видит аудитор. Консоль отвечает на четыре вопроса:
+// ─── Ход отчёта ──────────────────────────────────────────────────────────────
+//     Пять этапов, как их видит аудитор. Карточка хода отвечает на четыре вопроса:
 //       • сколько ещё ждать — по обычной длительности этапов (событие typical);
 //       • что помощник понял из вопроса и что войдёт в отчёт;
 //       • куда он ходит — сайты и число прочитанных страниц, а не «идёт сбор»;
@@ -14046,22 +14239,27 @@ function ClarifyCard({
 const DEEP_FLOW = [{
   key: "parse",
   label: "Разбор вопроса",
+  short: "Вопрос",
   phases: ["planning"]
 }, {
   key: "collect",
   label: "Поиск и чтение источников",
+  short: "Источники",
   phases: ["research"]
 }, {
   key: "facts",
   label: "Выписка фактов с цитатами",
+  short: "Факты",
   phases: ["extraction"]
 }, {
   key: "synth",
   label: "Написание отчёта",
+  short: "Текст",
   phases: ["writing"]
 }, {
   key: "verify",
   label: "Сверка чисел с источниками",
+  short: "Сверка",
   phases: ["verification"]
 }];
 const DR_PHASES = ["planning", "research", "extraction", "writing", "verification"];
@@ -14199,188 +14397,373 @@ const drScope = u => {
   if (u.scope === "sber") return "только " + n.join(" и ") + ", без конкурентов";
   return n.slice(0, 5).join(", ") + (n.length > 5 ? ` и ещё ${n.length - 5}` : "");
 };
-function DeepConsole({
+
+// Сколько занял каждый этап отчёта: по отметкам смены этапа в ленте шагов; у отчётов,
+// сохранённых раньше, — по времени шагов, которое сервер кладёт рядом с отчётом.
+function tracePhases(m) {
+  const out = {};
+  let cur = null,
+    at = 0;
+  for (const e of m.trace || []) {
+    if (e.k !== "phase") continue;
+    if (cur) out[cur] = (out[cur] || 0) + Math.max(0, (e.t || 0) - at);
+    cur = DR_PHASES.includes(e.label) ? e.label : null;
+    at = e.t || 0;
+  }
+  if (cur && m.phase !== cur) {
+    const end = m.elapsedS || at;
+    out[cur] = (out[cur] || 0) + Math.max(0, end - at);
+  }
+  if (!Object.keys(out).length && m.timings) {
+    const t = m.timings,
+      sum = (...k) => k.reduce((a, x) => a + (+t[x] || 0), 0);
+    const o = {
+      planning: sum("plan"),
+      research: sum("collect"),
+      extraction: sum("facts", "critic", "lead"),
+      writing: sum("write"),
+      verification: sum("verify")
+    };
+    for (const k in o) if (o[k] > 0) out[k] = Math.round(o[k]);
+  }
+  return out;
+}
+
+// Что помощник делает сейчас — для отчёта: состояние шара, заголовок и живая строка
+// под ним. Заголовок — подпись шага с сервера; строка — числа этого шага.
+function runNowReport(m) {
+  const phase = m.phase,
+    prog = m.progress || {};
+  let live = m.stageStatus && m.stageStatus.label && (!m.stageStatus.phase || m.stageStatus.phase === phase) ? m.stageStatus : null;
+  const stage = live && live.stage || "";
+  // длинная подпись с перечислением после двоеточия («Данные AuditLens: документов 8, жалоб 5…»):
+  // в заголовок — начало, перечисление — в строку под ним
+  let listed = false;
+  if (live && live.label.length > 60) {
+    const i = live.label.indexOf(": ");
+    if (i > 0) {
+      listed = true;
+      live = {
+        ...live,
+        label: live.label.slice(0, i),
+        detail: live.label.slice(i + 2) + (live.detail ? " · " + live.detail : "")
+      };
+    }
+  }
+  const pagesRead = prog.pages || 0,
+    hosts = prog.hosts || [];
+  if (phase === "research") {
+    const bits = [];
+    if (pagesRead) bits.push(`прочитано ${pagesRead} ${plural(pagesRead, "страница", "страницы", "страниц")}` + (prog.sites > 1 ? ` на ${prog.sites} ${plural(prog.sites, "сайте", "сайтах", "сайтах")}` : ""));
+    if (prog.last_host) bits.push("только что — " + prog.last_host); // последний прочитанный сайт
+    else if (!pagesRead && hosts.length) bits.push(hosts.slice(0, 3).map(h => h[0]).join(", "));
+    if (prog.blocked) bits.push(`${prog.blocked} не ${plural(prog.blocked, "открылась", "открылись", "открылось")}`);
+    return {
+      orb: stage === "memory" ? {
+        state: "reasoning"
+      } : {
+        state: "searching"
+      },
+      title: live && live.label || "Ищу и читаю источники",
+      detail: (listed || stage === "memory" ? live.detail : "") || bits.join(" · ") || live && live.detail || ""
+    };
+  }
+  if (phase === "extraction") {
+    const bits = [];
+    if (prog.facts) bits.push(`выписано ${prog.facts} ${plural(prog.facts, "факт", "факта", "фактов")}`);
+    if (prog.pages_total) bits.push(`страниц в разборе ${prog.pages_total}`);
+    return {
+      orb: stage === "lead" ? {
+        state: "searching",
+        variant: "lighthouse"
+      } : {
+        state: "compacting",
+        variant: "fuse"
+      },
+      title: live && live.label || "Выписываю факты с цитатами",
+      detail: stage === "lead" || stage === "critic" || stage === "facts_ready" ? live.detail || bits.join(" · ") : bits.join(" · ") || live && live.detail || ""
+    };
+  }
+  if (phase === "writing") {
+    const secs = drSections(m),
+      done = secs.filter(s => s.state === "done").length;
+    return {
+      orb: {
+        state: "working"
+      },
+      title: live && live.label || "Пишу отчёт",
+      detail: secs.length ? `готово ${done} из ${secs.length} ${plural(secs.length, "раздела", "разделов", "разделов")}` : live && live.detail || ""
+    };
+  }
+  if (phase === "verification") return {
+    orb: stage === "deck" ? {
+      state: "working",
+      variant: "gyro"
+    } : {
+      state: "searching",
+      variant: "lighthouse"
+    },
+    title: live && live.label || "Сверяю числа с источниками",
+    detail: live && live.detail || ""
+  };
+  return {
+    orb: {
+      state: "reasoning"
+    },
+    title: live && live.label || "Разбираю вопрос",
+    detail: live && live.detail || ""
+  };
+}
+
+// То же для короткого ответа и презентации: шаги агента приходят подписями инструментов.
+const QUICK_STEP = [[/^Навык(?::\s*(.+))?$/, x => x[1] ? `Открываю навык: ${x[1]}` : "Открываю навык", {
+  state: "reasoning",
+  variant: "twins"
+}], [/^(Память|История диалогов)$/, () => "Сверяюсь с прошлыми разговорами", {
+  state: "reasoning",
+  variant: "twins"
+}], [/^План$/, () => "Составляю план ответа", {
+  state: "reasoning"
+}], [/^Веб-поиск$/, () => "Ищу в интернете", {
+  state: "searching"
+}], [/^Чтение (страницы|документа)$/, x => x[1] === "страницы" ? "Читаю страницу" : "Читаю документ", {
+  state: "searching",
+  variant: "lighthouse"
+}], [/^(SQL к базе)$/, () => "Считаю по базе данных", {
+  state: "working",
+  variant: "gyro"
+}], [/^(Код|Терминал)$/, () => "Выполняю расчёт", {
+  state: "working",
+  variant: "gyro"
+}], [/^(Файл)$/, () => "Готовлю файл", {
+  state: "working",
+  variant: "gyro"
+}]];
+function runNowQuick(m) {
+  if (m.engine === "deck" || m.route === "deck") {
+    const live = m.stageStatus && m.stageStatus.label ? m.stageStatus : null;
+    return {
+      orb: {
+        state: "working",
+        variant: "gyro"
+      },
+      title: live && live.label || "Рисую презентацию по отчёту",
+      detail: ""
+    };
+  }
+  if (m.text) return {
+    orb: {
+      state: "working"
+    },
+    title: "Пишу ответ",
+    detail: ""
+  };
+  const tools = m.tools || [],
+    last = tools[tools.length - 1];
+  if (!last) return {
+    orb: {
+      state: "reasoning"
+    },
+    title: "Думаю над ответом",
+    detail: ""
+  };
+  for (const [rx, say, orb] of QUICK_STEP) {
+    const x = rx.exec(last);
+    if (x) return {
+      orb,
+      title: say(x),
+      detail: ""
+    };
+  }
+  return {
+    orb: {
+      state: "searching"
+    },
+    title: "Смотрю: " + (TOOL_LABELS[last] || last),
+    detail: ""
+  };
+}
+// Сколько обычно длится такой ответ — по недавним ответам (typical), без процентов.
+function runNoteQuick(m, elapsed) {
+  const typ = m.typical || {};
+  if (m.engine === "deck" || m.route === "deck") {
+    const t = typ.deck && typ.deck.p50 || 150,
+      hi = typ.deck && typ.deck.p75 || 210;
+    if (elapsed > hi * 1.3 + 20) return "дольше обычного — работа продолжается";
+    const left = Math.max(t - elapsed, 25);
+    return left < 50 ? "осталось меньше минуты" : `осталось примерно ${Math.max(1, Math.round(left / 60))} мин`;
+  }
+  const kind = m.route === "reply" ? "Отвечаю по уже собранному, без нового сбора" : "Отвечаю короткой справкой";
+  const a = typ.answer;
+  if (a && a.p75 && elapsed > a.p75 * 1.5 + 10) return kind + " — дольше обычного, работа продолжается";
+  return kind + (a && a.p50 ? ` — обычно около ${runDur(a.p50 < 60 ? Math.max(5, Math.round(a.p50 / 5) * 5) : a.p50)}` : " — обычно меньше минуты");
+}
+
+// Полоса этапов отчёта: пять отрезков шириной по обычной длительности этапа. Пройденные —
+// чернилами, идущий заполняется красным по времени, впереди — пустые.
+function RunStages({
   m,
-  loading,
-  elapsed,
-  onFresh,
-  onShort,
-  compact,
-  onToggle
+  eta,
+  labels
 }) {
-  const phase = m.phase;
+  const typ = {
+    ...DR_TYPICAL,
+    ...(m.typical && m.typical.steps || {})
+  };
+  const idx = m.phase === "done" ? DR_PHASES.length : DR_PHASES.indexOf(m.phase);
+  const inPhase = m.phaseAt ? Math.max(0, (Date.now() - m.phaseAt) / 1000) : 0;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "run-stages" + (labels ? "" : " no-labels"),
+    role: "progressbar",
+    "aria-valuemin": 0,
+    "aria-valuemax": 100,
+    "aria-valuenow": eta.pct,
+    "aria-label": "\u0413\u043E\u0442\u043E\u0432\u043D\u043E\u0441\u0442\u044C \u043E\u0442\u0447\u0451\u0442\u0430"
+  }, DEEP_FLOW.map((d, i) => {
+    const ph = d.phases[0],
+      st = i < idx ? "done" : i === idx ? "now" : "wait";
+    const fill = st === "done" ? 100 : st === "now" ? Math.min(96, Math.max(3, Math.round(inPhase / (typ[ph] || 1) * 100))) : 0;
+    return /*#__PURE__*/React.createElement("div", {
+      key: d.key,
+      className: "run-stage is-" + st,
+      style: {
+        flexGrow: Math.max(8, typ[ph] || 8)
+      },
+      title: `${d.label} — обычно ${runDur(typ[ph] || 0)}`
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "run-stage-bar"
+    }, /*#__PURE__*/React.createElement("i", {
+      style: {
+        width: fill + "%"
+      }
+    })), labels && /*#__PURE__*/React.createElement("div", {
+      className: "run-stage-l"
+    }, d.short));
+  }));
+}
+
+// Как понят вопрос — главная опора доверия: рамку видно с первых секунд и после ответа.
+function RunUnderstood({
+  m,
+  onFresh
+}) {
+  const u = m.understood;
+  if (!u || !u.task) return null;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "run-und"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "run-und-k"
+  }, "\u0412\u043E\u043F\u0440\u043E\u0441 \u043F\u043E\u043D\u044F\u0442 \u043A\u0430\u043A"), /*#__PURE__*/React.createElement("span", {
+    className: "run-und-v"
+  }, DR_TASK[u.task] || u.task), !u.noScope && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    className: "run-und-s"
+  }, "\xB7"), /*#__PURE__*/React.createElement("span", null, drScope(u))), u.period && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    className: "run-und-s"
+  }, "\xB7"), /*#__PURE__*/React.createElement("span", null, u.period)), DR_CHECKS[u.checks] && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    className: "run-und-s"
+  }, "\xB7"), /*#__PURE__*/React.createElement("span", null, DR_CHECKS[u.checks])), u.continues && u.prior && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    className: "run-und-s"
+  }, "\xB7"), /*#__PURE__*/React.createElement("span", {
+    className: "run-und-c"
+  }, "\u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0435\u043D\u0438\u0435 \u043F\u0440\u043E\u0448\u043B\u043E\u0433\u043E \u043E\u0442\u0447\u0451\u0442\u0430", u.prior.date ? ` от ${u.prior.date}` : "", ": \u0443\u0436\u0435 \u0441\u043E\u0431\u0440\u0430\u043D\u043E ", u.prior.facts, " ", plural(u.prior.facts, "факт", "факта", "фактов")), onFresh && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "run-und-redo",
+    onClick: onFresh,
+    title: "\u041D\u0435 \u043E\u043F\u0438\u0440\u0430\u0442\u044C\u0441\u044F \u043D\u0430 \u043F\u0440\u043E\u0448\u043B\u044B\u0439 \u043E\u0442\u0447\u0451\u0442: \u0441\u043E\u0431\u0440\u0430\u0442\u044C \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438 \u0438 \u0444\u0430\u043A\u0442\u044B \u0437\u0430\u043D\u043E\u0432\u043E"
+  }, "\u0441\u043E\u0431\u0440\u0430\u0442\u044C \u0437\u0430\u043D\u043E\u0432\u043E")));
+}
+
+// Пять этапов отчёта с их содержанием: что войдёт в отчёт, какие сайты прочитаны, сколько
+// фактов и с какой стороны, оглавление, чего найти не удалось. Идущий этап раскрыт,
+// пройденный свёрнут в строку с итогом; человек может переключить сам.
+// ended — прогон окончен (готов, остановлен, оборван): этапы показываются как есть.
+function RunSteps({
+  m,
+  ended
+}) {
+  const phase = ended ? m.stoppedPhase || m.phase : m.phase;
   const curIdx = phase === "done" ? DEEP_FLOW.length : Math.max(0, DEEP_FLOW.findIndex(d => d.phases.includes(phase)));
   const [openRows, setOpenRows] = useState({}); // что человек раскрыл или свернул сам
   const contract = m.contract || [];
-  const subq = m.subqueries || [];
+  const subq = Array.isArray(m.subqueries) ? m.subqueries : [];
+  const subqN = subq.length || m.subqN || 0;
   const prog = m.progress || {};
   const fs = m.factStats || {};
   const stance = fs.by_stance || {};
   const gapsN = (m.gapsList || []).length;
   const verified = m.verification?.verified || m.claimCheck?.verified || 0;
   const checked = m.verification?.numeric_checked || 0;
+  const factsN = fs.total || prog.facts || m.verification?.facts_total || 0;
   const pagesRead = fs.pages || prog.pages_total || prog.pages || 0;
   const hosts = prog.hosts || [];
   const secs = drSections(m);
   const secDone = secs.filter(s => s.state === "done").length;
-  const eta = drEta(m);
-  const el = elapsed || 0;
-  const elapsedDisplay = `${String(Math.floor(el / 60)).padStart(2, "0")}:${String(el % 60).padStart(2, "0")}`;
-  // Живая подпись этапа показывается только под тем этапом, к которому относится:
-  // раньше «Фактов: 863» висело под «Написанием отчёта».
-  const live = loading && m.stageStatus && m.stageStatus.label && (!m.stageStatus.phase || m.stageStatus.phase === phase) ? m.stageStatus : null;
+  const took = tracePhases(m);
   const right = (key, status) => {
     if (status === "pending") return "";
     const done = status === "done";
     switch (key) {
       case "parse":
-        return done ? contract.length ? `${contract.length} ${plural(contract.length, "пункт", "пункта", "пунктов")} в отчёте` : "план готов" : "составляю план";
+        return done ? contract.length ? `${contract.length} ${plural(contract.length, "пункт", "пункта", "пунктов")} в отчёте` : "" : status === "running" ? "составляю план" : "";
       case "collect":
-        return pagesRead ? `${done ? "" : "прочитано "}${pagesRead} ${plural(pagesRead, "страница", "страницы", "страниц")}` + (prog.blocked ? ` · ${prog.blocked} не открылось` : "") : subq.length ? `${subq.length} ${plural(subq.length, "запрос", "запроса", "запросов")}` : "";
+        return pagesRead ? `${done ? "" : "прочитано "}${pagesRead} ${plural(pagesRead, "страница", "страницы", "страниц")}` + (prog.blocked ? ` · ${prog.blocked} не ${plural(prog.blocked, "открылась", "открылись", "открылось")}` : "") : subqN ? `${subqN} ${plural(subqN, "запрос", "запроса", "запросов")}` : "";
       case "facts":
-        return done ? `${fs.total || prog.facts || 0} ${plural(fs.total || prog.facts || 0, "факт", "факта", "фактов")}` : prog.facts ? `выписано ${prog.facts}` : "";
+        return done ? factsN ? `${factsN} ${plural(factsN, "факт", "факта", "фактов")}` : "" : prog.facts ? `выписано ${prog.facts}` : "";
       case "synth":
         return secs.length ? `${secDone} из ${secs.length} ${plural(secs.length, "раздела", "разделов", "разделов")}` : "";
       case "verify":
-        return done && checked ? `сошлось ${verified} из ${checked} чисел${gapsN ? ` · ${gapsN} ${plural(gapsN, "пробел", "пробела", "пробелов")}` : ""}` : "";
+        return done && checked ? `сошлось ${verified} из ${checked} ${plural(checked, "числа", "чисел", "чисел")}${gapsN ? ` · ${gapsN} ${plural(gapsN, "пробел", "пробела", "пробелов")}` : ""}` : "";
       default:
         return "";
     }
   };
-  const dotStyle = s => s === "done" ? {
-    background: "var(--ink)",
-    borderColor: "var(--ink)"
-  } : s === "running" ? {
-    background: "var(--accent)",
-    borderColor: "var(--accent)",
-    boxShadow: "0 0 0 4px var(--accent-soft)"
-  } : {
-    background: "transparent",
-    borderColor: "var(--hair-2)"
-  };
-  const titleStyle = s => s === "pending" ? {
-    color: "var(--ink-3)",
-    fontWeight: 450
-  } : s === "running" ? {
-    color: "var(--ink)",
-    fontWeight: 600
-  } : {
-    color: "var(--ink)",
-    fontWeight: 500
-  };
-  const head = /*#__PURE__*/React.createElement("div", {
-    className: "dr-con-head"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "dr-con-pulse"
-  }), /*#__PURE__*/React.createElement("span", {
-    className: "dr-con-title"
-  }, "\u0421\u043E\u0431\u0438\u0440\u0430\u044E \u043E\u0442\u0447\u0451\u0442"), m.title && /*#__PURE__*/React.createElement("span", {
-    className: "dr-con-sub dr-con-name",
-    title: m.title
-  }, m.title), /*#__PURE__*/React.createElement("span", {
-    className: "dr-con-eta",
-    "aria-live": "polite"
-  }, drLeftText(eta)), /*#__PURE__*/React.createElement("span", {
-    className: "dr-con-el mono",
-    title: "\u041F\u0440\u043E\u0448\u043B\u043E \u0441 \u043D\u0430\u0447\u0430\u043B\u0430"
-  }, elapsedDisplay));
-  const bar = /*#__PURE__*/React.createElement("div", {
-    className: "dr-con-bar",
-    role: "progressbar",
-    "aria-valuemin": 0,
-    "aria-valuemax": 100,
-    "aria-valuenow": eta.pct,
-    "aria-label": "\u0413\u043E\u0442\u043E\u0432\u043D\u043E\u0441\u0442\u044C \u043E\u0442\u0447\u0451\u0442\u0430"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "dr-con-bar-fill",
-    style: {
-      width: eta.pct + "%"
-    }
-  }));
-  // Свёрнутый вид: отчёт уже читается ниже, консоль не должна его заслонять.
-  if (compact) {
-    const cur = DEEP_FLOW[Math.min(curIdx, DEEP_FLOW.length - 1)];
-    return /*#__PURE__*/React.createElement("div", {
-      className: "dr-con-wrap dr-con-compact"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "dr-con"
-    }, head, bar, /*#__PURE__*/React.createElement("div", {
-      className: "dr-con-mini"
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-mini-t"
-    }, live && live.label || cur.label), secs.length > 0 && /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-mini-n mono"
-    }, secDone, " \u0438\u0437 ", secs.length, " ", plural(secs.length, "раздела", "разделов", "разделов")), onToggle && /*#__PURE__*/React.createElement("button", {
-      type: "button",
-      className: "dr-con-link",
-      onClick: onToggle
-    }, "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0445\u043E\u0434 \u0440\u0430\u0431\u043E\u0442\u044B"))));
-  }
   return /*#__PURE__*/React.createElement("div", {
-    className: "dr-con-wrap"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "dr-con"
-  }, head, bar, onShort && loading && curIdx < 3 && /*#__PURE__*/React.createElement("div", {
-    className: "dr-con-route",
-    role: "status"
-  }, /*#__PURE__*/React.createElement("span", null, "\u0412\u043E\u043F\u0440\u043E\u0441 \u0442\u0440\u0435\u0431\u0443\u0435\u0442 \u0441\u0431\u043E\u0440\u0430 \u0438 \u0441\u0432\u0435\u0440\u043A\u0438 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u043E\u0432 \u2014 \u0441\u043E\u0431\u0438\u0440\u0430\u044E \u043E\u0442\u0447\u0451\u0442."), /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    className: "ai-route-btn",
-    onClick: onShort,
-    title: "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u0442\u044C \u043E\u0442\u0447\u0451\u0442 \u0438 \u043E\u0442\u0432\u0435\u0442\u0438\u0442\u044C \u043A\u043E\u0440\u043E\u0442\u043A\u043E\u0439 \u0441\u043F\u0440\u0430\u0432\u043A\u043E\u0439 \u2014 \u043C\u0435\u043D\u044C\u0448\u0435 \u043C\u0438\u043D\u0443\u0442\u044B"
-  }, "\u0425\u0432\u0430\u0442\u0438\u0442 \u043A\u043E\u0440\u043E\u0442\u043A\u043E\u0433\u043E \u043E\u0442\u0432\u0435\u0442\u0430")), m.degraded && /*#__PURE__*/React.createElement("div", {
-    className: "dr-con-degraded"
-  }, /*#__PURE__*/React.createElement("b", null, "\u041F\u043B\u0430\u043D \u043E\u0442\u0447\u0451\u0442\u0430 \u043D\u0435 \u043F\u043E\u0441\u0442\u0440\u043E\u0435\u043D"), " \u2014 \u043C\u043E\u0434\u0435\u043B\u044C \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0430 (", m.degraded, "). \u041E\u0442\u0447\u0451\u0442 \u0432\u044B\u0439\u0434\u0435\u0442 \u0437\u0430\u043C\u0435\u0442\u043D\u043E \u0431\u0435\u0434\u043D\u0435\u0435: \u0432\u0437\u0433\u043B\u044F\u0434\u0430 \u0441\u043E \u0441\u0442\u043E\u0440\u043E\u043D\u044B \u0438 \u043D\u043E\u0440\u043C \u0432 \u043D\u0451\u043C \u043D\u0435 \u0431\u0443\u0434\u0435\u0442."), /*#__PURE__*/React.createElement("div", {
-    className: "dr-con-spine"
+    className: "run-steps"
   }, DEEP_FLOW.map((d, idx) => {
-    const status = idx < curIdx ? "done" : idx === curIdx ? "running" : "pending";
-    const last = idx === DEEP_FLOW.length - 1;
+    const status = idx < curIdx ? "done" : idx === curIdx ? ended ? "cut" : "running" : "pending";
+    const sum = right(d.key, status),
+      dur = status === "done" && took[d.phases[0]];
+    const has = d.key === "parse" ? contract.length > 0 : d.key === "collect" ? hosts.length > 0 || subq.length > 0 : d.key === "facts" ? (fs.total || 0) > 0 : d.key === "synth" ? secs.length > 0 : gapsN > 0;
+    const canOpen = status !== "pending" && has;
     // идущий этап раскрыт, пройденный свёрнут; человек может переключить сам
-    const open = openRows[d.key] !== undefined ? openRows[d.key] : status === "running";
-    const canOpen = status !== "pending";
+    const open = canOpen && (openRows[d.key] !== undefined ? openRows[d.key] : status === "running");
     const toggle = () => canOpen && setOpenRows(o => ({
       ...o,
       [d.key]: !open
     }));
     return /*#__PURE__*/React.createElement("div", {
       key: d.key,
-      className: "dr-con-row is-" + status
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "dr-con-col"
+      className: "run-step is-" + status
     }, /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-dot",
-      style: dotStyle(status)
+      className: "run-step-m",
+      "aria-hidden": "true"
     }, status === "done" && /*#__PURE__*/React.createElement("svg", {
-      width: "7",
-      height: "7",
+      width: "9",
+      height: "9",
       viewBox: "0 0 24 24",
       fill: "none",
-      stroke: "var(--paper)",
+      stroke: "currentColor",
       strokeWidth: "3.5",
       strokeLinecap: "round",
       strokeLinejoin: "round"
     }, /*#__PURE__*/React.createElement("path", {
       d: "M20 6L9 17l-5-5"
-    }))), !last && /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-conn",
-      style: {
-        background: status === "done" ? "var(--ink)" : "var(--hair)"
-      }
-    })), /*#__PURE__*/React.createElement("div", {
-      className: "dr-con-body"
+    }))), /*#__PURE__*/React.createElement("div", {
+      className: "run-step-b"
     }, /*#__PURE__*/React.createElement("button", {
       type: "button",
-      className: "dr-con-line",
+      className: "run-step-h",
       onClick: toggle,
       disabled: !canOpen,
       "aria-expanded": canOpen ? open : undefined
     }, /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-label",
-      style: titleStyle(status)
+      className: "run-step-l"
     }, d.label), /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-right mono"
-    }, right(d.key, status)), canOpen && /*#__PURE__*/React.createElement("svg", {
-      className: "dr-con-chev" + (open ? " open" : ""),
+      className: "run-step-r"
+    }, sum, sum && dur ? " · " : "", dur ? runDur(dur) : "", status === "cut" && /*#__PURE__*/React.createElement("span", {
+      className: "run-step-cut"
+    }, sum ? " · " : "", m.lost ? "связь прервалась здесь" : "остановлено здесь")), canOpen && /*#__PURE__*/React.createElement("svg", {
+      className: "run-chev" + (open ? " open" : ""),
       width: "12",
       height: "12",
       viewBox: "0 0 24 24",
@@ -14392,126 +14775,110 @@ function DeepConsole({
       "aria-hidden": "true"
     }, /*#__PURE__*/React.createElement("path", {
       d: "M6 9l6 6 6-6"
-    }))), status === "running" && live && /*#__PURE__*/React.createElement("div", {
-      className: "dr-con-now",
-      "aria-live": "polite"
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-now-l"
-    }, live.label), live.detail && /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-now-d"
-    }, live.detail)), d.key === "parse" && status !== "pending" && m.understood && m.understood.task && /*#__PURE__*/React.createElement("div", {
-      className: "dr-con-understood"
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-u-k"
-    }, "\u0412\u043E\u043F\u0440\u043E\u0441 \u043F\u043E\u043D\u044F\u0442 \u043A\u0430\u043A"), /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-u-v"
-    }, DR_TASK[m.understood.task] || m.understood.task), /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-u-sep"
-    }, "\xB7"), /*#__PURE__*/React.createElement("span", null, drScope(m.understood)), m.understood.period && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-u-sep"
-    }, "\xB7"), /*#__PURE__*/React.createElement("span", null, m.understood.period)), DR_CHECKS[m.understood.checks] && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-u-sep"
-    }, "\xB7"), /*#__PURE__*/React.createElement("span", null, DR_CHECKS[m.understood.checks])), m.understood.continues && m.understood.prior && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-u-sep"
-    }, "\xB7"), /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-u-cont"
-    }, "\u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0435\u043D\u0438\u0435 \u043F\u0440\u043E\u0448\u043B\u043E\u0433\u043E \u043E\u0442\u0447\u0451\u0442\u0430", m.understood.prior.date ? ` от ${m.understood.prior.date}` : "", ": \u0443\u0436\u0435 \u0441\u043E\u0431\u0440\u0430\u043D\u043E ", m.understood.prior.facts, " ", plural(m.understood.prior.facts, "факт", "факта", "фактов")), onFresh && /*#__PURE__*/React.createElement("button", {
-      type: "button",
-      className: "dr-con-u-redo",
-      onClick: onFresh,
-      title: "\u041D\u0435 \u043E\u043F\u0438\u0440\u0430\u0442\u044C\u0441\u044F \u043D\u0430 \u043F\u0440\u043E\u0448\u043B\u044B\u0439 \u043E\u0442\u0447\u0451\u0442: \u0441\u043E\u0431\u0440\u0430\u0442\u044C \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438 \u0438 \u0444\u0430\u043A\u0442\u044B \u0437\u0430\u043D\u043E\u0432\u043E"
-    }, "\u0441\u043E\u0431\u0440\u0430\u0442\u044C \u0437\u0430\u043D\u043E\u0432\u043E"))), open && /*#__PURE__*/React.createElement(React.Fragment, null, d.key === "parse" && contract.length > 0 && /*#__PURE__*/React.createElement("div", {
-      className: "dr-con-contract"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "dr-con-sub-h"
+    }))), open && /*#__PURE__*/React.createElement("div", {
+      className: "run-step-x"
+    }, d.key === "parse" && contract.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      className: "run-k"
     }, "\u0427\u0442\u043E \u0431\u0443\u0434\u0435\u0442 \u0432 \u043E\u0442\u0447\u0451\u0442\u0435"), /*#__PURE__*/React.createElement("div", {
-      className: "dr-con-chips"
+      className: "run-chips"
     }, contract.map((a, ai) => {
       const isObs = a === m.observedAttr,
         isReg = a === m.regulatoryAttr;
       return /*#__PURE__*/React.createElement("span", {
         key: ai,
-        className: "dr-con-chip",
+        className: "run-chip",
         title: isObs ? "взгляд со стороны: жалобы, отзывы, разборы" : isReg ? "нормы: требования закона и регулятора" : ""
       }, a, isObs && /*#__PURE__*/React.createElement("i", null, "\u0441\u043E \u0441\u0442\u043E\u0440\u043E\u043D\u044B"), isReg && /*#__PURE__*/React.createElement("i", null, "\u043D\u043E\u0440\u043C\u044B"));
     }))), d.key === "collect" && hosts.length > 0 && /*#__PURE__*/React.createElement("div", {
-      className: "dr-con-hosts",
+      className: "run-hosts",
       "aria-label": "\u041F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043D\u044B\u0435 \u0441\u0430\u0439\u0442\u044B"
     }, hosts.map(([h, n]) => /*#__PURE__*/React.createElement("span", {
       key: h,
-      className: "dr-con-host"
-    }, h, /*#__PURE__*/React.createElement("b", {
-      className: "mono"
-    }, n)))), d.key === "collect" && subq.length > 0 && /*#__PURE__*/React.createElement("details", {
-      className: "dr-con-queries"
+      className: "run-host" + (status === "running" && h === prog.last_host ? " now" : "")
+    }, h, /*#__PURE__*/React.createElement("b", null, n)))), d.key === "collect" && subq.length > 0 && /*#__PURE__*/React.createElement("details", {
+      className: "run-queries"
     }, /*#__PURE__*/React.createElement("summary", null, "\u041F\u043E\u0438\u0441\u043A\u043E\u0432\u044B\u0435 \u0437\u0430\u043F\u0440\u043E\u0441\u044B \xB7 ", subq.length), subq.map((q, qi) => {
       const site = (q.match(/site:(\S+)/) || [])[1];
       return /*#__PURE__*/React.createElement("div", {
         key: qi,
-        className: "dr-con-query"
-      }, /*#__PURE__*/React.createElement("span", {
-        className: "dr-con-q-txt"
-      }, q.replace(/\s*site:\S+/, "")), site && /*#__PURE__*/React.createElement("span", {
-        className: "dr-con-q-site mono"
-      }, site));
+        className: "run-query"
+      }, /*#__PURE__*/React.createElement("span", null, q.replace(/\s*site:\S+/, "")), site && /*#__PURE__*/React.createElement("i", null, site));
     })), d.key === "facts" && (fs.total || 0) > 0 && /*#__PURE__*/React.createElement("div", {
-      className: "dr-con-stances"
+      className: "run-stances"
     }, Object.entries(STANCE_UI).filter(([k]) => stance[k]).map(([k, v]) => /*#__PURE__*/React.createElement("div", {
       key: k,
-      className: "dr-con-stance",
+      className: "run-stance",
       title: v.hint
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-stance-n mono"
-    }, stance[k]), /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-stance-l"
-    }, v.label)))), d.key === "facts" && fs.critic && fs.critic.checked > 0 && /*#__PURE__*/React.createElement("div", {
-      className: "dr-con-note"
+    }, /*#__PURE__*/React.createElement("b", null, stance[k]), /*#__PURE__*/React.createElement("span", null, v.label)))), d.key === "facts" && fs.critic && fs.critic.checked > 0 && /*#__PURE__*/React.createElement("div", {
+      className: "run-note"
     }, "\u041A\u0430\u0436\u0434\u0430\u044F \u0446\u0438\u0442\u0430\u0442\u0430 \u0441\u0432\u0435\u0440\u0435\u043D\u0430 \u0441 \u0442\u0435\u043A\u0441\u0442\u043E\u043C \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u044B: \u0434\u043E\u0441\u043B\u043E\u0432\u043D\u044B\u0445 ", fs.critic.exact, " \u0438\u0437 ", fs.critic.checked, fs.critic.cut ? `, снято без опоры на источник — ${fs.critic.cut}` : "", "."), d.key === "synth" && secs.length > 0 && /*#__PURE__*/React.createElement("ol", {
-      className: "dr-con-secs"
+      className: "run-secs"
     }, secs.map((s, si) => /*#__PURE__*/React.createElement("li", {
       key: si,
-      className: "is-" + s.state
+      className: "is-" + (ended && s.state !== "done" ? "wait" : s.state)
     }, /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-sec-m",
+      className: "run-sec-m",
       "aria-hidden": "true"
     }, s.state === "done" && /*#__PURE__*/React.createElement("svg", {
-      width: "10",
-      height: "10",
+      width: "9",
+      height: "9",
       viewBox: "0 0 24 24",
       fill: "none",
       stroke: "currentColor",
-      strokeWidth: "3",
+      strokeWidth: "3.5",
       strokeLinecap: "round",
       strokeLinejoin: "round"
     }, /*#__PURE__*/React.createElement("path", {
       d: "M20 6L9 17l-5-5"
     }))), /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-sec-t"
+      className: "run-sec-t"
     }, s.title), /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-sec-s"
-    }, s.state === "done" ? "готов" : s.state === "writing" ? "пишется" : s.state === "last" ? "в конце, по готовому тексту" : "")))), d.key === "verify" && gapsN > 0 && /*#__PURE__*/React.createElement("div", {
-      className: "dr-con-gaps"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "dr-con-sub-h"
-    }, "\u0427\u0435\u0433\u043E \u043D\u0430\u0439\u0442\u0438 \u043D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \xB7 ", gapsN), (m.gapsList || []).slice(0, 4).map((g, gi) => /*#__PURE__*/React.createElement("div", {
-      key: gi,
-      className: "dr-con-gap"
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-gap-i mono"
-    }, "\u2014"), /*#__PURE__*/React.createElement("span", {
-      className: "dr-con-gap-w"
+      className: "run-sec-s"
+    }, s.state === "done" ? "готов" : ended ? "не написан" : s.state === "writing" ? "пишется" : s.state === "last" ? "в конце, по готовому тексту" : "")))), d.key === "verify" && gapsN > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      className: "run-k"
+    }, "\u0427\u0435\u0433\u043E \u043D\u0430\u0439\u0442\u0438 \u043D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \xB7 ", gapsN), /*#__PURE__*/React.createElement("ul", {
+      className: "run-gaps"
+    }, (m.gapsList || []).slice(0, 4).map((g, gi) => /*#__PURE__*/React.createElement("li", {
+      key: gi
     }, g)))))));
-  })), (m.ownPreview || []).length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "dr-con-own"
+  }));
+}
+
+// Все шаги по порядку, с минутой и секундой: лента, из которой видно, как получен ответ.
+function RunLog({
+  m
+}) {
+  const tr = (m.trace || []).filter(e => e.k !== "phase");
+  if (!tr.length) return null;
+  return /*#__PURE__*/React.createElement("ol", {
+    className: "run-log"
+  }, tr.map((e, i) => /*#__PURE__*/React.createElement("li", {
+    key: i,
+    className: "is-" + e.k
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "run-log-t"
+  }, runClock(e.t || 0)), /*#__PURE__*/React.createElement("span", {
+    className: "run-log-l"
+  }, e.label, e.n > 1 && /*#__PURE__*/React.createElement("i", null, " \xD7", e.n), e.detail && /*#__PURE__*/React.createElement("em", null, e.detail)))));
+}
+
+// Собственные данные готовы раньше сбора по сайтам: числа разделов видны уже через
+// полминуты, со ссылкой в раздел. Это не вывод — на этом он будет стоять.
+function RunOwn({
+  m
+}) {
+  if (!(m.ownPreview || []).length) return null;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "run-own"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "dr-con-sub-h"
+    className: "run-k"
   }, "\u0423\u0436\u0435 \u043D\u0430\u0448\u043B\u043E\u0441\u044C \u0432 \u0434\u0430\u043D\u043D\u044B\u0445 AuditLens"), /*#__PURE__*/React.createElement("div", {
-    className: "dr-con-own-g"
+    className: "run-own-g"
   }, m.ownPreview.map((b, bi) => /*#__PURE__*/React.createElement("div", {
     key: bi,
-    className: "dr-con-own-b"
+    className: "run-own-b"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "dr-con-own-t"
+    className: "run-own-t"
   }, b.link ? /*#__PURE__*/React.createElement("a", {
     href: b.link.startsWith("#") ? location.pathname + location.search + b.link : b.link,
     target: "_blank",
@@ -14521,16 +14888,255 @@ function DeepConsole({
     "aria-hidden": "true"
   }, " \u2197")) : b.title), (b.rows || []).map((r, ri) => /*#__PURE__*/React.createElement("div", {
     key: ri,
-    className: "dr-con-own-r"
+    className: "run-own-r"
   }, r.link ? /*#__PURE__*/React.createElement("a", {
     href: r.link,
     target: "_blank",
     rel: "noopener noreferrer"
-  }, r.label) : /*#__PURE__*/React.createElement("span", null, r.label), r.value && /*#__PURE__*/React.createElement("b", {
-    className: "mono"
-  }, r.value)))))), /*#__PURE__*/React.createElement("div", {
-    className: "dr-con-note"
-  }, "\u042D\u0442\u043E \u0447\u0438\u0441\u043B\u0430 \u0438\u0437 \u0440\u0430\u0437\u0434\u0435\u043B\u043E\u0432 AuditLens, \u0430 \u043D\u0435 \u0432\u044B\u0432\u043E\u0434: \u043E\u0442\u0447\u0451\u0442 \u0441\u0432\u0435\u0440\u0438\u0442 \u0438\u0445 \u0441 \u0441\u0430\u0439\u0442\u0430\u043C\u0438 \u0431\u0430\u043D\u043A\u043E\u0432 \u0438 \u043D\u043E\u0440\u043C\u0430\u043C\u0438."))));
+  }, r.label) : /*#__PURE__*/React.createElement("span", null, r.label), r.value && /*#__PURE__*/React.createElement("b", null, r.value)))))), /*#__PURE__*/React.createElement("div", {
+    className: "run-note"
+  }, "\u042D\u0442\u043E \u0447\u0438\u0441\u043B\u0430 \u0438\u0437 \u0440\u0430\u0437\u0434\u0435\u043B\u043E\u0432 AuditLens, \u0430 \u043D\u0435 \u0432\u044B\u0432\u043E\u0434: \u043E\u0442\u0447\u0451\u0442 \u0441\u0432\u0435\u0440\u0438\u0442 \u0438\u0445 \u0441 \u0441\u0430\u0439\u0442\u0430\u043C\u0438 \u0431\u0430\u043D\u043A\u043E\u0432 \u0438 \u043D\u043E\u0440\u043C\u0430\u043C\u0438."));
+}
+
+// Живая карточка отчёта. Пока читать нечего — развёрнута: шар, шаг, оценка времени,
+// полоса этапов, как понят вопрос, этапы с содержанием. Как только написан первый
+// раздел, сворачивается в полосу над черновиком и не заслоняет чтение.
+function RunCard({
+  m,
+  loading,
+  elapsed,
+  onFresh,
+  onShort,
+  compact,
+  onToggle,
+  turb
+}) {
+  const now = runNowReport(m),
+    eta = drEta(m);
+  const stepN = Math.min(DR_PHASES.length, Math.max(1, DR_PHASES.indexOf(m.phase) + 1));
+  const secs = drSections(m),
+    secDone = secs.filter(s => s.state === "done").length;
+  const left = drLeftText(eta);
+  const [logOpen, setLogOpen] = useState(false);
+  const logN = (m.trace || []).filter(e => e.k !== "phase").length;
+  if (compact) return /*#__PURE__*/React.createElement("div", {
+    className: "run-wrap"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "run-card is-compact"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "run-hd"
+  }, /*#__PURE__*/React.createElement(Orb, _extends({}, now.orb, {
+    size: 26,
+    label: "\u041F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u0440\u0430\u0431\u043E\u0442\u0430\u0435\u0442"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "run-hd-t"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "run-title run-swap",
+    key: now.title,
+    "aria-live": "polite"
+  }, now.title), secs.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "run-sub"
+  }, "\u0433\u043E\u0442\u043E\u0432\u043E ", secDone, " \u0438\u0437 ", secs.length, " ", plural(secs.length, "раздела", "разделов", "разделов"))), /*#__PURE__*/React.createElement("div", {
+    className: "run-hd-r"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "run-el",
+    title: "\u041F\u0440\u043E\u0448\u043B\u043E \u0441 \u043D\u0430\u0447\u0430\u043B\u0430"
+  }, runClock(elapsed || 0)), left && /*#__PURE__*/React.createElement("span", {
+    className: "run-eta"
+  }, left))), /*#__PURE__*/React.createElement(RunStages, {
+    m: m,
+    eta: eta,
+    labels: false
+  }), onToggle && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "run-more",
+    onClick: onToggle
+  }, "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0445\u043E\u0434 \u0440\u0430\u0431\u043E\u0442\u044B", /*#__PURE__*/React.createElement("svg", {
+    className: "run-chev",
+    width: "12",
+    height: "12",
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M6 9l6 6 6-6"
+  })))));
+  return /*#__PURE__*/React.createElement("div", {
+    className: "run-wrap"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "run-card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "run-hd"
+  }, /*#__PURE__*/React.createElement(Orb, _extends({}, now.orb, {
+    size: 44,
+    label: "\u041F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u0440\u0430\u0431\u043E\u0442\u0430\u0435\u0442"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "run-hd-t"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "run-eb"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0421\u043E\u0431\u0438\u0440\u0430\u044E \u043E\u0442\u0447\u0451\u0442"), /*#__PURE__*/React.createElement("span", null, "\u0448\u0430\u0433 ", stepN, " \u0438\u0437 ", DR_PHASES.length)), /*#__PURE__*/React.createElement("div", {
+    className: "run-title run-swap",
+    key: now.title,
+    "aria-live": "polite"
+  }, now.title), now.detail && /*#__PURE__*/React.createElement("div", {
+    className: "run-sub"
+  }, now.detail)), /*#__PURE__*/React.createElement("div", {
+    className: "run-hd-r"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "run-el",
+    title: "\u041F\u0440\u043E\u0448\u043B\u043E \u0441 \u043D\u0430\u0447\u0430\u043B\u0430"
+  }, runClock(elapsed || 0)), left && /*#__PURE__*/React.createElement("span", {
+    className: "run-eta"
+  }, left))), /*#__PURE__*/React.createElement(RunStages, {
+    m: m,
+    eta: eta,
+    labels: true
+  }), turb && /*#__PURE__*/React.createElement("div", {
+    className: "run-turb",
+    role: "status"
+  }, "\u0421\u0435\u0433\u043E\u0434\u043D\u044F \u043C\u043E\u0434\u0435\u043B\u0438 \u043E\u0442\u0432\u0435\u0447\u0430\u044E\u0442 \u0441 \u043F\u0435\u0440\u0435\u0431\u043E\u044F\u043C\u0438: \u044D\u0442\u0430\u043F\u044B \u043C\u043E\u0433\u0443\u0442 \u0438\u0434\u0442\u0438 \u0434\u043E\u043B\u044C\u0448\u0435, \u043E\u0446\u0435\u043D\u043A\u0430 \u0432\u0440\u0435\u043C\u0435\u043D\u0438 \u2014 \u043D\u0435\u0442\u043E\u0447\u043D\u0430\u044F."), m.degraded && /*#__PURE__*/React.createElement("div", {
+    className: "run-warn",
+    role: "status"
+  }, /*#__PURE__*/React.createElement("b", null, "\u041F\u043B\u0430\u043D \u043E\u0442\u0447\u0451\u0442\u0430 \u043D\u0435 \u043F\u043E\u0441\u0442\u0440\u043E\u0435\u043D"), " \u2014 \u043C\u043E\u0434\u0435\u043B\u044C \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0430 (", m.degraded, "). \u041E\u0442\u0447\u0451\u0442 \u0432\u044B\u0439\u0434\u0435\u0442 \u0437\u0430\u043C\u0435\u0442\u043D\u043E \u0431\u0435\u0434\u043D\u0435\u0435: \u0432\u0437\u0433\u043B\u044F\u0434\u0430 \u0441\u043E \u0441\u0442\u043E\u0440\u043E\u043D\u044B \u0438 \u043D\u043E\u0440\u043C \u0432 \u043D\u0451\u043C \u043D\u0435 \u0431\u0443\u0434\u0435\u0442."), /*#__PURE__*/React.createElement(RunUnderstood, {
+    m: m,
+    onFresh: onFresh
+  }), onShort && loading && stepN <= 3 && /*#__PURE__*/React.createElement("div", {
+    className: "run-route",
+    role: "status"
+  }, /*#__PURE__*/React.createElement("span", null, "\u0412\u043E\u043F\u0440\u043E\u0441 \u0442\u0440\u0435\u0431\u0443\u0435\u0442 \u0441\u0431\u043E\u0440\u0430 \u0438 \u0441\u0432\u0435\u0440\u043A\u0438 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u043E\u0432, \u043F\u043E\u044D\u0442\u043E\u043C\u0443 \u0441\u043E\u0431\u0438\u0440\u0430\u044E \u043E\u0442\u0447\u0451\u0442."), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "ai-route-btn",
+    onClick: onShort,
+    title: "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u0442\u044C \u043E\u0442\u0447\u0451\u0442 \u0438 \u043E\u0442\u0432\u0435\u0442\u0438\u0442\u044C \u043A\u043E\u0440\u043E\u0442\u043A\u043E\u0439 \u0441\u043F\u0440\u0430\u0432\u043A\u043E\u0439 \u2014 \u043C\u0435\u043D\u044C\u0448\u0435 \u043C\u0438\u043D\u0443\u0442\u044B"
+  }, "\u0425\u0432\u0430\u0442\u0438\u0442 \u043A\u043E\u0440\u043E\u0442\u043A\u043E\u0433\u043E \u043E\u0442\u0432\u0435\u0442\u0430")), /*#__PURE__*/React.createElement(RunSteps, {
+    m: m
+  }), /*#__PURE__*/React.createElement(RunOwn, {
+    m: m
+  }), logN > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "run-logbox"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "run-more",
+    onClick: () => setLogOpen(o => !o),
+    "aria-expanded": logOpen
+  }, logOpen ? "Свернуть шаги" : `Все шаги по порядку · ${logN}`, /*#__PURE__*/React.createElement("svg", {
+    className: "run-chev" + (logOpen ? " open" : ""),
+    width: "12",
+    height: "12",
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M6 9l6 6 6-6"
+  }))), logOpen && /*#__PURE__*/React.createElement(RunLog, {
+    m: m
+  }))));
+}
+
+// Итог прогона и «как получен ответ». Строка под ответом: неподвижный шар, чем кончилось
+// и за сколько; раскрывается в этапы и ленту шагов. У сохранённого ответа — то же самое
+// из истории, насколько сервер это сохранил.
+function runEnded(m) {
+  return m.lost ? "lost" : m.stopped || m.status === "stopped" ? "stopped" : m.status === "failed" || m.err && !m.text ? "failed" : "ok";
+}
+function runSummary(m, kind) {
+  const sec = Math.round(m.elapsedS || 0),
+    took = sec ? runDur(sec) : "";
+  const at = m.stoppedPhase && DEEP_FLOW.find(d => d.phases.includes(m.stoppedPhase));
+  const where = at ? ` на шаге «${at.label}»` : "";
+  const end = runEnded(m);
+  if (end === "lost") return "Связь прервалась" + where + (took ? ` через ${took}` : "");
+  if (end === "stopped") return (kind === "report" ? "Отчёт остановлен" : kind === "deck" ? "Презентация остановлена" : "Ответ остановлен") + (m.stopped ? " вами" : "") + where + (took ? ` через ${took}` : "");
+  if (end === "failed") return (kind === "report" ? "Отчёт не собран" : "Ответ не получен") + (took ? ` — сбой через ${took}` : "");
+  if (kind === "report") return "Как получен отчёт";
+  if (kind === "deck") return took ? `Презентация собрана за ${took}` : "Презентация собрана";
+  return took ? `Ответ за ${took}` : "";
+}
+function RunDone({
+  m,
+  kind
+}) {
+  const [open, setOpen] = useState(false);
+  const end = runEnded(m),
+    sum = runSummary(m, kind);
+  const steps = (m.trace || []).filter(e => e.k !== "phase");
+  const tools = kind !== "report" ? collapseTools(m.tools) : [];
+  const rich = kind === "report" && !!(m.understood || (m.contract || []).length || m.factStats || m.progress || m.timings || (m.outline || []).length);
+  const can = steps.length > 0 || rich;
+  if (!sum && !tools.length && !can || end === "failed" && !can) return null;
+  const took = kind === "report" ? tracePhases(m) : {};
+  const head = /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(Orb, {
+    state: "idle",
+    size: 16,
+    still: true,
+    tone: end === "ok" || end === "stopped" ? "mute" : "accent"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "run-done-x"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "run-done-t"
+  }, sum || "Где помощник смотрел"), tools.length > 0 && /*#__PURE__*/React.createElement("span", {
+    className: "run-trail"
+  }, tools.map(({
+    lbl,
+    n
+  }, ti) => /*#__PURE__*/React.createElement("span", {
+    key: ti,
+    className: "run-trail-i"
+  }, lbl, n > 1 ? /*#__PURE__*/React.createElement("i", null, " \xD7", n) : null)))));
+  return /*#__PURE__*/React.createElement("div", {
+    className: "run-done is-" + end + (open ? " open" : "")
+  }, can ? /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "run-done-h",
+    onClick: () => setOpen(o => !o),
+    "aria-expanded": open,
+    title: open ? "Свернуть" : "Показать шаги: что и когда делал помощник"
+  }, head, /*#__PURE__*/React.createElement("svg", {
+    className: "run-chev" + (open ? " open" : ""),
+    width: "12",
+    height: "12",
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M6 9l6 6 6-6"
+  }))) : /*#__PURE__*/React.createElement("div", {
+    className: "run-done-h"
+  }, head), open && can && /*#__PURE__*/React.createElement("div", {
+    className: "run-done-b"
+  }, rich && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(RunUnderstood, {
+    m: m,
+    onFresh: null
+  }), Object.keys(took).length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "run-took",
+    "aria-label": "\u0412\u0440\u0435\u043C\u044F \u043F\u043E \u044D\u0442\u0430\u043F\u0430\u043C"
+  }, DEEP_FLOW.filter(d => took[d.phases[0]]).map(d => /*#__PURE__*/React.createElement("div", {
+    key: d.key,
+    style: {
+      flexGrow: Math.max(6, took[d.phases[0]])
+    }
+  }, /*#__PURE__*/React.createElement("i", null), /*#__PURE__*/React.createElement("span", null, d.short), /*#__PURE__*/React.createElement("b", null, runDur(took[d.phases[0]]))))), /*#__PURE__*/React.createElement(RunSteps, {
+    m: m,
+    ended: true
+  }), /*#__PURE__*/React.createElement(RunOwn, {
+    m: m
+  })), steps.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, rich && /*#__PURE__*/React.createElement("div", {
+    className: "run-k run-k-log"
+  }, "\u0412\u0441\u0435 \u0448\u0430\u0433\u0438 \u043F\u043E \u043F\u043E\u0440\u044F\u0434\u043A\u0443"), /*#__PURE__*/React.createElement(RunLog, {
+    m: m
+  }))));
 }
 
 // ─── Сводка завершённого прогона (collapsed bar над отчётом, редизайн). ────
@@ -16050,15 +16656,52 @@ function AIPage() {
   }, []);
   // страница живёт в фоне (Shell держит смонтированной) — сообщаем Shell о ходе
   // прогона: точка в rail + тост «Отчёт готов», когда пользователь на другой вкладке
+  // и заголовок вкладки браузера: «Отчёт: ещё ~3 мин» видно, даже когда открыт другой сайт
+  const [runTitle, setRunTitle] = useState({
+    kind: "answer",
+    left: ""
+  });
   useEffect(() => {
     try {
       window.dispatchEvent(new CustomEvent("al-ai-state", {
         detail: {
-          running: loading
+          running: loading,
+          kind: runTitle.kind,
+          left: runTitle.left
         }
       }));
     } catch {}
+  }, [loading, runTitle.kind, runTitle.left]);
+  // Перезагрузка посреди прогона обрывает его (ответ идёт одним соединением). Браузер
+  // переспросит, а если страницу всё же перезагрузили — на стартовой будет видно, что
+  // ответ прерван, и как к нему вернуться.
+  useEffect(() => {
+    if (!loading) return;
+    const warn = e => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
   }, [loading]);
+  const runMark = v => {
+    try {
+      if (v) sessionStorage.setItem("al-ai-run", JSON.stringify({
+        ...v,
+        at: Date.now()
+      }));else sessionStorage.removeItem("al-ai-run");
+    } catch {}
+  };
+  const [cutRun, setCutRun] = useState(() => {
+    try {
+      const v = JSON.parse(sessionStorage.getItem("al-ai-run") || "null");
+      sessionStorage.removeItem("al-ai-run");
+      return v && v.q && Date.now() - (v.at || 0) < 3600e3 ? v : null;
+    } catch {
+      return null;
+    }
+  });
+  const turbOn = useTurbOn();
   const [histOpen, setHistOpen] = useState(false); // command palette истории
   const [recent, setRecent] = useState([]); // недавние диалоги для welcome (без повторов)
   const [sessAll, setSessAll] = useState([]); // вся история — для «вы уже спрашивали»
@@ -16154,6 +16797,13 @@ function AIPage() {
     // утаскиваем — человек остаётся там, где читает.
     const last = msgs[msgs.length - 1];
     if (last && last.mode === "deep" && (last.text || "").length > 400) return;
+    // Карточка хода отчёта растёт вниз и бывает выше экрана: держим в виду её шапку
+    // (шар, шаг, оценка времени), а не хвост. Дальше человек листает сам.
+    const card = last && last.mode === "deep" && loading ? el.querySelector(".chat-msg:last-child .run-wrap") : null;
+    if (card) {
+      if (stickRef.current) el.scrollTop += card.getBoundingClientRect().top - el.getBoundingClientRect().top - 10;
+      return;
+    }
     if (stickRef.current) el.scrollTop = el.scrollHeight; // мгновенно, без рывка smooth
   }, [msgs, loading]);
   useEffect(() => {
@@ -16272,6 +16922,7 @@ function AIPage() {
     // об этом прямо написали в обратной связи. Держим отменяемый запрос.
     const ac = new AbortController();
     abortRef.current = ac;
+    const runT = () => Math.max(0, Math.round((Date.now() - runStartRef.current) / 1000));
     try {
       const res = await fetch("/api/ai/analyze", {
         method: "POST",
@@ -16314,6 +16965,13 @@ function AIPage() {
         };
         return u;
       });
+      // лента шагов: что и на какой секунде прогона произошло
+      const tr = (last, e) => ({
+        trace: traceAdd(last.trace, {
+          t: runT(),
+          ...e
+        })
+      });
       outer: while (true) {
         const {
           done,
@@ -16334,10 +16992,18 @@ function AIPage() {
                 if (data.session_id) {
                   sessionRef.current = data.session_id;
                   setSessionId(data.session_id);
+                  runMark({
+                    q: question,
+                    sid: data.session_id
+                  });
                 }
               } else if (data.type === "text" && data.chunk) {
                 updateLast(last => ({
-                  text: (last.text || "") + data.chunk
+                  text: (last.text || "") + data.chunk,
+                  ...(!last.text && last.mode !== "deep" && last.route !== "deck" && last.engine !== "deck" ? tr(last, {
+                    k: "write",
+                    label: "Пишу ответ"
+                  }) : {})
                 }));
               } else if (data.type === "lead" && data.chunk) {
                 // Резюме и «что проверять» пишутся ПОСЛЕДНИМИ — по готовому
@@ -16389,7 +17055,11 @@ function AIPage() {
                 }));
               } else if (data.type === "tool_call") {
                 updateLast(last => ({
-                  tools: [...(last.tools || []), data.name]
+                  tools: [...(last.tools || []), data.name],
+                  ...tr(last, {
+                    k: "tool",
+                    label: TOOL_LABELS[data.name] || data.name
+                  })
                 }));
               } else if (data.type === "sources" && Array.isArray(data.sources)) {
                 updateLast(() => ({
@@ -16402,12 +17072,16 @@ function AIPage() {
                 }));
               } else if (data.type === "route") {
                 // чем помощник решил отвечать: справкой, отчётом или репликой к прошлому ответу
-                updateLast(() => ({
+                updateLast(last => ({
                   route: data.value,
                   routeBy: data.by,
                   ...(data.value === "report" ? {
                     mode: "deep"
-                  } : {})
+                  } : {}),
+                  ...tr(last, {
+                    k: "route",
+                    label: data.value === "report" ? "Вопрос требует сбора источников — собираю отчёт" : data.value === "reply" ? "Отвечаю по уже собранному, без нового сбора" : data.value === "deck" ? "Собираю презентацию по готовому отчёту" : "Отвечаю короткой справкой"
+                  })
                 }));
               } else if (data.type === "mode") {
                 updateLast(() => ({
@@ -16419,20 +17093,34 @@ function AIPage() {
                 }));
               } else if (data.type === "phase") {
                 // phaseAt — когда начался этап: по нему считается «осталось примерно…»
-                updateLast(() => ({
+                updateLast(last => ({
                   phase: data.value,
-                  phaseAt: Date.now()
+                  phaseAt: Date.now(),
+                  ...tr(last, {
+                    k: "phase",
+                    label: data.value
+                  })
                 }));
               } else if (data.type === "own_preview" && Array.isArray(data.blocks)) {
                 // что уже нашлось в данных AuditLens — показываем, пока идёт сбор по сайтам
                 updateLast(() => ({
                   ownPreview: data.blocks
                 }));
-              } else if (data.type === "typical" && data.steps) {
-                updateLast(() => ({
+              } else if (data.type === "typical") {
+                // сколько обычно длится: этапы отчёта, короткий ответ, презентация
+                updateLast(last => ({
                   typical: {
-                    steps: data.steps,
-                    total: data.total
+                    ...(last.typical || {}),
+                    ...(data.steps ? {
+                      steps: data.steps,
+                      total: data.total
+                    } : {}),
+                    ...(data.answer ? {
+                      answer: data.answer
+                    } : {}),
+                    ...(data.deck ? {
+                      deck: data.deck
+                    } : {})
                   }
                 }));
               } else if (data.type === "plan" && Array.isArray(data.steps)) {
@@ -16535,6 +17223,7 @@ function AIPage() {
                 // показываем её отдельным prominent banner'ом чтобы пользователь
                 // видел что pipeline жив и сколько примерно ждать.
                 // phase — к какому этапу относится подпись: под чужим этапом её не показываем
+                // повтор подписи с секундами (progress_elapsed) — не новый шаг: в ленту не идёт
                 updateLast(last => ({
                   stageStatus: {
                     ...data,
@@ -16542,7 +17231,12 @@ function AIPage() {
                   },
                   ...(data.stage === "analyst" ? {
                     writingSection: data.section || null
-                  } : {})
+                  } : {}),
+                  ...(data.progress_elapsed == null && data.label ? tr(last, {
+                    k: "stage",
+                    label: data.label,
+                    detail: data.detail || ""
+                  }) : {})
                 }));
               } else if (data.type === "merge_progress") {
                 // Прогресс финальной сборки — счётчик символов, видимый юзеру
@@ -16626,8 +17320,12 @@ function AIPage() {
                   title: m.title || data.title || undefined
                 }));
               } else if (data.type === "done") {
-                if (data.elapsed_s) updateLast(() => ({
-                  elapsedS: data.elapsed_s
+                updateLast(last => ({
+                  elapsedS: data.elapsed_s || runT(),
+                  ...tr(last, {
+                    k: "done",
+                    label: "Готово"
+                  })
                 }));
                 break outer;
               }
@@ -16658,23 +17356,42 @@ function AIPage() {
           u[u.length - 1] = {
             ...last,
             stopped: true,
-            phase: "done"
+            stoppedPhase: last.phase,
+            phase: "done",
+            elapsedS: runT(),
+            trace: traceAdd(last.trace, {
+              t: runT(),
+              k: "stop",
+              label: "Остановлено вами"
+            })
           };
           return u;
         });
       } else {
+        // Обрыв связи — не то же, что сбой помощника: показываем, на каком шаге оборвалось,
+        // и оставляем всё, что успело прийти.
         setMsgs(m => {
           const u = [...m];
+          const last = u[u.length - 1] || {};
           u[u.length - 1] = {
-            ...u[u.length - 1],
+            ...last,
+            lost: true,
+            stoppedPhase: last.phase,
             phase: "done",
-            err: "Связь с сервером прервалась — ответ пришёл не полностью. Проверьте сеть и повторите вопрос."
+            elapsedS: runT(),
+            trace: traceAdd(last.trace, {
+              t: runT(),
+              k: "lost",
+              label: "Связь с сервером прервалась"
+            }),
+            err: (last.text || "").trim() ? "Связь с сервером прервалась — ответ пришёл не полностью. Проверьте сеть и повторите вопрос." : "Связь с сервером прервалась раньше, чем пришёл ответ. Проверьте сеть и повторите вопрос."
           };
           return u;
         });
       }
     } finally {
       abortRef.current = null;
+      runMark(null); // прогон кончился сам — отметка «прервано» не нужна
       const sw = switchRef.current;
       switchRef.current = null;
       if (sw) {
@@ -16703,6 +17420,11 @@ function AIPage() {
     setLoading(true);
     runStartRef.current = Date.now();
     setElapsed(0); // старт таймера прогона
+    setRunOpen(false);
+    runMark({
+      q: t,
+      sid: sessionRef.current
+    });
     // Маршрут уже известен — сразу показываем нужный вид: консоль отчёта или
     // короткий ответ, а не безликое «думаю» до первого события сервера.
     const r = extra && extra.route;
@@ -16753,7 +17475,8 @@ function AIPage() {
       text: t
     }, {
       role: "pending",
-      label: "Разбираю вопрос…"
+      label: "Разбираю вопрос",
+      detail: "решаю, хватит ли короткой справки или нужен отчёт"
     }]);
     setLoading(true);
     let data = null;
@@ -16795,7 +17518,8 @@ function AIPage() {
     // после ответа на воронку экран молчит ~15с до старта research.
     setMsgs(m => [...m.filter(x => x.role !== "clarify"), {
       role: "pending",
-      label: "Собираю уточнённый запрос…"
+      label: "Учитываю уточнения",
+      detail: "собираю вопрос для отчёта"
     }]);
     let enriched = srcQuestion;
     if (answers && answers.length) {
@@ -16833,7 +17557,7 @@ function AIPage() {
     });
   };
   // «Повторить» после сбоя: неудачный ответ убираем, тот же вопрос уходит заново.
-  const retryLast = srcQ => {
+  const retryLast = (srcQ, route) => {
     if (loading || !srcQ) return;
     trkEvent({
       kind: "ui",
@@ -16843,7 +17567,11 @@ function AIPage() {
       }
     });
     setMsgs(m => m.length && m[m.length - 1].role === "ai" ? m.slice(0, -1) : m);
-    setTimeout(() => runSend(srcQ, null, {
+    setTimeout(() => runSend(srcQ, route === "report" ? true : null, route ? {
+      resend: true,
+      route,
+      route_by: "user"
+    } : {
       resend: true
     }), 60);
   };
@@ -16956,6 +17684,51 @@ function AIPage() {
     setTimeout(() => inputRef.current?.focus(), 0);
   };
 
+  // Ход работы сохранённого ответа — из того, что сервер положил рядом с ним: лента шагов,
+  // время, как понят вопрос, сколько прочитано и выписано. У ответов, сохранённых раньше,
+  // части этих сведений нет — тогда «как получен ответ» показывает то, что есть.
+  const savedRun = (meta, p) => {
+    meta = meta || {};
+    p = p || {};
+    const plan = p.plan || null,
+      run = p.run || {},
+      out = {};
+    const trace = meta.trace || p.trace;
+    if (Array.isArray(trace) && trace.length) out.trace = trace;
+    const el = meta.elapsed_s || p.elapsed_s;
+    if (el) out.elapsedS = el;
+    if (meta.tools) out.tools = meta.tools;
+    if (meta.route) out.route = meta.route;
+    if (meta.engine) out.engine = meta.engine;
+    if (p.timings) out.timings = p.timings;
+    if (plan && plan.task) {
+      const labels = plan.subject_labels || {},
+        subj = plan.subjects || [];
+      const names = subj.map(x => labels[x]).filter(Boolean);
+      out.understood = {
+        task: plan.task,
+        scope: plan.scope || "",
+        checks: plan.checks || "",
+        period: plan.period || "",
+        continues: false,
+        prior: null,
+        names,
+        noScope: subj.length > 0 && !names.length
+      };
+    }
+    if (run.contract) out.contract = run.contract;
+    if (run.subqueries) out.subqN = run.subqueries;
+    if (run.pages || run.hosts) out.progress = {
+      pages: run.pages || 0,
+      blocked: run.blocked || 0,
+      hosts: run.hosts || [],
+      sites: run.sites || 0
+    };
+    if (run.facts) out.factStats = run.facts;
+    if (run.outline) out.outline = run.outline;
+    if (run.stopped_phase) out.stoppedPhase = run.stopped_phase;
+    return out;
+  };
   // Загрузка сессии из истории → в ленту (продолжение возможно, sessionId сохранён).
   // Открыли сохранённое: отчёт показываем с начала (с названия), а не с последней
   // строки — раньше лента прокручивалась в самый низ, к источникам и сверке.
@@ -16987,7 +17760,9 @@ function AIPage() {
           report_id: meta.report_id || undefined,
           mode: meta.mode || undefined,
           phase: meta.mode === "deep" ? "done" : undefined,
-          files: meta.files || undefined
+          files: meta.files || undefined,
+          status: meta.status || undefined,
+          ...savedRun(meta, null)
         };
       });
       // История хранит только текст и источники; визуализации, графики и
@@ -16998,13 +17773,14 @@ function AIPage() {
         try {
           const r = await apiFetch(`/api/reports/${m.report_id}`);
           const p = r.payload || {};
-          Object.assign(m, {
+          Object.assign(m, savedRun(null, p), {
             charts: p.charts || [],
             viz: p.viz || [],
             verification: p.verification || null,
             gaps: p.gaps || null,
             ranking: p.ranking || null,
             insights: p.insights || null,
+            gapsList: ((p.gaps || {}).missing || []).map(g => g.attribute || g),
             status: p.status || undefined,
             title: r.title || undefined,
             created_at: r.created_at || undefined,
@@ -17052,7 +17828,9 @@ function AIPage() {
         elapsedS: p.elapsed_s || undefined,
         status: p.status || undefined,
         title: r.title || undefined,
-        files: p.files || undefined
+        files: p.files || undefined,
+        gapsList: ((p.gaps || {}).missing || []).map(g => g.attribute || g),
+        ...savedRun(null, p)
       }]);
       setSessionId(r.session_id || null);
       setActiveCite(null);
@@ -17112,13 +17890,39 @@ function AIPage() {
     const el = feedRef.current;
     if (!el) return;
     requestAnimationFrame(() => {
-      const c = el.querySelector(".chat-msg:last-child .dr-con-wrap");
+      const c = el.querySelector(".chat-msg:last-child .run-wrap");
       if (c) {
         stickRef.current = false;
         el.scrollTop += c.getBoundingClientRect().top - el.getBoundingClientRect().top - 10;
       }
     });
   }, [hasDraft]);
+  // что идёт и сколько осталось — в заголовок вкладки браузера (через Shell)
+  const runKindNow = isRunning ? "report" : lastMsg && (lastMsg.route === "deck" || lastMsg.engine === "deck") ? "deck" : "answer";
+  const runLeftNow = isRunning ? drLeftShort(drEta(lastDeep)) : "";
+  useEffect(() => {
+    setRunTitle(t => t.kind === runKindNow && t.left === runLeftNow ? t : {
+      kind: runKindNow,
+      left: runLeftNow
+    });
+  }, [runKindNow, runLeftNow]);
+  // Живой шар на экране один: пока видна карточка хода со своим шаром, шар нижней полосы
+  // стоит; карточку пролистали — оживает он (анимация двух шаров — двойная нагрузка).
+  const [cardSeen, setCardSeen] = useState(true);
+  useEffect(() => {
+    if (!isRunning) return;
+    const feed = feedRef.current,
+      card = feed && feed.querySelector(".chat-msg:last-child .run-card .orb");
+    if (!card || typeof IntersectionObserver === "undefined") {
+      setCardSeen(false);
+      return;
+    }
+    const io = new IntersectionObserver(es => setCardSeen(es[es.length - 1].isIntersecting), {
+      root: feed
+    });
+    io.observe(card);
+    return () => io.disconnect();
+  }, [isRunning, hasDraft, runOpen]);
   const showThreadHead = !isEmpty && !isRunning && !isClarify;
   const showComposer = !isRunning && !isClarify;
   const fmtEl = s => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
@@ -17142,7 +17946,40 @@ function AIPage() {
   }, "\u043E\u0442\u043A\u0440\u044B\u0442\u044C ", dupHit.report_id ? "отчёт" : "ответ")), slotHint && /*#__PURE__*/React.createElement("div", {
     className: "aw-dup aw-slot",
     role: "alert"
-  }, slotHint), /*#__PURE__*/React.createElement("div", {
+  }, slotHint), isEmpty && cutRun && /*#__PURE__*/React.createElement("div", {
+    className: "aw-dup run-cut",
+    role: "status"
+  }, /*#__PURE__*/React.createElement("span", null, "\u041E\u0442\u0432\u0435\u0442 \u043D\u0430 \u0432\u043E\u043F\u0440\u043E\u0441 \xAB", cutRun.q.length > 90 ? cutRun.q.slice(0, 90) + "…" : cutRun.q, "\xBB \u043F\u0440\u0435\u0440\u0432\u0430\u043B\u0441\u044F: \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u0431\u044B\u043B\u0430 \u043F\u0435\u0440\u0435\u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D\u0430."), cutRun.sid && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => {
+      const sid = cutRun.sid;
+      setCutRun(null);
+      openSession(sid);
+    }
+  }, "\u043E\u0442\u043A\u0440\u044B\u0442\u044C, \u0447\u0442\u043E \u0443\u0441\u043F\u0435\u043B\u043E \u043F\u0440\u0438\u0439\u0442\u0438"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => {
+      const t = cutRun.q;
+      setCutRun(null);
+      send(t);
+    }
+  }, "\u0441\u043F\u0440\u043E\u0441\u0438\u0442\u044C \u0437\u0430\u043D\u043E\u0432\u043E"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "run-cut-x",
+    onClick: () => setCutRun(null),
+    "aria-label": "\u0421\u043A\u0440\u044B\u0442\u044C"
+  }, /*#__PURE__*/React.createElement("svg", {
+    width: "12",
+    height: "12",
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M6 6l12 12M18 6L6 18"
+  })))), /*#__PURE__*/React.createElement("div", {
     className: "chat-input-wrap"
   }, /*#__PURE__*/React.createElement("textarea", {
     ref: inputRef,
@@ -17281,9 +18118,12 @@ function AIPage() {
     if (m.role === "pending") {
       return /*#__PURE__*/React.createElement("div", {
         key: i,
-        className: "chat-msg ai"
-      }, /*#__PURE__*/React.createElement(PendingDots, {
-        label: m.label
+        className: "chat-msg ai quick-msg"
+      }, /*#__PURE__*/React.createElement("div", {
+        className: "who"
+      }, "\u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A"), /*#__PURE__*/React.createElement(PrepLine, {
+        label: m.label,
+        detail: m.detail
       }));
     }
     if (m.mode === "deep") {
@@ -17298,49 +18138,88 @@ function AIPage() {
       // сворачивается в полоску, чтобы не заслонять чтение.
       const consoleMode = m.role === "ai" && loading && i === msgs.length - 1 && m.phase !== "done";
       const draftMode = consoleMode && (m.text || "").length > 400;
-      // Отчёт сорвался, не начавшись: шапку «Отчёт» с пустым документом не рисуем —
-      // только что случилось и «Повторить».
-      if (!consoleMode && m.err && !(m.text || "").trim()) return /*#__PURE__*/React.createElement("div", {
+      const canRetry = userQ !== "Аудит-отчёт";
+      // Сервер ответил заглушкой сбоя («⚠ Не удалось построить план…») — это не отчёт.
+      const failNote = !consoleMode && /^\s*⚠\s*\*\*/.test(m.text || "") && (m.text || "").length < 400 ? (m.text || "").replace(/[⚠*_]/g, "").replace(/\s+/g, " ").trim() : "";
+      // Прогон кончился, не дав текста (остановлен, оборвалась связь, сбой): шапку «Отчёт»
+      // с пустым документом не рисуем — показываем, на каком шаге он кончился, что успело
+      // собраться и что делать дальше.
+      if (!consoleMode && (failNote || !(m.text || "").trim()) && (failNote || m.err || m.stopped || m.lost || m.status === "stopped")) return /*#__PURE__*/React.createElement("div", {
         key: i,
         className: "chat-msg ai quick-msg"
       }, /*#__PURE__*/React.createElement("div", {
         className: "who"
-      }, "\u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A"), /*#__PURE__*/React.createElement(AiError, {
-        text: m.err,
-        onRetry: userQ !== "Аудит-отчёт" ? () => retryLast(userQ) : null
-      }));
+      }, "\u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A"), /*#__PURE__*/React.createElement(RunDone, {
+        m: failNote ? {
+          ...m,
+          status: "failed"
+        } : m,
+        kind: "report"
+      }), m.err || failNote ? /*#__PURE__*/React.createElement(AiError, {
+        text: m.err || failNote,
+        onRetry: canRetry ? () => retryLast(userQ, "report") : null
+      }) : /*#__PURE__*/React.createElement("div", {
+        className: "run-next"
+      }, /*#__PURE__*/React.createElement("span", null, "\u0422\u0435\u043A\u0441\u0442\u0430 \u043E\u0442\u0447\u0451\u0442\u0430 \u0435\u0449\u0451 \u043D\u0435 \u0431\u044B\u043B\u043E. \u0427\u0442\u043E \u0443\u0441\u043F\u0435\u043B\u043E \u0441\u043E\u0431\u0440\u0430\u0442\u044C\u0441\u044F \u2014 \u0432 \u0441\u0442\u0440\u043E\u043A\u0435 \u0432\u044B\u0448\u0435."), canRetry && /*#__PURE__*/React.createElement("button", {
+        type: "button",
+        className: "btn-export",
+        disabled: loading,
+        onClick: () => retryLast(userQ, "report")
+      }, "\u0421\u043E\u0431\u0440\u0430\u0442\u044C \u0437\u0430\u043D\u043E\u0432\u043E"), canRetry && /*#__PURE__*/React.createElement("button", {
+        type: "button",
+        className: "btn-export",
+        disabled: loading,
+        onClick: () => switchRoute(userQ, "answer")
+      }, "\u041E\u0442\u0432\u0435\u0442\u0438\u0442\u044C \u043A\u043E\u0440\u043E\u0442\u043A\u043E")));
       return /*#__PURE__*/React.createElement("div", {
         key: i,
         className: `chat-msg ${m.role}`
       }, consoleMode && /*#__PURE__*/React.createElement("div", {
         className: "chat-bubble chat-bubble-deep"
-      }, /*#__PURE__*/React.createElement(DeepConsole, {
+      }, /*#__PURE__*/React.createElement(RunCard, {
         m: m,
         loading: loading,
         elapsed: elapsed,
         onFresh: () => redoFresh(userQ),
+        turb: turbOn,
         onShort: i > 0 && msgs[i - 1]?.role === "user" ? () => switchRoute(userQ, "answer") : null,
         compact: draftMode && !runOpen,
         onToggle: () => setRunOpen(true)
       }), draftMode && runOpen && /*#__PURE__*/React.createElement("div", {
-        className: "dr-con-fold"
+        className: "run-fold"
       }, /*#__PURE__*/React.createElement("button", {
         type: "button",
-        className: "dr-con-link",
+        className: "run-more",
         onClick: () => setRunOpen(false)
-      }, "\u0421\u0432\u0435\u0440\u043D\u0443\u0442\u044C \u0445\u043E\u0434 \u0440\u0430\u0431\u043E\u0442\u044B"))), draftMode && /*#__PURE__*/React.createElement("div", {
+      }, "\u0421\u0432\u0435\u0440\u043D\u0443\u0442\u044C \u0445\u043E\u0434 \u0440\u0430\u0431\u043E\u0442\u044B", /*#__PURE__*/React.createElement("svg", {
+        className: "run-chev open",
+        width: "12",
+        height: "12",
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: "currentColor",
+        strokeWidth: "2",
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        "aria-hidden": "true"
+      }, /*#__PURE__*/React.createElement("path", {
+        d: "M6 9l6 6 6-6"
+      }))))), draftMode && /*#__PURE__*/React.createElement("div", {
         className: "dr-draft-note",
         role: "status"
       }, /*#__PURE__*/React.createElement("b", null, "\u041E\u0442\u0447\u0451\u0442 \u043F\u0438\u0448\u0435\u0442\u0441\u044F \u2014 \u043C\u043E\u0436\u043D\u043E \u0447\u0438\u0442\u0430\u0442\u044C."), " \u0420\u0430\u0437\u0434\u0435\u043B\u044B \u043F\u043E\u044F\u0432\u043B\u044F\u044E\u0442\u0441\u044F \u043F\u043E \u043C\u0435\u0440\u0435 \u0433\u043E\u0442\u043E\u0432\u043D\u043E\u0441\u0442\u0438; \u0440\u0435\u0437\u044E\u043C\u0435 \u0432\u0441\u0442\u0430\u043D\u0435\u0442 \u0432 \u043D\u0430\u0447\u0430\u043B\u043E, \u0447\u0438\u0441\u043B\u0430 \u0441\u0432\u0435\u0440\u044F\u044E\u0442\u0441\u044F \u0432 \u043A\u043E\u043D\u0446\u0435."), (!consoleMode || draftMode) && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("header", {
         className: "rp-head"
       }, /*#__PURE__*/React.createElement("div", {
         className: "rp-eyebrow"
-      }, /*#__PURE__*/React.createElement("span", null, streaming ? "Отчёт пишется" : m.stopped || m.status === "stopped" ? "Отчёт остановлен" : "Отчёт"), !streaming && (m.created_at || m.phase === "done") && /*#__PURE__*/React.createElement("span", null, srcDay(m.created_at || localDay())), !streaming && rpTook(m) && /*#__PURE__*/React.createElement("span", null, "\u0441\u043E\u0431\u0440\u0430\u043D \u0437\u0430 ", rpTook(m)), m.report_owner && me && m.report_owner !== me.username && /*#__PURE__*/React.createElement("span", {
+      }, /*#__PURE__*/React.createElement("span", null, streaming ? "Отчёт пишется" : m.stopped || m.status === "stopped" ? "Отчёт остановлен" : "Отчёт"), !streaming && (m.created_at || m.phase === "done") && /*#__PURE__*/React.createElement("span", null, srcDay(m.created_at || localDay())), !streaming && rpTook(m) && !(m.stopped || m.lost || m.status === "stopped") && /*#__PURE__*/React.createElement("span", null, "\u0441\u043E\u0431\u0440\u0430\u043D \u0437\u0430 ", rpTook(m)), m.report_owner && me && m.report_owner !== me.username && /*#__PURE__*/React.createElement("span", {
         className: "shr-owner"
       }, "\u043F\u043E\u0434\u0435\u043B\u0438\u043B\u0441\u044F: ", m.owner_name || m.report_owner)), /*#__PURE__*/React.createElement("h1", {
         className: "rp-title"
       }, m.title || userQ), !streaming && /*#__PURE__*/React.createElement(RpMeta, {
         m: m
+      }), !streaming && /*#__PURE__*/React.createElement(RunDone, {
+        m: m,
+        kind: "report"
       }), !streaming && /*#__PURE__*/React.createElement("div", {
         className: "rp-bar"
       }, /*#__PURE__*/React.createElement("div", {
@@ -17423,12 +18302,12 @@ function AIPage() {
         className: "dr-fade-in"
       }, /*#__PURE__*/React.createElement(InsightsWidget, {
         insights: m.insights
-      })), (m.status === "stopped" || m.stopped) && !streaming && /*#__PURE__*/React.createElement("div", {
+      })), (m.status === "stopped" || m.stopped) && !m.lost && !streaming && /*#__PURE__*/React.createElement("div", {
         className: "ai-stopped",
         role: "status"
       }, "\u041E\u0442\u0447\u0451\u0442 \u043E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D \u0434\u043E \u043A\u043E\u043D\u0446\u0430 \u043F\u0440\u043E\u0433\u043E\u043D\u0430 \u2014 \u0437\u0434\u0435\u0441\u044C \u0442\u043E, \u0447\u0442\u043E \u0443\u0441\u043F\u0435\u043B\u043E \u043F\u0440\u0438\u0439\u0442\u0438."), m.err && !streaming && /*#__PURE__*/React.createElement(AiError, {
         text: m.err,
-        onRetry: userQ && userQ !== "Аудит-отчёт" ? () => retryLast(userQ) : null
+        onRetry: userQ && userQ !== "Аудит-отчёт" ? () => retryLast(userQ, "report") : null
       }), m.verification && /*#__PURE__*/React.createElement(VerificationBanner, {
         verification: m.verification
       }), showPdfBtn && !streaming && /*#__PURE__*/React.createElement("div", {
@@ -17477,8 +18356,10 @@ function AIPage() {
     }
     // Quick mode — ответ ИИ (редизайн: голый текст + tool-бокс + источники + апселл)
     const prevQ = i > 0 && msgs[i - 1]?.role === "user" ? msgs[i - 1].text : "";
-    const thinking = !m.text && loading && i === msgs.length - 1;
+    const live = loading && i === msgs.length - 1;
+    const isDeck = m.route === "deck" || m.engine === "deck";
     const qText = stripFileMarks(m.text, m.files);
+    const now = live ? runNowQuick(m) : null;
     return /*#__PURE__*/React.createElement("div", {
       key: i,
       className: "chat-msg ai quick-msg"
@@ -17487,37 +18368,28 @@ function AIPage() {
     }, "\u0418\u0418-\u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A"), m.notice && /*#__PURE__*/React.createElement("div", {
       className: "ai-notice",
       role: "status"
-    }, m.notice), loading && i === msgs.length - 1 && prevQ && (m.route === "answer" || m.route === "reply") && /*#__PURE__*/React.createElement("div", {
-      className: "ai-route",
-      role: "status"
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "ai-route-t"
-    }, m.route === "reply" ? "Отвечаю по уже собранному, без нового сбора" : "Отвечаю короткой справкой — обычно меньше минуты"), /*#__PURE__*/React.createElement("button", {
-      type: "button",
-      className: "ai-route-btn",
-      onClick: () => switchRoute(prevQ, "report"),
-      title: "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u0442\u044C \u043A\u043E\u0440\u043E\u0442\u043A\u0438\u0439 \u043E\u0442\u0432\u0435\u0442 \u0438 \u0441\u043E\u0431\u0440\u0430\u0442\u044C \u043E\u0442\u0447\u0451\u0442 \u0441 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430\u043C\u0438 (3\u20135 \u043C\u0438\u043D\u0443\u0442)"
-    }, "\u041D\u0443\u0436\u0435\u043D \u043E\u0442\u0447\u0451\u0442")), m.tools && m.tools.length > 0 && /*#__PURE__*/React.createElement("div", {
-      className: "quick-tools",
-      "aria-label": "\u0413\u0434\u0435 \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u0438\u0441\u043A\u0430\u043B \u043E\u0442\u0432\u0435\u0442"
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "quick-tools-k"
-    }, thinking ? "Смотрю" : "Смотрел"), collapseTools(m.tools).map(({
-      lbl,
-      n
-    }, ti, arr) => /*#__PURE__*/React.createElement("span", {
-      key: ti,
-      className: "quick-tool" + (ti === arr.length - 1 && thinking ? " now" : "")
-    }, lbl, n > 1 ? /*#__PURE__*/React.createElement("span", {
-      className: "quick-tool-n"
-    }, " \xD7", n) : null))), thinking ? /*#__PURE__*/React.createElement(PendingDots, {
-      label: "\u0414\u0443\u043C\u0430\u044E \u043D\u0430\u0434 \u043E\u0442\u0432\u0435\u0442\u043E\u043C\u2026"
-    }) : qText && /*#__PURE__*/React.createElement("div", {
+    }, m.notice), live && /*#__PURE__*/React.createElement(RunLine, {
+      orb: now.orb,
+      title: now.title,
+      detail: now.detail,
+      elapsed: elapsed,
+      note: m.route || isDeck ? runNoteQuick(m, elapsed) : "",
+      trail: collapseTools(m.tools),
+      action: prevQ && (m.route === "answer" || m.route === "reply") ? /*#__PURE__*/React.createElement("button", {
+        type: "button",
+        className: "ai-route-btn",
+        onClick: () => switchRoute(prevQ, "report"),
+        title: "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u0438\u0442\u044C \u043A\u043E\u0440\u043E\u0442\u043A\u0438\u0439 \u043E\u0442\u0432\u0435\u0442 \u0438 \u0441\u043E\u0431\u0440\u0430\u0442\u044C \u043E\u0442\u0447\u0451\u0442 \u0441 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0430\u043C\u0438 (3\u20135 \u043C\u0438\u043D\u0443\u0442)"
+      }, "\u041D\u0443\u0436\u0435\u043D \u043E\u0442\u0447\u0451\u0442") : null
+    }), !live && /*#__PURE__*/React.createElement(RunDone, {
+      m: m,
+      kind: isDeck ? "deck" : "answer"
+    }), qText && /*#__PURE__*/React.createElement("div", {
       className: "quick-answer chat-bubble"
-    }, renderMD(qText, m.sources)), m.stopped && /*#__PURE__*/React.createElement("div", {
+    }, renderMD(qText, m.sources)), m.stopped && !live && /*#__PURE__*/React.createElement("div", {
       className: "ai-stopped",
       role: "status"
-    }, "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043E", qText ? ". Показано то, что успело прийти." : " до ответа."), m.err && /*#__PURE__*/React.createElement(AiError, {
+    }, qText ? "Показано то, что успело прийти." : "Ответа ещё не было."), m.err && /*#__PURE__*/React.createElement(AiError, {
       text: m.err,
       onRetry: prevQ ? () => retryLast(prevQ) : null
     }), /*#__PURE__*/React.createElement(AgentFiles, {
@@ -17603,16 +18475,17 @@ function AIPage() {
     })));
   })), isRunning && /*#__PURE__*/React.createElement("div", {
     className: "al-runbar"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "al-runbar-dot"
-  }), /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement(Orb, _extends({}, runNowReport(lastDeep).orb, {
+    size: 20,
+    still: cardSeen
+  })), /*#__PURE__*/React.createElement("span", {
     className: "al-runbar-text"
   }, /*#__PURE__*/React.createElement("span", {
     className: "al-runbar-full"
   }, "\u0421\u043E\u0431\u0438\u0440\u0430\u044E \u043E\u0442\u0447\u0451\u0442", lastDeep && drLeftText(drEta(lastDeep)) ? " — " + drLeftText(drEta(lastDeep)) : ""), /*#__PURE__*/React.createElement("span", {
     className: "al-runbar-short"
   }, lastDeep && drLeftShort(drEta(lastDeep)) || "Собираю отчёт")), /*#__PURE__*/React.createElement("span", {
-    className: "al-runbar-el mono"
+    className: "al-runbar-el"
   }, fmtEl(elapsed)), lastDeep && (lastDeep.text || "").length > 400 && /*#__PURE__*/React.createElement("button", {
     className: "al-runbar-btn",
     onClick: () => {
@@ -39566,6 +40439,18 @@ function useTurbBanner() {
   }, []);
   return b;
 }
+// Включена ли плашка — для хода работы ИИ-помощника: оценка времени в такие дни неточная.
+// Плашку запрашивает Shell; сюда доходит только признак.
+function useTurbOn() {
+  const [on, setOn] = useState(() => !!window.__alTurb);
+  useEffect(() => {
+    const h = () => setOn(!!window.__alTurb);
+    window.addEventListener("al-turb", h);
+    h();
+    return () => window.removeEventListener("al-turb", h);
+  }, []);
+  return on;
+}
 // контурная, как остальные иконки интерфейса: штрих 1,5, currentColor
 const TurbCloud = ({
   s = 22
@@ -39658,6 +40543,9 @@ function Shell() {
   const [aiMounted, setAiMounted] = useState(() => (parseHash().p || "overview") === "ai");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiReady, setAiReady] = useState(false);
+  const [aiRun, setAiRun] = useState(null); // что готовит помощник и сколько осталось
+  const [aiReadyKind, setAiReadyKind] = useState("answer");
+  const aiKindRef = useRef("answer");
   const aiPrevRun = useRef(false);
   const pageCurRef = useRef(null);
   const {
@@ -39668,6 +40556,12 @@ function Shell() {
   const reduceMotion = useReducedMotion();
   // плашка о перебоях: свёрнута сегодня (дата МСК в localStorage) → значок в шапке
   const turb = useTurbBanner();
+  useEffect(() => {
+    window.__alTurb = !!turb;
+    try {
+      window.dispatchEvent(new Event("al-turb"));
+    } catch {}
+  }, [turb]);
   const turbKey = turb ? "al-turb:" + (turb.v || "") : null;
   const [turbAck, setTurbAck] = useState(null);
   useEffect(() => {
@@ -40361,9 +41255,18 @@ function Shell() {
   // сигналы от AIPage о ходе прогона (running true/false)
   useEffect(() => {
     const h = e => {
-      const r = !!(e.detail && e.detail.running);
+      const d = e.detail || {},
+        r = !!d.running;
       setAiBusy(r);
-      if (aiPrevRun.current && !r && pageCurRef.current !== "ai") setAiReady(true);
+      setAiRun(r ? {
+        kind: d.kind || "answer",
+        left: d.left || ""
+      } : null);
+      if (aiPrevRun.current && !r && pageCurRef.current !== "ai") {
+        setAiReady(true);
+        setAiReadyKind(aiKindRef.current);
+      }
+      if (r) aiKindRef.current = d.kind || "answer";
       aiPrevRun.current = r;
     };
     window.addEventListener("al-ai-state", h);
@@ -40468,9 +41371,15 @@ function Shell() {
   const section = SECTION_OF[page] || page;
   const label = PAGE_LABELS[page] || "Новостные обзоры";
   // заголовок вкладки браузера — по разделу: в истории и закладках видно, где был
+  // пока помощник работает — что готовится и сколько осталось: видно с другой вкладки браузера
+  const AI_KIND = {
+    report: "Отчёт",
+    deck: "Презентация",
+    answer: "Ответ"
+  };
   useEffect(() => {
-    document.title = `${label} · AuditLens`;
-  }, [label]);
+    document.title = aiRun ? `${AI_KIND[aiRun.kind] || "Ответ"}: ${aiRun.left || "готовится"} · AuditLens` : aiReady && page !== "ai" ? `${AI_KIND[aiReadyKind] || "Ответ"} готов · AuditLens` : `${label} · AuditLens`;
+  }, [label, aiRun && aiRun.kind, aiRun && aiRun.left, aiReady, aiReadyKind, page]);
   const navIdx = navOrder.indexOf(section);
   const idx = navIdx >= 0 ? String(navIdx + 1).padStart(2, "0") : null;
   return /*#__PURE__*/React.createElement(MeCtx.Provider, {
@@ -41082,7 +41991,7 @@ function Shell() {
     }
   }, /*#__PURE__*/React.createElement("span", {
     className: "sp"
-  }, "\u2726"), " \u041E\u0442\u0447\u0451\u0442 \u0433\u043E\u0442\u043E\u0432 \u2014 \u043E\u0442\u043A\u0440\u044B\u0442\u044C", /*#__PURE__*/React.createElement("button", {
+  }, "\u2726"), " ", AI_KIND[aiReadyKind] || "Ответ", " \u0433\u043E\u0442\u043E\u0432 \u2014 \u043E\u0442\u043A\u0440\u044B\u0442\u044C", /*#__PURE__*/React.createElement("button", {
     className: "x",
     onClick: e => {
       e.stopPropagation();

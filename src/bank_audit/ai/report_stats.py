@@ -103,3 +103,65 @@ def typical(days: int = 30) -> dict:
         val = typical_from(None)
     _typical_cache.update(at=now, val=val)
     return val
+
+
+# ── Сколько обычно длится короткий ответ и презентация ───────────────────────
+# Для строки хода работы: «обычно около 25 с», «осталось примерно 2 мин». Берётся
+# из сохранённых ответов (chat_message.meta: mode, engine, elapsed_s, status).
+# Запасные значения — замеры 11–12.11.2026; своих данных нужно не меньше восьми.
+_ANSWER_DEFAULT = {"answer": {"p50": 30, "p75": 60, "n": 0},
+                   "deck": {"p50": 140, "p75": 190, "n": 0}}
+_answer_cache: dict = {"at": 0.0, "val": None}
+
+
+def quantile(xs: list[float], q: float) -> float | None:
+    xs = sorted(float(x) for x in xs if x is not None)
+    if not xs:
+        return None
+    pos = (len(xs) - 1) * q
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    return xs[lo] + (xs[hi] - xs[lo]) * (pos - lo)
+
+
+def typical_answer_from(rows: list[tuple[str, float]] | None, *, min_rows: int = 8) -> dict:
+    """rows: [(движок, секунды)] → {"answer": {p50, p75, n}, "deck": {…}}. Презентация —
+    движок deck; всё остальное — короткий ответ. Мало данных — запасные значения."""
+    out = {k: dict(v) for k, v in _ANSWER_DEFAULT.items()}
+    groups: dict[str, list[float]] = {"answer": [], "deck": []}
+    for engine, sec in rows or []:
+        try:
+            sec = float(sec)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= sec <= 1800:
+            groups["deck" if engine == "deck" else "answer"].append(sec)
+    for key, xs in groups.items():
+        if len(xs) >= min_rows:
+            out[key] = {"p50": int(round(quantile(xs, 0.5))), "p75": int(round(quantile(xs, 0.75))),
+                        "n": len(xs)}
+    return out
+
+
+def typical_answer(days: int = 30) -> dict:
+    """Обычная длительность короткого ответа и презентации (кэш на полчаса). Никогда не бросает."""
+    import time
+    now = time.monotonic()
+    if _answer_cache["val"] is not None and now - _answer_cache["at"] < _TYPICAL_TTL:
+        return _answer_cache["val"]
+    try:
+        with db.session() as s:
+            s.execute(text("SET LOCAL statement_timeout = '4s'"))
+            rows = [(r[0] or "", r[1]) for r in s.execute(text("""
+                SELECT meta->>'engine', (meta->>'elapsed_s')::numeric
+                  FROM chat_message
+                 WHERE role = 'assistant'
+                   AND created_at > now() - make_interval(days => :d)
+                   AND meta->>'mode' = 'quick'
+                   AND coalesce(meta->>'status', 'ok') = 'ok'
+                   AND meta->>'elapsed_s' ~ '^[0-9]+(\\.[0-9]+)?$'"""), {"d": days})]
+        val = typical_answer_from(rows)
+    except Exception:  # noqa: BLE001 — нет базы: оценка по запасным значениям
+        val = typical_answer_from(None)
+    _answer_cache.update(at=now, val=val)
+    return val

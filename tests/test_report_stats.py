@@ -23,3 +23,31 @@ def test_no_timed_reports_gives_empty_steps():
     out = R.summarize([{"task": None, "elapsed_s": 294, "timings": None, "broken": False}], 30)
     assert out["steps"] == [] and out["timed"] == 0
     assert R.summarize([], 30)["median_s"] is None
+
+
+def test_typical_answer_uses_own_durations_when_enough():
+    """Строка хода работы говорит «обычно около N с» по недавним ответам, а не по догадке."""
+    rows = [("hermes", s) for s in (10, 12, 14, 20, 22, 26, 30, 44, 60)] + [("deck", 130)]
+    out = R.typical_answer_from(rows)
+    assert out["answer"] == {"p50": 22, "p75": 30, "n": 9}
+    # презентаций мало — запасные значения, и видно, что они запасные (n = 0)
+    assert out["deck"]["n"] == 0 and out["deck"]["p50"] == 140
+
+
+def test_typical_answer_ignores_garbage_and_falls_back():
+    out = R.typical_answer_from([("hermes", None), ("hermes", "x"), ("hermes", 0), ("hermes", 99999)])
+    assert out["answer"]["n"] == 0 and out["answer"]["p50"] == 30
+    assert R.typical_answer_from(None)["deck"]["p75"] == 190
+    deck = R.typical_answer_from([("deck", s) for s in (100, 110, 120, 130, 140, 150, 160, 170)])
+    assert deck["deck"] == {"p50": 135, "p75": 152, "n": 8}
+
+
+def test_typical_answer_never_raises_without_database(monkeypatch):
+    R._answer_cache.update(at=0.0, val=None)
+
+    def boom():
+        raise RuntimeError("нет базы")
+    monkeypatch.setattr(R.db, "session", boom)
+    out = R.typical_answer()
+    assert out["answer"]["n"] == 0 and out["deck"]["n"] == 0
+    R._answer_cache.update(at=0.0, val=None)

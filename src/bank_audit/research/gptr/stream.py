@@ -97,6 +97,32 @@ def _hosts(urls, top: int = 8) -> list[list]:
     return [[h, k] for h, k in sorted(seen.items(), key=lambda x: (-x[1], x[0]))[:top]]
 
 
+def _hosts_live(urls) -> dict:
+    """Сколько разных сайтов уже прочитано и какой прочитан последним — для живой
+    строки хода работы («прочитано 48 страниц на 6 сайтах · только что — …»)."""
+    seen: set[str] = set()
+    last = ""
+    for u in urls:
+        if not str(u).startswith("http"):
+            continue
+        try:
+            h = (urlparse(u).hostname or "").removeprefix("www.")
+        except ValueError:
+            continue
+        if h:
+            seen.add(h)
+            last = h
+    return {"sites": len(seen), "last_host": last}
+
+
+def _clip(text, limit: int = 220) -> str:
+    """Подпись для хода работы: не длиннее limit и без обрыва посреди слова."""
+    t = " ".join(str(text or "").split())
+    if len(t) <= limit:
+        return t
+    return t[:limit].rsplit(" ", 1)[0].rstrip(",.;:—–- ") + "…"
+
+
 def _sources_ui(urls: list[str], pages: dict[str, str],
                 cited: dict[str, dict] | None = None,
                 dates: dict[str, str] | None = None,
@@ -270,7 +296,7 @@ async def stream_deep_research_gptr(question: str,
                     "estimate_s": 0})
     yield _evt({"type": "stage_status", "stage": "plan_ready",
                 "label": "План готов",
-                "detail": plan.intent_summary[:160], "estimate_s": 0})
+                "detail": _clip(plan.intent_summary), "estimate_s": 0})
     yield _evt({"type": "plan", "steps": plan.to_ui_plan(),
                 "question_nature": plan.question_nature,
                 "subjects": plan.subjects,
@@ -368,7 +394,8 @@ async def stream_deep_research_gptr(question: str,
                     "pages": len(state.pages),
                     "facts": len(registry.facts),
                     "blocked": len(state.unreadable),
-                    "hosts": _hosts(list(state.pages))}):
+                    "hosts": _hosts(list(state.pages)),
+                    **_hosts_live(list(state.pages))}):
                 yield ev
                 # Собственные данные готовы раньше сбора по сайтам — показываем
                 # их сразу: сюжеты жалоб, строки рынка, новости со ссылкой в раздел.
@@ -411,7 +438,7 @@ async def stream_deep_research_gptr(question: str,
                if own.knowledge_live else "",
                f"документов базы знаний {own.knowledge}" if own.knowledge else "",
                f"жалоб {own.complaints}" if sc.get("complaints", True) else "",
-               f"лазеек {own.loopholes}" if sc.get("loopholes", True) else "",
+               f"уязвимостей {own.loopholes}" if sc.get("loopholes", True) else "",
                f"предложений рынка {own.market}" if own.market else "",
                f"новостей {own.news}" if own.news else ""]
         themes = [al_own.T.theme_label(k) for k in sc.get("themes") or []]
@@ -570,7 +597,7 @@ async def stream_deep_research_gptr(question: str,
                 "label": f"Фактов: {len(registry.facts)}",
                 "detail": (f"заявлено {by_stance['declared']}, со стороны "
                            f"{by_stance['observed']}, норм {by_stance['regulatory']}"
-                           + (f", лазеек {by_stance['loophole']}" if by_stance["loophole"] else "")),
+                           + (f", уязвимостей {by_stance['loophole']}" if by_stance["loophole"] else "")),
                 "estimate_s": 0})
 
     # ── Отчёт ────────────────────────────────────────────────────────────

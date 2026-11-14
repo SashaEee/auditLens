@@ -5423,6 +5423,10 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
     # по этому «Пульс» видит, как часто выбор глубины приходится поправлять.
     route_info: dict = {}
     t0 = time.monotonic()
+    # Лента шагов и сводка прогона — «как получен ответ»: сохраняются рядом с
+    # ответом, чтобы ход работы был виден и при открытии разговора из истории.
+    from ..ai.run_trace import Recorder
+    rec = Recorder(lambda: time.monotonic() - t0)
 
     def _persist(finished: bool) -> int | None:
         """Сохранить ответ (и отчёт, если тянет). Возвращает report_id или None.
@@ -5436,6 +5440,7 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
             from ..ai import agent_files
             body = agent_files.replace_markers(body, files)
         elapsed = round(time.monotonic() - t0)
+        rec.finish(finished)
         from ..research.gptr.stream import FAIL_PREFIXES
         failed = bool(body and body.strip()) and (
             body.strip().startswith(FAIL_PREFIXES) or (mode == "deep" and len(body.strip()) < 300))
@@ -5467,6 +5472,7 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                              "status": status, "elapsed_s": elapsed,
                              "files": files or None,
                              "plan": plan_info, "timings": timings,
+                             "trace": rec.trace or None, "run": rec.run or None,
                              "payload_v": 2},
                     banks=banks, title=saved_title)
                 if report_title:
@@ -5493,6 +5499,8 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                 meta["files"] = files
             if run_meta:
                 meta["run"] = run_meta
+            if rec.trace:
+                meta["trace"] = rec.trace
             meta.update(route_info)
             userdata.add_message(session_id, "assistant", body, meta)
             # Достраиваем связь «документ → отчёт»: страницы уже легли в базу
@@ -5517,6 +5525,10 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
             try:
                 data = json.loads(ev)
                 t = data.get("type")
+                try:
+                    rec.feed(data)
+                except Exception:  # noqa: BLE001 — лента шагов не должна ронять ответ
+                    log.debug("[ai_analyze] run trace", exc_info=True)
                 if t == "memory":
                     # служебное: клиенту не отдаём (сотни килобайт фактов)
                     internal = True
@@ -5553,7 +5565,7 @@ async def _persisting_stream(inner, username: str, session_id: int, question: st
                 elif t == "plan":
                     plan_info = {k: data.get(k) for k in ("task", "scope", "checks", "deliverable",
                                                           "period", "subjects", "question_nature",
-                                                          "continues")}
+                                                          "continues", "subject_labels")}
                 elif t == "report_title" and data.get("title"):
                     report_title = str(data["title"])[:200]
                 elif t == "engine":
